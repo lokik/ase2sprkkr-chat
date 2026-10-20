@@ -210,7 +210,7 @@ async def follow_growing_files(paths, on_chunk, terminal, *, offsets=None,
             else:
                 await tail.wait_for_change(wakeup=wakeup)
 
-async def follow_job_files(paths, on_chunk, wait, *, terminal=None, offsets=None,
+async def follow_job_files(paths, on_chunk, wait, *, terminal=None, wait_error=None, offsets=None,
                            poll_interval=1.0):
     """Follow scheduler output while one blocking job.wait() runs in a thread.
 
@@ -247,7 +247,12 @@ async def follow_job_files(paths, on_chunk, wait, *, terminal=None, offsets=None
     async def outcome():
         if not waiting.done():
             return None
-        status = await waiting
+        try:
+            status = await waiting
+        except Exception as exc:
+            if wait_error is None:
+                raise
+            return await wait_error(exc)
         return await terminal(status) if terminal is not None else status
 
     try:

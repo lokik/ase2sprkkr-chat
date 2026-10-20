@@ -480,32 +480,46 @@ async def _follow_scheduler_async(remote_id, streams, paths, offsets, poll_inter
     from .psij import _psij_state
 
     handle = _decode_handle(remote_id)
-    executor = _psij_executor(handle)
+    executor = _psij_executor(
+        {"backend": handle["backend"], "url": handle.get("url")}
+    )
     job = executor.attach_native_job(handle["native_id"])
 
     def emit(kind, data):
         streams[kind].write(data)
         streams[kind].flush()
 
-    async def terminal(_native_status):
-        status = await asyncio.to_thread(status_remote, remote_id)
-        if status["state"] in {s.value for s in _FINAL_STATES}:
-            return status
-        native = job.status
-        state = _psij_state(native)
+    async def uncertain(reason):
+        if str(handle["backend"]).lower() == "slurm" and handle.get("url") is None:
+            try:
+                status = await asyncio.to_thread(status_remote, remote_id)
+            except (OSError, subprocess.CalledProcessError):
+                pass
+            else:
+                if RunState(status["state"]) in _FINAL_STATES:
+                    return status
+        return {
+            "state": RunState.UNKNOWN.value, "return_code": None,
+            "failure_phase": None, "error": reason,
+        }
+
+    async def terminal(native):
+        state = _psij_state(native, attached=True)
+        if state not in _FINAL_STATES:
+            return await uncertain("PSI/J wait returned without a terminal state")
         return _status_reply(
             state, getattr(native, "exit_code", None),
-            failure_phase=(
-                FailurePhase.EXECUTION if state == RunState.FAILED else None
-            ),
+            failure_phase=FailurePhase.EXECUTION if state == RunState.FAILED else None,
             error=getattr(native, "message", None),
         )
 
-    return await follow_job_files(
-        paths, emit, job.wait, terminal=terminal, offsets=offsets,
-        poll_interval=max(poll_interval, 1.0),
-    )
+    async def wait_error(exc):
+        return await uncertain(f"PSI/J wait failed: {exc}")
 
+    return await follow_job_files(
+        paths, emit, job.wait, terminal=terminal, wait_error=wait_error,
+        offsets=offsets, poll_interval=max(poll_interval, 1.0),
+    )
 
 def follow_remote(
     remote_id,

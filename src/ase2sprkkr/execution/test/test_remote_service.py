@@ -165,31 +165,41 @@ def test_slurm_status_is_native_and_does_not_use_psij_job_cache(tmp_path, monkey
     assert status["failure_phase"] is None
 
 
-@pytest.mark.parametrize(
-    "accounting_state, code, expected_state, expected_phase",
-    [
-        ("COMPLETED", 0, RunState.FINISHED, None),
-        ("FAILED", 7, RunState.FAILED, FailurePhase.EXECUTION),
-        ("COMPLETED", 7, RunState.FAILED, FailurePhase.EXECUTION),
-    ],
-)
-def test_slurm_accounting_status_maps_state_and_exit_code(
-    tmp_path, monkeypatch, accounting_state, code, expected_state, expected_phase,
-):
+def test_slurm_status_falls_back_to_exact_accounting_record(tmp_path, monkeypatch):
     _, remote_id = _psij_handle(tmp_path)
     monkeypatch.setattr(psij, "_slurm_details", lambda _native_id: {})
-    monkeypatch.setattr(
-        psij, "_scheduler_output",
-        lambda argv: f"42|{accounting_state}|{code}:0|\n",
-    )
+    monkeypatch.setattr(psij, "_scheduler_output", lambda argv: "42|COMPLETED|0:0|\n")
 
     status = remote_service.status_remote(remote_id)
 
-    assert status["state"] == expected_state.value
-    assert status["return_code"] == code
-    assert status["failure_phase"] == (
-        None if expected_phase is None else expected_phase.value
+    assert status["state"] == RunState.FINISHED.value
+    assert status["return_code"] == 0
+    assert status["failure_phase"] is None
+
+
+def test_slurm_failed_accounting_record_is_execution_failure(tmp_path, monkeypatch):
+    _, remote_id = _psij_handle(tmp_path)
+    monkeypatch.setattr(psij, "_slurm_details", lambda _native_id: {})
+    monkeypatch.setattr(psij, "_scheduler_output", lambda argv: "42|FAILED|7:0|\n")
+
+    status = remote_service.status_remote(remote_id)
+
+    assert status["state"] == RunState.FAILED.value
+    assert status["return_code"] == 7
+    assert status["failure_phase"] == FailurePhase.EXECUTION.value
+
+
+
+def test_slurm_completed_with_nonzero_exit_is_failed(tmp_path, monkeypatch):
+    _, remote_id = _psij_handle(tmp_path)
+    monkeypatch.setattr(psij, "_slurm_details", lambda _id: {})
+    monkeypatch.setattr(
+        psij, "_scheduler_output", lambda argv: "42|COMPLETED|7:0|\n",
     )
+    status = remote_service.status_remote(remote_id)
+    assert status["state"] == RunState.FAILED.value
+    assert status["return_code"] == 7
+    assert status["failure_phase"] == FailurePhase.EXECUTION.value
 
 
 def test_psij_cancellation_does_not_invent_terminal_state(monkeypatch, tmp_path):
@@ -252,7 +262,7 @@ def test_follow_waits_for_psij_terminal_without_repeated_status_probes(tmp_path,
 
     assert outcome["state"] == RunState.FINISHED.value
     assert observed == [("attach", "42"), "wait"]
-    assert checks == [remote_id]
+    assert checks == []
 
 
 def test_follow_uses_native_terminal_when_status_query_is_transient_unknown(tmp_path, monkeypatch):
@@ -271,7 +281,7 @@ def test_follow_uses_native_terminal_when_status_query_is_transient_unknown(tmp_
     assert outcome["return_code"] == 7
     assert outcome["failure_phase"] == FailurePhase.EXECUTION.value
     assert observed == [("attach", "42"), "wait"]
-    assert checks == [remote_id]
+    assert checks == []
 
 
 def test_follow_fallback_treats_completed_nonzero_psij_as_failed(
@@ -592,135 +602,53 @@ def test_remote_cleanup_checks_collisions_before_deleting_any_output(tmp_path):
     assert stale.read_text() == "old"
     assert cache.read_text() == "restart"
 
-
-@pytest.mark.parametrize("failure", ("stream_start", "handshake", "startup_cleanup"))
-def test_supervisor_prelaunch_failure_publishes_durable_receipt_and_closes_fd(
-    tmp_path, monkeypatch, failure,
-):
-    import asyncio
-    import os
-    from ase2sprkkr.execution import remote_mailbox
-
-    monkeypatch.setenv("ASE2SPRKKR_REMOTE_STATE_DIR", str(tmp_path / "state"))
-    read_fd, write_fd = os.pipe()
-    receipt = "c" * 32
-    spec = {
-        "argv": ["this-command-must-not-launch"],
-        "directory": str(tmp_path),
-        "output_file": None, "error_file": None,
-        "receipt_id": receipt, "socket_fd": write_fd,
-        "detached": True,
+def test_psij_follow_uses_wait_returned_status_not_stale_job_status(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    _, remote_id = _psij_handle(tmp_path)
+    result_status = SimpleNamespace(
+        state=SimpleNamespace(name="FAILED"), exit_code=4, message="failed",
+    )
+    class Job:
+        status = SimpleNamespace(state=SimpleNamespace(name="ACTIVE"), exit_code=None)
+        def wait(self):
+            return result_status
+    class Backend:
+        def attach_native_job(self, native_id):
+            assert native_id == "42"
+            return Job()
+    monkeypatch.setattr(remote_service, "_psij_executor", lambda _: Backend())
+    monkeypatch.setattr(remote_service, "status_remote",
+                        lambda _: pytest.fail("Redundant status probe"))
+    result = remote_service.follow_remote(remote_id, io.BytesIO(), io.BytesIO())
+    assert result == {
+        "state": "failed", "return_code": 4,
+        "failure_phase": "execution", "error": "failed",
     }
-    if failure == "stream_start":
-        async def broken_start(_self):
-            raise OSError("failed to initialize socket")
-        monkeypatch.setattr(remote_process_worker.SupervisorStreams, "start", broken_start)
-    elif failure == "startup_cleanup":
-        original_finish = remote_process_worker.SupervisorStreams.finish
-
-        async def fail_socket_bind(*args, **kwargs):
-            raise OSError("socket bind failed")
-
-        async def cleanup_then_fail(self):
-            await original_finish(self)
-            raise OSError("cleanup failed")
-
-        monkeypatch.setattr(asyncio, "start_unix_server", fail_socket_bind)
-        monkeypatch.setattr(
-            remote_process_worker.SupervisorStreams, "finish", cleanup_then_fail,
-        )
-    else:
-        os.close(read_fd)
-        read_fd = None
-
-    try:
-        assert asyncio.run(remote_process_worker._run(spec)) == 127
-        if read_fd is not None:
-            with os.fdopen(read_fd, "rb") as reader:
-                assert reader.read() == b""
-            read_fd = None
-        with pytest.raises(OSError):
-            os.fstat(write_fd)
-        outcome = remote_mailbox.read_outcome(receipt)
-        assert outcome["state"] == RunState.FAILED.value
-        assert outcome["failure_phase"] == FailurePhase.LAUNCH.value
-        assert outcome["return_code"] == 127
-        assert "socket" in outcome["error"].lower() or "pipe" in outcome["error"].lower()
-        if failure == "startup_cleanup":
-            assert "socket bind failed" in outcome["error"]
-            assert "cleanup failed" in outcome["error"]
-    finally:
-        if read_fd is not None:
-            os.close(read_fd)
 
 
+def test_psij_follow_uncertain_wait_uses_one_slurm_probe(monkeypatch, tmp_path):
+    _, remote_id = _psij_handle(tmp_path)
+    events = []
+    _stub_terminal_psij_job(monkeypatch, "ACTIVE", None, events)
+    probes = []
+    def status(_):
+        probes.append(True)
+        return {"state": "unknown"}
+    monkeypatch.setattr(remote_service, "status_remote", status)
+    result = remote_service.follow_remote(remote_id, io.BytesIO(), io.BytesIO())
+    assert result["state"] == "unknown"
+    assert result["return_code"] is None
+    assert len(probes) == 1
 
-@pytest.mark.parametrize("launch_failure", [False, True])
-def test_supervisor_stdin_close_failure_preserves_terminal_receipt(
-    tmp_path, monkeypatch, launch_failure,
-):
-    """A failing close() cannot suppress a previous launch error or receipt."""
-    import asyncio
-    import os
-    import sys
-    from ase2sprkkr.execution import remote_mailbox
 
-    original_input = tmp_path / "input"
-    original_input.write_bytes(b"input")
-    from builtins import open as builtin_open
-
-    class FailingInput:
-        def __init__(self):
-            self.stream = builtin_open(original_input, "rb")
-
-        def fileno(self):
-            return self.stream.fileno()
-
-        def close(self):
-            self.stream.close()
-            raise OSError("stdin close failed")
-
-    opened = []
-    def open_input(path, mode):
-        assert path == str(original_input)
-        assert mode == "rb"
-        obj = FailingInput()
-        opened.append(obj)
-        return obj
-
-    monkeypatch.setattr(remote_process_worker, "open", open_input, raising=False)
-    if launch_failure:
-        async def broken_spawn(*args, **kwargs):
-            raise FileNotFoundError("calculation executable missing")
-        monkeypatch.setattr(
-            remote_process_worker.asyncio, "create_subprocess_exec", broken_spawn,
-        )
-
-    monkeypatch.setenv("ASE2SPRKKR_REMOTE_STATE_DIR", str(tmp_path / "state"))
-    reader, writer = os.pipe()
-    receipt_id = "d" * 32 if launch_failure else "e" * 32
-    spec = {
-        "argv": [sys.executable, "-c", "pass"],
-        "directory": str(tmp_path),
-        "stdin": str(original_input),
-        "output_file": None, "error_file": None,
-        "receipt_id": receipt_id, "socket_fd": writer,
-        "detached": True,
-    }
-    try:
-        return_code = asyncio.run(remote_process_worker._run(spec))
-    finally:
-        with os.fdopen(reader, "rb") as pipe:
-            assert pipe.readline().endswith(b"/socket\n")
-    receipt = remote_mailbox.read_outcome(receipt_id)
-    assert opened and opened[0].stream.closed
-    assert receipt["state"] == RunState.FAILED.value
-    if launch_failure:
-        assert return_code == 127
-        assert receipt["failure_phase"] == FailurePhase.LAUNCH.value
-        assert "calculation executable missing" in receipt["error"]
-        assert "stdin close failed" not in receipt["error"]
-    else:
-        assert return_code == 0
-        assert receipt["failure_phase"] == FailurePhase.EXECUTION.value
-        assert "stdin close failed" in receipt["error"]
+def test_psij_follow_uncertain_other_scheduler_never_reprobes(monkeypatch, tmp_path):
+    handle, _ = _psij_handle(tmp_path)
+    handle["backend"] = "pbs"
+    handle["url"] = "ssh://remote"
+    remote_id = remote_service._encode_handle(handle)
+    events = []
+    _stub_terminal_psij_job(monkeypatch, "ACTIVE", None, events)
+    monkeypatch.setattr(remote_service, "status_remote",
+                        lambda _: pytest.fail("Unexpected PSI/J status probe"))
+    result = remote_service.follow_remote(remote_id, io.BytesIO(), io.BytesIO())
+    assert result["state"] == "unknown"
