@@ -608,7 +608,7 @@ def test_psij_status_and_attach_check_complete_endpoint(monkeypatch, tmp_path):
     state = psij_backend.RunStatus(
         RunState.FINISHED, backend_id="456", return_code=0,
     )
-    assert executor.status(run) == (state,)
+    assert executor.status(matching) == (state,)
     assert seen == ["456", "456"]
 
 
