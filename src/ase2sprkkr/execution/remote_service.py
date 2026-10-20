@@ -437,12 +437,14 @@ def cancel_remote(remote_id, timeout=1.0):
                     raise RuntimeError("Invalid supervisor cancellation reply") from exc
                 if not isinstance(response, dict) or response.get("accepted") is not True:
                     raise RuntimeError("Supervisor rejected cancellation")
-        except (FileNotFoundError, ConnectionRefusedError):
-            # Supervisor may exit between the status check and connect.
-            pass
-        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError):
-            # Lost connection is not evidence of failed cancellation. Preserve
-            # a terminal backend outcome, otherwise propagate the transport error.
+        except (
+            FileNotFoundError, ConnectionRefusedError,
+            BrokenPipeError, ConnectionResetError, ConnectionAbortedError,
+            TimeoutError,
+        ):
+            # A missing/refusing socket does not mean the cancellation reached
+            # the supervisor. Only a confirmed terminal backend outcome makes
+            # this connection failure safe to ignore.
             status = status_remote(remote_id)
             if status["state"] in _FINAL_STATE_VALUES:
                 return status

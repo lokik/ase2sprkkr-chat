@@ -747,3 +747,35 @@ def test_cancel_rechecks_status_when_supervisor_exits_before_connect(
     monkeypatch.setattr(remote_service.socket, "socket", lambda *args: conn)
     assert remote_service.cancel_remote(remote_id)["state"] == RunState.FINISHED.value
     assert len(calls) == 2
+
+
+
+@pytest.mark.parametrize("connect_error", [FileNotFoundError, ConnectionRefusedError])
+@pytest.mark.parametrize("terminal", [False, True])
+def test_cancel_missing_supervisor_socket_never_claims_delivery(
+    tmp_path, monkeypatch, connect_error, terminal,
+):
+    _, remote_id, _ = _process_handle(tmp_path)
+    reads = []
+
+    def receipt(_id):
+        reads.append(True)
+        if terminal and len(reads) == 2:
+            return (RunState.FINISHED, 0, None, None)
+        return None
+
+    monkeypatch.setattr(remote_service, "_process_outcome", receipt)
+    monkeypatch.setattr(remote_service, "_process_running", lambda _: True)
+    conn = _cancel_socket()
+    conn.connect.side_effect = connect_error("supervisor unavailable")
+    monkeypatch.setattr(remote_service.socket, "socket", lambda *args: conn)
+
+    if terminal:
+        result = remote_service.cancel_remote(remote_id)
+        assert result["state"] == RunState.FINISHED.value
+        assert result["return_code"] == 0
+    else:
+        with pytest.raises(connect_error, match="supervisor unavailable"):
+            remote_service.cancel_remote(remote_id)
+    assert len(reads) == 2
+    conn.sendall.assert_not_called()
