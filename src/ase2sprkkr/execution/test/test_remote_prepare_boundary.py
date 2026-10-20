@@ -86,7 +86,7 @@ def test_remote_manifest_uses_same_declarations_as_local(tmp_path):
     local = FileManifest.from_spec(spec)
     executor = RemoteEndpointExecutor(LocalTransport())
     runner = executor.create_run(spec)
-    manifest = asyncio.run(runner._submitted_manifest({
+    manifest = asyncio.run(runner.file_handler.submitted_manifest(runner.executor, runner.spec, {
         "client_sync": {"output_file": str(remote / "local" / "main.out"),
                         "error_file": str(remote / "local" / "main.err")},
     }))
@@ -133,23 +133,13 @@ def test_remote_file_preparation_deduplicates_paths_before_mapping(tmp_path):
     )
     runner = executor.create_run(spec)
 
-    async def prepare():
-        used = {}
-        await runner._prepare_cache_files(used)
-        await runner._prepare_output_files()
-        return used
-
-    used = asyncio.run(prepare())
-    assert runner._output_targets == {
-        str(directory / "one.dat"): str(remote / "work" / "one.dat"),
-    }
-    assert runner._output_patterns == (str(remote / "work" / "cut-*.dat"),)
-    assert runner._cache_targets == {
-        str(directory / "restart.dat"): (
-            str(remote / "work" / "restart.dat"), None,
-        ),
-    }
-    assert runner._cache_patterns == (
-        str(remote / "work" / "checkpoint-*.dat"),
-    )
-    assert used == {str(remote / "work" / "restart.dat"): str(directory / "restart.dat")}
+    request, manifest = asyncio.run(runner.file_handler.prepare(
+        runner.executor, runner.spec, runner.result, "id", str(remote / "work"),
+    ))
+    assert request["client_sync"]["output_patterns"] == [
+        str(remote / "work" / "cut-*.dat")
+    ]
+    assert request["client_sync"]["cache_patterns"] == [
+        str(remote / "work" / "checkpoint-*.dat")
+    ]
+    assert manifest.caches

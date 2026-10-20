@@ -137,6 +137,9 @@ class FileManifest:
     input_versions: tuple[FileVersion, ...] = ()
     output_versions: tuple[FileVersion, ...] = ()
     captured_at: Optional[str] = None
+    # True once wildcard memberships have been frozen at backend completion.
+    # Distinct from captured_at: SHA-256 snapshots are captured client-side.
+    wildcards_frozen: bool = False
 
     @classmethod
     def from_spec(cls, spec):
@@ -281,6 +284,29 @@ class FileManifest:
         if kind == "cache":
             return replace(self, caches=(*self.caches, CacheEntry(file)))
         raise ValueError(f"Unknown artifact kind: {kind!r}")
+
+    def freeze_wildcards(self, *, outputs=(), caches=()):
+        """Persist concrete matches once; never incorporate later files.
+
+        Each item is (local_path, remote_path, source_pattern). The caller
+        resolves target-side matches using the original run's file mapping.
+        """
+        if self.wildcards_frozen:
+            return self
+        result = self
+        for kind, matches in (("output", outputs), ("cache", caches)):
+            for local, remote, pattern in matches:
+                if not any(
+                    entry.local_path == pattern
+                    for entry in (result.outputs if kind == "output"
+                                  else tuple(c.file for c in result.caches))
+                ):
+                    raise ValueError(f"Undeclared {kind} file pattern: {pattern}")
+                result = result.with_file_availability(
+                    local, "pending", remote_path=remote,
+                    kind=kind, source_pattern=pattern,
+                )
+        return replace(result, wildcards_frozen=True)
 
     @property
     def input_file(self):

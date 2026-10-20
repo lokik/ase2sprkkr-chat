@@ -12,7 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 from threading import Event, Lock
 
-from .file_availability import discover_local_files, clear_declared_outputs, validate_output_collisions
+from .local_file_handler import LocalFileHandler
 from .growing_file_tail import follow_job_files
 from .base import (
     ExecutionOutcome,
@@ -381,7 +381,7 @@ class PsijRunner:
     def _update_files(self):
         if self._files is None:
             return
-        self._files = discover_local_files(self._files)
+        self._files = LocalFileHandler.collect(self._files)
 
     @property
     def backend_id(self):
@@ -397,26 +397,14 @@ class PsijRunner:
     def _prepare_io(self):
         if self.spec.input_file is not None and hasattr(self.spec.input_file, "flush"):
             self.spec.input_file.flush()
-        protected = [
-            _path(value, self.spec.directory)
-            for value in (self.spec.input_file, self.spec.stdin, *self.spec.input_files,
-                          *self.spec.cache_files)
-        ]
-        validate_output_collisions(
-            (*(_path(item, self.spec.directory) for item in self.spec.output_files),
-             self._stdout_path, self._stderr_path),
-            protected=protected,
-        )
         for stream in (self.spec.output_file, self.spec.error_file):
             if stream is not None and hasattr(stream, "flush"):
                 stream.flush()
         close_output_files(self.spec.output_file, self.spec.error_file)
-        declared = [
-            _path(value, self.spec.directory)
-            for value in (*self.spec.output_files, self.spec.output_file,
-                          self.spec.error_file)
-        ]
-        clear_declared_outputs(declared, protected=protected)
+        LocalFileHandler.prepare_target(
+            self.spec, output_file=self._stdout_path,
+            error_file=self._stderr_path,
+        )
         for path in {self._stdout_path, self._stderr_path} - {None}:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).write_bytes(b"")

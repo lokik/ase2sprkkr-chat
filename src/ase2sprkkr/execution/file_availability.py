@@ -8,7 +8,20 @@ from __future__ import annotations
 
 import os
 
-from .transport import expand_local_candidates, has_file_magic
+from .transport import expand_local_candidates, expand_local_files, has_file_magic
+
+
+def materialize_target_patterns(directory, *, outputs=(), caches=()):
+    """Resolve target-side wildcard memberships once at the terminal barrier."""
+    result = {}
+    for kind, patterns in (("outputs", outputs), ("caches", caches)):
+        result[kind] = tuple(dict.fromkeys(
+            os.path.abspath(os.fspath(match))
+            for pattern in patterns
+            for match in expand_local_files(pattern, directory)
+            if os.path.isfile(match)
+        ))
+    return result
 
 
 def discover_local_files(files, *, include_streams=True):
@@ -27,6 +40,17 @@ def discover_local_files(files, *, include_streams=True):
         ):
             continue
         path = entry.local_path
+        if has_file_magic(path) and files.wildcards_frozen:
+            # Concrete children were captured when the backend terminated.
+            matches = tuple(
+                item for item in (
+                    *files.outputs, *(cache.file for cache in files.caches)
+                ) if item.source_pattern == path
+            )
+            files = files.with_file_availability(
+                path, "available" if matches else "skipped"
+            )
+            continue
         if has_file_magic(path):
             matches = tuple(
                 candidate for candidate in expand_local_candidates(path)

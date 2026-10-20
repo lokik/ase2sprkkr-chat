@@ -11,6 +11,7 @@ import sys
 from .remote_mailbox import publish_outcome
 from .base import FailurePhase, RunState
 from .local_process import pump_stream
+from .file_availability import materialize_target_patterns
 from .remote_supervisor_stream import SupervisorStreams
 
 _SPEC_ENV = "ASE2SPRKKR_REMOTE_PROCESS_SPEC"
@@ -146,12 +147,18 @@ async def _run(spec):
         except OSError as exc:
             state, phase = RunState.FAILED, FailurePhase.ARTIFACTS
             message = f"Failed to sync process output: {exc}"
+        matched_files = materialize_target_patterns(
+            spec["directory"],
+            outputs=spec.get("output_patterns", ()),
+            caches=spec.get("cache_patterns", ()),
+        )
         outcome = {"state": state.value, "return_code": return_code,
                    "failure_phase": None if phase is None else phase.value,
-                   "error": message}
+                   "error": message, "matched_files": matched_files}
         try:
             publish_outcome(
                 spec["receipt_id"], state, return_code, phase, error=message,
+                matched_files=matched_files,
             )
         except OSError as exc:
             # No durable terminal receipt exists. The client must preserve its
