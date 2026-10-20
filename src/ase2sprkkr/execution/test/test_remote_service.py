@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -325,8 +326,9 @@ def test_cancel_requests_supervisor_without_inventing_terminal_state(
             assert path == "/tmp/test-supervisor.sock"
         def sendall(self, data):
             sent.append(data)
-        def recv(self, count):
-            return b'{"accepted":true}\n'
+        def makefile(self, mode):
+            assert mode == "rb"
+            return io.BytesIO(b'{"accepted":true}\n')
 
     monkeypatch.setattr(remote_service.socket, "socket", lambda *args: Connection())
     status = remote_service.cancel_remote(remote_id)
@@ -552,3 +554,196 @@ def test_failed_submission_ticket_cannot_leave_calculation_running(tmp_path, mon
     with pytest.raises(SubmissionNotStarted, match="ticket store unavailable"):
         remote_service.submit_remote(request)
     assert not marker.exists()
+
+
+def _cancel_socket(reply=b'{"accepted":true}\n'):
+    """Small socket double for the one-line cancellation protocol."""
+    connection = MagicMock()
+    connection.__enter__.return_value = connection
+    stream = MagicMock()
+    stream.__enter__.return_value = stream
+    stream.readline.side_effect = lambda limit: reply[:limit]
+    connection.makefile.return_value = stream
+    return connection
+
+
+@pytest.mark.parametrize(
+    "reply, message",
+    [
+        (b'{"accepted":false}\n', "Supervisor rejected cancellation"),
+        (b'{"accepted":true,"accepted":false}\n', "Supervisor rejected cancellation"),
+        (b'{"accepted":1}\n', "Supervisor rejected cancellation"),
+        (b'["accepted",true]\n', "Supervisor rejected cancellation"),
+        (b'not json\n', "Invalid supervisor cancellation reply"),
+        (b'{"accepted":true', "Incomplete supervisor cancellation reply"),
+        (b'', "Incomplete supervisor cancellation reply"),
+        (b" " * 256 + b"\n", "Incomplete supervisor cancellation reply"),
+    ],
+)
+def test_cancel_rejects_invalid_supervisor_replies(
+    tmp_path, monkeypatch, reply, message,
+):
+    _, remote_id, _ = _process_handle(tmp_path)
+    monkeypatch.setattr(remote_service, "_process_running", lambda _: True)
+    conn = _cancel_socket(reply)
+    monkeypatch.setattr(remote_service.socket, "socket", lambda *args: conn)
+
+    with pytest.raises(RuntimeError, match=message):
+        remote_service.cancel_remote(remote_id)
+    conn.sendall.assert_called_once_with(b'{"command":"cancel"}\n')
+
+
+@pytest.mark.parametrize("failure", ("broken_pipe", "reset", "timeout", "eof"))
+@pytest.mark.parametrize("terminal", (False, True))
+def test_cancel_handles_supervisor_exit_during_ack(
+    tmp_path, monkeypatch, failure, terminal,
+):
+    """A completed backend remains authoritative after the ACK transport dies."""
+    _, remote_id, _ = _process_handle(tmp_path)
+    receipts = []
+
+    def receipt(_id):
+        receipts.append(True)
+        if terminal and len(receipts) >= 2:
+            return (RunState.FINISHED, 0, None, None)
+        return None
+
+    monkeypatch.setattr(remote_service, "_process_outcome", receipt)
+    monkeypatch.setattr(remote_service, "_process_running", lambda _: True)
+    conn = _cancel_socket(b"")
+    if failure == "broken_pipe":
+        conn.sendall.side_effect = BrokenPipeError("supervisor exited")
+    elif failure == "reset":
+        conn.makefile.return_value.readline.side_effect = ConnectionResetError("reset")
+    elif failure == "timeout":
+        conn.makefile.return_value.readline.side_effect = TimeoutError("timed out")
+    monkeypatch.setattr(remote_service.socket, "socket", lambda *args: conn)
+
+    if terminal:
+        result = remote_service.cancel_remote(remote_id)
+        assert result["state"] == RunState.FINISHED.value
+        assert result["return_code"] == 0
+    else:
+        expected = RuntimeError if failure == "eof" else {
+            "broken_pipe": BrokenPipeError,
+            "reset": ConnectionResetError,
+            "timeout": TimeoutError,
+        }[failure]
+        with pytest.raises(expected):
+            remote_service.cancel_remote(remote_id)
+    assert len(receipts) == 2
+
+
+def test_cancel_reads_split_ack_over_unix_socket(tmp_path, monkeypatch):
+    """The receiver really consumes the prefix before the rest is transmitted."""
+    import socket
+    from threading import Event, Thread
+
+    _, remote_id, _ = _process_handle(tmp_path)
+    monkeypatch.setattr(remote_service, "_process_running", lambda _: True)
+    client, server = socket.socketpair()
+    prefix = b'{"accepted":'
+    prefix_read = Event()
+    received = []
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            client.close()
+
+        def settimeout(self, timeout):
+            client.settimeout(timeout)
+
+        def connect(self, path):
+            assert path == "/tmp/test-supervisor.sock"
+
+        def sendall(self, data):
+            client.sendall(data)
+
+        def makefile(self, mode):
+            stream = client.makefile(mode)
+
+            class SplitReader:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_args):
+                    stream.close()
+
+                def readline(self, limit):
+                    first = stream.read(len(prefix))
+                    assert first == prefix
+                    prefix_read.set()
+                    return first + stream.readline(limit - len(first))
+
+            return SplitReader()
+
+    def respond():
+        with server:
+            with server.makefile("rb") as request_stream:
+                received.append(request_stream.readline())
+            server.sendall(prefix)
+            if prefix_read.wait(2):
+                server.sendall(b'true}\n')
+
+    server.settimeout(2)
+    thread = Thread(target=respond, daemon=True)
+    thread.start()
+    try:
+        monkeypatch.setattr(remote_service.socket, "socket", lambda *args: Connection())
+        status = remote_service.cancel_remote(remote_id)
+    finally:
+        client.close()
+        thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert received == [b'{"command":"cancel"}\n']
+    assert status["state"] == RunState.RUNNING.value
+
+
+def test_cancel_accepts_spaced_json_acknowledgement(tmp_path, monkeypatch):
+    _, remote_id, _ = _process_handle(tmp_path)
+    monkeypatch.setattr(remote_service, "_process_running", lambda _: True)
+    conn = _cancel_socket(b'{ "accepted" : true }\n')
+    monkeypatch.setattr(remote_service.socket, "socket", lambda *args: conn)
+    assert remote_service.cancel_remote(remote_id)["state"] == RunState.RUNNING.value
+
+
+def test_cancel_terminal_receipt_is_read_exactly_once(tmp_path, monkeypatch):
+    _, remote_id, _ = _process_handle(tmp_path)
+    reads = []
+
+    def terminal_outcome(receipt_id):
+        reads.append(receipt_id)
+        return RunState.FINISHED, 0, None, None
+
+    monkeypatch.setattr(remote_service, "_process_outcome", terminal_outcome)
+    monkeypatch.setattr(
+        remote_service.socket, "socket",
+        lambda *_args: pytest.fail("Finished supervisor must not be signalled"),
+    )
+    result = remote_service.cancel_remote(remote_id)
+    assert result["state"] == RunState.FINISHED.value
+    assert result["return_code"] == 0
+    assert reads == ["a" * 32]
+
+
+def test_cancel_rechecks_status_when_supervisor_exits_before_connect(
+    tmp_path, monkeypatch,
+):
+    _, remote_id, _ = _process_handle(tmp_path)
+    calls = []
+
+    def racing_outcome(_id):
+        calls.append(True)
+        return None if len(calls) == 1 else (RunState.FINISHED, 0, None, None)
+
+    monkeypatch.setattr(remote_service, "_process_outcome", racing_outcome)
+    monkeypatch.setattr(remote_service, "_process_running", lambda _: True)
+    conn = _cancel_socket()
+    conn.connect.side_effect = ConnectionRefusedError("supervisor exited")
+    monkeypatch.setattr(remote_service.socket, "socket", lambda *args: conn)
+    assert remote_service.cancel_remote(remote_id)["state"] == RunState.FINISHED.value
+    assert len(calls) == 2
