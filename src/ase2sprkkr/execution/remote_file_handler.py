@@ -13,32 +13,8 @@ from dataclasses import replace
 
 from ..common.file_versions import file_digest
 from .base import file_path
-from .run_model import CacheEntry, FileEntry, FileManifest, FileMapping
+from .run_model import CacheEntry, FileEntry, FileManifest, FileMapping, FileSyncPolicy
 from .transport import expand_local_files, has_file_magic
-from enum import Enum
-
-
-class FileSyncPolicy(str, Enum):
-    """Policy controlling transfers between local and remote workspaces."""
-
-    CHANGED = "changed"
-    ALWAYS = "always"
-    MISSING = "missing"
-    NEVER = "never"
-
-    def should_transfer(self, source_digest, destination_digest):
-        """Apply the direction-independent transfer rule to file digests.
-
-        The caller handles missing mandatory files separately; a missing
-        source is never transferable, including with ALWAYS.
-        """
-        if self == FileSyncPolicy.NEVER or source_digest is None:
-            return False
-        if self == FileSyncPolicy.ALWAYS:
-            return True
-        if self == FileSyncPolicy.MISSING:
-            return destination_digest is None
-        return source_digest != destination_digest
 
 
 
@@ -174,22 +150,8 @@ class RemoteFileHandler:
                 await self._stage_input_pattern(context, spec, value, used)
             else:
                 await self._stage_file(context, spec, value, used)
-        staged = {source: target for target, source in used.items()}
-        input_target = staged.get(result.input_file)
-        if input_target is None:
-            input_target = await self._stage_file(
-                context, spec, spec.input_file, used,
-            )
-            staged = {source: target for target, source in used.items()}
-        stdin_target = None
-        if spec.stdin is not None:
-            source = _local_path(spec, spec.stdin)
-            stdin_target = staged.get(source)
-            if stdin_target is None:
-                stdin_target = await self._stage_file(
-                    context, spec, spec.stdin, used,
-                )
-                staged = {source: target for target, source in used.items()}
+        input_target = await self._stage_file(context, spec, spec.input_file, used)
+        stdin_target = await self._stage_file(context, spec, spec.stdin, used)
 
         cache_targets, cache_patterns, cache_before = (
             await self._prepare_cache_files(context, spec, used)
