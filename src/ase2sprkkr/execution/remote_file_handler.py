@@ -323,6 +323,7 @@ class RemoteFileHandler:
                     )
             return manifest, None
 
+        first_error = None
         seen_remote = set()
         # Collect declared outputs, including only the children materialized
         # at terminal completion; no new wildcard expansion is performed.
@@ -335,7 +336,10 @@ class RemoteFileHandler:
             if has_file_magic(remote):
                 if not manifest.wildcards_frozen:
                     error = RuntimeError("Cannot collect an unresolved wildcard")
-                    return marked(manifest, entry, "failed", str(error)), error
+                    manifest = marked(manifest, entry, "failed", str(error))
+                    if first_error is None:
+                        first_error = error
+                    continue
                 children = tuple(
                     child for child in manifest.outputs
                     if child.source_pattern == entry.local_path
@@ -349,12 +353,13 @@ class RemoteFileHandler:
                         "failed" if error else "skipped",
                         None if error is None else str(error),
                     )
-                    if error:
-                        return manifest, error
+                    if error and first_error is None:
+                        first_error = error
                     continue
             else:
                 children = (entry,)
 
+            pattern_failed = False
             for child in children:
                 if child.remote_path in seen_remote or child.local_path in primary:
                     continue
@@ -364,12 +369,19 @@ class RemoteFileHandler:
                         context, child.local_path, child.remote_path, required,
                     )
                 except Exception as exc:
-                    return marked(manifest, child, "failed", str(exc)), exc
+                    manifest = marked(manifest, child, "failed", str(exc))
+                    pattern_failed = True
+                    if first_error is None:
+                        first_error = exc
+                    continue
                 manifest = marked(
                     manifest, child, "available" if available else "skipped",
                 )
             if children != (entry,):
-                manifest = marked(manifest, entry, "available")
+                manifest = marked(
+                    manifest, entry, "failed" if pattern_failed else "available",
+                    "One or more output transfers failed" if pattern_failed else None,
+                )
 
         # Remote-only caches are the stored *pre-run* baselines for wildcard
         # children, never a second download target.
@@ -389,7 +401,12 @@ class RemoteFileHandler:
             if has_file_magic(remote):
                 if not manifest.wildcards_frozen:
                     error = RuntimeError("Cannot collect unresolved cache wildcard")
-                    return marked(manifest, entry, "failed", str(error), kind="cache"), error
+                    manifest = marked(
+                        manifest, entry, "failed", str(error), kind="cache",
+                    )
+                    if first_error is None:
+                        first_error = error
+                    continue
                 children = tuple(
                     c.file for c in manifest.caches
                     if c.file.source_pattern == entry.local_path
@@ -399,6 +416,7 @@ class RemoteFileHandler:
                     continue
             else:
                 children = (entry,)
+            pattern_failed = False
             for child in children:
                 if child.remote_path in seen_remote:
                     continue
@@ -409,11 +427,19 @@ class RemoteFileHandler:
                         context, child.local_path, child.remote_path, before,
                     )
                 except Exception as exc:
-                    return marked(manifest, child, "failed", str(exc), kind="cache"), exc
+                    manifest = marked(manifest, child, "failed", str(exc), kind="cache")
+                    pattern_failed = True
+                    if first_error is None:
+                        first_error = exc
+                    continue
                 manifest = marked(manifest, child, state, kind="cache")
             if children != (entry,):
-                manifest = marked(manifest, entry, "available", kind="cache")
-        return manifest, None
+                manifest = marked(
+                    manifest, entry, "failed" if pattern_failed else "available",
+                    "One or more cache transfers failed" if pattern_failed else None,
+                    kind="cache",
+                )
+        return manifest, first_error
 
     async def restore(self, run, paths, context, *, destinations=None):
         """Restore only persisted concrete files; caller checks digests."""

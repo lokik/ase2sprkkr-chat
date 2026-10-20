@@ -144,3 +144,78 @@ def test_frozen_empty_wildcard_does_not_match_future_files(tmp_path):
     ))
     assert not (local / "too-late.out").exists()
     assert manifest.wildcards_frozen
+
+
+def test_remote_collect_keeps_transferring_after_required_output_fails(tmp_path):
+    from ase2sprkkr.execution import CacheEntry
+    from ase2sprkkr.execution.base import ExecutionOutcome
+
+    local, remote = tmp_path / "local", tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    (remote / "first.out").write_text("first")
+    (remote / "last.out").write_text("last")
+    (remote / "restart.pot").write_text("restart")
+    manifest = FileManifest(
+        outputs=tuple(FileEntry(
+            local_path=str(local / name), remote_path=str(remote / name),
+            availability_state="pending",
+        ) for name in ("first.out", "missing.out", "last.out")),
+        caches=(CacheEntry(FileEntry(
+            local_path=str(local / "restart.pot"),
+            remote_path=str(remote / "restart.pot"),
+            availability_state="pending",
+        )),),
+    )
+    endpoint = RemoteEndpointExecutor(LocalTransport())
+    context = endpoint._context(endpoint, LaunchSpec(
+        local_root=local, remote_root=str(remote), output_sync="always",
+    ))
+    updated, error = asyncio.run(endpoint.file_handler.collect(
+        context, manifest, ExecutionOutcome(), required=True,
+    ))
+    assert isinstance(error, FileNotFoundError)
+    assert [entry.availability_state for entry in updated.outputs] == [
+        "available", "failed", "available",
+    ]
+    assert updated.caches[0].file.availability_state == "available"
+    assert (local / "first.out").read_text() == "first"
+    assert (local / "last.out").read_text() == "last"
+    assert (local / "restart.pot").read_text() == "restart"
+    assert all(entry.availability_state == "pending" for entry in manifest.outputs)
+
+
+def test_remote_collect_marks_partial_wildcard_failed_but_keeps_children(tmp_path):
+    from ase2sprkkr.execution import FileMapping
+    from ase2sprkkr.execution.base import ExecutionOutcome
+
+    local, remote = tmp_path / "local", tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    (remote / "present.dat").write_text("present")
+    manifest = FileManifest(
+        outputs=(FileEntry(
+            local_path=str(local / "*.dat"),
+            remote_path=str(remote / "*.dat"),
+            availability_state="pending",
+        ),),
+        mapping=FileMapping(str(local), str(remote)),
+    )
+    endpoint = RemoteEndpointExecutor(LocalTransport())
+    manifest = endpoint.file_handler.freeze_from_outcome(manifest, {
+        "outputs": [str(remote / "missing.dat"), str(remote / "present.dat")],
+        "caches": [],
+    })
+    context = endpoint._context(endpoint, LaunchSpec(
+        local_root=local, remote_root=str(remote), output_sync="always",
+    ))
+    updated, error = asyncio.run(endpoint.file_handler.collect(
+        context, manifest, ExecutionOutcome(), required=True,
+    ))
+    assert isinstance(error, FileNotFoundError)
+    by_path = {entry.local_path: entry.availability_state
+               for entry in updated.outputs}
+    assert by_path[str(local / "*.dat")] == "failed"
+    assert by_path[str(local / "missing.dat")] == "failed"
+    assert by_path[str(local / "present.dat")] == "available"
+    assert (local / "present.dat").read_text() == "present"
