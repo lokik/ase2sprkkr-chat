@@ -746,45 +746,33 @@ def test_psij_recovers_live_slurm_submission_by_run_id(monkeypatch, tmp_path):
     assert calls[0][0] == "squeue"
 
 
-def test_psij_recovers_completed_slurm_submission_from_accounting(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "exit_code, accounting_flags, use_workdir_paths, expected_state",
+    [
+        (0, "job_comment,job_env", True, RunState.FINISHED),
+        (7, "job_comment", False, RunState.FAILED),
+    ],
+)
+def test_psij_recovers_completed_slurm_submission_from_accounting(
+    monkeypatch, tmp_path, exit_code, accounting_flags, use_workdir_paths,
+    expected_state,
+):
     executor = _executor(monkeypatch, _Backend())
 
     def scheduler_output(argv):
         if argv[0] == "squeue":
             return ""
         if argv[:3] == ("scontrol", "show", "config"):
-            return "AccountingStoreFlags = job_comment,job_env\n"
+            return f"AccountingStoreFlags = {accounting_flags}\n"
         if argv[0] == "sacct":
-            return (
-                f"456|ase2sprkkr:run-2|COMPLETED|{tmp_path}|"
-                f"{tmp_path / 'run.out'}|{tmp_path / 'run.err'}|0:0|\n"
+            directory, stdout, stderr = (
+                (str(tmp_path), str(tmp_path / "run.out"), str(tmp_path / "run.err"))
+                if use_workdir_paths else ("/tmp", "out", "err")
             )
-        raise AssertionError(argv)
-
-    monkeypatch.setattr(psij_backend, "_scheduler_output", scheduler_output)
-
-    status = executor.recover_submission(
-        "run-2",
-        _psij_run(tmp_path),
-        submitted_at="2026-10-13T08:00:00+02:00",
-    )
-
-    assert status.state == RunState.FINISHED
-    assert status.return_code == 0
-    assert status.backend_id == "456"
-    assert status.files.stdout.remote_path == str(tmp_path / "run.out")
-
-
-def test_psij_recovery_normalizes_nonzero_completed(monkeypatch, tmp_path):
-    executor = _executor(monkeypatch, _Backend())
-
-    def scheduler_output(argv):
-        if argv[0] == "squeue":
-            return ""
-        if argv[:3] == ("scontrol", "show", "config"):
-            return "AccountingStoreFlags = job_comment\\n".replace("\\n", "\n")
-        if argv[0] == "sacct":
-            return "456|ase2sprkkr:run-2|COMPLETED|/tmp|out|err|7:0|\n"
+            return (
+                f"456|ase2sprkkr:run-2|COMPLETED|{directory}|"
+                f"{stdout}|{stderr}|{exit_code}:0|\n"
+            )
         raise AssertionError(argv)
 
     monkeypatch.setattr(psij_backend, "_scheduler_output", scheduler_output)
@@ -792,48 +780,39 @@ def test_psij_recovery_normalizes_nonzero_completed(monkeypatch, tmp_path):
         "run-2", _psij_run(tmp_path),
         submitted_at="2026-10-13T08:00:00+02:00",
     )
-    assert status.state == RunState.FAILED
-    assert status.return_code == 7
+    assert status.state == expected_state
+    assert status.return_code == exit_code
+    assert status.backend_id == "456"
+    if use_workdir_paths:
+        assert status.files.stdout.remote_path == str(tmp_path / "run.out")
 
 
-def test_psij_empty_accounting_keeps_submission_uncertain(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "accounting_flags, accounting_available, run_id, expected_error",
+    [
+        ("job_comment", True, "missing", "still uncertain"),
+        ("job_env", False, "uncertain", "comments are unavailable"),
+    ],
+)
+def test_psij_unavailable_accounting_keeps_submission_uncertain(
+    monkeypatch, tmp_path, accounting_flags, accounting_available,
+    run_id, expected_error,
+):
     executor = _executor(monkeypatch, _Backend())
 
     def scheduler_output(argv):
         if argv[0] == "squeue":
             return ""
         if argv[:3] == ("scontrol", "show", "config"):
-            return "AccountingStoreFlags = job_comment\n"
-        if argv[0] == "sacct":
+            return f"AccountingStoreFlags = {accounting_flags}\n"
+        if argv[0] == "sacct" and accounting_available:
             return ""
         raise AssertionError(argv)
 
     monkeypatch.setattr(psij_backend, "_scheduler_output", scheduler_output)
-
-    with pytest.raises(NotImplementedError, match="still uncertain"):
+    with pytest.raises(NotImplementedError, match=expected_error):
         executor.recover_submission(
-            "missing",
-            _psij_run(tmp_path),
-            submitted_at="2026-10-13T08:00:00+02:00",
-        )
-
-
-def test_psij_missing_accounting_history_keeps_submission_uncertain(monkeypatch, tmp_path):
-    executor = _executor(monkeypatch, _Backend())
-
-    def scheduler_output(argv):
-        if argv[0] == "squeue":
-            return ""
-        if argv[:3] == ("scontrol", "show", "config"):
-            return "AccountingStoreFlags = job_env\n"
-        raise AssertionError(argv)
-
-    monkeypatch.setattr(psij_backend, "_scheduler_output", scheduler_output)
-
-    with pytest.raises(NotImplementedError, match="comments are unavailable"):
-        executor.recover_submission(
-            "uncertain",
-            _psij_run(tmp_path),
+            run_id, _psij_run(tmp_path),
             submitted_at="2026-10-13T08:00:00+02:00",
         )
 
