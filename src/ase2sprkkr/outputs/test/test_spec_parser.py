@@ -149,10 +149,11 @@ def test_spec_parser_uses_stream_text_without_reopening_output(tmp_path, monkeyp
     result = SpecResult(None, None, tmp_path, task_name="BAND")
     parser = SpecOutputReader(None, None, tmp_path).parser
     assert isinstance(parser, SpecOutputParser)
-    assert SpecOutputParser.read_output is DefaultOutputParser.read_output
+    assert SpecOutputParser.read_output is not DefaultOutputParser.read_output
 
-    async def skip_common_header(_stream, _result):
-        pass
+    async def skip_common_header(stream, _result):
+        # The real common parser consumes the FILES/header section.
+        assert await stream.readline() == b"# ibar: 2\n"
 
     monkeypatch.setattr(parser, "read_commons", skip_common_header)
 
