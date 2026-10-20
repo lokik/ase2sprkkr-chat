@@ -517,12 +517,6 @@ async def _follow_scheduler_async(remote_id, streams, paths, offsets, poll_inter
     )
 
 
-def _follow_scheduler(remote_id, streams, paths, offsets, poll_interval):
-    return asyncio.run(
-        _follow_scheduler_async(remote_id, streams, paths, offsets, poll_interval)
-    )
-
-
 def follow_remote(
     remote_id,
     stdout,
@@ -544,7 +538,9 @@ def follow_remote(
     }
 
     if handle["kind"] == "psij":
-        return _follow_scheduler(remote_id, streams, paths, offsets, poll_interval)
+        return asyncio.run(
+            _follow_scheduler_async(remote_id, streams, paths, offsets, poll_interval)
+        )
     if handle["kind"] != "process":
         raise ValueError("Unknown execution backend")
     from .remote_supervisor_stream import follow_socket
