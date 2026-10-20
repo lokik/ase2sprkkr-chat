@@ -209,3 +209,25 @@ def test_spec_parser_prefers_stream_snapshot_over_existing_file(tmp_path, monkey
 
     assert result.potential_barrier == {"ibar": 4}
     assert result._get_file_content() == "# ibar: 4"
+
+
+
+def test_spec_saved_stream_keeps_paired_input_fallback(tmp_path):
+    """The captured stream must retain the source pathname for FILES fallback."""
+    from ase2sprkkr.common.process_output_reader import AsyncioFileReader
+
+    output = tmp_path / "sample.out"
+    (tmp_path / "sample.inp").write_text("placeholder")
+    output.write_bytes(
+        b"SPRKKR VERSION 9.7 build\n"
+        b"FILES:\n"
+        b"\n"
+        b"\n"
+        b"# ibar: 2\n"
+    )
+    result = SpecResult(None, None, tmp_path, output_file=output, task_name="BAND")
+    parser = SpecOutputParser()
+    with AsyncioFileReader(output) as stream:
+        asyncio.run(parser.read_output(stream, result))
+    assert result.path_to("input") == str(tmp_path / "sample.inp")
+    assert result.potential_barrier == {"ibar": 2}
