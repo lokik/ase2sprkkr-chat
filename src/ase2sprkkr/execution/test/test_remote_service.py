@@ -180,7 +180,7 @@ def test_slurm_accounting_status_maps_state_and_exit_code(
     monkeypatch.setattr(psij, "_slurm_details", lambda _native_id: {})
     monkeypatch.setattr(
         psij, "_scheduler_output",
-        lambda argv: f"42|{accounting_state}|{code}:0|\\n".replace("\\n", "\n"),
+        lambda argv: f"42|{accounting_state}|{code}:0|\n",
     )
 
     status = remote_service.status_remote(remote_id)
