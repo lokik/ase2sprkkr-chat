@@ -5,7 +5,7 @@ import pytest
 from ase2sprkkr.execution.endpoint import ExecutorEndpoint
 from ase2sprkkr.execution.run_model import (
     ArtifactAvailabilityState, CacheEntry, Execution, FileEntry, FileManifest,
-    WorkingDirectory,
+    FileMapping, FileSyncPolicy, WorkingDirectory,
 )
 
 
@@ -333,3 +333,22 @@ def test_file_entry_accepts_enum_but_serializes_status_as_string(state):
     with pytest.raises(ValueError, match="error belongs"):
         FileEntry("/local/file", availability_state=ArtifactAvailabilityState.PENDING,
                   availability_message="error")
+
+
+def test_file_sync_policy_validation_uses_the_runtime_enum():
+    from ase2sprkkr.execution.remote import FileSyncPolicy as RemoteFileSyncPolicy
+
+    assert RemoteFileSyncPolicy is FileSyncPolicy
+    for input_policy in FileSyncPolicy:
+        for output_policy in FileSyncPolicy:
+            mapping = FileMapping("/local", "/remote", input_policy, output_policy)
+            assert type(mapping.input_sync) is str
+            assert type(mapping.output_sync) is str
+            assert mapping.input_sync == input_policy.value
+            assert mapping.output_sync == output_policy.value
+            assert FileMapping(**asdict(mapping)) == mapping
+
+    with pytest.raises(ValueError, match="synchronization policy"):
+        FileMapping("/local", "/remote", input_sync="unsupported")
+    with pytest.raises(ValueError, match="synchronization policy"):
+        FileMapping("/local", "/remote", output_sync="unsupported")

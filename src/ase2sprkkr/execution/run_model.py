@@ -121,6 +121,29 @@ class CacheEntry:
             object.__setattr__(self, "before", tuple(self.before))
 
 
+class FileSyncPolicy(str, Enum):
+    """Policy controlling transfers between local and remote workspaces."""
+
+    CHANGED = "changed"
+    ALWAYS = "always"
+    MISSING = "missing"
+    NEVER = "never"
+
+    def should_transfer(self, source_digest, destination_digest):
+        """Apply the direction-independent transfer rule to file digests.
+
+        The caller handles missing mandatory files separately; a missing
+        source is never transferable, including with ALWAYS.
+        """
+        if self == FileSyncPolicy.NEVER or source_digest is None:
+            return False
+        if self == FileSyncPolicy.ALWAYS:
+            return True
+        if self == FileSyncPolicy.MISSING:
+            return destination_digest is None
+        return source_digest != destination_digest
+
+
 @dataclass(frozen=True)
 class FileMapping:
     """Resolved mapping and transfer policy of this run's file manifest."""
@@ -135,9 +158,13 @@ class FileMapping:
 
         object.__setattr__(self, "local_root", os.fspath(self.local_root))
         object.__setattr__(self, "remote_root", os.fspath(self.remote_root))
-        policies = {"changed", "always", "missing", "never"}
-        if self.input_sync not in policies or self.output_sync not in policies:
-            raise ValueError("Invalid file synchronization policy")
+        try:
+            input_sync = FileSyncPolicy(self.input_sync)
+            output_sync = FileSyncPolicy(self.output_sync)
+        except ValueError as exc:
+            raise ValueError("Invalid file synchronization policy") from exc
+        object.__setattr__(self, "input_sync", input_sync.value)
+        object.__setattr__(self, "output_sync", output_sync.value)
 
 
 @dataclass(frozen=True)
