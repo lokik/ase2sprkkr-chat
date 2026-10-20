@@ -208,7 +208,7 @@ def test_spec_parser_prefers_stream_snapshot_over_existing_file(tmp_path, monkey
     asyncio.run(parse())
 
     assert result.potential_barrier == {"ibar": 4}
-    assert result._get_file_content() == "# ibar: 4"
+    assert result._get_file_content() == "# ibar: 4\n"
 
 
 
