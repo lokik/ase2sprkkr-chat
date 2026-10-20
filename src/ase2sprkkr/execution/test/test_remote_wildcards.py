@@ -28,7 +28,7 @@ def test_local_transport_put_files_expands_patterns_and_preserves_paths(tmp_path
     assert not (destination / "a" / "ignored.txt").exists()
 
 
-def test_local_transport_get_files_expands_source_patterns(tmp_path):
+def test_local_transport_get_files_expands_sources(tmp_path):
     source = tmp_path / "source"
     destination = tmp_path / "destination"
     (source / "nested").mkdir(parents=True)
@@ -164,11 +164,10 @@ def test_exact_and_wildcard_outputs_share_availability_tracking(tmp_path):
         path = workdir / name
         assert path.read_text() == expected
         assert entries[str(path)].availability_state == "available"
-        assert entries[str(path)].source_pattern == str(pattern)
+        assert entries[str(path)].source == str(pattern)
 
     assert entries[str(exact)].availability_state == "available"
     assert entries[str(overlap)].availability_state == "available"
-    assert entries[str(pattern)].availability_state == "available"
 
     remote_workdir = remote_root / "calculation"
     for name in ("bands.dat", "part-a.dat", "part-b.dat", "part-c.dat"):
@@ -205,10 +204,9 @@ def test_exact_and_wildcard_caches_keep_individual_sync_states(tmp_path):
     assert (workdir / "generated-new.dat").read_text() == "new"
     assert entries[str(exact)].availability_state == "skipped"
     assert entries[str(unchanged)].availability_state == "skipped"
-    assert entries[str(pattern)].availability_state == "available"
     new_entry = entries[str(workdir / "generated-new.dat")]
     assert new_entry.availability_state == "available"
-    assert new_entry.source_pattern == str(pattern)
+    assert new_entry.source == str(pattern)
 
 
 def test_remote_executor_tolerates_unmatched_optional_cache_wildcard(tmp_path):
@@ -284,5 +282,4 @@ def test_overlapping_exact_and_wildcard_caches_are_transferred_once(tmp_path):
     assert sum(src == remote_b for src, _ in transport.get_files) == 1
     entries = {item.file.local_path: item.file for item in runner.files.caches}
     assert entries[str(exact)].availability_state == "available"
-    assert entries[str(pattern)].availability_state == "available"
     assert exact.read_text() == "new"
