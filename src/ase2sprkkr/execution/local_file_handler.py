@@ -50,12 +50,3 @@ class LocalFileHandler:
     @staticmethod
     def collect(manifest, *, include_streams=True):
         return discover_local_files(manifest, include_streams=include_streams)
-
-    @staticmethod
-    def restore(manifest, paths):
-        """Local data has no other source to fetch from.
-
-        Keep missing files missing; never synthesize a new copy in place
-        of an already historical result.
-        """
-        return manifest
