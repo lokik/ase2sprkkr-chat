@@ -277,7 +277,7 @@ class ResourceOwnedRunner:
     def state(self):
         if self._cancel_requested.is_set():
             with self._submission_lock:
-                if not self._submitted:
+                if not self._submitted and not self._submission_uncertain:
                     return RunState.CANCELLED
         return self._runner.state
 
@@ -296,7 +296,7 @@ class ResourceOwnedRunner:
         if not self._cancel_requested.is_set():
             return
         with self._submission_lock:
-            if not self._submitted:
+            if not self._submitted and not self._submission_uncertain:
                 raise asyncio.CancelledError("Run was cancelled before submission")
 
     def submit(self):
