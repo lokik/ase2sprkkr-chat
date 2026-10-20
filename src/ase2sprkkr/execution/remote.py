@@ -308,7 +308,7 @@ class RemoteRunner:
     def _unique_declared_paths(self, values, *, excluded=()):
         """Yield normalized file declarations once, preserving their order."""
         for local, required in declared_file_paths(
-            values, self.spec.directory, excluded=excluded,
+            values, self.spec.directory, excluded=excluded, flush=True,
         ):
             yield local, has_file_magic(local), required
 
