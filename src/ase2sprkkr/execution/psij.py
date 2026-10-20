@@ -402,20 +402,15 @@ class PsijRunner:
             for value in (self.spec.input_file, self.spec.stdin, *self.spec.input_files,
                           *self.spec.cache_files)
         ]
-        validate_output_collisions(
-            (*(_path(item, self.spec.directory) for item in self.spec.output_files),
-             self._stdout_path, self._stderr_path),
-            protected=protected,
-        )
+        declared = [
+            *(_path(value, self.spec.directory) for value in self.spec.output_files),
+            self._stdout_path, self._stderr_path,
+        ]
+        validate_output_collisions(declared, protected=protected)
         for stream in (self.spec.output_file, self.spec.error_file):
             if stream is not None and hasattr(stream, "flush"):
                 stream.flush()
         close_output_files(self.spec.output_file, self.spec.error_file)
-        declared = [
-            _path(value, self.spec.directory)
-            for value in (*self.spec.output_files, self.spec.output_file,
-                          self.spec.error_file)
-        ]
         clear_declared_outputs(declared, protected=protected)
         for path in {self._stdout_path, self._stderr_path} - {None}:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
