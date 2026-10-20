@@ -341,6 +341,8 @@ class ResourceOwnedRunner:
 
     async def run_async(self):
         self._raise_if_cancelled_before_submit()
+        if self._submission_uncertain:
+            raise RuntimeError("Submission outcome is uncertain; recover the run before retrying")
         if self.state == RunState.NEW:
             self.submit()
         try:
