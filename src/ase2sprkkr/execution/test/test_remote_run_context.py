@@ -100,8 +100,15 @@ def test_attach_restores_typed_manifest_without_sync_dictionary(tmp_path, monkey
         return {"state": "running"}
 
     monkeypatch.setattr(context, "_status", status)
+    # The original observer's file handle need not survive a disconnection.
+    original_stream = (local / "stdout.txt").open("ab")
+    original_stream.write(b"previous bytes")
+    original_stream.close()
     runner = asyncio.run(context.attach(run, start=False))
     try:
+        assert runner.spec.output_file is not None
+        assert not runner.spec.output_file.closed
+        assert (local / "stdout.txt").read_bytes() == b"previous bytes"
         assert runner._output_targets == {
             str(local / "exact.out"): str(remote / "exact.out"),
         }
@@ -164,3 +171,45 @@ def test_home_relative_remote_root_still_resolves_home_once(
     monkeypatch.setattr(endpoint, "_remote_home", remote_home)
     assert asyncio.run(context._resolved_remote_root()) == expected
     assert calls == ["home"]
+
+
+def test_ephemeral_ssh_staging_uses_remote_mktemp_and_cleans_failed_preflight(
+    tmp_path, monkeypatch,
+):
+    from types import SimpleNamespace
+    from ase2sprkkr.execution.base import ExecutionSpec, SubmissionNotStarted
+    from ase2sprkkr.execution.transport import LocalTransport
+
+    endpoint = RemoteEndpointExecutor(LocalTransport())
+    calls = []
+
+    async def remote_run(argv, **kwargs):
+        calls.append(tuple(argv))
+        return SimpleNamespace(stdout=b"/tmp/ase2sprkkr-test1234" + bytes([10]))
+
+    monkeypatch.setattr(endpoint.transport, "run", remote_run)
+    launch = LaunchSpec(
+        local_root=str(tmp_path), remote_root="/scratch/ignored",
+        temporary_directory=True, output_sync="never",
+    )
+    context = endpoint._context(endpoint, launch)
+    spec = ExecutionSpec(
+        argv=("true",), input_file=None, output_file=None,
+        directory=str(tmp_path), launch=launch,
+    )
+    runner = context.create_run(spec)
+
+    async def prepared(*args):
+        assert await context.map_path(tmp_path / "input.inp") == (
+            "/tmp/ase2sprkkr-test1234/input.inp"
+        )
+        raise OSError("staging interrupted")
+
+    monkeypatch.setattr(runner, "_prepare_request", prepared)
+    with pytest.raises(SubmissionNotStarted, match="staging interrupted"):
+        asyncio.run(runner._prepare_async())
+    assert calls == [
+        ("mktemp", "-d", "-t", "ase2sprkkr-XXXXXXXX"),
+        ("rm", "-rf", "--", "/tmp/ase2sprkkr-test1234"),
+    ]
+    assert context._temporary_root is None

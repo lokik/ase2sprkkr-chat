@@ -601,3 +601,70 @@ def test_remote_cleanup_checks_collisions_before_deleting_any_output(tmp_path):
 
     assert stale.read_text() == "old"
     assert cache.read_text() == "restart"
+
+
+def test_ephemeral_supervisor_removes_scratch_only_after_terminal_output(
+    tmp_path, monkeypatch,
+):
+    import asyncio
+    import os
+    import sys
+    from uuid import uuid4
+
+    scratch = tmp_path / "ase2sprkkr-AbCd1234"
+    scratch.mkdir()
+    socket_dir = tmp_path / "follow"
+    socket_dir.mkdir()
+    output = scratch / "stdout.txt"
+    error = scratch / "stderr.txt"
+    read_fd, write_fd = os.pipe()
+    observed = []
+
+    def publish(receipt_id, state, return_code, phase, **kwargs):
+        observed.append((state, return_code, output.read_bytes(), scratch.is_dir()))
+
+    monkeypatch.setattr(remote_process_worker, "publish_outcome", publish)
+    spec = {
+        "argv": [sys.executable, "-c", "print('remote result')"],
+        "directory": str(scratch), "stdin": None,
+        "output_file": str(output), "error_file": str(error),
+        "receipt_id": uuid4().hex, "socket_dir": str(socket_dir),
+        "socket_fd": write_fd, "detached": True,
+        "temporary_directory": True,
+    }
+    try:
+        assert asyncio.run(remote_process_worker._run(spec)) == 0
+    finally:
+        os.close(read_fd)
+    assert observed == [(RunState.FINISHED, 0, b"remote result" + bytes([10]), True)]
+    assert not scratch.exists()
+
+
+def test_ephemeral_submit_refuses_unowned_directory(tmp_path):
+    request = {
+        "executor": "local", "argv": ["true"], "directory": str(tmp_path),
+        "temporary_directory": True,
+    }
+    with pytest.raises(ValueError, match="Invalid ephemeral remote"):
+        remote_service.submit_remote(request)
+    assert tmp_path.exists()
+
+
+def test_ephemeral_target_preflight_error_removes_unlaunched_scratch(tmp_path, monkeypatch):
+    from ase2sprkkr.execution import local
+    from ase2sprkkr.execution.base import SubmissionNotStarted
+
+    scratch = tmp_path / "ase2sprkkr-XyZ12345"
+    scratch.mkdir()
+
+    def bad_materialization(spec):
+        raise OSError("cannot materialize stdin")
+
+    monkeypatch.setattr(local, "materialize_local_spec", bad_materialization)
+    request = {
+        "executor": "local", "argv": ["true"],
+        "directory": str(scratch), "temporary_directory": True,
+    }
+    with pytest.raises(SubmissionNotStarted, match="cannot materialize stdin"):
+        remote_service.submit_remote(request)
+    assert not scratch.exists()

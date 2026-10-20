@@ -1,11 +1,13 @@
-from threading import Event
+from threading import Event, Thread
 from types import SimpleNamespace
+import io
 
 import pytest
 
 import ase2sprkkr.outputs.project_results as project_output
 from ase2sprkkr.execution import (
     ExecutionOutcome,
+    ExecutionResources,
     Executor,
     FailurePhase,
     RunState,
@@ -252,3 +254,98 @@ def test_failed_download_reader_construction_does_not_reopen_run(tmp_path, monke
     assert current.state == RunState.FAILED
     assert current.failure_phase == FailurePhase.DOWNLOAD
     assert current.files == failed.files
+
+
+@pytest.mark.parametrize("callback_fails", (False, True))
+def test_concurrent_wait_and_completion_callback_persist_only_once(
+    tmp_path, monkeypatch, callback_fails,
+):
+    """Waiters cannot repeat persistence or close inputs before the callback."""
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    input_stream = io.BytesIO(b"input")
+    resources = ExecutionResources(input_stream)
+    persisting, release = Event(), Event()
+    completions, callbacks, errors = [], [], []
+    complete = manager.complete
+
+    def gated_complete(*args, **kwargs):
+        completions.append(kwargs["state"])
+        persisting.set()
+        assert release.wait(5), "persistence remained blocked"
+        return complete(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "complete", gated_complete)
+
+    def callback(_result):
+        callbacks.append((store.get(run.id).state, input_stream.closed))
+        if callback_fails:
+            raise ValueError("user callback error")
+
+    run = manager.create_run(
+        _Executor(), SimpleNamespace(directory=str(tmp_path)),
+        process_result=lambda outcome: outcome,
+        task="DOS", callback=callback, resources=resources,
+    )
+    run.submit()
+    waiting = None
+
+    def wait():
+        try:
+            run.wait()
+        except BaseException as exc:
+            errors.append(exc)
+
+    try:
+        assert persisting.wait(5)
+        waiting = Thread(target=wait)
+        waiting.start()
+        assert not input_stream.closed
+        # The fake backend can report FINISHED during submit(), before
+        # completion persistence starts. That state observation is valid;
+        # the assertions below verify single durable completion and cleanup.
+    finally:
+        release.set()
+        if waiting is not None:
+            waiting.join(5)
+
+    assert waiting is not None and not waiting.is_alive()
+    assert completions == [RunState.FINISHED]
+    assert callbacks == [(RunState.FINISHED, False)]
+    assert input_stream.closed
+    assert store.get(run.id).state == RunState.FINISHED
+    if callback_fails:
+        assert len(errors) == 1
+        assert isinstance(errors[0], ValueError)
+        assert str(errors[0]) == "user callback error"
+    else:
+        assert errors == []
+
+
+@pytest.mark.parametrize("terminal", [RunState.FINISHED, RunState.FAILED, RunState.CANCELLED])
+def test_cancel_after_persisted_completion_does_not_touch_backend_or_store(
+    tmp_path, monkeypatch, terminal,
+):
+    from ase2sprkkr.execution.manager import ProjectRunner
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    record = manager.new_record(task="DOS", directory=tmp_path)
+    record = manager.transition(record, state=terminal)
+    calls = []
+
+    class Raw:
+        state = RunState.RUNNING
+        def cancel(self):
+            calls.append("backend")
+            raise AssertionError("terminal backend cancellation")
+    class Processed:
+        state = RunState.RUNNING
+        def cancel(self):
+            return Raw().cancel()
+
+    project = ProjectRunner(manager, None, Processed(), record)
+    monkeypatch.setattr(manager, "transition", lambda *a, **k: calls.append("store"))
+    assert project.cancel() is None
+    assert project.cancel() is None
+    assert calls == []
+    assert store.get(record.id).state == terminal

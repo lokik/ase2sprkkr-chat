@@ -538,7 +538,8 @@ class RemoteRunner:
 
         await self._prepare_cache_files(used)
         staged = {source: target for target, source in used.items()}
-        await self._prepare_output_files()
+        if not self.spec.launch.temporary_directory:
+            await self._prepare_output_files()
 
         output_target = (
             await self.executor.map_path(self.result.output_file)

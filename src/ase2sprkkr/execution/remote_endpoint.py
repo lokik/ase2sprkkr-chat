@@ -6,6 +6,7 @@ import glob
 import json
 import os
 import posixpath
+import re
 import warnings
 from dataclasses import asdict, replace
 from pathlib import Path, PurePosixPath
@@ -84,7 +85,8 @@ class _RemoteRun(RemoteRunner):
 
     async def _monitor(self):
         result = await super()._monitor()
-        if self.state != RunState.FINISHED or self.files is None:
+        if (self.state != RunState.FINISHED or self.files is None
+                or self.spec.launch.temporary_directory):
             return result
 
         # A broken follow connection can leave either channel incomplete even
@@ -146,7 +148,9 @@ class _RemoteRun(RemoteRunner):
         sync = request.get("client_sync") or {}
         mapping = FileMapping(
             local_root=os.fspath(self.executor.local_root),
-            remote_root=await self.executor._resolved_remote_root(),
+            remote_root=(self.executor._temporary_root
+                         if self.executor.temporary_directory
+                         else await self.executor._resolved_remote_root()),
             input_sync=self.executor.input_files.value,
             output_sync=self.executor.output_files.value,
         )
@@ -163,16 +167,41 @@ class _RemoteRun(RemoteRunner):
         )
 
     async def _prepare_async(self):
+        scratch = None
         try:
+            if self.spec.launch.temporary_directory and self.executor.backend != "local":
+                raise ValueError("Ephemeral SSH execution requires the direct-process backend")
             run_id = self._run_id or uuid4().hex
-            remote_directory = await self.executor.map_directory(self.spec.directory)
-            await self.executor.transport.run(("mkdir", "-p", "--", remote_directory))
+            if self.spec.launch.temporary_directory:
+                result = await self.executor.transport.run(
+                    ("mktemp", "-d", "-t", "ase2sprkkr-XXXXXXXX")
+                )
+                remote_directory = result.stdout.decode().strip()
+                if (not posixpath.isabs(remote_directory)
+                        or re.fullmatch(r"ase2sprkkr-[A-Za-z0-9]{8}",
+                                        posixpath.basename(remote_directory)) is None):
+                    raise RuntimeError("Remote mktemp returned an invalid scratch path")
+                scratch = remote_directory
+                self.executor._temporary_root = remote_directory
+            else:
+                remote_directory = await self.executor.map_directory(self.spec.directory)
+                await self.executor.transport.run(("mkdir", "-p", "--", remote_directory))
             request = await self._prepare_request(run_id, remote_directory)
+            if self.spec.launch.temporary_directory:
+                request["temporary_directory"] = True
             if self._run_id is None:
                 request["id"] = None
             manifest = await self._submitted_manifest(request)
             return request, manifest
         except Exception as exc:
+            # The backend has not been contacted. Only scratch acquired by
+            # this preflight may be removed here.
+            if scratch is not None and posixpath.isabs(scratch):
+                try:
+                    await self.executor.transport.run(("rm", "-rf", "--", scratch))
+                except OSError:
+                    pass
+                self.executor._temporary_root = None
             # No calculation has been launched yet. Persisted preflight and
             # direct submission must classify this known failure identically.
             self._failure_phase = FailurePhase.SUBMISSION
@@ -235,13 +264,23 @@ class _RemoteRunContext:
         self.remote_root = (
             None if launch.remote_root is None else os.fspath(launch.remote_root)
         )
-        self.input_files = FileSyncPolicy(launch.input_sync)
-        self.output_files = FileSyncPolicy(launch.output_sync)
+        self.temporary_directory = launch.temporary_directory
+        # A fresh scratch workspace must receive inputs and must not export
+        # completed artifacts. FOLLOW still streams stdout/stderr live.
+        self.input_files = FileSyncPolicy(
+            "always" if self.temporary_directory else launch.input_sync
+        )
+        self.output_files = FileSyncPolicy(
+            "never" if self.temporary_directory else launch.output_sync
+        )
+        self._temporary_root = None
 
     async def _remote_home(self):
         return await self.endpoint._remote_home()
 
     async def _resolved_remote_root(self):
+        if self.temporary_directory and self._temporary_root is not None:
+            return self._temporary_root
         root = self.remote_root
         if root is not None and posixpath.isabs(root):
             return posixpath.normpath(root)

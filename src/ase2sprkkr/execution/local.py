@@ -258,9 +258,8 @@ class LocalRunner:
         return self.wait()
 
     async def run_async(self):
-        if self._state == RunState.NEW:
-            self.submit()
-        return await asyncio.to_thread(self.wait)
+        # Both submission and waiting can block; keep them off the event loop.
+        return await asyncio.to_thread(self.run)
 
 
 class LocalExecutor(Executor):

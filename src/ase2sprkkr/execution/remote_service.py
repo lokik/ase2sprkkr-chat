@@ -196,8 +196,20 @@ def _local_submit(request):
     # Everything here happens before launching a supervisor. A failed local
     # filesystem setup proves that submission never started, unlike a lost
     # reply after Popen.
+    validated_scratch = None
     try:
-        directory = Path(request["directory"]).expanduser().resolve()
+        requested = Path(request["directory"]).expanduser()
+        if request.get("temporary_directory"):
+            # Scratch must have been allocated by the client's mktemp -d.
+            # Never allow a forged cleanup flag to remove arbitrary directories.
+            if (not requested.is_absolute()
+                    or re.fullmatch(r"ase2sprkkr-[A-Za-z0-9]{8}",
+                                    requested.name) is None
+                    or requested.is_symlink()
+                    or not requested.is_dir()):
+                raise ValueError("Invalid ephemeral remote working directory")
+            validated_scratch = requested.resolve()
+        directory = requested.resolve()
         directory.mkdir(parents=True, exist_ok=True)
         original_spec = _request_spec(dict(request, directory=os.fspath(directory)))
         spec = materialize_local_spec(original_spec)
@@ -208,8 +220,14 @@ def _local_submit(request):
             if path is not None:
                 Path(path).parent.mkdir(parents=True, exist_ok=True)
         _clean_request_outputs(original_spec, directory, output_path, error_path)
-    except OSError as exc:
-        raise SubmissionNotStarted(str(exc)) from exc
+    except Exception as exc:
+        # This block has not launched a worker. Failed materialization of
+        # allocated scratch must not leave an orphaned directory.
+        if validated_scratch is not None:
+            shutil.rmtree(validated_scratch, ignore_errors=True)
+        if isinstance(exc, OSError):
+            raise SubmissionNotStarted(str(exc)) from exc
+        raise
 
     run_id = str(request.get("id") or uuid4().hex)
     receipt_id = uuid4().hex
@@ -225,6 +243,7 @@ def _local_submit(request):
         "receipt_id": receipt_id,
         "socket_dir": socket_dir,
         "detached": bool(request.get("detached", True)),
+        "temporary_directory": bool(request.get("temporary_directory", False)),
     }
     env = os.environ.copy()
     env["ASE2SPRKKR_RUN_ID"] = run_id
@@ -285,6 +304,8 @@ def _local_submit(request):
                 pass
         if not published:
             shutil.rmtree(socket_dir, ignore_errors=True)
+            if process is None and validated_scratch is not None:
+                shutil.rmtree(validated_scratch, ignore_errors=True)
         if isinstance(exc, OSError) and not published:
             raise SubmissionNotStarted(str(exc)) from exc
         raise

@@ -7,6 +7,7 @@ import os
 import signal
 import subprocess
 import sys
+import shutil
 
 from .remote_mailbox import publish_outcome
 from .base import FailurePhase, RunState
@@ -164,7 +165,11 @@ async def _run(spec):
             }
         finally:
             streams.terminal(outcome)
-            await streams.finish()
+            try:
+                await streams.finish()
+            finally:
+                if spec.get("temporary_directory"):
+                    shutil.rmtree(spec["directory"], ignore_errors=True)
     return return_code if return_code is not None else 127
 
 

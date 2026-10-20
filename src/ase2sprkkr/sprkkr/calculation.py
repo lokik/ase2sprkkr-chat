@@ -20,7 +20,7 @@ from ..ase.symbols import filename_from_symbols
 from ..bindings.empty_spheres import add_empty_spheres
 from ..common.file_utils import Directory
 from ..common.temporary import temporary_option_value
-from ..execution.base import ExecutionResources, ResourceOwnedRunner
+from ..execution.base import ExecutionResources
 from ..execution.persistence import resolve_project_manager
 from ..execution.postprocessing import PostprocessingRunner
 from ..input_parameters.input_parameters import InputParameters
@@ -425,6 +425,7 @@ class PreparedCalculation:
     _directory_resources: ExitStack | None
     _temporary_potential: bool = False
     _closed: bool = False
+    _temporary_directory: bool = False
 
     def __post_init__(self):
         _require_named_file(self.input_file, "input_file")
@@ -679,6 +680,7 @@ class PreparedCalculation:
                 _file_resources=file_resources,
                 _directory_resources=directory_resources,
                 _temporary_potential=temporary_potential,
+                _temporary_directory=(directory_context.dir is False),
             )
         except BaseException:
             try:
@@ -914,6 +916,18 @@ def _create_sprkkr_run(
             gdb=gdb,
         )
 
+        from dataclasses import replace
+        from ..execution.remote_endpoint import RemoteEndpointExecutor
+        if (isinstance(executor, RemoteEndpointExecutor)
+                and prepared._temporary_directory):
+            if executor.backend != "local":
+                raise ValueError("Temporary SSH workspace currently requires the direct-process backend")
+            spec = replace(
+                spec, launch=replace(spec.launch, temporary_directory=True,
+                                     local_root=prepared.directory,
+                                     input_sync="always", output_sync="never"),
+            )
+
         def process_result(outcome):
             return reader.read_from_file(
                 outcome.output_file,
@@ -925,7 +939,6 @@ def _create_sprkkr_run(
             )
 
         def finalized(out):
-            resources.close(suppress_errors=True)
             if callback:
                 callback(out)
 
@@ -935,6 +948,7 @@ def _create_sprkkr_run(
                 raw_runner,
                 process_result,
                 callback=finalized,
+                resources=resources,
             )
         else:
             runner = manager.create_run(
@@ -945,11 +959,11 @@ def _create_sprkkr_run(
                 input_definition=input_parameters.definition_name,
                 dataset=input_parameters.CONTROL.DATASET.result,
                 callback=finalized,
+                resources=resources,
             )
         if read_callback:
             runner.add_output_listener(read_callback)
 
-        runner = ResourceOwnedRunner(runner, resources)
         handed_off = True
         return runner
     finally:
