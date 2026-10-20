@@ -163,7 +163,7 @@ class RemoteRunner:
         ):
             return self._state
         status = _run_sync(
-            self.executor._status(
+            self.executor.endpoint._status(
                 self._remote_directory,
                 self._backend_id,
                 self._files,
@@ -605,7 +605,7 @@ class RemoteRunner:
                     offsets[kind] = os.path.getsize(self._local_path(target))
             self._stream_positions = dict(offsets)
             try:
-                self._follow_process = await self.executor._follow(
+                self._follow_process = await self.executor.endpoint._follow(
                     self._remote_directory, self._backend_id, self._files,
                     offsets=offsets,
                 )
@@ -634,7 +634,7 @@ class RemoteRunner:
             status = self._follow_process.terminal
             if status is None:
                 try:
-                    status = await self.executor._status(
+                    status = await self.executor.endpoint._status(
                         self._remote_directory,
                         self._backend_id,
                         self._files,
@@ -771,6 +771,6 @@ class RemoteRunner:
         return request_cancellation(
             self,
             lambda: _run_sync(
-                self.executor._cancel(self._remote_directory, self._backend_id)
+                self.executor.endpoint._cancel(self._remote_directory, self._backend_id)
             ),
         )

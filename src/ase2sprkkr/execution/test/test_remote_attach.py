@@ -209,7 +209,7 @@ def test_remote_attach_preserves_existing_partial_stream(tmp_path, monkeypatch):
 
     async def status(*args, **kwargs):
         return {"state": "running"}
-    monkeypatch.setattr(context, "_status", status)
+    monkeypatch.setattr(context.endpoint, "_status", status)
     runner = asyncio.run(context.attach(run, start=False))
     assert runner.spec.output_file.tell() == len(b"partial")
     runner.spec.output_file.close()

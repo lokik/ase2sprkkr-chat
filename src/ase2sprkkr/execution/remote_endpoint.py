@@ -198,7 +198,7 @@ class _RemoteRun(RemoteRunner):
             request, manifest = self._prepared
 
         request["detached"] = self._run_id is not None
-        status = await self.executor._submit(request)
+        status = await self.executor.endpoint._submit(request)
         remote_id = status.get("remote_id")
         if not remote_id:
             raise RuntimeError("Remote submit returned no remote_id")
@@ -280,20 +280,6 @@ class _RemoteRunContext:
     async def map_directory(self, directory):
         return await self.map_path(directory)
 
-    async def _submit(self, request):
-        return await self.endpoint._submit(request)
-
-    async def _status(self, directory, backend_id, files=None):
-        return await self.endpoint._status(directory, backend_id, files)
-
-    async def _cancel(self, directory, backend_id, files=None):
-        return await self.endpoint._cancel(directory, backend_id, files)
-
-    async def _follow(self, directory, backend_id, files=None, *, offsets=None):
-        return await self.endpoint._follow(
-            directory, backend_id, files, offsets=offsets,
-        )
-
     def create_run(self, spec, callback=None, *, run_id=None):
         return _RemoteRun(self, spec, callback=callback, run_id=run_id)
 
@@ -306,7 +292,7 @@ class _RemoteRunContext:
         execution = run.execution
         if execution.backend_id is None or execution.directory.remote is None:
             raise ValueError("Remote run lacks backend ID or target directory")
-        status = await self._status(execution.directory.remote, execution.backend_id, run.files)
+        status = await self.endpoint._status(execution.directory.remote, execution.backend_id, run.files)
         local_directory = Path(execution.directory.local)
         local_directory.mkdir(parents=True, exist_ok=True)
         input_local = run.files.input_file

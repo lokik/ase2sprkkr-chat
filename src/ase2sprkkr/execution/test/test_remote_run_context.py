@@ -99,7 +99,7 @@ def test_attach_restores_typed_manifest_without_sync_dictionary(tmp_path, monkey
     async def status(*args, **kwargs):
         return {"state": "running"}
 
-    monkeypatch.setattr(context, "_status", status)
+    monkeypatch.setattr(context.endpoint, "_status", status)
     runner = asyncio.run(context.attach(run, start=False))
     try:
         assert runner._output_targets == {
@@ -164,3 +164,17 @@ def test_home_relative_remote_root_still_resolves_home_once(
     monkeypatch.setattr(endpoint, "_remote_home", remote_home)
     assert asyncio.run(context._resolved_remote_root()) == expected
     assert calls == ["home"]
+
+
+def test_run_context_does_not_forward_endpoint_backend_operations(tmp_path):
+    """Backend calls belong to the endpoint, never to per-run path context."""
+    from ..transport import LocalTransport
+
+    endpoint = RemoteEndpointExecutor(LocalTransport())
+    context = endpoint._context(
+        endpoint, LaunchSpec(local_root=tmp_path, remote_root="/scratch"),
+    )
+    assert context.endpoint is endpoint
+    assert not any(
+        hasattr(context, name) for name in ("_submit", "_status", "_cancel", "_follow")
+    )

@@ -75,6 +75,11 @@ def test_remote_monitor_closes_merged_output_once_after_follow_failure(tmp_path)
     output = _TrackedOutput(str(output_path))
 
     class UnreachableEndpoint:
+        endpoint = None
+
+        def __init__(self):
+            self.endpoint = self
+
         async def _status(self, directory, backend_id, files):
             assert backend_id == "job-1"
             return {"state": "unknown"}

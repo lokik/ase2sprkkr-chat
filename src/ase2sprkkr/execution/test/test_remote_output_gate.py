@@ -25,6 +25,7 @@ class _Executor:
 
     def __init__(self, state):
         self.backend_state = RunState(state)
+        self.endpoint = self  # Backend fixture for the context's endpoint contract
         self.sync_calls = 0
 
     async def _follow(self, directory, run_id, reference=None, *, offsets=None):
