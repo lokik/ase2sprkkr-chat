@@ -176,19 +176,18 @@ def _request_spec(request):
 
 def _clean_request_outputs(spec, directory, output_path=None, error_path=None):
     """Clear prior outputs while protecting inputs and caches in the parsed spec."""
-    declared = (*spec.output_files, output_path, error_path)
-    protected = (
-        spec.input_file, spec.stdin, *spec.input_files, *spec.cache_files,
+    declared = tuple(
+        _absolute(directory, path)
+        for path in (*spec.output_files, output_path, error_path)
+        if path is not None
     )
-    validate_output_collisions(
-        (*(_absolute(directory, item) for item in spec.output_files),
-         output_path, error_path),
-        protected=(_absolute(directory, path) for path in protected if path is not None),
+    protected = tuple(
+        _absolute(directory, path)
+        for path in (spec.input_file, spec.stdin, *spec.input_files, *spec.cache_files)
+        if path is not None
     )
-    clear_declared_outputs(
-        (_absolute(directory, path) for path in declared if path is not None),
-        protected=(_absolute(directory, path) for path in protected if path is not None),
-    )
+    validate_output_collisions(declared, protected=protected)
+    clear_declared_outputs(declared, protected=protected)
 
 
 def _local_submit(request):
