@@ -285,9 +285,8 @@ class LocalTransport(Transport):
             raise FileNotFoundError(source)
         destination = Path(destination)
         temporary = _local_temporary_path(destination)
-        loop = asyncio.get_running_loop()
         try:
-            await loop.run_in_executor(None, shutil.copyfile, source, temporary)
+            await asyncio.to_thread(shutil.copyfile, source, temporary)
             if local_file_signature(source) != signature:
                 raise RuntimeError(f"Local file changed while copying: {source}")
             stat = temporary.stat()
@@ -325,16 +324,13 @@ class LocalTransport(Transport):
         return await self._transfer_files(paths, source_root, destination_root, self.get_file)
 
     async def read_file(self, path):
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, Path(path).read_bytes)
+        return await asyncio.to_thread(Path(path).read_bytes)
 
     async def file_digest(self, path):
-        loop = asyncio.get_running_loop()
         return await asyncio.to_thread(file_digest, path, missing_ok=True)
 
     async def file_signature(self, path):
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, local_file_signature, path)
+        return await asyncio.to_thread(local_file_signature, path)
 
 
 class SshTransport(Transport):
