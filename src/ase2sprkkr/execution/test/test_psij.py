@@ -727,13 +727,15 @@ def test_psij_attach_to_stderr_only(monkeypatch, tmp_path):
     assert runner.result.error_file == str(tmp_path / "run.err")
 
 
-def test_psij_attach_requires_a_recorded_stream(monkeypatch, tmp_path):
+def test_psij_attach_without_recorded_streams(monkeypatch, tmp_path):
     executor = _executor(monkeypatch, _Backend())
     from dataclasses import replace
     run = _psij_run(tmp_path, "456")
     run = replace(run, files=replace(run.files, stdout=None, stderr=None))
-    with pytest.raises(ValueError, match="recorded output streams"):
-        executor.attach(run)
+    attached = executor.attach(run, start=False)
+    assert attached.spec.output_file is None
+    assert attached.spec.error_file is None
+    assert attached.files == run.files
 
 
 def test_psij_recovers_live_slurm_submission_by_run_id(monkeypatch, tmp_path):
