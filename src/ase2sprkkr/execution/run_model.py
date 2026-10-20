@@ -71,6 +71,7 @@ class FileEntry:
     availability_state: Optional[str] = None
     availability_message: Optional[str] = None
     source_pattern: Optional[str] = None
+    optional: bool = False
 
     def __post_init__(self):
         import os
@@ -81,6 +82,8 @@ class FileEntry:
             value = getattr(self, name)
             if value is not None:
                 object.__setattr__(self, name, os.fspath(value))
+        if type(self.optional) is not bool:
+            raise TypeError("FileEntry.optional must be a bool")
         if self.local_path is None and self.remote_path is None:
             raise ValueError("A file entry must have at least one location")
         if self.availability_state is not None and self.availability_state not in (
@@ -145,6 +148,12 @@ class FileManifest:
 
         from .base import file_path
 
+        def output_entry(value):
+            return FileEntry(
+                local_path=file_path(value, directory),
+                optional=bool(getattr(value, "optional", False)),
+            )
+
         directory = os.path.abspath(os.fspath(spec.directory))
 
         def paths(*values):
@@ -157,13 +166,15 @@ class FileManifest:
         stdout = file_path(getattr(spec, "output_file", None), directory)
         stderr = file_path(getattr(spec, "error_file", None), directory)
         streams = {stdout, stderr}
-        outputs = (
-            path for path in paths(*getattr(spec, "output_files", ())) if path not in streams
-        )
+        outputs = tuple(dict.fromkeys(
+            value for value in getattr(spec, "output_files", ())
+            if file_path(value, directory) not in streams
+            and file_path(value, directory) is not None
+        ))
         caches = paths(*getattr(spec, "cache_files", ()))
         return cls(
             inputs=tuple(FileEntry(local_path=x) for x in inputs),
-            outputs=tuple(FileEntry(local_path=x) for x in outputs),
+            outputs=tuple(output_entry(x) for x in outputs),
             caches=tuple(CacheEntry(FileEntry(local_path=x)) for x in caches),
             stdout=None if stdout is None else FileEntry(local_path=stdout),
             stderr=None if stderr is None else FileEntry(local_path=stderr),
