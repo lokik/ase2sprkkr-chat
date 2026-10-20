@@ -179,3 +179,30 @@ def test_bsf_grid_check_does_not_expect_nonexistent_shape_field():
     examples = Path(__file__).resolve().parents[1] / "examples"
     bsf = ResultFile.from_file(str(examples / "SnTe_BLOCHSF.bsf"), unknown=False)
     assert bsf._check_arithmetic(bsf.copy(copy_values=True)) is None
+
+def test_dos_numpy_array_arithmetic_uses_elementwise_values():
+    original = _dos()
+    factors = np.array([2.0, 3.0, 4.0])
+    scaled = original * factors
+    np.testing.assert_array_equal(scaled.dos, [4.0, 12.0, 24.0])
+    np.testing.assert_array_equal(original.dos, [2.0, 4.0, 6.0])
+    original *= factors
+    np.testing.assert_array_equal(original.dos, [4.0, 12.0, 24.0])
+
+
+def test_bsf_const_e_origin_is_part_of_arithmetic_grid():
+    from pathlib import Path
+    import pytest
+    from .. import ResultFile
+
+    examples = Path(__file__).resolve().parents[1] / "examples"
+    bsf = ResultFile.from_file(str(examples / "SnTe_BLOCHSF.bsf"), unknown=False)
+    if bsf.MODE() != "CONST-E":
+        pytest.skip("Fixture has no CONST-E origin vector")
+    origin = bsf.VECK_START()
+    if origin is None:
+        pytest.skip("Fixture has no explicit origin vector")
+    shifted = bsf.copy(copy_values=True)
+    shifted.VECK_START = np.asarray(origin) + 0.1
+    with pytest.raises(ValueError, match="BSF VECK_START grids"):
+        bsf + shifted
