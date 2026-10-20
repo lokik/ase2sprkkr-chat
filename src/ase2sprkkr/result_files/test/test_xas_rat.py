@@ -54,13 +54,19 @@ def parse_agr(path):
 
 
 @pytest.fixture(scope="module")
-def generated_data():
+def rat_result():
     from ase2sprkkr.result_files.definitions.rat import RATResultFile
 
-    of = RATResultFile.from_file(RAT_FILE)
+    return RATResultFile.from_file(RAT_FILE)
+
+
+@pytest.fixture(scope="module")
+def generated_data(rat_result):
     # Fortran default: WGAUSS = 0.0 (no Gaussian broadening)
     # Fortran uses Fuggle-Inglesfield core-hole widths — request by name
-    return of.generate_data(gauss_width=0.0, core_hole_width="fuggle-inglesfield")
+    return rat_result.generate_data(
+        gauss_width=0.0, core_hole_width="fuggle-inglesfield",
+    )
 
 
 @pytest.fixture(scope="module")
@@ -100,14 +106,11 @@ def aligned_xas(generated_data, ref_xas):
 
 
 class TestPlotCaptions:
-    def test_subject_is_derived_from_header_tables(self):
-        from ase2sprkkr.result_files.definitions.rat import RATResultFile
-
-        of = RATResultFile.from_file(RAT_FILE)
-        assert of.absorbing_element == "Cu"
-        assert of.system_formula == "Cu"
-        assert of.spectrum_subject == "of Cu in Cu"
-        assert of.xray_edge == r"L_{2,3}"
+    def test_subject_is_derived_from_header_tables(self, rat_result):
+        assert rat_result.absorbing_element == "Cu"
+        assert rat_result.system_formula == "Cu"
+        assert rat_result.spectrum_subject == "of Cu in Cu"
+        assert rat_result.xray_edge == r"L_{2,3}"
 
 
 # ---------------------------------------------------------------------------
@@ -197,14 +200,12 @@ class TestDifferenceSpectrum:
         assert ref_max < 1e-6, f"Reference difference is non-trivial: max={ref_max:.2e} Mb"
         assert py_max < 1e-6, f"Python difference is non-trivial: max={py_max:.2e} Mb"
 
-    def test_three_input_polarizations_default_to_mcd(self):
+    def test_three_input_polarizations_default_to_mcd(self, rat_result, generated_data):
         """Like XBand, RXAS must use + and - unless MLD is requested."""
-        from ase2sprkkr.result_files.definitions.rat import RATResultFile
-
-        of = RATResultFile.from_file(RAT_FILE)
-        common = dict(gauss_width=0.0, core_hole_width="fuggle-inglesfield")
-        mcd = of.compute_data(**common)
-        mld = of.compute_data(**common, mld=True)
+        mcd = generated_data
+        mld = rat_result.compute_data(
+            gauss_width=0.0, core_hole_width="fuggle-inglesfield", mld=True,
+        )
 
         # Cu's + and - spectra are identical to floating-point precision.  Its
         # z spectrum differs slightly, making this sensitive to selecting the
