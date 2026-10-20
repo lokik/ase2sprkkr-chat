@@ -159,6 +159,7 @@ def test_none_streams_live_only_without_spool_files(tmp_path):
             await asyncio.sleep(0.05)
             streams.publish("out", b"observed")
             streams.publish("err", b"warning")
+            streams.sync()  # No spool files must also mean no files to fsync.
             streams.terminal({"state": "finished", "return_code": 0})
             assert (await asyncio.wait_for(task, 2))["return_code"] == 0
             assert [item[2] for item in received] == [b"observed", b"warning"]
@@ -209,22 +210,6 @@ def test_supervisor_writes_declared_output_during_execution(tmp_path):
         assert output.read_bytes() == b"partial"
         assert error.read_bytes() == b"diagnostic"
     asyncio.run(run())
-
-
-def test_no_stream_files_are_created(tmp_path):
-    async def run():
-        streams = SupervisorStreams(None, None)
-        await streams.start()
-        try:
-            streams.publish("out", b"live only")
-            streams.sync()
-            assert streams._spools == {}
-            assert list(tmp_path.iterdir()) == []
-        finally:
-            await streams.finish()
-    asyncio.run(run())
-
-
 
 def test_terminal_drops_backpressured_client_without_discarding_output(tmp_path):
     async def run():
