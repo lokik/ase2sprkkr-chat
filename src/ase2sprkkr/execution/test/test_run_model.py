@@ -63,15 +63,6 @@ def test_manifest_versions_and_availability_roundtrip():
         FileEntry("/local/test", availability_state="inconsistent")
 
 
-def test_execution_backend_id_is_write_once():
-    execution = Execution(ExecutorEndpoint(), WorkingDirectory("/tmp"))
-    submitted = execution.submitted("job-12")
-    assert execution.backend_id is None
-    assert submitted.backend_id == "job-12"
-    assert submitted.submitted("job-12") == submitted
-    with pytest.raises(ValueError, match="Cannot replace"):
-        submitted.submitted("job-13")
-
 def test_each_artifact_tracks_its_own_transfer_outcome():
     manifest = FileManifest(
         outputs=(
@@ -238,6 +229,7 @@ def test_submitted_uses_execution_backend_id_validation():
     with pytest.raises(ValueError, match="backend_id cannot be empty"):
         execution.submitted("")
     bound = execution.submitted(42)
+    assert execution.backend_id is None
     assert bound.backend_id == "42"
     assert bound.submitted(42) == bound
     with pytest.raises(ValueError, match="backend_id cannot be empty"):
