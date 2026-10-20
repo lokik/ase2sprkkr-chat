@@ -7,7 +7,6 @@ import fcntl
 import os
 import posixpath
 from dataclasses import replace
-from enum import Enum
 from threading import Event, Lock, Thread
 
 from .base import (
@@ -25,29 +24,7 @@ from .base import (
 from ..common.async_utils import run_coro_sync as _run_sync
 from ..common.file_versions import file_digest
 from .transport import expand_local_files, has_file_magic
-
-
-class FileSyncPolicy(str, Enum):
-    """Policy controlling transfers between local and remote workspaces."""
-
-    CHANGED = "changed"
-    ALWAYS = "always"
-    MISSING = "missing"
-    NEVER = "never"
-
-    def should_transfer(self, source_digest, destination_digest):
-        """Apply the direction-independent transfer rule to file digests.
-
-        The caller handles missing mandatory files separately; a missing
-        source is never transferable, including with ALWAYS.
-        """
-        if self == FileSyncPolicy.NEVER or source_digest is None:
-            return False
-        if self == FileSyncPolicy.ALWAYS:
-            return True
-        if self == FileSyncPolicy.MISSING:
-            return destination_digest is None
-        return source_digest != destination_digest
+from .run_model import FileSyncPolicy
 
 
 class RemoteRunner:

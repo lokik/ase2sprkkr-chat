@@ -13,7 +13,7 @@ from threading import Event, Lock, Thread
 from typing import Any, Optional, Protocol, Sequence, Tuple
 
 from ..common.decorators import class_property
-from .run_model import Execution, FileManifest
+from .run_model import Execution, FileManifest, FileSyncPolicy
 
 
 def file_path(value, directory=None, *, flush=False, required=False):
@@ -504,8 +504,8 @@ class LaunchSpec:
     mpi: MpiSpec = MpiSpec()
     local_root: Optional[str] = None
     remote_root: Optional[str] = None
-    input_sync: str = "changed"
-    output_sync: str = "changed"
+    input_sync: str = FileSyncPolicy.CHANGED.value
+    output_sync: str = FileSyncPolicy.CHANGED.value
 
     def __post_init__(self):
         mpi = self.mpi
@@ -519,8 +519,11 @@ class LaunchSpec:
             if value is not None:
                 object.__setattr__(self, name, os.fspath(value))
         for name in ("input_sync", "output_sync"):
-            value = getattr(self, name)
-            object.__setattr__(self, name, getattr(value, "value", value))
+            try:
+                value = FileSyncPolicy(getattr(self, name))
+            except ValueError as exc:
+                raise ValueError(f"Invalid {name} file synchronization policy") from exc
+            object.__setattr__(self, name, value.value)
 
     def __bool__(self):
         return self.mpi.requested
