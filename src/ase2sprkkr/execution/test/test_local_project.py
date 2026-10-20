@@ -146,10 +146,9 @@ def test_wildcards_track_concrete_file_availability(tmp_path):
     ))
     status = RunStatus(RunState.FINISHED, backend_id="test")
     updated = local_manifest(files, status)
-    assert len(updated.outputs) == 2
+    assert len(updated.outputs) == 1
+    assert updated.outputs[0].source == str(tmp_path / "*.dat")
     assert updated.outputs[0].availability_state == "available"
-    assert updated.outputs[1].source_pattern == str(tmp_path / "*.dat")
-    assert updated.outputs[1].availability_state == "available"
 
 
 def test_failed_launch_clears_stale_stdout(tmp_path):
