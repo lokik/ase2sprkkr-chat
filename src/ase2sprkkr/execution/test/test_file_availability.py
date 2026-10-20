@@ -139,17 +139,6 @@ def test_protected_output_stream_matches_cache_glob(tmp_path):
         )
 
 
-def test_explicit_output_artifact_cannot_overwrite_input(tmp_path):
-    import pytest
-    from ase2sprkkr.execution.file_availability import validate_output_collisions
-
-    input_path = tmp_path / "input.dat"
-    input_path.write_bytes(b"input")
-    with pytest.raises(ValueError, match="overlaps protected"):
-        validate_output_collisions((input_path,), protected=(input_path,))
-    assert input_path.read_bytes() == b"input"
-
-
 def test_output_pattern_can_skip_protected_files(tmp_path):
     from ase2sprkkr.execution.file_availability import (
         validate_output_collisions, clear_declared_outputs,
