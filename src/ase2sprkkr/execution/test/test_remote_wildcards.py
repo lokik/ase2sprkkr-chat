@@ -4,7 +4,7 @@ from pathlib import Path
 
 from ..base import SubmissionNotStarted
 from ..transport import LocalTransport
-from .test_remote import _Reader, _text_run
+from .test_remote import _processed_run, _text_run
 
 
 def test_local_transport_put_files_expands_patterns_and_preserves_paths(tmp_path):
@@ -64,7 +64,7 @@ def test_remote_executor_expands_input_wildcards(tmp_path):
             "for name in ('file-a.pot', 'file-b.pot')))"
         ),
     )
-    result = executor.create_run(_Reader(), spec).run()
+    result = _processed_run(executor, spec).run()
 
     assert result.output == b"a:b\n"
     remote_workdir = remote_root / "calculation"
@@ -81,7 +81,7 @@ def test_remote_executor_rejects_unmatched_input_wildcard(tmp_path):
     )
 
     try:
-        executor.create_run(_Reader(), spec).run()
+        _processed_run(executor, spec).run()
     except SubmissionNotStarted as exc:
         assert "input pattern did not match" in str(exc)
     else:
@@ -103,7 +103,7 @@ def test_remote_executor_downloads_output_wildcards_and_discards_stale_matches(t
             "pathlib.Path('artifact-b.dat').write_text('b'); print('done')"
         ),
     )
-    result = executor.create_run(_Reader(), spec).run()
+    result = _processed_run(executor, spec).run()
 
     assert result.return_code == 0
     assert (workdir / "artifact-a.dat").read_text() == "a"
@@ -127,7 +127,7 @@ def test_remote_executor_syncs_cache_wildcards_in_both_directions(tmp_path):
             "print('done')"
         ),
     )
-    result = executor.create_run(_Reader(), spec).run()
+    result = _processed_run(executor, spec).run()
 
     assert result.return_code == 0
     assert (workdir / "cache-a.dat").read_text() == "new"
@@ -146,7 +146,7 @@ def test_remote_executor_allows_missing_optional_outputs(tmp_path):
         ),
         code="print('done')",
     )
-    result = executor.create_run(_Reader(), spec).run()
+    result = _processed_run(executor, spec).run()
     assert result.return_code == 0
     assert not (workdir / "not-created.dat").exists()
 
@@ -158,5 +158,5 @@ def test_remote_executor_allows_missing_optional_input_pattern(tmp_path):
         declared_input_files=(DeclaredFile(workdir / "missing-*.pot", optional=True),),
         code="print('done')",
     )
-    result = executor.create_run(_Reader(), spec).run()
+    result = _processed_run(executor, spec).run()
     assert result.return_code == 0
