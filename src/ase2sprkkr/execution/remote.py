@@ -742,6 +742,7 @@ class RemoteRunner:
         except BaseException as exc:
             self._exception = exc
         finally:
+            self._output_observers.finish_bytes()
             finish_monitor(self)
 
     def start(self):
