@@ -263,6 +263,7 @@ class ResourceOwnedRunner:
         self._submission_lock = Lock()
         self._cancel_requested = Event()
         self._submitted = runner.state != RunState.NEW
+        self._submission_uncertain = False
         self._cancel_dispatched = False
 
     def __getattr__(self, name):
@@ -305,8 +306,14 @@ class ResourceOwnedRunner:
                 raise asyncio.CancelledError("Run was cancelled before submission")
             try:
                 result = self._runner.submit()
-            except BaseException:
+            except SubmissionNotStarted:
                 self._release_after_failure()
+                raise
+            except BaseException:
+                # An SSH/PSI-J scheduler might have accepted the job even when
+                # the submission reply was lost. Keep its input handles alive
+                # until backend recovery or terminal completion.
+                self._submission_uncertain = True
                 raise
             self._submitted = True
             cancel_after_submit = self._cancel_requested.is_set()
@@ -326,6 +333,8 @@ class ResourceOwnedRunner:
 
     def run(self):
         self._raise_if_cancelled_before_submit()
+        if self._submission_uncertain:
+            raise RuntimeError("Submission outcome is uncertain; recover the run before retrying")
         if self.state == RunState.NEW:
             self.submit()
         return self.wait()
@@ -349,7 +358,7 @@ class ResourceOwnedRunner:
     def cancel(self):
         self._cancel_requested.set()
         with self._submission_lock:
-            if not self._submitted:
+            if not self._submitted and not self._submission_uncertain:
                 self._resources.close()
                 return None
             if self._cancel_dispatched:
@@ -362,9 +371,10 @@ class ResourceOwnedRunner:
         if self._resources.closed:
             return
         state = self.state
-        if state != RunState.NEW:
+        if state != RunState.NEW or self._submission_uncertain:
             raise RuntimeError(
-                f"Cannot close execution resources while run is {state.value}"
+                "Cannot close execution resources while run is "
+                f"{state.value}" + (" (submission uncertain)" if self._submission_uncertain else "")
             )
         self._resources.close()
 
