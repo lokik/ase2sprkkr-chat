@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-from collections.abc import Mapping
 from . import definitions, tasks
 from .task_definition import InputParametersRegistry, TaskRegistry
 from ..sprkkr.configuration import (
@@ -15,29 +14,6 @@ from ..common.configuration_containers import BaseConfigurationContainer
 from ..common.repeated_configuration_containers import RepeatedConfigurationContainer
 from ..common.decorators import cached_class_property
 from ..potentials.potentials import Potential
-
-class _LazyInputParametersDefinitions(Mapping):
-    """Read-only compatibility mapping that materializes only requested schemas.
-
-    User-installed definitions can be malformed or require optional packages.
-    Merely requesting a different definition must not import those modules.
-    """
-
-    def __init__(self, registry):
-        self._registry = registry
-
-    def __getitem__(self, name):
-        return self._registry[name]
-
-    def __iter__(self):
-        return iter(self._registry.names())
-
-    def __len__(self):
-        return len(self._registry.names())
-
-    def __contains__(self, name):
-        return name in self._registry
-
 
 class InputSection(ConfigurationSection):
     """Input parameters sections have nothing special yet."""
@@ -111,6 +87,12 @@ class InputParameters(ConfigurationFile):
         if task is None:
             raise RuntimeError(
                 "These input parameters are not associated with an SPR-KKR task definition"
+            )
+        expected = self.input_parameters_registry.definition_for_task(task)
+        if expected is not self._definition:
+            raise RuntimeError(
+                f"Task {task.name} uses a different input schema; "
+                "use change_task() to switch schemas explicitly."
             )
         return task
 
@@ -272,8 +254,10 @@ class InputParameters(ConfigurationFile):
 
     @cached_class_property
     def definitions(cls):
-        """Legacy definition mapping; lookup does not load unrelated schemas."""
-        return _LazyInputParametersDefinitions(cls.input_parameters_registry)
+        return {
+            name: cls.input_parameters_registry[name]
+            for name in cls.input_parameters_registry.names()
+        }
 
     @classmethod
     def is_task_name(cls, name):
@@ -285,8 +269,8 @@ class InputParameters(ConfigurationFile):
     def create_input_parameters(cls, arg):
         if isinstance(arg, str):
             name = cls.is_task_name(arg)
-            if name:
-                return cls.create(name)
+            if name or arg.upper() in cls.input_parameters_registry:
+                return cls.create(name or arg)
             return cls.from_file(arg)
         if isinstance(arg, io.IOBase):
             return cls.from_file(arg)
@@ -294,8 +278,9 @@ class InputParameters(ConfigurationFile):
 
     @classmethod
     def create(cls, name):
-        task = cls.task_registry[name]
-        return cls.input_parameters_registry.create_for_task(task)
+        """Create parameters for a registered task, not for a bare shared schema."""
+        name = cls.task_registry.normalize_name(name)
+        return cls.input_parameters_registry.create_for_task(cls.task_registry[name])
 
     @classmethod
     def default_parameters(cls):
@@ -335,3 +320,20 @@ class InputParameters(ConfigurationFile):
                 retain_invalid="none",
                 report_invalid="ignore",
             )
+
+            # Explicit TASK.TASK may select a different canonical schema.
+            # Preserve requested provenance while keeping the effective task
+            # and its input definition consistent.
+            effective = self.task_definition
+            if effective is not None:
+                canonical = self.input_parameters_registry.definition_for_task(effective)
+                if canonical is not self._definition:
+                    values = self.to_dict(only_changed="explicit")
+                    self._definition = canonical
+                    self._init_members_from_the_definition()
+                    self.set(
+                        values,
+                        unknown="ignore",
+                        retain_invalid="none",
+                        report_invalid="ignore",
+                    )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
-from typing import Iterable, Optional, Tuple, Union
+from typing import Callable, Iterable, Optional, Tuple, Union
 
 from ..common.doc import process_input_parameters_definition
 from ..common.module_registry import (
@@ -14,7 +14,49 @@ from ..common.module_registry import (
 )
 
 
-_FileTemplate = Union[str, os.PathLike[str]]
+class DeclaredFile(str):
+    """A path declaration with explicit existence requirements.
+
+    Optional files may legitimately be absent after a successful run. The
+    string subclass keeps existing path APIs and file manifests compatible.
+    """
+
+    __slots__ = ("_optional",)
+
+    def __new__(cls, path, optional=False):
+        if not isinstance(optional, bool):
+            raise TypeError("optional must be a boolean")
+        obj = super().__new__(cls, os.fspath(path))
+        object.__setattr__(obj, "_optional", optional)
+        return obj
+
+    def __reduce__(self):
+        return (type(self), (str(self), self.optional))
+
+    @property
+    def optional(self):
+        return self._optional
+
+    def __setattr__(self, name, value):
+        raise AttributeError("file declarations are immutable")
+
+    def __eq__(self, other):
+        if isinstance(other, DeclaredFile):
+            return str.__eq__(self, other) and self.optional == other.optional
+        if isinstance(other, str):
+            return not self.optional and str.__eq__(self, other)
+        return NotImplemented
+
+    def __ne__(self, other):
+        result = self.__eq__(other)
+        return NotImplemented if result is NotImplemented else not result
+
+    def __hash__(self):
+        return hash((str(self), True)) if self.optional else hash(str(self))
+
+
+_FilePath = Union[str, os.PathLike[str]]
+_FileTemplate = Union[_FilePath, Callable[[object], Optional[_FilePath]]]
 
 
 def _normalize_identifier(value: str, field: str) -> str:
@@ -36,7 +78,7 @@ def _validate_executable(value: str) -> str:
 
 def _normalize_file_templates(
     templates: Iterable[_FileTemplate], field: str
-) -> Tuple[str, ...]:
+) -> Tuple[_FileTemplate, ...]:
     if isinstance(templates, (str, bytes, os.PathLike)):
         raise TypeError(
             f"{field} must be an iterable of path-like strings, not a single path"
@@ -50,11 +92,14 @@ def _normalize_file_templates(
 
     normalized = []
     for index, item in enumerate(iterator):
+        if callable(item):
+            normalized.append(item)
+            continue
         try:
             path = os.fspath(item)
         except TypeError:
             raise TypeError(
-                f"{field}[{index}] must be a string or os.PathLike, "
+                f"{field}[{index}] must be a path or callback, "
                 f"got {type(item).__name__}"
             ) from None
         if not isinstance(path, str):
@@ -62,7 +107,7 @@ def _normalize_file_templates(
                 f"{field}[{index}] must resolve to a string, "
                 f"got {type(path).__name__}"
             )
-        normalized.append(path)
+        normalized.append(DeclaredFile(path, optional=item.optional) if isinstance(item, DeclaredFile) else path)
     return tuple(normalized)
 
 
@@ -79,9 +124,9 @@ class TaskDefinition:
     executable: str
     mpi: bool
     output_reader_name: Optional[str]
-    input_file_templates: Tuple[str, ...]
-    output_file_templates: Tuple[str, ...]
-    cache_file_templates: Tuple[str, ...]
+    input_file_templates: Tuple[_FileTemplate, ...]
+    output_file_templates: Tuple[_FileTemplate, ...]
+    cache_file_templates: Tuple[_FileTemplate, ...]
 
     def __init__(
         self,
@@ -306,6 +351,9 @@ class InputParametersRegistry(ModuleRegistry):
             inputfile=file,
         )
 
+        if task.executable == "kkrspec" and not out.TASK.TASK.is_set():
+            raise TaskMismatchError(task.name, None)
+
         task_name = out.task_name
         if task_name != task.name:
             raise TaskMismatchError(task.name, task_name)
@@ -322,14 +370,21 @@ class InputParametersRegistry(ModuleRegistry):
 
     @staticmethod
     def _resolve_file_templates(parameters, directory, templates):
+        """Resolve static paths or parameter callbacks; None omits a file."""
         dataset = parameters.CONTROL.DATASET()
-        return tuple(
-            path if os.path.isabs(path) else os.path.join(directory, path)
-            for path in (
-                os.fspath(template).format(dataset=dataset)
-                for template in templates
-            )
-        )
+        files = []
+        for template in templates:
+            value = template(parameters) if callable(template) else template
+            if value is None:
+                continue
+            path = os.fspath(value)
+            if not isinstance(path, str):
+                raise TypeError("File callback must return a path or None")
+            path = path.format(dataset=dataset)
+            resolved = path if os.path.isabs(path) else os.path.join(directory, path)
+            optional = getattr(value, "optional", getattr(template, "optional", False))
+            files.append(DeclaredFile(resolved, optional=optional))
+        return tuple(files)
 
     def files_for_task(self, task, parameters, directory, kind):
         """Combine declarative task templates with schema-specific file rules."""
@@ -337,33 +392,13 @@ class InputParametersRegistry(ModuleRegistry):
         templates = getattr(task, f"{kind}_file_templates")
         declared = self._resolve_file_templates(parameters, directory, templates)
         schema_files = getattr(definition, f"{kind}_files")(parameters, directory)
+        # Schema-specific paths have the same public contract as task templates:
+        # all entries expose .optional, including required (default False) files.
+        schema_files = tuple(
+            DeclaredFile(path, optional=getattr(path, "optional", False))
+            for path in schema_files
+        )
         return (*declared, *schema_files)
-
-
-class _ExtraTaskRegistry(ModuleRegistry):
-    """Validate explicit task declarations at materialization time."""
-
-    def __init__(self, package, input_parameters_registry):
-        super().__init__(package, "task_definition", factory=True)
-        self.input_parameters_registry = input_parameters_registry
-
-    def prepare_value(self, name, module, task):
-        if not isinstance(task, TaskDefinition):
-            raise RegistryDefinitionError(
-                f"Extra task {name} must be TaskDefinition, got {type(task).__name__}"
-            )
-        if task.name != name:
-            raise RegistryDefinitionError(
-                f"Extra task {task.name} is registered as {name}"
-            )
-        try:
-            self.input_parameters_registry.definition_for_task(task)
-        except RegistryEntryNotFound:
-            raise RegistryDefinitionError(
-                f"Task {task.name} references unknown input schema "
-                f"{task.input_parameters_definition_name}"
-            ) from None
-        return task
 
 
 class TaskRegistry:
@@ -386,8 +421,10 @@ class TaskRegistry:
 
     def __init__(self, input_parameters_registry, extra_tasks_package):
         self.input_parameters_registry = input_parameters_registry
-        self.extra_tasks = _ExtraTaskRegistry(
-            extra_tasks_package, input_parameters_registry
+        self.extra_tasks = ModuleRegistry(
+            extra_tasks_package,
+            "task_definition",
+            factory=True,
         )
 
     def _input_task(self, name):
@@ -399,9 +436,25 @@ class TaskRegistry:
 
     def _extra_task(self, name):
         try:
-            return self.extra_tasks[name]
+            task = self.extra_tasks[name]
         except RegistryEntryNotFound:
             return None
+        if not isinstance(task, TaskDefinition):
+            raise RegistryDefinitionError(
+                f"Extra task {name} must be TaskDefinition, got {type(task).__name__}"
+            )
+        if task.name != name:
+            raise RegistryDefinitionError(
+                f"Extra task {task.name} is registered as {name}"
+            )
+        try:
+            self.input_parameters_registry.definition_for_task(task)
+        except RegistryEntryNotFound:
+            raise RegistryDefinitionError(
+                f"Task {task.name} references unknown input schema "
+                f"{task.input_parameters_definition_name}"
+            ) from None
+        return task
 
     def __getitem__(self, name):
         name = self.normalize_name(name)
@@ -425,10 +478,9 @@ class TaskRegistry:
         return True
 
     def names(self):
-        """Enumerate valid tasks; broken unrelated definitions are skipped."""
-        names = {task.name for task in self.extra_tasks.iter_valid_values()}
-        for schema in self.input_parameters_registry.iter_valid_values():
-            task = schema._task_definition
+        names = set(self.extra_tasks.names())
+        for schema_name in self.input_parameters_registry.names():
+            task = self.input_parameters_registry[schema_name]._task_definition
             if task is None:
                 continue
             name = task.name

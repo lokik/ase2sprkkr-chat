@@ -6,7 +6,7 @@ import pytest
 
 from ..input_parameters import InputParameters
 from ..input_parameters_definitions import InputParametersDefinition
-from ..task_definition import TaskDefinition
+from ..task_definition import TaskDefinition, DeclaredFile
 from ...outputs.readers.default import DefaultOutputReader
 from ...sprkkr.configuration import ConfigurationFile
 
@@ -91,6 +91,7 @@ def test_change_task_retain_values_preserves_explicit_shared_task_value():
     assert parameters.TASK.TASK.is_set()
     assert parameters.TASK.TASK() == "SPLEED"
     assert parameters.task_definition.name == "SPLEED"
+    assert parameters._definition is _schema_for(parameters.task_definition)
 
 
 def test_change_task_retain_values_preserves_explicit_old_default():
@@ -104,6 +105,7 @@ def test_change_task_retain_values_preserves_explicit_old_default():
     assert parameters.task_name == "ARPES"
     assert parameters.TASK.TASK.is_set()
     assert parameters.TASK.TASK() == "ARPES"
+    assert parameters._definition is _schema_for(parameters.task_definition)
 
 
 def test_direct_schema_objects_are_detached():
@@ -289,3 +291,52 @@ def test_bsf_tasks_declare_shared_output_reader_identifier():
 
     assert bsfek.output_reader_name == "BSF"
     assert bsfkk.output_reader_name == "BSF"
+
+
+def test_optional_file_template_retains_metadata(tmp_path):
+    task = TaskDefinition(
+        "SCF",
+        input_file_templates=(DeclaredFile("aux.dat", optional=True),),
+        output_file_templates=(DeclaredFile("{dataset}_optional-*.dat", optional=True),),
+    )
+    parameters = InputParameters.create("SCF")
+    parameters.CONTROL.DATASET = "Fe"
+    registry = InputParameters.input_parameters_registry
+    for kind in ("input", "output"):
+        resolved = registry._resolve_file_templates(
+            parameters, str(tmp_path), getattr(task, f"{kind}_file_templates")
+        )
+        assert len(resolved) == 1
+        assert resolved[0].optional is True
+    assert task.input_file_templates[0].optional is True
+
+
+def test_optional_file_metadata_affects_task_identity():
+    required = TaskDefinition("SCF", output_file_templates=(DeclaredFile("x", optional=False),))
+    optional = TaskDefinition("SCF", output_file_templates=(DeclaredFile("x", optional=True),))
+    assert required != optional
+    assert hash(required) != hash(optional)
+    assert optional.output_file_templates[0] != "x"
+    assert required.output_file_templates[0] == "x"
+    with pytest.raises(AttributeError):
+        optional.output_file_templates[0].optional = False
+
+
+def test_task_execution_rejects_cross_schema_selector_without_retargeting():
+    parameters = InputParameters.create("SPLEED")
+    parameters.TASK.TASK = "ARPES"
+    assert parameters.task_name == "ARPES"
+    with pytest.raises(RuntimeError, match="change_task"):
+        parameters.task_definition_required()
+
+    parameters.change_task("ARPES")
+    assert parameters._definition is _schema_for(parameters.task_definition)
+    assert parameters.task_definition_required().name == "ARPES"
+
+def test_optional_file_declaration_pickle_roundtrip():
+    import pickle
+
+    task = TaskDefinition("SCF", output_file_templates=(DeclaredFile("extra.dat", optional=True),))
+    restored = pickle.loads(pickle.dumps(task))
+    assert restored == task
+    assert restored.output_file_templates[0].optional is True

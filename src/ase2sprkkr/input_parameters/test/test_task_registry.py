@@ -1,17 +1,13 @@
 import importlib
 import io
-import os
 import pickle
-import subprocess
-import sys
-from collections.abc import Mapping
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from ...common.module_registry import RegistryDefinitionError, RegistryEntryNotFound
-from ..input_parameters import InputParameters, _LazyInputParametersDefinitions
+from ..input_parameters import InputParameters
 from ..task_definition import InputParametersRegistry, TaskDefinition, TaskRegistry
 
 
@@ -35,12 +31,13 @@ def test_standard_task_comes_from_input_parameters_definition():
     assert "SCF" not in InputParameters.task_registry.extra_tasks.names()
 
 
-def test_spec_tasks_share_schema_and_requested_task_is_default():
+def test_spec_tasks_have_specialized_schemas_and_requested_task_is_default():
     schema = InputParameters.input_parameters_registry["ARPES"]
     spleed = InputParameters.create("SPLEED")
 
     assert schema._task_definition is None
-    assert spleed._definition is schema
+    assert spleed._definition is InputParameters.input_parameters_registry["SPLEED"]
+    assert spleed._definition is not schema
     assert spleed.requested_task_name == "SPLEED"
     assert spleed.TASK.TASK() == "SPLEED"
     assert not spleed.TASK.TASK.is_set()
@@ -85,7 +82,7 @@ def test_input_and_task_registry_namespaces_are_distinct():
     task_names = set(InputParameters.task_registry.names())
 
     assert {"ARPES", "BSF"} <= input_names
-    assert "SPLEED" not in input_names
+    assert {"SPLEED", "AIPES", "BAND"} <= input_names
     assert "BSFEK" not in input_names
     assert "BSF" not in task_names
     assert {"ARPES", "SPLEED", "BSFEK", "BSFKK"} <= task_names
@@ -393,149 +390,26 @@ def test_create_from_dmi_result_keeps_dmi_defaults():
     assert params.ENERGY.EMIN() == -0.35
 
 
-def test_compatibility_definition_mapping_loads_only_requested_schema(
-    tmp_path, monkeypatch
-):
-    package = _package(
-        tmp_path,
-        monkeypatch,
-        "_lazy_user_definition_entries",
-        {
-            "valid": (
-                "from ase2sprkkr.input_parameters.input_parameters_definitions "
-                "import InputParametersDefinition\n"
-                "def input_parameters_definition():\n"
-                "    return InputParametersDefinition('valid', [])\n"
-            ),
-            "marpes": "input_parameters = object()\n",
-        },
+def _optional_task_file(parameters):
+    return "{dataset}.optional" if parameters.CONTROL.PRINT() else None
+
+
+def test_file_template_callbacks_skip_none_and_support_pickle(tmp_path):
+    parameters = InputParameters.create("ARPES")
+    parameters.CONTROL.DATASET = "Fe"
+    parameters.CONTROL.PRINT = 0
+    task = TaskDefinition(
+        "ARPES", name="FILE_CALLBACK_TEST",
+        input_file_templates=("{dataset}.required", _optional_task_file),
     )
-    mapping = _LazyInputParametersDefinitions(InputParametersRegistry(package))
-
-    assert isinstance(mapping, Mapping)
-    assert set(mapping) == {"VALID", "MARPES"}
-    assert "MARPES" in mapping  # Discovery is not module materialization.
-    assert mapping["VALID"].name == "valid"
-
-    with pytest.raises(
-        RegistryDefinitionError,
-        match="does not define required export 'input_parameters_definition'",
-    ):
-        mapping["MARPES"]
-
-
-def test_legacy_user_hook_can_read_arpes_without_loading_broken_user_schema(
-    tmp_path,
-):
-    # Reproduce an import-time preference using InputParameters.definitions.
-    # The separate user-installed MARPES module is intentionally malformed.
-    config_dir = tmp_path / "ase2sprkkr"
-    custom_schemas = config_dir / "input_parameters"
-    custom_schemas.mkdir(parents=True)
-    (custom_schemas / "marpes.py").write_text(
-        "input_parameters = object()\n"
+    registry = InputParameters.input_parameters_registry
+    assert registry.files_for_task(task, parameters, str(tmp_path), "input") == (
+        str(tmp_path / "Fe.required"),
     )
-    (config_dir / "__init__.py").write_text(
-        "from ase2sprkkr.input_parameters.input_parameters import InputParameters\n"
-        "InputParameters.definitions['ARPES'].mpi = False\n"
-        "assert InputParameters.definitions['ARPES'].name == 'arpes'\n"
-        "assert InputParameters.definitions['ARPES'].mpi is False\n"
+    parameters.CONTROL.PRINT = 1
+    assert registry.files_for_task(task, parameters, str(tmp_path), "input") == (
+        str(tmp_path / "Fe.required"), str(tmp_path / "Fe.optional"),
     )
-    env = os.environ.copy()
-    env["XDG_CONFIG_HOME"] = str(tmp_path)
-    env.pop("ASE2SPRKKR_NO_USER_PROFILE", None)
-
-    # Do not execute in XDG_CONFIG_HOME: its ase2sprkkr directory would
-    # shadow the installed package on sys.path in a fresh Python process.
-    working_dir = tmp_path / "work"
-    working_dir.mkdir()
-    completed = subprocess.run(
-        [sys.executable, "-c", "import ase2sprkkr"],
-        env=env,
-        cwd=working_dir,
-        capture_output=True,
-        text=True,
-        timeout=45,
-        check=False,
-    )
-    assert completed.returncode == 0, completed.stderr
-
-
-def test_task_enumeration_ignores_broken_schema_and_extra_task(
-    tmp_path, monkeypatch
-):
-    from ...common.module_registry import RegistryLoadWarning
-
-    definitions = _package(
-        tmp_path, monkeypatch, "_tolerant_task_schemas", {
-            "good": (
-                "from ase2sprkkr.input_parameters.input_parameters_definitions "
-                "import InputParametersDefinition\n"
-                "from ase2sprkkr.input_parameters.task_definition import TaskDefinition\n"
-                "def input_parameters_definition():\n"
-                "    definition = InputParametersDefinition('good', [])\n"
-                "    definition._task_definition = TaskDefinition('GOOD')\n"
-                "    return definition\n"
-            ),
-            "marpes": "input_parameters = object()\n",
-            "shared": (
-                "from ase2sprkkr.input_parameters.input_parameters_definitions "
-                "import InputParametersDefinition\n"
-                "def input_parameters_definition():\n"
-                "    return InputParametersDefinition('shared', [])\n"
-            ),
-        },
-    )
-    tasks = _package(
-        tmp_path, monkeypatch, "_tolerant_extra_tasks", {
-            "extra": (
-                "from ase2sprkkr.input_parameters.task_definition import TaskDefinition\n"
-                "def task_definition():\n"
-                "    return TaskDefinition('SHARED', name='EXTRA')\n"
-            ),
-            "invalid": "task_definition = object()\n",
-        },
-    )
-    registry = TaskRegistry(InputParametersRegistry(definitions), tasks)
-    with pytest.warns(RegistryLoadWarning) as record:
-        assert set(registry.names()) == {"GOOD", "EXTRA"}
-    assert len(record) == 2
-    assert {registry[name].name for name in ("GOOD", "EXTRA")} == {"GOOD", "EXTRA"}
-    with pytest.raises(RegistryDefinitionError, match="required export"):
-        registry.input_parameters_registry["MARPES"]
-    with pytest.raises(RegistryDefinitionError, match="must be TaskDefinition"):
-        registry.extra_tasks["INVALID"]
-
-
-def test_cli_and_input_autodetection_with_broken_user_schema(tmp_path):
-    config_dir = tmp_path / "ase2sprkkr"
-    custom = config_dir / "input_parameters"
-    custom.mkdir(parents=True)
-    (custom / "marpes.py").write_text("input_parameters = object()\n")
-    work = tmp_path / "work"
-    work.mkdir()
-    env = os.environ.copy()
-    env["XDG_CONFIG_HOME"] = str(tmp_path)
-    env.pop("ASE2SPRKKR_NO_USER_PROFILE", None)
-
-    examples = os.path.join(os.path.dirname(__file__), "..", "examples", "scf.in")
-
-    commands = (
-        ([sys.executable, "-m", "ase2sprkkr.tools.ase2sprkkr", "--help"], False),
-        ([sys.executable, "-m", "ase2sprkkr.tools.ase2sprkkr", "run", "--help"], False),
-        ([sys.executable, "-m", "ase2sprkkr.tools.ase2sprkkr", "info", "--task=scf"], False),
-        ([sys.executable, "-c", (
-            "from ase2sprkkr.input_parameters.input_parameters import InputParameters; "
-            "assert 'SCF' in InputParameters.task_registry.names(); "
-            "assert InputParameters.from_file(" + repr(examples) + ").task_name == 'SCF'"
-        )], True),
-    )
-    for command, should_warn in commands:
-        completed = subprocess.run(
-            command, cwd=work, env=env, capture_output=True, text=True,
-            timeout=45, check=False,
-        )
-        assert completed.returncode == 0, (
-            f"{command!r} failed: {completed.stderr}\n{completed.stdout}"
-        )
-        assert ("Skipping invalid registry entry" in completed.stderr) == should_warn
+    restored = pickle.loads(pickle.dumps(task))
+    assert restored == task
+    assert restored.input_file_templates[1] is _optional_task_file
