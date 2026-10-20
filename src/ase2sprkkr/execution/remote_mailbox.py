@@ -1,4 +1,4 @@
-"""Durable mailbox for terminal remote-process outcomes, not RunRecord state."""
+"""Durable handoff of temporary submission identities and terminal results."""
 
 import json
 import os
@@ -21,13 +21,42 @@ def _state_root():
     return Path(os.environ.get("XDG_STATE_HOME", "~/.local/state")).expanduser() / "ase2sprkkr"
 
 
-def _path(receipt_id):
+def _validated_path(receipt_id, folder):
     if not isinstance(receipt_id, str) or not _RECEIPT.fullmatch(receipt_id):
         raise ValueError("Invalid remote receipt ID")
-    return _state_root() / "remote-outcomes" / (receipt_id + ".json")
+    return _state_root() / folder / (receipt_id + ".json")
 
 
-def publish_outcome(receipt_id, state, return_code, failure_phase=None, *, error=None):
+def _path(receipt_id):
+    return _validated_path(receipt_id, "remote-outcomes")
+
+
+def publish_submission(run_id, reply):
+    """Persist short-lived backend identity until acknowledged."""
+    path = _validated_path(run_id, "remote-submissions")
+    durable_mkdir(path.parent, parents=True, exist_ok=True, mode=0o700)
+    durable_write_json(path, reply, mode=0o600)
+
+
+def read_submission(run_id):
+    try:
+        return json.loads(_validated_path(run_id, "remote-submissions").read_text())
+    except FileNotFoundError:
+        return None
+
+
+def drop_submission(run_id):
+    path = _validated_path(run_id, "remote-submissions")
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return False
+    fsync_directory(path.parent)
+    return True
+
+
+def publish_outcome(receipt_id, state, return_code, failure_phase=None, *,
+                    error=None, files=None, materialization_error=None):
     """Publish once: cancellation must not overwrite natural completion."""
     state = RunState(state)
     if state not in _TERMINAL:
@@ -43,6 +72,8 @@ def publish_outcome(receipt_id, state, return_code, failure_phase=None, *, error
                 "return_code": None if return_code is None else int(return_code),
                 "failure_phase": None if failure_phase is None else FailurePhase(failure_phase).value,
                 "error": error,
+                "files": files,
+                "materialization_error": materialization_error,
             },
             separators=(",", ":"),
             mode=0o600,

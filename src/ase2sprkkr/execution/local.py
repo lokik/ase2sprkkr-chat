@@ -19,7 +19,7 @@ from .base import (
     RunState,
     SubmissionNotStarted,
 )
-from .file_availability import clear_declared_outputs, validate_output_collisions
+from .file_availability import prepare_local_files
 from .local_process import (
     materialize_local_spec,
     pump_stream,
@@ -130,24 +130,8 @@ class LocalRunner:
             return self.result
 
         try:
-            protected = [
-                file_path(value, self.spec.directory)
-                for value in (self.spec.input_file, self.spec.stdin,
-                              *self.spec.input_files, *self.spec.cache_files)
-            ]
-            # Preserve already-open stdout/stderr handles: an unlink would
-            # disconnect their inode from the named destination.
-            outputs = [
-                file_path(value, self.spec.directory)
-                for value in self.spec.output_files
-            ]
-            validate_output_collisions(
-                (*outputs, self.result.output_file, self.result.error_file),
-                protected=protected,
-            )
-            clear_declared_outputs(
-                outputs,
-                protected=(*protected, self.result.output_file, self.result.error_file),
+            prepare_local_files(
+                self.spec, preserve_open_streams=True,
             )
             try:
                 self._process = await start_local_process(self.spec)

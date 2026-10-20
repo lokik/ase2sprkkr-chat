@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import fcntl
 import os
-import posixpath
 from dataclasses import replace
 from threading import Event, Lock, Thread
 
@@ -22,9 +21,9 @@ from .base import (
     start_monitor,
 )
 from ..common.async_utils import run_coro_sync as _run_sync
-from ..common.file_versions import file_digest
-from .transport import expand_local_files, has_file_magic
-from .run_model import FileSyncPolicy
+from .remote_file_handler import FileSyncPolicy, RemoteFileHandler
+
+
 
 
 class RemoteRunner:
@@ -47,11 +46,6 @@ class RemoteRunner:
         remote_directory=None,
         files=None,
         state=RunState.NEW,
-        output_targets=None,
-        cache_targets=None,
-        output_patterns=None,
-        cache_patterns=None,
-        cache_before=None,
     ):
         self.executor = executor
         self.spec = spec
@@ -59,7 +53,6 @@ class RemoteRunner:
         self._state = RunState(state)
         self._backend_id = backend_id
         self._remote_directory = remote_directory
-        self._files = files
         self._output_observers = OutputObservers(output_listener)
         self._lock = Lock()
         self._done = Event()
@@ -72,16 +65,17 @@ class RemoteRunner:
         self._follow_process = None
         self._stream_positions = {}
         self._cancel_future = None
-        self._output_targets = dict(output_targets or {})
-        self._cache_targets = dict(cache_targets or {})
-        self._output_patterns = tuple(output_patterns or ())
-        self._cache_patterns = tuple(cache_patterns or ())
-        self._cache_before = dict(cache_before or {})
         self.result = ExecutionOutcome(
-            output_file=self._local_path(spec.output_file),
-            input_file=self._local_path(spec.input_file),
-            error_file=self._local_path(spec.error_file),
+            output_file=file_path(spec.output_file, spec.directory, flush=True, required=spec.output_file is not None),
+            input_file=file_path(spec.input_file, spec.directory, flush=True, required=spec.input_file is not None),
+            error_file=file_path(spec.error_file, spec.directory, flush=True, required=spec.error_file is not None),
         )
+
+        self.file_handler = getattr(
+            getattr(executor, "endpoint", executor),
+            "file_handler", None,
+        ) or RemoteFileHandler(getattr(executor, "transport", None))
+        self._files = files
 
         if start:
             self.start()
@@ -93,24 +87,6 @@ class RemoteRunner:
     @property
     def files(self):
         return self._files
-
-    def _set_file_availability(
-        self, local, state, message=None, *,
-        remote=None, kind="output", source_pattern=None,
-    ):
-        if self._files is not None:
-            self._files = self._files.with_file_availability(
-                local, state, message, remote_path=remote, kind=kind,
-                source_pattern=source_pattern,
-            )
-
-    def _set_pending_failed(self, message):
-        """Record a transfer-wide failure on still-pending output artifacts."""
-        if self._files is None:
-            return
-        for entry in self._files.artifacts:
-            if entry.availability_state in (None, "pending"):
-                self._set_file_availability(entry.local_path, "failed", message)
 
     @property
     def execution(self):
@@ -177,6 +153,18 @@ class RemoteRunner:
     def add_output_error_listener(self, callback):
         self._output_observers.add_error_listener(callback)
 
+    def _mark_pending_files_failed(self, message):
+        if self._files is None:
+            return
+        for entry in self._files.artifacts:
+            if entry.availability_state in (None, "pending"):
+                self._files = self._files.with_file_availability(
+                    entry.local_path, "failed", message,
+                )
+
+    def _local_path(self, value):
+        return file_path(value, self.spec.directory, flush=True, required=value is not None)
+
     def _write_output(self, data, kind):
         """Persist FOLLOW bytes at their logical offset, not blindly append.
 
@@ -209,342 +197,6 @@ class RemoteRunner:
             finally:
                 fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
         self._stream_positions[kind] = offset + len(data)
-
-    def _local_path(self, value):
-        if value is None:
-            return None
-        try:
-            return file_path(value, self.spec.directory, flush=True, required=True)
-        except ValueError as exc:
-            raise ValueError("Remote execution requires named files") from exc
-
-    async def _stage_file(self, value, used, *, uploads=None, required=True):
-        source = self._local_path(value)
-        if source is None:
-            return None
-        target = await self.executor.map_path(source)
-        previous = used.get(target)
-        if previous is not None and previous != source:
-            raise ValueError(f"Remote input target collision: {target}")
-        if previous is not None:
-            return target
-
-        policy = self.executor.input_files
-        if policy == FileSyncPolicy.NEVER:
-            used[target] = source
-            return target
-
-        local_digest = file_digest(source, missing_ok=True)
-        remote_digest = await self.executor.transport.file_digest(target)
-        if required and local_digest is None:
-            if policy == FileSyncPolicy.ALWAYS:
-                raise FileNotFoundError(f"Local input file does not exist: {source}")
-            if remote_digest is None:
-                raise FileNotFoundError(
-                    f"Input file exists neither locally nor remotely: {source}"
-                )
-
-        if policy.should_transfer(local_digest, remote_digest):
-            if uploads is None:
-                await self.executor.transport.put_file(source, target)
-            else:
-                uploads.append(source)
-
-        used[target] = source
-        return target
-
-    async def _stage_input_pattern(self, value, used, *, required=True):
-        source = self._local_path(value)
-        matches = expand_local_files(source, self.executor.local_root)
-        if not matches and required:
-            raise FileNotFoundError(
-                f"Local input pattern did not match any files: {source}"
-            )
-        uploads = []
-        for match in matches:
-            await self._stage_file(
-                match, used, uploads=uploads, required=required,
-            )
-        if uploads:
-            await self.executor.transport.put_files(
-                uploads,
-                self.executor.local_root,
-                await self.executor._resolved_remote_root(),
-            )
-
-    def _unique_declared_paths(self, values, *, excluded=()):
-        """Yield normalized file declarations once, preserving their order."""
-        seen = set(excluded)
-        for value in values:
-            local = self._local_path(value)
-            if local is not None and local not in seen:
-                seen.add(local)
-                yield local, has_file_magic(local)
-
-    async def _prepare_cache_files(self, used):
-        targets = {}
-        patterns = []
-        pattern_before = {}
-        output_policy = self.executor.output_files
-        remote_root = await self.executor._resolved_remote_root()
-
-        for local, pattern in self._unique_declared_paths(self.spec.cache_files):
-            if pattern:
-                remote_pattern = await self.executor.map_path(local)
-                patterns.append(remote_pattern)
-                # Cache patterns use the same transfer logic as inputs,
-                # but an unmatched cache pattern is optional.
-                await self._stage_input_pattern(local, used, required=False)
-                if output_policy != FileSyncPolicy.NEVER:
-                    for remote in await self.executor.transport.expand_files(
-                        remote_pattern, remote_root
-                    ):
-                        pattern_before[remote] = (
-                            await self.executor.transport.file_signature(remote)
-                        )
-                continue
-
-            # Cache inputs obey precisely the same staging policy as ordinary
-            # inputs, except that a missing local cache is allowed.
-            remote = await self._stage_file(local, used, required=False)
-
-            before = None
-            if output_policy != FileSyncPolicy.NEVER:
-                before = await self.executor.transport.file_signature(remote)
-            targets[local] = (remote, before)
-
-        self._cache_targets = targets
-        self._cache_patterns = tuple(patterns)
-        self._cache_before = pattern_before
-
-    async def _prepare_output_files(self):
-        primary = {
-            path
-            for path in (self.result.output_file, self.result.error_file)
-            if path is not None
-        }
-        targets = {}
-        patterns = []
-
-        for local, pattern in self._unique_declared_paths(
-            self.spec.output_files, excluded=primary,
-        ):
-            remote = await self.executor.map_path(local)
-            if pattern:
-                patterns.append(remote)
-            else:
-                targets[local] = remote
-        # Cleanup belongs to the target-side submit operation, where input
-        # and cache wildcard protections are resolved together. Never delete
-        # remote files during client-side staging.
-        self._output_targets = targets
-        self._output_patterns = tuple(patterns)
-
-    async def _sync_output_entry(self, local, remote, required, *, source_pattern=None):
-        """Synchronize one concrete output and record its availability."""
-        if source_pattern is not None:
-            self._set_file_availability(
-                local, "pending", remote=remote, source_pattern=source_pattern,
-            )
-        try:
-            available = await self._sync_one_output(local, remote, required)
-        except Exception as exc:
-            self._set_file_availability(local, "failed", str(exc))
-            raise
-        self._set_file_availability(
-            local, "available" if available else "skipped",
-        )
-
-    async def _sync_patterns(self, patterns, *, kind, required=False,
-                             excluded_remote=(), excluded_local=()):
-        """Expand declarations once; the entry handlers own transfer policy."""
-        remote_root = await self.executor._resolved_remote_root()
-        selected = set(excluded_remote)
-        excluded_local = set(excluded_local)
-        for pattern in patterns:
-            local_pattern = os.fspath(await self.executor.unmap_path(pattern))
-            try:
-                matches = await self.executor.transport.expand_files(pattern, remote_root)
-                if not matches:
-                    if required:
-                        raise FileNotFoundError(
-                            f"Declared remote {kind} pattern did not match any files: {pattern}"
-                        )
-                    self._set_file_availability(local_pattern, "skipped", kind=kind)
-                    continue
-                for remote in matches:
-                    if remote in selected:
-                        continue
-                    selected.add(remote)
-                    local = os.fspath(await self.executor.unmap_path(remote))
-                    if local in excluded_local:
-                        continue
-                    if kind == "cache":
-                        await self._sync_cache_entry(
-                            local, remote, self._cache_before.get(remote),
-                            source_pattern=local_pattern,
-                        )
-                    else:
-                        await self._sync_output_entry(
-                            local, remote, required, source_pattern=local_pattern,
-                        )
-                self._set_file_availability(local_pattern, "available", kind=kind)
-            except Exception as exc:
-                self._set_file_availability(
-                    local_pattern, "failed", str(exc), kind=kind,
-                )
-                raise
-
-    async def _sync_output_files(self, required):
-        policy = self.executor.output_files
-        if policy == FileSyncPolicy.NEVER:
-            # FOLLOW transfers primary streams even when separate artifact
-            # synchronization is disabled.
-            primary = {path for path in (self.result.output_file, self.result.error_file)
-                       if path is not None}
-            for entry in (() if self._files is None else self._files.artifacts):
-                if entry.availability_state == "pending":
-                    self._set_file_availability(
-                        entry.local_path,
-                        "available" if entry.local_path in primary else "skipped",
-                    )
-            return
-
-        for local, remote in self._output_targets.items():
-            await self._sync_output_entry(local, remote, required)
-
-        if self._output_patterns:
-            primary = {
-                path for path in (self.result.output_file, self.result.error_file)
-                if path is not None
-            }
-            await self._sync_patterns(
-                self._output_patterns,
-                kind="output",
-                required=required,
-                excluded_remote=self._output_targets.values(),
-                excluded_local=primary,
-            )
-
-    async def _sync_one_output(self, local, remote, required):
-        policy = self.executor.output_files
-        remote_digest = await self.executor.transport.file_digest(remote)
-        if remote_digest is None:
-            if required:
-                raise FileNotFoundError(
-                    f"Declared remote output file was not created: {remote}"
-                )
-            return False
-        local_digest = file_digest(local, missing_ok=True)
-        if policy.should_transfer(remote_digest, local_digest):
-            await self.executor.transport.get_file(remote, local)
-        return True
-
-    async def _sync_cache_entry(self, local, remote, before, *, source_pattern=None):
-        """Synchronize one concrete cache using its pre-run signature."""
-        if source_pattern is not None:
-            self._set_file_availability(
-                local, "pending", remote=remote, kind="cache",
-                source_pattern=source_pattern,
-            )
-        try:
-            after = await self.executor.transport.file_signature(remote)
-            if (
-                after is None or after == before
-                or (
-                    self.executor.output_files == FileSyncPolicy.MISSING
-                    and file_digest(local, missing_ok=True) is not None
-                )
-            ):
-                state = "skipped"
-            else:
-                await self.executor.transport.get_file(remote, local)
-                state = "available"
-        except Exception as exc:
-            self._set_file_availability(local, "failed", str(exc), kind="cache")
-            raise
-        self._set_file_availability(local, state, kind="cache")
-
-    async def _sync_cache_files(self):
-        if self.executor.output_files == FileSyncPolicy.NEVER:
-            return
-
-        for local, (remote, before) in self._cache_targets.items():
-            await self._sync_cache_entry(local, remote, before)
-
-        if self._cache_patterns:
-            await self._sync_patterns(
-                self._cache_patterns,
-                kind="cache",
-                excluded_remote=(remote for remote, _ in self._cache_targets.values()),
-            )
-
-    def _remote_argv(self, argv, staged):
-        out = []
-        for arg in argv:
-            value = os.fspath(arg)
-            # Match the path identity used when staging; never flush command
-            # arguments or reinterpret non-path arguments as file handles.
-            replacement = staged.get(file_path(value, self.spec.directory))
-            out.append(replacement or value)
-        return out
-
-    async def _prepare_request(self, run_id, remote_directory):
-        used = {}
-        for value in self.spec.input_files:
-            source = self._local_path(value)
-            if source is not None and has_file_magic(source):
-                await self._stage_input_pattern(value, used)
-            else:
-                await self._stage_file(value, used)
-        input_target = await self._stage_file(self.spec.input_file, used)
-        stdin_target = await self._stage_file(self.spec.stdin, used)
-
-        await self._prepare_cache_files(used)
-        staged = {source: target for target, source in used.items()}
-        await self._prepare_output_files()
-
-        output_target = (
-            await self.executor.map_path(self.result.output_file)
-            if self.result.output_file
-            else None
-        )
-        error_target = (
-            await self.executor.map_path(self.result.error_file)
-            if self.result.error_file
-            else None
-        )
-        client_sync = {
-            "output_file": output_target if self.spec.output_file is not None else None,
-            "error_file": error_target if self.spec.error_file is not None else None,
-            "output_files": list(self._output_targets.values()),
-            "cache_files": [
-                {"path": remote, "before": before}
-                for remote, before in self._cache_targets.values()
-            ],
-            "output_patterns": list(self._output_patterns),
-            "cache_patterns": list(self._cache_patterns),
-            "cache_before": [
-                {"path": remote, "signature": before}
-                for remote, before in self._cache_before.items()
-            ],
-        }
-
-        return {
-            "id": run_id,
-            "executor": self.executor.backend,
-            "executor_options": self.executor.backend_options,
-            "directory": remote_directory,
-            **self.spec.command_request(
-                lambda args: self._remote_argv(args, staged)
-            ),
-            "input_file": input_target,
-            "stdin": stdin_target,
-            "output_file": output_target,
-            "error_file": error_target,
-            "client_sync": client_sync,
-            "input_files": list(used.keys()),
-        }
 
     async def _pump(self, source, kind):
         while True:
@@ -608,6 +260,14 @@ class RemoteRunner:
                     self._failure_phase = None
                     self._failure_message = str(stream_error or exc)
                     return self.result
+            # Scheduler FOLLOW need not carry file state. Request terminal
+            # materialization explicitly with the client's current manifest.
+            if status.get("files") is None and status.get("state") in (
+                "finished", "failed", "cancelled",
+            ):
+                status = await self.executor._status(
+                    self._remote_directory, self._backend_id, self._files,
+                )
             backend_state = RunState(status.get("state", "unknown"))
             self._return_code = status.get("return_code")
             self.result.return_code = self._return_code
@@ -649,10 +309,41 @@ class RemoteRunner:
 
             self._state = RunState.DOWNLOADING
             try:
-                await self._sync_output_files(required=backend_state == RunState.FINISHED)
-                await self._sync_cache_files()
+                from .run_model import FileManifest
+                if status.get("files") is not None:
+                    received = FileManifest(**status["files"])
+                    # The target's completed membership is authoritative;
+                    # the client owns its download availability.
+                    availability = {
+                        (entry.local_path, entry.remote_path): entry
+                        for entry in self._files.artifacts
+                    } if self._files is not None else {}
+                    def preserve(entry):
+                        if entry is None:
+                            return None
+                        prior = availability.get((entry.local_path, entry.remote_path))
+                        if prior is None:
+                            return entry
+                        return replace(
+                            entry, availability_state=prior.availability_state,
+                            availability_message=prior.availability_message,
+                        )
+                    self._files = received._map_artifacts(preserve)
+                freeze_error = None
+                if status.get("materialization_error"):
+                    freeze_error = RuntimeError(status["materialization_error"])
+                # A failed wildcard does not suppress downloads of other
+                # successfully resolved files. Preserve the new manifest first.
+                self._files, transfer_error = await self.file_handler.collect(
+                    self.executor, self._files, self.result,
+                    required=backend_state == RunState.FINISHED,
+                )
+                if freeze_error is not None:
+                    raise freeze_error
+                if transfer_error is not None:
+                    raise transfer_error
             except Exception as exc:
-                self._set_pending_failed(str(exc))
+                self._mark_pending_files_failed(str(exc))
                 if backend_state == RunState.FINISHED:
                     # A successful calculation with unavailable artifacts is a
                     # failed run, even though its backend return code is zero.
@@ -670,7 +361,7 @@ class RemoteRunner:
             if self._files is not None:
                 for entry in self._files.artifacts:
                     if entry.availability_state == "pending":
-                        self._set_file_availability(entry.local_path, "available")
+                        self._files = self._files.with_file_availability(entry.local_path, "available")
             self._state = backend_state
             if self._state == RunState.FAILED and self._failure_phase is None:
                 self._failure_phase = FailurePhase.EXECUTION
@@ -702,7 +393,6 @@ class RemoteRunner:
         except BaseException as exc:
             self._exception = exc
         finally:
-            self._output_observers.finish_bytes()
             finish_monitor(self)
 
     def start(self):

@@ -82,7 +82,9 @@ def run(args, global_args):
         request["directory"] = args.directory
         _print_json(submit_remote(request))
     elif args.remote_action == "status":
-        _print_json(status_remote(args.remote_id))
+        payload = "" if sys.stdin.isatty() else sys.stdin.read()
+        request = json.loads(payload) if payload.strip() else {}
+        _print_json(status_remote(args.remote_id, request.get("files")))
     elif args.remote_action == "cancel":
         _print_json(cancel_remote(args.remote_id))
     elif args.remote_action == "follow":

@@ -69,8 +69,9 @@ def test_remote_request_carries_target_executor_options(tmp_path):
     remote_potential = tmp_path / "remote" / "calculation" / "start.pot"
     assert "output_files" not in request
     assert "cache_files" not in request
-    assert request["client_sync"]["output_files"] == []
-    assert request["client_sync"]["cache_files"] == []
+    assert "client_sync" not in request
+    assert request["files"]["outputs"] == []
+    assert request["files"]["caches"] == []
     assert request["input_file"] == str(remote_input)
     assert remote_input.read_bytes() == b"input"
     assert remote_potential.read_text() == "potential"
