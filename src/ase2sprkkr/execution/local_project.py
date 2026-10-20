@@ -208,6 +208,7 @@ class LocalProjectRunner:
             self._failure_phase = self._failure_phase or FailurePhase.EXECUTION
             self._state = RunState.FAILED
         finally:
+            self._output_observers.finish_bytes()
             try:
                 close_output_files(self.spec.output_file, self.spec.error_file)
             except BaseException as exc:
