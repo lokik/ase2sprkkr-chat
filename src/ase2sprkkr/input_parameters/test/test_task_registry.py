@@ -413,3 +413,33 @@ def test_file_template_callbacks_skip_none_and_support_pickle(tmp_path):
     restored = pickle.loads(pickle.dumps(task))
     assert restored == task
     assert restored.input_file_templates[1] is _optional_task_file
+
+
+
+def test_definitions_mapping_does_not_load_unrelated_definitions(monkeypatch):
+    from ase2sprkkr.input_parameters.input_parameters import (
+        _LazyInputParametersDefinitions,
+    )
+
+    class Registry:
+        def __init__(self):
+            self.loaded = []
+
+        def names(self):
+            return ("SCF", "BROKEN")
+
+        def __getitem__(self, name):
+            self.loaded.append(name)
+            if name == "BROKEN":
+                raise ImportError("broken user-provided definition")
+            return "scf-schema"
+
+    registry = Registry()
+    mapping = _LazyInputParametersDefinitions(registry)
+    assert list(mapping) == ["SCF", "BROKEN"]
+    assert len(mapping) == 2
+    assert registry.loaded == []
+    assert mapping["SCF"] == "scf-schema"
+    assert registry.loaded == ["SCF"]
+    with pytest.raises(ImportError, match="broken user-provided"):
+        mapping["BROKEN"]
