@@ -165,8 +165,42 @@ class SpecResult(ArpesResult):
         return self._file_content
 
 
+class _CapturedSpecStream:
+    """Tee readline-based common-header parsing and the remaining async lines."""
+
+    def __init__(self, source):
+        self.source = source
+        self.lines = []
+
+    async def readline(self):
+        line = await self.source.readline()
+        if line:
+            self.lines.append(line)
+        return line
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        line = await self.readline()
+        if not line:
+            raise StopAsyncIteration
+        return line
+
+    def __getattr__(self, name):
+        return getattr(self.source, name)
+
+
 class SpecOutputParser(DefaultOutputParser):
     """Reader for the main text output produced by KKRSPEC."""
+
+    async def read_output(self, stdout, result):
+        # read_commons consumes the FILES header before DefaultOutputParser
+        # collects output_lines. Capture both parts from the same stream.
+        captured = _CapturedSpecStream(stdout)
+        parsed = await super().read_output(captured, result)
+        result._file_content = b"".join(captured.lines).decode("utf-8", errors="replace")
+        return parsed
 
     _DIAGRAM = re.compile(
         r"^\s*(?:i\s*\(e\)\s*-?diagram|rotation diagram|"
