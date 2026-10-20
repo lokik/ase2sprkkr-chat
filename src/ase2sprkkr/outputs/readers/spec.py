@@ -187,6 +187,9 @@ class _CapturedSpecStream:
             raise StopAsyncIteration
         return line
 
+    def __fspath__(self):
+        return os.fspath(self.source)
+
     def __getattr__(self, name):
         return getattr(self.source, name)
 
