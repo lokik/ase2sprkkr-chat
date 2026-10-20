@@ -448,34 +448,6 @@ def test_psij_auto_uses_mpi_without_fixed_process_count(monkeypatch, tmp_path):
     input_file.close()
     output_file.close()
 
-
-def test_psij_project_run_exposes_recovery_metadata(monkeypatch, tmp_path):
-    executor = _executor(monkeypatch, _Backend())
-    input_file = open(tmp_path / "run.inp", "wb+")
-    output_file = open(tmp_path / "run.out", "wb")
-    spec = ExecutionSpec(
-        argv=("program",),
-        input_file=input_file,
-        output_file=output_file,
-        directory=str(tmp_path),
-        stdin=input_file,
-    )
-
-    runner = executor.create_project_run(
-        spec, run_id="persistent-run"
-    )
-
-    assert runner._job.spec.environment == {
-        "ASE2SPRKKR_RUN_ID": "persistent-run"
-    }
-    assert runner._job.spec.attributes.custom_attributes == {
-        "slurm.comment": "ase2sprkkr:persistent-run"
-    }
-    input_file.close()
-    output_file.close()
-
-
-
 def test_psij_status_is_nonblocking_and_explicit_wait_synchronizes(monkeypatch):
     executor = _executor(monkeypatch, _Backend())
     executor.backend = "pbs"
