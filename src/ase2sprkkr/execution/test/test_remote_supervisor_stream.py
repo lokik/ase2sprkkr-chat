@@ -376,3 +376,90 @@ def test_supervisor_finish_is_bounded_when_client_never_drains(tmp_path):
             streams._followers.discard(follower)
 
     asyncio.run(run())
+
+
+
+def test_supervisor_start_closes_first_stream_if_second_cannot_open(tmp_path):
+    async def check():
+        out = tmp_path / "out"
+        err = tmp_path / "stderr-is-a-directory"
+        err.mkdir()
+        streams = SupervisorStreams(out, err)
+        with pytest.raises(IsADirectoryError):
+            await streams.start()
+        assert streams._spools["out"].closed
+        assert streams._server is None
+        assert streams.socket_path is None
+
+    asyncio.run(check())
+
+
+def test_supervisor_start_closes_streams_and_directory_on_socket_bind_error(
+    tmp_path, monkeypatch,
+):
+    async def fail_bind(*args, **kwargs):
+        raise OSError("cannot bind supervisor socket")
+
+    monkeypatch.setattr(asyncio, "start_unix_server", fail_bind)
+
+    async def check():
+        streams = SupervisorStreams(tmp_path / "out", tmp_path / "err")
+        with pytest.raises(OSError, match="cannot bind supervisor socket"):
+            await streams.start()
+        assert all(handle.closed for handle in streams._spools.values())
+        assert streams._server is None
+        assert not (tmp_path / "out").is_dir()
+        assert not __import__("os").path.exists(streams._socket_dir)
+
+    asyncio.run(check())
+
+
+def test_supervisor_start_closes_bound_server_if_chmod_fails(tmp_path, monkeypatch):
+    from .. import remote_supervisor_stream as module
+
+    def fail_chmod(path, mode):
+        raise OSError("socket permissions unavailable")
+
+    monkeypatch.setattr(module.os, "chmod", fail_chmod)
+
+    async def check():
+        streams = SupervisorStreams(tmp_path / "out", None)
+        with pytest.raises(OSError, match="socket permissions unavailable"):
+            await streams.start()
+        assert streams._spools["out"].closed
+        assert streams._server is not None
+        assert not streams._server.is_serving()
+        assert not __import__("os").path.exists(streams._socket_dir)
+
+    asyncio.run(check())
+
+
+def test_supervisor_start_preserves_failure_when_cleanup_also_fails(
+    tmp_path, monkeypatch,
+):
+    """A second failure from finish() must not mask the original error."""
+    import os
+    startup_error = OSError("socket bind failed")
+    cleanup_error = OSError("cleanup failed")
+    original_finish = SupervisorStreams.finish
+
+    async def fail_bind(*args, **kwargs):
+        raise startup_error
+
+    async def cleanup_then_fail(self):
+        await original_finish(self)
+        raise cleanup_error
+
+    monkeypatch.setattr(asyncio, "start_unix_server", fail_bind)
+    monkeypatch.setattr(SupervisorStreams, "finish", cleanup_then_fail)
+
+    async def check():
+        streams = SupervisorStreams(tmp_path / "out", None)
+        with pytest.raises(OSError) as raised:
+            await streams.start()
+        assert raised.value is startup_error
+        assert raised.value.__cause__ is cleanup_error
+        assert streams._spools["out"].closed
+        assert not os.path.exists(streams._socket_dir)
+
+    asyncio.run(check())

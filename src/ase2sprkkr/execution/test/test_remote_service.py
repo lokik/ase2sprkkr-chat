@@ -601,3 +601,136 @@ def test_remote_cleanup_checks_collisions_before_deleting_any_output(tmp_path):
 
     assert stale.read_text() == "old"
     assert cache.read_text() == "restart"
+
+
+@pytest.mark.parametrize("failure", ("stream_start", "handshake", "startup_cleanup"))
+def test_supervisor_prelaunch_failure_publishes_durable_receipt_and_closes_fd(
+    tmp_path, monkeypatch, failure,
+):
+    import asyncio
+    import os
+    from ase2sprkkr.execution import remote_mailbox
+
+    monkeypatch.setenv("ASE2SPRKKR_REMOTE_STATE_DIR", str(tmp_path / "state"))
+    read_fd, write_fd = os.pipe()
+    receipt = "c" * 32
+    spec = {
+        "argv": ["this-command-must-not-launch"],
+        "directory": str(tmp_path),
+        "output_file": None, "error_file": None,
+        "receipt_id": receipt, "socket_fd": write_fd,
+        "detached": True,
+    }
+    if failure == "stream_start":
+        async def broken_start(_self):
+            raise OSError("failed to initialize socket")
+        monkeypatch.setattr(remote_process_worker.SupervisorStreams, "start", broken_start)
+    elif failure == "startup_cleanup":
+        original_finish = remote_process_worker.SupervisorStreams.finish
+
+        async def fail_socket_bind(*args, **kwargs):
+            raise OSError("socket bind failed")
+
+        async def cleanup_then_fail(self):
+            await original_finish(self)
+            raise OSError("cleanup failed")
+
+        monkeypatch.setattr(asyncio, "start_unix_server", fail_socket_bind)
+        monkeypatch.setattr(
+            remote_process_worker.SupervisorStreams, "finish", cleanup_then_fail,
+        )
+    else:
+        os.close(read_fd)
+        read_fd = None
+
+    try:
+        assert asyncio.run(remote_process_worker._run(spec)) == 127
+        if read_fd is not None:
+            with os.fdopen(read_fd, "rb") as reader:
+                assert reader.read() == b""
+            read_fd = None
+        with pytest.raises(OSError):
+            os.fstat(write_fd)
+        outcome = remote_mailbox.read_outcome(receipt)
+        assert outcome["state"] == RunState.FAILED.value
+        assert outcome["failure_phase"] == FailurePhase.LAUNCH.value
+        assert outcome["return_code"] == 127
+        assert "socket" in outcome["error"].lower() or "pipe" in outcome["error"].lower()
+        if failure == "startup_cleanup":
+            assert "socket bind failed" in outcome["error"]
+            assert "cleanup failed" in outcome["error"]
+    finally:
+        if read_fd is not None:
+            os.close(read_fd)
+
+
+
+@pytest.mark.parametrize("launch_failure", [False, True])
+def test_supervisor_stdin_close_failure_preserves_terminal_receipt(
+    tmp_path, monkeypatch, launch_failure,
+):
+    """A failing close() cannot suppress a previous launch error or receipt."""
+    import asyncio
+    import os
+    import sys
+    from ase2sprkkr.execution import remote_mailbox
+
+    original_input = tmp_path / "input"
+    original_input.write_bytes(b"input")
+    from builtins import open as builtin_open
+
+    class FailingInput:
+        def __init__(self):
+            self.stream = builtin_open(original_input, "rb")
+
+        def fileno(self):
+            return self.stream.fileno()
+
+        def close(self):
+            self.stream.close()
+            raise OSError("stdin close failed")
+
+    opened = []
+    def open_input(path, mode):
+        assert path == str(original_input)
+        assert mode == "rb"
+        obj = FailingInput()
+        opened.append(obj)
+        return obj
+
+    monkeypatch.setattr(remote_process_worker, "open", open_input, raising=False)
+    if launch_failure:
+        async def broken_spawn(*args, **kwargs):
+            raise FileNotFoundError("calculation executable missing")
+        monkeypatch.setattr(
+            remote_process_worker.asyncio, "create_subprocess_exec", broken_spawn,
+        )
+
+    monkeypatch.setenv("ASE2SPRKKR_REMOTE_STATE_DIR", str(tmp_path / "state"))
+    reader, writer = os.pipe()
+    receipt_id = "d" * 32 if launch_failure else "e" * 32
+    spec = {
+        "argv": [sys.executable, "-c", "pass"],
+        "directory": str(tmp_path),
+        "stdin": str(original_input),
+        "output_file": None, "error_file": None,
+        "receipt_id": receipt_id, "socket_fd": writer,
+        "detached": True,
+    }
+    try:
+        return_code = asyncio.run(remote_process_worker._run(spec))
+    finally:
+        with os.fdopen(reader, "rb") as pipe:
+            assert pipe.readline().endswith(b"/socket\n")
+    receipt = remote_mailbox.read_outcome(receipt_id)
+    assert opened and opened[0].stream.closed
+    assert receipt["state"] == RunState.FAILED.value
+    if launch_failure:
+        assert return_code == 127
+        assert receipt["failure_phase"] == FailurePhase.LAUNCH.value
+        assert "calculation executable missing" in receipt["error"]
+        assert "stdin close failed" not in receipt["error"]
+    else:
+        assert return_code == 0
+        assert receipt["failure_phase"] == FailurePhase.EXECUTION.value
+        assert "stdin close failed" in receipt["error"]
