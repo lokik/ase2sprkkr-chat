@@ -150,8 +150,8 @@ class FileMapping:
 
     local_root: str
     remote_root: str
-    input_sync: str = "changed"
-    output_sync: str = "changed"
+    input_sync: str = FileSyncPolicy.CHANGED.value
+    output_sync: str = FileSyncPolicy.CHANGED.value
 
     def __post_init__(self):
         import os
