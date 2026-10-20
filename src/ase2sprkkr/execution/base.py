@@ -508,6 +508,9 @@ class LaunchSpec:
 
 
 def _pathlike(value):
+    from ..input_parameters.task_definition import TaskFile
+    if isinstance(value, TaskFile):
+        return value
     if isinstance(value, os.PathLike):
         return os.fspath(value)
     return value
