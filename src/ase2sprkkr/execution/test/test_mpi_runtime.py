@@ -1,6 +1,8 @@
 import json
 from dataclasses import asdict
 
+import pytest
+
 from ...execution import mpi as mpi_runtime
 from ...execution.base import LaunchSpec
 
@@ -125,22 +127,17 @@ def test_explicit_mpi_command_does_not_probe_host(monkeypatch):
     )
 
 
-def test_process_count_is_materialized_for_mpirun(monkeypatch):
+@pytest.mark.parametrize(
+    ("launcher", "count_option"),
+    (("mpirun", "-np"), ("srun", "-n")),
+)
+def test_process_count_is_materialized_for_launcher(monkeypatch, launcher, count_option):
     monkeypatch.setattr(
-        mpi_runtime, "find_default_mpi_launcher", lambda: ("mpirun",)
+        mpi_runtime, "find_default_mpi_launcher", lambda: (launcher,),
     )
     spec = LaunchSpec.from_mpi(4).mpi
 
-    assert mpi_runtime.resolve_mpi_command(spec) == ("mpirun", "-np", "4")
-
-
-def test_process_count_is_materialized_for_srun(monkeypatch):
-    monkeypatch.setattr(
-        mpi_runtime, "find_default_mpi_launcher", lambda: ("srun",)
-    )
-    spec = LaunchSpec.from_mpi(4).mpi
-
-    assert mpi_runtime.resolve_mpi_command(spec) == ("srun", "-n", "4")
+    assert mpi_runtime.resolve_mpi_command(spec) == (launcher, count_option, "4")
 
 
 def test_resolver_rejects_unparsed_mpi_values():
