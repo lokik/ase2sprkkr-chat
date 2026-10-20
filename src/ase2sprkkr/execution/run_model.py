@@ -80,12 +80,12 @@ class FileEntry:
     remote_path: Optional[str] = None
     availability_state: Optional[str] = None
     availability_message: Optional[str] = None
-    source_pattern: Optional[str] = None
+    source: Optional[str] = None
 
     def __post_init__(self):
         import os
-        if self.source_pattern is not None:
-            object.__setattr__(self, "source_pattern", os.fspath(self.source_pattern))
+        if self.source is not None:
+            object.__setattr__(self, "source", os.fspath(self.source))
 
         for name in ("local_path", "remote_path"):
             value = getattr(self, name)
@@ -180,6 +180,9 @@ class FileManifest:
     input_versions: tuple[FileVersion, ...] = ()
     output_versions: tuple[FileVersion, ...] = ()
     captured_at: Optional[str] = None
+    # Original wildcard declarations are replaced by concrete members.
+    # Errors belong to the unresolved *pattern*, not to a nonexistent file.
+    resolution_errors: tuple[tuple[str, str], ...] = ()
 
     @classmethod
     def from_spec(cls, spec):
@@ -213,6 +216,10 @@ class FileManifest:
         ).initialize_availability()
 
     def __post_init__(self):
+        object.__setattr__(
+            self, "resolution_errors",
+            tuple(tuple(item) for item in self.resolution_errors),
+        )
         for name, cls in (("inputs", FileEntry), ("outputs", FileEntry), ("caches", CacheEntry)):
             items = getattr(self, name)
             object.__setattr__(
@@ -295,13 +302,12 @@ class FileManifest:
 
     def with_file_availability(
         self, local_path, state, message=None, *,
-        remote_path=None, kind="output", source_pattern=None,
+        remote_path=None, kind="output", source=None,
     ):
-        """Update one artifact, adding each wildcard match as it is discovered.
+        """Update one file, recording availability or a transfer failure.
 
-        The pattern declaration retains its own independent status. A child's
-        source_pattern identifies the declaration, including after restart.
-        Duplicate stream/output declarations of one path are updated together.
+        Materialized files have an optional source; unresolved pattern
+        failures are stored separately in resolution_errors.
         """
         import os
         path = os.fspath(local_path)
@@ -317,13 +323,23 @@ class FileManifest:
         file = FileEntry(
             local_path=path, remote_path=remote_path,
             availability_state=state, availability_message=message,
-            source_pattern=source_pattern,
+            source=source,
         )
         if kind == "output":
             return replace(self, outputs=(*self.outputs, file))
         if kind == "cache":
             return replace(self, caches=(*self.caches, CacheEntry(file)))
         raise ValueError(f"Unknown artifact kind: {kind!r}")
+
+    def has_wildcards(self):
+        """Whether any declared output/cache path still needs materializing."""
+        from .transport import has_file_magic
+        return any(
+            entry is not None and
+            has_file_magic(entry.remote_path or entry.local_path)
+            for entry in (*self.outputs, *(cache.file for cache in self.caches))
+            if entry.local_path is not None
+        )
 
     @property
     def input_file(self):
