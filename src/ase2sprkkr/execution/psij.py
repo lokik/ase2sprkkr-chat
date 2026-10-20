@@ -493,9 +493,7 @@ class PsijRunner:
         return self.wait()
 
     async def run_async(self):
-        if self._thread is None:
-            self.start()
-        return await asyncio.to_thread(self.wait)
+        return await asyncio.to_thread(self.run)
 
     def cancel(self):
         if self._thread is None and not self._attached:

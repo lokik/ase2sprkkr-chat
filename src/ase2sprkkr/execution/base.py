@@ -331,20 +331,9 @@ class ResourceOwnedRunner:
         return self.wait()
 
     async def run_async(self):
-        self._raise_if_cancelled_before_submit()
-        if self.state == RunState.NEW:
-            self.submit()
-        try:
-            run_async = getattr(self._runner, "run_async", None)
-            if run_async is not None:
-                result = await run_async()
-            else:
-                result = await asyncio.to_thread(self._runner.wait)
-        except BaseException:
-            self._release_after_failure()
-            raise
-        self._resources.close()
-        return result
+        # Submission may perform blocking I/O. Preserve the synchronous
+        # run() contract and its resource/exception handling off the event loop.
+        return await asyncio.to_thread(self.run)
 
     def cancel(self):
         self._cancel_requested.set()

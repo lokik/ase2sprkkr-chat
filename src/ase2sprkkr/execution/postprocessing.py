@@ -210,9 +210,7 @@ class PostprocessingRunner:
         return self.wait()
 
     async def run_async(self):
-        if not self._started:
-            self.start()
-        return await asyncio.to_thread(self.wait)
+        return await asyncio.to_thread(self.run)
 
     def cancel(self):
         return self._runner.cancel()
