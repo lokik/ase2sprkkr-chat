@@ -905,3 +905,52 @@ def test_psij_follow_cancellation_detaches_without_cancelling_job(
         assert calls == ["observing", "detached"]
 
     asyncio.run(check())
+
+
+
+def test_psij_follow_unknown_callback_ends_observation_without_waiting(
+    tmp_path, monkeypatch,
+):
+    import asyncio
+    from types import SimpleNamespace
+
+    handle, _ = _psij_handle(tmp_path)
+    handle["backend"] = "pbs"
+    handle["url"] = "ssh://remote"
+    remote_id = remote_service._encode_handle(handle)
+    pending = SimpleNamespace(state=SimpleNamespace(name="ACTIVE"), exit_code=None)
+    unknown = SimpleNamespace(state=SimpleNamespace(name="UNKNOWN"), exit_code=None)
+    received = []
+    class Job:
+        status = pending
+        def wait(self):
+            raise AssertionError("No blocking wait permitted")
+        def cancel(self):
+            raise AssertionError("UNKNOWN observation must not cancel job")
+    class Backend:
+        def attach_native_job(self, native_id):
+            return Job()
+        def _observe_job(self, job, callback):
+            received.append(("observe", callback))
+            return lambda: received.append(("detach", None))
+    monkeypatch.setattr(remote_service, "_psij_executor", lambda _: Backend())
+    monkeypatch.setattr(remote_service, "status_remote",
+                        lambda _: pytest.fail("PBS must not invoke Slurm fallback"))
+
+    async def check():
+        task = asyncio.create_task(remote_service._follow_scheduler_async(
+            remote_id, {"out": io.BytesIO(), "err": io.BytesIO()},
+            {"out": None, "err": None}, {"out": 0, "err": 0}, 0.01,
+        ))
+        for _ in range(30):
+            if received:
+                break
+            await asyncio.sleep(0)
+        assert received and received[0][0] == "observe"
+        received[0][1](unknown)
+        return await asyncio.wait_for(task, 2)
+
+    result = asyncio.run(check())
+    assert result["state"] == RunState.UNKNOWN.value
+    assert result["return_code"] is None
+    assert [x[0] for x in received] == ["observe", "detach"]

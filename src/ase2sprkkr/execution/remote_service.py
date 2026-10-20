@@ -521,8 +521,12 @@ async def _follow_scheduler_async(remote_id, streams, paths, offsets, poll_inter
 
     def receive(native):
         def publish():
-            if (not completed.done()
-                    and _psij_state(native, attached=True) in _FINAL_STATES):
+            # UNKNOWN ends this observation, not the underlying scheduler
+            # job. Returning it allows a later attach to try again.
+            state = _psij_state(native, attached=True)
+            if not completed.done() and (
+                state in _FINAL_STATES or state == RunState.UNKNOWN
+            ):
                 completed.set_result(native)
 
         # PSI/J may invoke callbacks from a native worker thread, even during
