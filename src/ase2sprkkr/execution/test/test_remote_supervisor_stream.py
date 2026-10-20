@@ -128,18 +128,30 @@ def test_attached_supervisor_detects_session_disconnect(tmp_path):
     asyncio.run(run())
 
 
-def test_detached_supervisor_does_not_cancel_on_disconnect(tmp_path):
+@pytest.mark.parametrize("persist_streams", (False, True))
+def test_detached_supervisor_releases_silent_disconnected_followers(
+    tmp_path, persist_streams,
+):
     async def run():
-        streams = SupervisorStreams(tmp_path / "out", tmp_path / "err", detached=True)
+        out = tmp_path / "out" if persist_streams else None
+        err = tmp_path / "err" if persist_streams else None
+        streams = SupervisorStreams(out, err, detached=True)
         await streams.start()
         try:
-            reader, writer = await asyncio.open_unix_connection(streams.socket_path)
-            writer.write(b'{"command":"follow","offsets":{"out":0,"err":0}}\n')
-            await writer.drain()
-            writer.close()
-            await writer.wait_closed()
-            await asyncio.sleep(0.05)
-            assert not streams.disconnected.is_set()
+            for _ in range(3):
+                reader, writer = await asyncio.open_unix_connection(streams.socket_path)
+                writer.write(b'{"command":"follow","offsets":{"out":0,"err":0}}\n')
+                await writer.drain()
+                # The handshake proves the server registered the follower.
+                assert await reader.readexactly(8) == b"A2SFOLL1"
+                assert len(streams._followers) == 1
+                follower = next(iter(streams._followers))
+                writer.close()
+                await writer.wait_closed()
+                # No output is published: EOF alone must release the follower.
+                await asyncio.wait_for(follower.done.wait(), 2)
+                assert not streams._followers
+                assert not streams.disconnected.is_set()
             streams.terminal({"state": "finished", "return_code": 0})
         finally:
             await streams.finish()
