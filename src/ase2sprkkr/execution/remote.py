@@ -25,6 +25,7 @@ from .base import (
 from ..common.async_utils import run_coro_sync as _run_sync
 from ..common.file_versions import file_digest
 from .transport import expand_local_files, has_file_magic
+from .local_process import pump_stream
 
 
 class FileSyncPolicy(str, Enum):
@@ -587,12 +588,11 @@ class RemoteRunner:
         }
 
     async def _pump(self, source, kind):
-        while True:
-            data = await source.read(65536)
-            if not data:
-                return
+        def deliver(data):
             self._write_output(data, kind)
             self._output_observers.emit_bytes(data, kind)
+
+        await pump_stream(source, deliver)
 
     async def _monitor(self):
         stdout_task = stderr_task = None

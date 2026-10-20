@@ -688,3 +688,55 @@ def test_remote_argv_reuses_staged_path_identity(tmp_path):
         "program", "/remote/work/input.dat", "/remote/work/input.dat",
         "--verbose", "./missing.dat",
     ]
+
+
+@pytest.mark.parametrize("kind", ("out", "err"))
+def test_remote_stream_pump_preserves_binary_chunks_and_order(kind):
+    """Exercise the actual _pump() used by the monitor, not an inline replica."""
+    from ..remote import RemoteRunner
+
+    observed = []
+    runner = object.__new__(RemoteRunner)
+    runner._write_output = lambda data, channel: observed.append(("file", channel, data))
+    runner._output_observers = SimpleNamespace(
+        emit_bytes=lambda data, channel: observed.append(("observer", channel, data)),
+    )
+
+    async def check():
+        source = asyncio.StreamReader()
+        source.feed_data(b"A" * 65536 + bytes((0, 255)))
+        source.feed_eof()
+        await runner._pump(source, kind)
+
+    asyncio.run(check())
+    assert observed == [
+        ("file", kind, b"A" * 65536),
+        ("observer", kind, b"A" * 65536),
+        ("file", kind, bytes((0, 255))),
+        ("observer", kind, bytes((0, 255))),
+    ]
+
+
+def test_remote_stream_pump_preserves_write_error_without_notifying():
+    from ..remote import RemoteRunner
+
+    notifications = []
+    runner = object.__new__(RemoteRunner)
+
+    def fail_write(data, kind):
+        raise OSError("cannot write FOLLOW output")
+
+    runner._write_output = fail_write
+    runner._output_observers = SimpleNamespace(
+        emit_bytes=lambda data, kind: notifications.append((data, kind)),
+    )
+
+    async def check():
+        source = asyncio.StreamReader()
+        source.feed_data(b"data")
+        source.feed_eof()
+        await runner._pump(source, "out")
+
+    with pytest.raises(OSError, match="cannot write FOLLOW output"):
+        asyncio.run(check())
+    assert not notifications
