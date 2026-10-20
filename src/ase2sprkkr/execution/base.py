@@ -104,7 +104,11 @@ def finish_monitor(runner):
 
 
 def wait_for_monitor(runner):
-    """Propagate execution errors before callback errors after completion."""
+    """Await a started monitor; propagate execution errors before callback errors."""
+    if runner._thread is None:
+        if runner._state == RunState.NEW:
+            raise RuntimeError("Run has not been submitted")
+        raise RuntimeError("Attached run has not been started")
     runner._done.wait()
     if runner._exception is not None:
         raise runner._exception
