@@ -276,7 +276,9 @@ def test_ssh_batch_tar_pipeline_drains_stderr_during_copy():
 async def _wait_for_command_pid(path):
     for _ in range(500):
         if path.exists():
-            return int(path.read_text())
+            contents = path.read_text().strip()
+            if contents:
+                return int(contents)
         await asyncio.sleep(0.01)
     raise AssertionError("Subprocess never reported its PID")
 
