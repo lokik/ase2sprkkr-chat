@@ -4,7 +4,8 @@ import pytest
 
 from ase2sprkkr.execution.endpoint import ExecutorEndpoint
 from ase2sprkkr.execution.run_model import (
-    CacheEntry, Execution, FileEntry, FileManifest, WorkingDirectory,
+    ArtifactAvailabilityState, CacheEntry, Execution, FileEntry, FileManifest,
+    WorkingDirectory,
 )
 
 
@@ -304,3 +305,31 @@ def test_legacy_duplicate_stderr_declaration_is_updated_together():
     assert updated.stderr.availability_state == "available"
     assert updated.outputs[0].availability_state == "available"
     assert updated.output_files == (path,)
+
+
+
+def test_availability_enum_is_shared_between_model_and_manager():
+    from ase2sprkkr.execution import ArtifactAvailabilityState
+    from ase2sprkkr.execution.manager import ArtifactAvailabilityState as ManagerState
+    from ase2sprkkr.execution.run_model import ArtifactAvailabilityState as ModelState
+
+    assert ModelState is ManagerState is ArtifactAvailabilityState
+    assert {state.value for state in ModelState} == {
+        "pending", "available", "failed", "skipped",
+    }
+
+
+@pytest.mark.parametrize("state", list(ArtifactAvailabilityState))
+def test_file_entry_accepts_enum_but_serializes_status_as_string(state):
+    from ase2sprkkr.execution.run_model import ArtifactAvailabilityState
+    entry = FileEntry("/local/file", availability_state=state)
+    assert type(entry.availability_state) is str
+    assert entry.availability_state == state.value
+    assert asdict(entry)["availability_state"] == state.value
+    assert FileEntry(**asdict(entry)) == entry
+
+    with pytest.raises(ValueError, match="availability"):
+        FileEntry("/local/file", availability_state="new-state")
+    with pytest.raises(ValueError, match="error belongs"):
+        FileEntry("/local/file", availability_state=ArtifactAvailabilityState.PENDING,
+                  availability_message="error")
