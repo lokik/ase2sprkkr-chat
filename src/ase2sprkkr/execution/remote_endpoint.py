@@ -7,6 +7,7 @@ import json
 import os
 import posixpath
 import warnings
+from contextlib import ExitStack
 from dataclasses import asdict, replace
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
@@ -340,56 +341,53 @@ class _RemoteRunContext:
                     local = await self.unmap_path(remote)
                     cache_targets[os.fspath(local)] = (remote, before)
 
-        output_file = None if output_local is None else open(output_local, "ab")
-        if error_local is None:
-            error_file = None
-        elif error_local == output_local:
-            error_file = output_file
-        else:
-            error_file = open(error_local, "ab")
-        try:
-            spec = ExecutionSpec(
-                argv=(),
-                input_file=None if input_local is None else os.fspath(input_local),
-                output_file=output_file,
-                error_file=error_file,
-                directory=os.fspath(local_directory),
-                launch=LaunchSpec(
-                    local_root=os.fspath(self.local_root),
-                    remote_root=self.remote_root,
-                    input_sync=self.input_files.value,
-                    output_sync=self.output_files.value,
-                ),
-            )
-            phase = status.get("failure_phase")
-            runner = _RemoteRun(
-                self,
-                spec,
-                callback=callback,
-                output_listener=output_listener,
-                start=False,
-                backend_id=execution.backend_id,
-                remote_directory=execution.directory.remote,
-                files=run.files,
-                state=_client_status_state(status),
-                output_targets=output_targets,
-                cache_targets=cache_targets,
-                output_patterns=tuple(output_patterns),
-                cache_patterns=tuple(cache_patterns),
-                cache_before=cache_before,
-            )
-            runner._return_code = status.get("return_code")
-            runner.result.return_code = runner._return_code
-            runner._failure_phase = None if phase is None else FailurePhase(phase)
-            runner._failure_message = status.get("error")
-            if start:
-                runner.start()
-            return runner
-        except BaseException:
-            for file in (output_file, error_file):
-                if file is not None and not file.closed:
-                    file.close()
-            raise
+        with ExitStack() as streams:
+            output_file = (None if output_local is None else
+                           streams.enter_context(open(output_local, "ab")))
+            if error_local is None:
+                error_file = None
+            elif error_local == output_local:
+                error_file = output_file
+            else:
+                error_file = streams.enter_context(open(error_local, "ab"))
+                spec = ExecutionSpec(
+                    argv=(),
+                    input_file=None if input_local is None else os.fspath(input_local),
+                    output_file=output_file,
+                    error_file=error_file,
+                    directory=os.fspath(local_directory),
+                    launch=LaunchSpec(
+                        local_root=os.fspath(self.local_root),
+                        remote_root=self.remote_root,
+                        input_sync=self.input_files.value,
+                        output_sync=self.output_files.value,
+                    ),
+                )
+                phase = status.get("failure_phase")
+                runner = _RemoteRun(
+                    self,
+                    spec,
+                    callback=callback,
+                    output_listener=output_listener,
+                    start=False,
+                    backend_id=execution.backend_id,
+                    remote_directory=execution.directory.remote,
+                    files=run.files,
+                    state=_client_status_state(status),
+                    output_targets=output_targets,
+                    cache_targets=cache_targets,
+                    output_patterns=tuple(output_patterns),
+                    cache_patterns=tuple(cache_patterns),
+                    cache_before=cache_before,
+                )
+                runner._return_code = status.get("return_code")
+                runner.result.return_code = runner._return_code
+                runner._failure_phase = None if phase is None else FailurePhase(phase)
+                runner._failure_message = status.get("error")
+                if start:
+                    runner.start()
+                streams.pop_all()  # Runner owns the streams after successful attach.
+                return runner
 
 
 class RemoteEndpointExecutor(Executor):
