@@ -519,14 +519,18 @@ async def _follow_scheduler_async(remote_id, streams, paths, offsets, poll_inter
     loop = asyncio.get_running_loop()
     completed = loop.create_future()
 
-    def receive(native):
+    def receive(native, *, initial=False):
         def publish():
-            # UNKNOWN ends this observation, not the underlying scheduler
-            # job. Returning it allows a later attach to try again.
             state = _psij_state(native, attached=True)
-            if not completed.done() and (
-                state in _FINAL_STATES or state == RunState.UNKNOWN
-            ):
+            native_name = getattr(getattr(native, "state", None), "name", None)
+            # An attached job starts at NEW while its scheduler state loads.
+            # Only an explicit later UNKNOWN callback ends the observation.
+            # The job remains eligible for another attach in that case.
+            uncertain = (
+                not initial and native_name == "UNKNOWN"
+                and state == RunState.UNKNOWN
+            )
+            if not completed.done() and (state in _FINAL_STATES or uncertain):
                 completed.set_result(native)
 
         # PSI/J may invoke callbacks from a native worker thread, even during
@@ -554,7 +558,7 @@ async def _follow_scheduler_async(remote_id, streams, paths, offsets, poll_inter
 
     try:
         # Handles a job already terminal before/while registering the callback.
-        receive(job.status)
+        receive(job.status, initial=True)
 
         async def terminal_status():
             return await terminal(completed.result()) if completed.done() else None
