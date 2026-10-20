@@ -15,7 +15,7 @@ from .base import (
     RunState, RunStatus, request_cancellation, start_monitor,
     close_output_files, finish_monitor, wait_for_monitor, file_path,
 )
-from .file_availability import discover_local_files
+from .local_file_handler import LocalFileHandler
 from .remote_service import (
     _decode_handle, cancel_remote, follow_remote, status_remote, submit_remote,
 )
@@ -54,7 +54,7 @@ def local_manifest(files, status):
 
     if status.failure_phase in (FailurePhase.LAUNCH, FailurePhase.SUBMISSION):
         return files
-    return discover_local_files(files, include_streams=False)
+    return LocalFileHandler.collect(files, include_streams=False)
 
 
 def _local_status_from_facts(backend_id, facts, files=None):
