@@ -159,6 +159,27 @@ def test_remote_executor_local_transport_streams_output(tmp_path):
     assert Path(runner.execution.directory.remote) == remote_root
 
 
+def test_remote_input_file_and_stdin_staged_only_once(tmp_path):
+    transport = _SpyTransport()
+    executor, spec, _, remote_root = _text_run(tmp_path, transport)
+    runner = executor.create_run(spec)
+
+    async def prepare():
+        directory = await runner.executor.map_directory(spec.directory)
+        return await runner._prepare_request("one-run", directory)
+
+    try:
+        request = asyncio.run(prepare())
+        target = remote_root / "calculation" / "input.txt"
+        assert request["input_file"] == str(target)
+        assert request["stdin"] == str(target)
+        assert request["input_files"] == [str(target)]
+        assert [destination for _, destination in transport.put_files] == [target]
+    finally:
+        spec.input_file.close()
+        spec.output_file.close()
+
+
 def test_remote_executor_stages_declared_input_files(tmp_path):
     workdir = tmp_path / "calculation"
     workdir.mkdir()
