@@ -7,46 +7,31 @@ from ...execution import mpi as mpi_runtime
 from ...execution.base import LaunchSpec
 
 
-def test_slurm_allocation_prefers_srun(monkeypatch):
-    monkeypatch.setenv("SLURM_NODELIST", "node[01-02]")
+@pytest.mark.parametrize(
+    "slurm, available, expected, probed",
+    [
+        (True, "srun", ("srun",), ("srun",)),
+        (True, "mpirun", ("mpirun",), ("srun", "mpirun")),
+        (False, "mpiexec", ("mpiexec",),
+         ("mpirun", "mpirun.opmpirun", "mpirun.mpich", "mpiexec")),
+    ],
+)
+def test_mpi_launcher_selection_and_probe_order(
+    monkeypatch, slurm, available, expected, probed,
+):
+    if slurm:
+        monkeypatch.setenv("SLURM_NODELIST", "node[01-02]")
+    else:
+        monkeypatch.delenv("SLURM_NODELIST", raising=False)
     seen = []
 
     def which(name):
         seen.append(name)
-        return f"/usr/bin/{name}"
+        return f"/usr/bin/{name}" if name == available else None
 
     monkeypatch.setattr(mpi_runtime.shutil, "which", which)
-
-    assert mpi_runtime.find_default_mpi_launcher() == ("srun",)
-    assert seen == ["srun"]
-
-
-def test_slurm_without_srun_falls_back_to_other_launchers(monkeypatch):
-    monkeypatch.setenv("SLURM_NODELIST", "node[01-02]")
-    seen = []
-
-    def which(name):
-        seen.append(name)
-        return "/usr/bin/mpirun" if name == "mpirun" else None
-
-    monkeypatch.setattr(mpi_runtime.shutil, "which", which)
-
-    assert mpi_runtime.find_default_mpi_launcher() == ("mpirun",)
-    assert seen == ["srun", "mpirun"]
-
-
-def test_default_launcher_uses_legacy_probe_order(monkeypatch):
-    monkeypatch.delenv("SLURM_NODELIST", raising=False)
-    seen = []
-
-    def which(name):
-        seen.append(name)
-        return "/usr/bin/mpiexec" if name == "mpiexec" else None
-
-    monkeypatch.setattr(mpi_runtime.shutil, "which", which)
-
-    assert mpi_runtime.find_default_mpi_launcher() == ("mpiexec",)
-    assert seen == ["mpirun", "mpirun.opmpirun", "mpirun.mpich", "mpiexec"]
+    assert mpi_runtime.find_default_mpi_launcher() == expected
+    assert seen == list(probed)
 
 
 def test_mpi_spec_distinguishes_required_auto_and_explicit_launchers():
@@ -93,21 +78,20 @@ def test_auto_disables_mpi_when_only_one_cpu_is_available(monkeypatch):
     assert mpi_runtime.resolve_mpi_command(spec) is None
 
 
-def test_auto_without_sched_getaffinity_probes_host(monkeypatch):
-    monkeypatch.delattr(mpi_runtime.os, "sched_getaffinity", raising=False)
+@pytest.mark.parametrize(
+    "affinity",
+    [None, {2, 7}],
+    ids=("no-sched-getaffinity", "multiple-cpus"),
+)
+def test_auto_mpi_probes_host_when_cpu_count_is_not_one(monkeypatch, affinity):
+    if affinity is None:
+        monkeypatch.delattr(mpi_runtime.os, "sched_getaffinity", raising=False)
+    else:
+        monkeypatch.setattr(
+            mpi_runtime.os, "sched_getaffinity", lambda _pid: affinity,
+        )
     monkeypatch.setattr(
-        mpi_runtime, "find_default_mpi_launcher", lambda: ("mpirun",)
-    )
-
-    assert mpi_runtime.resolve_mpi_command(LaunchSpec.from_mpi("auto").mpi) == (
-        "mpirun",
-    )
-
-
-def test_auto_probes_host_when_multiple_cpus_are_available(monkeypatch):
-    monkeypatch.setattr(mpi_runtime.os, "sched_getaffinity", lambda _pid: {2, 7})
-    monkeypatch.setattr(
-        mpi_runtime, "find_default_mpi_launcher", lambda: ("mpirun",)
+        mpi_runtime, "find_default_mpi_launcher", lambda: ("mpirun",),
     )
     spec = LaunchSpec.from_mpi("auto").mpi
 

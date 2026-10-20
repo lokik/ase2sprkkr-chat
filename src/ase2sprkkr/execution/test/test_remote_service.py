@@ -165,41 +165,31 @@ def test_slurm_status_is_native_and_does_not_use_psij_job_cache(tmp_path, monkey
     assert status["failure_phase"] is None
 
 
-def test_slurm_status_falls_back_to_exact_accounting_record(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "accounting_state, code, expected_state, expected_phase",
+    [
+        ("COMPLETED", 0, RunState.FINISHED, None),
+        ("FAILED", 7, RunState.FAILED, FailurePhase.EXECUTION),
+        ("COMPLETED", 7, RunState.FAILED, FailurePhase.EXECUTION),
+    ],
+)
+def test_slurm_accounting_status_maps_state_and_exit_code(
+    tmp_path, monkeypatch, accounting_state, code, expected_state, expected_phase,
+):
     _, remote_id = _psij_handle(tmp_path)
     monkeypatch.setattr(psij, "_slurm_details", lambda _native_id: {})
-    monkeypatch.setattr(psij, "_scheduler_output", lambda argv: "42|COMPLETED|0:0|\n")
-
-    status = remote_service.status_remote(remote_id)
-
-    assert status["state"] == RunState.FINISHED.value
-    assert status["return_code"] == 0
-    assert status["failure_phase"] is None
-
-
-def test_slurm_failed_accounting_record_is_execution_failure(tmp_path, monkeypatch):
-    _, remote_id = _psij_handle(tmp_path)
-    monkeypatch.setattr(psij, "_slurm_details", lambda _native_id: {})
-    monkeypatch.setattr(psij, "_scheduler_output", lambda argv: "42|FAILED|7:0|\n")
-
-    status = remote_service.status_remote(remote_id)
-
-    assert status["state"] == RunState.FAILED.value
-    assert status["return_code"] == 7
-    assert status["failure_phase"] == FailurePhase.EXECUTION.value
-
-
-
-def test_slurm_completed_with_nonzero_exit_is_failed(tmp_path, monkeypatch):
-    _, remote_id = _psij_handle(tmp_path)
-    monkeypatch.setattr(psij, "_slurm_details", lambda _id: {})
     monkeypatch.setattr(
-        psij, "_scheduler_output", lambda argv: "42|COMPLETED|7:0|\n",
+        psij, "_scheduler_output",
+        lambda argv: f"42|{accounting_state}|{code}:0|\\n".replace("\\n", "\n"),
     )
+
     status = remote_service.status_remote(remote_id)
-    assert status["state"] == RunState.FAILED.value
-    assert status["return_code"] == 7
-    assert status["failure_phase"] == FailurePhase.EXECUTION.value
+
+    assert status["state"] == expected_state.value
+    assert status["return_code"] == code
+    assert status["failure_phase"] == (
+        None if expected_phase is None else expected_phase.value
+    )
 
 
 def test_psij_cancellation_does_not_invent_terminal_state(monkeypatch, tmp_path):
