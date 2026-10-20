@@ -24,6 +24,7 @@ from .base import (
 )
 from ..common.async_utils import run_coro_sync as _run_sync
 from ..common.file_versions import file_digest
+from .local_process import pump_stream
 from .transport import expand_local_files, has_file_magic
 
 
@@ -586,13 +587,10 @@ class RemoteRunner:
             "input_files": list(used.keys()),
         }
 
-    async def _pump(self, source, kind):
-        while True:
-            data = await source.read(65536)
-            if not data:
-                return
-            self._write_output(data, kind)
-            self._output_observers.emit_bytes(data, kind)
+    def _forward_follow_chunk(self, data, kind):
+        """Persist FOLLOW bytes before notifying the output observers."""
+        self._write_output(data, kind)
+        self._output_observers.emit_bytes(data, kind)
 
     async def _monitor(self):
         stdout_task = stderr_task = None
@@ -620,10 +618,16 @@ class RemoteRunner:
                 self._failure_message = str(exc)
                 return self.result
             stdout_task = asyncio.create_task(
-                self._pump(self._follow_process.stdout, "out")
+                pump_stream(
+                    self._follow_process.stdout,
+                    lambda data: self._forward_follow_chunk(data, "out"),
+                )
             )
             stderr_task = asyncio.create_task(
-                self._pump(self._follow_process.stderr, "err")
+                pump_stream(
+                    self._follow_process.stderr,
+                    lambda data: self._forward_follow_chunk(data, "err"),
+                )
             )
             stream_error = None
             try:
