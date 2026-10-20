@@ -209,3 +209,46 @@ def test_cancel_unstarted_run_releases_resources():
     assert runner.state == RunState.CANCELLED
     assert resources.closed
     assert input_file.closed
+
+
+def test_uncertain_submit_keeps_resources_and_prevents_resubmit():
+    """A lost submit reply is not proof that the backend rejected the job."""
+    input_file = io.BytesIO(b"input")
+    resources = ExecutionResources(input_file)
+    attempts = []
+
+    class AmbiguousRunner(_Runner):
+        def submit(self):
+            attempts.append("submitted")
+            raise ConnectionError("submit reply lost")
+
+        def cancel(self):
+            attempts.append("cancel requested")
+
+    runner = ResourceOwnedRunner(AmbiguousRunner(), resources)
+    with pytest.raises(ConnectionError, match="reply lost"):
+        runner.submit()
+    assert not resources.closed
+    assert not input_file.closed
+
+    with pytest.raises(RuntimeError, match="submission uncertain"):
+        runner.close()
+    with pytest.raises(RuntimeError, match="Submission outcome is uncertain"):
+        runner.run()
+    assert attempts == ["submitted"]
+
+    runner.cancel()
+    assert attempts == ["submitted", "cancel requested"]
+    assert not resources.closed
+
+
+def test_certain_submit_failure_still_releases_resources():
+    input_file = io.BytesIO(b"input")
+    resources = ExecutionResources(input_file)
+    runner = ResourceOwnedRunner(
+        _Runner(submit_error=SubmissionNotStarted("not launched")), resources,
+    )
+    with pytest.raises(SubmissionNotStarted, match="not launched"):
+        runner.submit()
+    assert resources.closed
+    assert input_file.closed
