@@ -39,13 +39,7 @@ class _Executor:
 
 
 class _GateRunner(RemoteRunner):
-    async def _sync_output_files(self, required):
-        self.executor.sync_calls += 1
-        await super()._sync_output_files(required)
-
-    async def _sync_cache_files(self):
-        self.executor.sync_calls += 1
-        await super()._sync_cache_files()
+    pass
 
 
 def _run(tmp_path, state, *, original=b"old\n"):
@@ -68,6 +62,13 @@ def _run(tmp_path, state, *, original=b"old\n"):
         ).initialize_availability(),
         state=RunState.RUNNING,
     )
+    original = runner.file_handler.collect
+
+    async def counting_collect(*args, **kwargs):
+        executor.sync_calls += 2
+        return await original(*args, **kwargs)
+
+    runner.file_handler.collect = counting_collect
     return runner, executor, destination, output
 
 
@@ -104,7 +105,9 @@ async def _unavailable_output(required):
 
 def test_successful_backend_with_failed_download_fails_run(tmp_path):
     runner, executor, destination, output = _run(tmp_path, RunState.FINISHED)
-    runner._sync_output_files = _unavailable_output
+    async def fail_collect(*args, **kwargs):
+        return args[1], OSError("remote output could not be downloaded")
+    runner.file_handler.collect = fail_collect
 
     with pytest.raises(OSError, match="could not be downloaded"):
         asyncio.run(runner._monitor())
@@ -120,7 +123,9 @@ def test_successful_backend_with_failed_download_fails_run(tmp_path):
 
 def test_failed_backend_keeps_execution_failure_when_diagnostics_cannot_download(tmp_path):
     runner, executor, destination, output = _run(tmp_path, RunState.FAILED)
-    runner._sync_output_files = _unavailable_output
+    async def fail_collect(*args, **kwargs):
+        return args[1], OSError("remote output could not be downloaded")
+    runner.file_handler.collect = fail_collect
 
     async def failed_status(*_args):
         return {
@@ -145,7 +150,9 @@ def test_failed_backend_keeps_execution_failure_when_diagnostics_cannot_download
 
 def test_cancelled_backend_survives_diagnostic_download_failure(tmp_path):
     runner, _, destination, _ = _run(tmp_path, RunState.CANCELLED)
-    runner._sync_output_files = _unavailable_output
+    async def fail_collect(*args, **kwargs):
+        return args[1], OSError("remote output could not be downloaded")
+    runner.file_handler.collect = fail_collect
     asyncio.run(runner._monitor())
     assert runner.state == RunState.CANCELLED
     assert runner.failure_phase is None
