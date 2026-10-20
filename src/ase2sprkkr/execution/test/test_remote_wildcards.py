@@ -1,5 +1,6 @@
 from ase2sprkkr.input_parameters.task_definition import TaskFile
 import asyncio
+import pytest
 from pathlib import Path
 
 from ..base import SubmissionNotStarted
@@ -203,3 +204,60 @@ def test_optional_outputs_with_absent_required_output_still_fail(tmp_path):
     result_runner = _processed_run(executor, spec)
     result_runner.run()
     assert result_runner.state.value == "failed"
+
+
+@pytest.mark.parametrize("optional_first", [True, False])
+def test_conflicting_output_declarations_are_required(tmp_path, optional_first):
+    """A required declaration takes precedence regardless of declaration order."""
+    from ..base import FailurePhase, RunState
+    workdir = tmp_path / "local" / "calculation"
+    maybe = TaskFile(workdir / "missing.dat", optional=True)
+    mandatory = str(workdir / "missing.dat")
+    declared = (maybe, mandatory) if optional_first else (mandatory, maybe)
+    executor, spec, _, _ = _text_run(
+        tmp_path, declared_output_files=declared, code="print('done')",
+    )
+    runner = _processed_run(executor, spec)
+    runner.run()
+    assert runner.state == RunState.FAILED
+    assert runner.failure_phase == FailurePhase.DOWNLOAD
+
+
+@pytest.mark.parametrize("optional_first", [True, False])
+def test_conflicting_input_declarations_are_required(tmp_path, optional_first):
+    """Missing mandatory inputs cannot be hidden behind optional declarations."""
+    workdir = tmp_path / "local" / "calculation"
+    maybe = TaskFile(workdir / "missing.pot", optional=True)
+    mandatory = str(workdir / "missing.pot")
+    declared = (maybe, mandatory) if optional_first else (mandatory, maybe)
+    executor, spec, _, _ = _text_run(
+        tmp_path, declared_input_files=declared,
+    )
+    with pytest.raises(SubmissionNotStarted, match="neither locally nor remotely"):
+        _processed_run(executor, spec).run()
+
+
+@pytest.mark.parametrize("optional_first", [True, False])
+def test_manifest_deduplicates_normalized_paths_and_merges_requirements(
+    tmp_path, optional_first,
+):
+    from ..base import ExecutionSpec
+    from ..run_model import FileManifest
+
+    filename = tmp_path / "example.dat"
+    optional = TaskFile(filename, optional=True)
+    mandatory = str(filename)
+    declarations = (optional, mandatory) if optional_first else (mandatory, optional)
+    spec = ExecutionSpec(
+        argv=("true",), input_file=tmp_path / "primary.inp",
+        output_file=tmp_path / "stdout.out", directory=str(tmp_path),
+        input_files=(TaskFile(tmp_path / "primary.inp", optional=True), *declarations),
+        output_files=(*declarations, filename),
+    )
+    manifest = FileManifest.from_spec(spec)
+    assert [(entry.local_path, entry.optional) for entry in manifest.inputs] == [
+        (str(tmp_path / "primary.inp"), False), (str(filename), False),
+    ]
+    assert [(entry.local_path, entry.optional) for entry in manifest.outputs] == [
+        (str(filename), False),
+    ]

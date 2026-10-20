@@ -16,6 +16,7 @@ from .base import (
     OutputObservers,
     close_output_files,
     file_path,
+    declared_file_paths,
     finish_monitor,
     wait_for_monitor,
     RunState,
@@ -306,12 +307,10 @@ class RemoteRunner:
 
     def _unique_declared_paths(self, values, *, excluded=()):
         """Yield normalized file declarations once, preserving their order."""
-        seen = set(excluded)
-        for value in values:
-            local = self._local_path(value)
-            if local is not None and local not in seen:
-                seen.add(local)
-                yield local, has_file_magic(local), not getattr(value, "optional", False)
+        for local, required in declared_file_paths(
+            values, self.spec.directory, excluded=excluded,
+        ):
+            yield local, has_file_magic(local), required
 
     async def _prepare_cache_files(self, used):
         targets = {}
@@ -531,31 +530,21 @@ class RemoteRunner:
 
     async def _prepare_request(self, run_id, remote_directory):
         used = {}
-        for value in self.spec.input_files:
-            source = self._local_path(value)
-            if source is not None and has_file_magic(source):
-                await self._stage_input_pattern(
-                    value, used, required=not getattr(value, "optional", False)
-                )
+        # Include primary input and stdin in requirement resolution: neither
+        # may silently become optional through a duplicate auxiliary entry.
+        staged_files = (*self.spec.input_files, self.spec.input_file, self.spec.stdin)
+        for source, pattern, required in self._unique_declared_paths(staged_files):
+            if pattern:
+                await self._stage_input_pattern(source, used, required=required)
             else:
-                await self._stage_file(
-                    value, used, required=not getattr(value, "optional", False)
-                )
+                await self._stage_file(source, used, required=required)
         staged = {source: target for target, source in used.items()}
 
-        input_path = self.result.input_file
-        input_target = staged.get(input_path)
-        if input_target is None:
-            input_target = await self._stage_file(self.spec.input_file, used)
-            staged = {source: target for target, source in used.items()}
-
-        stdin_target = None
-        if self.spec.stdin is not None:
-            stdin_path = self._local_path(self.spec.stdin)
-            stdin_target = staged.get(stdin_path)
-            if stdin_target is None:
-                stdin_target = await self._stage_file(self.spec.stdin, used)
-                staged = {source: target for target, source in used.items()}
+        input_target = staged.get(self.result.input_file)
+        stdin_target = (
+            staged.get(self._local_path(self.spec.stdin))
+            if self.spec.stdin is not None else None
+        )
 
         await self._prepare_cache_files(used)
         staged = {source: target for target, source in used.items()}

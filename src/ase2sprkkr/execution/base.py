@@ -38,6 +38,23 @@ def file_path(value, directory=None, *, flush=False, required=False):
     return os.path.abspath(path)
 
 
+def declared_file_paths(values, directory, *, excluded=()):
+    """Combine declarations by physical path; any required use wins.
+
+    The execution layer accepts ordinary filenames, file objects and TaskFile
+    metadata without depending on the task-schema implementation.
+    """
+    merged = {}
+    excluded = set(excluded)
+    for value in values:
+        path = file_path(value, directory)
+        if path is None or path in excluded:
+            continue
+        required = not getattr(value, "optional", False)
+        merged[path] = merged.get(path, False) or required
+    return tuple(merged.items())
+
+
 def close_output_files(*files):
     """Close each distinct output handle once, including merged stdout/stderr.
 

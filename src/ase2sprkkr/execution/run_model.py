@@ -146,13 +146,7 @@ class FileManifest:
         """Build the local file manifest for an execution specification."""
         import os
 
-        from .base import file_path
-
-        def output_entry(value):
-            return FileEntry(
-                local_path=file_path(value, directory),
-                optional=bool(getattr(value, "optional", False)),
-            )
+        from .base import declared_file_paths, file_path
 
         directory = os.path.abspath(os.fspath(spec.directory))
 
@@ -162,26 +156,23 @@ class FileManifest:
                 if (path := file_path(value, directory)) is not None
             ))
 
-        input_values = (
-            getattr(spec, "input_file", None),
-            *getattr(spec, "input_files", ()),
+        inputs = declared_file_paths(
+            (getattr(spec, "input_file", None), *getattr(spec, "input_files", ())),
+            directory,
         )
-        inputs = tuple(dict.fromkeys(
-            value for value in input_values
-            if value is not None and file_path(value, directory) is not None
-        ))
         stdout = file_path(getattr(spec, "output_file", None), directory)
         stderr = file_path(getattr(spec, "error_file", None), directory)
-        streams = {stdout, stderr}
-        outputs = tuple(dict.fromkeys(
-            value for value in getattr(spec, "output_files", ())
-            if file_path(value, directory) not in streams
-            and file_path(value, directory) is not None
-        ))
+        outputs = declared_file_paths(
+            getattr(spec, "output_files", ()),
+            directory,
+            excluded={stdout, stderr},
+        )
         caches = paths(*getattr(spec, "cache_files", ()))
         return cls(
-            inputs=tuple(output_entry(x) for x in inputs),
-            outputs=tuple(output_entry(x) for x in outputs),
+            inputs=tuple(FileEntry(local_path=path, optional=not required)
+                         for path, required in inputs),
+            outputs=tuple(FileEntry(local_path=path, optional=not required)
+                          for path, required in outputs),
             caches=tuple(CacheEntry(FileEntry(local_path=x)) for x in caches),
             stdout=None if stdout is None else FileEntry(local_path=stdout),
             stderr=None if stderr is None else FileEntry(local_path=stderr),
