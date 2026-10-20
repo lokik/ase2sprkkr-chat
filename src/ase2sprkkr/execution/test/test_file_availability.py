@@ -16,12 +16,12 @@ def test_discovers_outputs_and_caches_with_independent_pattern_children(tmp_path
         )),),
     )
     found = discover_local_files(manifest)
-    assert len(found.outputs) == 2
+    assert len(found.outputs) == 1
     assert found.outputs[0].availability_state == "available"
-    assert found.outputs[1].source_pattern == str(tmp_path / "out-*.dat")
-    assert len(found.caches) == 2
+    assert found.outputs[0].source == str(tmp_path / "out-*.dat")
+    assert len(found.caches) == 1
     assert found.caches[0].file.availability_state == "available"
-    assert found.caches[1].file.source_pattern == str(tmp_path / "cache-*.pot")
+    assert found.caches[0].file.source == str(tmp_path / "cache-*.pot")
     assert discover_local_files(found) == found
 
 
@@ -97,8 +97,9 @@ def test_local_wildcard_discovery_uses_same_glob_semantics_as_transport(tmp_path
     )
     discovered = discover_local_files(manifest)
     assert [entry.local_path for entry in discovered.outputs] == [
-        declaration, str(shown / "file.dat")
+        str(shown / "file.dat")
     ]
+    assert discovered.outputs[0].source == declaration
 
 
 def test_cleanup_unlinks_symlink_without_deleting_its_target(tmp_path):

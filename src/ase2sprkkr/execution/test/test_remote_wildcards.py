@@ -28,7 +28,7 @@ def test_local_transport_put_files_expands_patterns_and_preserves_paths(tmp_path
     assert not (destination / "a" / "ignored.txt").exists()
 
 
-def test_local_transport_get_files_expands_source_patterns(tmp_path):
+def test_local_transport_get_files_expands_sources(tmp_path):
     source = tmp_path / "source"
     destination = tmp_path / "destination"
     (source / "nested").mkdir(parents=True)
@@ -157,11 +157,10 @@ def test_exact_and_wildcard_outputs_share_availability_tracking(tmp_path):
     assert (workdir / "part-a.dat").read_text() == "a"
     assert (workdir / "part-b.dat").read_text() == "b"
     assert entries[str(exact)].availability_state == "available"
-    assert entries[str(pattern)].availability_state == "available"
     for name in ("part-a.dat", "part-b.dat"):
         entry = entries[str(workdir / name)]
         assert entry.availability_state == "available"
-        assert entry.source_pattern == str(pattern)
+        assert entry.source == str(pattern)
 
 
 def test_exact_and_wildcard_caches_keep_individual_sync_states(tmp_path):
@@ -192,10 +191,9 @@ def test_exact_and_wildcard_caches_keep_individual_sync_states(tmp_path):
     assert (workdir / "generated-new.dat").read_text() == "new"
     assert entries[str(exact)].availability_state == "skipped"
     assert entries[str(unchanged)].availability_state == "skipped"
-    assert entries[str(pattern)].availability_state == "available"
     new_entry = entries[str(workdir / "generated-new.dat")]
     assert new_entry.availability_state == "available"
-    assert new_entry.source_pattern == str(pattern)
+    assert new_entry.source == str(pattern)
 
 
 def test_remote_executor_tolerates_unmatched_optional_cache_wildcard(tmp_path):

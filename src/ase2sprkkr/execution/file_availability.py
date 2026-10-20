@@ -8,40 +8,72 @@ from __future__ import annotations
 
 import os
 
-from .transport import expand_local_candidates, has_file_magic
+from .transport import expand_local_candidates, expand_local_files, has_file_magic
+
+
+def materialize_target_patterns(directory, *, outputs=(), caches=()):
+    """Evaluate each target-side wildcard once, preserving partial results.
+
+    Every source pattern has its own concrete match list and optional error;
+    later consumers never need to reapply glob matching rules.
+    """
+    result = {"outputs": [], "caches": []}
+    for kind, patterns in (("outputs", outputs), ("caches", caches)):
+        for pattern in patterns:
+            matches = ()
+            error = None
+            try:
+                matches = tuple(dict.fromkeys(
+                    os.path.abspath(os.fspath(match))
+                    for match in expand_local_files(pattern, directory)
+                    if os.path.isfile(match)
+                ))
+            except Exception as exc:
+                error = str(exc)
+            result[kind].append({
+                "source": os.fspath(pattern),
+                "matches": matches,
+                "error": error,
+            })
+    return result
 
 
 def discover_local_files(files, *, include_streams=True):
     """Resolve pending local declarations and retain individual wildcard matches."""
-    declarations = []
-    if include_streams:
-        declarations.extend(("output", entry) for entry in (files.stdout, files.stderr))
-    declarations.extend(("output", entry) for entry in files.outputs)
-    declarations.extend(("cache", item.file) for item in files.caches)
+    # Local process and PSI/J jobs materialize their wildcard declarations at
+    # the first terminal observation. Concrete members replace declarations;
+    # nothing will be expanded again from an already finalized manifest.
+    from dataclasses import replace
 
-    for kind, entry in declarations:
-        if (
-            entry is None or entry.local_path is None
-            or entry.source_pattern is not None
-            or entry.availability_state not in (None, "pending")
-        ):
-            continue
+    def resolve(entry, *, is_cache):
+        if entry is None or entry.local_path is None:
+            return ()
+        if entry.availability_state not in (None, "pending"):
+            return (entry,)
         path = entry.local_path
-        if has_file_magic(path):
-            matches = tuple(
-                candidate for candidate in expand_local_candidates(path)
-                if os.path.isfile(candidate)
-            )
-            for concrete in matches:
-                files = files.with_file_availability(
-                    concrete, "available", kind=kind, source_pattern=path,
-                )
-            state = "available" if matches else "skipped"
-        else:
-            state = "available" if os.path.isfile(path) else "skipped"
-        files = files.with_file_availability(path, state)
-    return files
+        if not has_file_magic(path):
+            return (replace(entry, availability_state=(
+                "available" if os.path.isfile(path) else "skipped"
+            )),)
+        return tuple(
+            replace(entry, local_path=candidate, availability_state="available",
+                    source=path)
+            for candidate in expand_local_candidates(path)
+            if os.path.isfile(candidate)
+        )
 
+    outputs = tuple(x for entry in files.outputs
+                    for x in resolve(entry, is_cache=False))
+    caches = tuple(replace(cache, file=x)
+                   for cache in files.caches
+                   for x in resolve(cache.file, is_cache=True))
+    stdout = files.stdout
+    stderr = files.stderr
+    if include_streams:
+        stdout = next(iter(resolve(files.stdout, is_cache=False)), None)
+        stderr = next(iter(resolve(files.stderr, is_cache=False)), None)
+    return replace(files, outputs=outputs, caches=caches,
+                   stdout=stdout, stderr=stderr)
 
 
 def validate_output_collisions(streams, *, protected=()):

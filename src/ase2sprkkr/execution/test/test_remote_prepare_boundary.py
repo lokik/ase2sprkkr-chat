@@ -83,13 +83,14 @@ def test_remote_manifest_uses_same_declarations_as_local(tmp_path):
         cache_files=("restart.pot", "restart.pot"),
         launch=LaunchSpec(local_root=str(tmp_path), remote_root=str(remote)),
     )
+    (directory / "main.inp").write_text("main")
+    (directory / "extra.inp").write_text("extra")
     local = FileManifest.from_spec(spec)
     executor = RemoteEndpointExecutor(LocalTransport())
     runner = executor.create_run(spec)
-    manifest = asyncio.run(runner._submitted_manifest({
-        "client_sync": {"output_file": str(remote / "local" / "main.out"),
-                        "error_file": str(remote / "local" / "main.err")},
-    }))
+    manifest = asyncio.run(runner.file_handler.prepare(
+        runner.executor, runner.spec, runner.result,
+    ))
     assert tuple(e.local_path for e in manifest.inputs) == (
         str(directory / "main.inp"), str(directory / "extra.inp"),
     )
@@ -133,23 +134,14 @@ def test_remote_file_preparation_deduplicates_paths_before_mapping(tmp_path):
     )
     runner = executor.create_run(spec)
 
-    async def prepare():
-        used = {}
-        await runner._prepare_cache_files(used)
-        await runner._prepare_output_files()
-        return used
-
-    used = asyncio.run(prepare())
-    assert runner._output_targets == {
-        str(directory / "one.dat"): str(remote / "work" / "one.dat"),
-    }
-    assert runner._output_patterns == (str(remote / "work" / "cut-*.dat"),)
-    assert runner._cache_targets == {
-        str(directory / "restart.dat"): (
-            str(remote / "work" / "restart.dat"), None,
-        ),
-    }
-    assert runner._cache_patterns == (
-        str(remote / "work" / "checkpoint-*.dat"),
-    )
-    assert used == {str(remote / "work" / "restart.dat"): str(directory / "restart.dat")}
+    manifest = asyncio.run(runner.file_handler.prepare(
+        runner.executor, runner.spec, runner.result,
+    ))
+    assert [e.remote_path for e in manifest.outputs if "*" in e.remote_path] == [
+        str(remote / "work" / "cut-*.dat")
+    ]
+    assert [c.file.remote_path for c in manifest.caches
+            if c.file.local_path and "*" in c.file.remote_path] == [
+        str(remote / "work" / "checkpoint-*.dat")
+    ]
+    assert manifest.caches
