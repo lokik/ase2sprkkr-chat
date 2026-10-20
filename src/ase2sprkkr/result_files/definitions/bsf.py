@@ -84,7 +84,7 @@ class BSFResultFile(CommonResultFile, Arithmetic):
             for name in ("NK1", "NK2"):
                 if self[name]() != other[name]():
                     raise ValueError(f"BSF {name} differs between operands")
-            for name in ("VECK1", "VECK2", "ERYD"):
+            for name in ("VECK_START", "VECK1", "VECK2", "ERYD"):
                 if not np.array_equal(self[name](), other[name]()):
                     raise ValueError(f"BSF {name} grids are different")
 
