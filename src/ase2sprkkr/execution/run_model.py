@@ -162,7 +162,14 @@ class FileManifest:
                 if (path := file_path(value, directory)) is not None
             ))
 
-        inputs = paths(getattr(spec, "input_file", None), *getattr(spec, "input_files", ()))
+        input_values = (
+            getattr(spec, "input_file", None),
+            *getattr(spec, "input_files", ()),
+        )
+        inputs = tuple(dict.fromkeys(
+            value for value in input_values
+            if value is not None and file_path(value, directory) is not None
+        ))
         stdout = file_path(getattr(spec, "output_file", None), directory)
         stderr = file_path(getattr(spec, "error_file", None), directory)
         streams = {stdout, stderr}
@@ -173,7 +180,7 @@ class FileManifest:
         ))
         caches = paths(*getattr(spec, "cache_files", ()))
         return cls(
-            inputs=tuple(FileEntry(local_path=x) for x in inputs),
+            inputs=tuple(output_entry(x) for x in inputs),
             outputs=tuple(output_entry(x) for x in outputs),
             caches=tuple(CacheEntry(FileEntry(local_path=x)) for x in caches),
             stdout=None if stdout is None else FileEntry(local_path=stdout),
