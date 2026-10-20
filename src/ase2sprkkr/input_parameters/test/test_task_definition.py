@@ -301,7 +301,7 @@ def test_optional_file_template_retains_metadata(tmp_path):
     parameters.CONTROL.DATASET = "Fe"
     registry = InputParameters.input_parameters_registry
     for kind in ("input", "output"):
-        resolved = registry._resolve_files(
+        resolved = registry._resolve_file_templates(
             parameters, str(tmp_path), getattr(task, f"{kind}_files")
         )
         assert len(resolved) == 1
