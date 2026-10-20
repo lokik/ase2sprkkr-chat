@@ -301,6 +301,8 @@ class ResourceOwnedRunner:
 
     def submit(self):
         with self._submission_lock:
+            if self._submission_uncertain:
+                raise RuntimeError("Submission outcome is uncertain; recover the run before retrying")
             if self._cancel_requested.is_set():
                 self._resources.close()
                 raise asyncio.CancelledError("Run was cancelled before submission")
