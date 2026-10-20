@@ -177,11 +177,14 @@ def test_optional_output_declaration_survives_manifest_roundtrip(tmp_path):
         output_file=workdir / "stdout.out",
         directory=str(workdir),
         output_files=(optional, required),
+        input_files=(TaskFile(workdir / "maybe.inp", optional=True),),
     )
     manifest = FileManifest.from_spec(spec)
     assert [(entry.local_path, entry.optional) for entry in manifest.outputs] == [
         (str(optional), True), (str(required), False),
     ]
+    assert any(entry.local_path == str(workdir / "maybe.inp") and entry.optional
+               for entry in manifest.inputs)
     restored = FileManifest(**dataclasses.asdict(manifest))
     assert restored.outputs == manifest.outputs
 
