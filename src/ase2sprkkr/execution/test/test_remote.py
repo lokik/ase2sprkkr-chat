@@ -745,3 +745,77 @@ def test_remote_submit_failure_is_not_misclassified_as_failed_preparation(
 
     assert runner.failure_phase is None
     assert runner.backend_id is None
+
+
+def test_always_policy_avoids_content_digests(tmp_path, monkeypatch):
+    from .. import remote as remote_module
+    executor, spec, workdir, remote_root = _text_run(
+        tmp_path, _SpyTransport(),
+        input_files=FileSyncPolicy.ALWAYS,
+        output_files=FileSyncPolicy.ALWAYS,
+    )
+    transport = executor.transport
+    def no_digest(*args, **kwargs):
+        raise AssertionError("ALWAYS must not compute content digests")
+    monkeypatch.setattr(remote_module, "file_digest", no_digest)
+    monkeypatch.setattr(transport, "file_digest", no_digest)
+    try:
+        runner = executor.create_run(spec)
+        async def check():
+            target = await runner.executor.map_directory(workdir)
+            request = await runner._prepare_request("test-run", target)
+            assert Path(request["input_file"]).read_bytes() == b"hello"
+            remote_output = remote_root / "calculation" / "result.out"
+            remote_output.write_bytes(b"remote output")
+            local_output = workdir / "result.out"
+            assert await runner._sync_one_output(
+                str(local_output), str(remote_output), required=True,
+            )
+            assert local_output.read_bytes() == b"remote output"
+        asyncio.run(check())
+    finally:
+        spec.input_file.close()
+        spec.output_file.close()
+
+
+@pytest.mark.parametrize("already_present", (False, True))
+def test_missing_cache_policy_checks_existence_not_hash(tmp_path, monkeypatch, already_present):
+    from .. import remote as remote_module
+    root = tmp_path / "local"
+    root.mkdir()
+    remote_root = tmp_path / "remote"
+    remote_root.mkdir()
+    remote = remote_root / "cache.dat"
+    remote.write_bytes(b"updated")
+    local = root / "cache.dat"
+    if already_present:
+        local.write_bytes(b"preserved")
+    def no_digest(*args, **kwargs):
+        raise AssertionError("MISSING cache policy must not hash local file")
+    monkeypatch.setattr(remote_module, "file_digest", no_digest)
+    spec = ExecutionSpec(
+        argv=("true",), input_file=None, output_file=None,
+        directory=str(root), launch=_launch(
+            root, remote_root, output_files=FileSyncPolicy.MISSING,
+        ),
+    )
+    runner = _executor().create_run(spec)
+    asyncio.run(runner._sync_cache_entry(str(local), str(remote), before=(0, 0)))
+    assert local.read_bytes() == (b"preserved" if already_present else b"updated")
+
+
+def test_always_policy_missing_required_input(tmp_path, monkeypatch):
+    from .. import remote as remote_module
+    root = tmp_path / "local"
+    root.mkdir()
+    def no_digest(*args, **kwargs):
+        raise AssertionError("Missing input should not be hashed")
+    monkeypatch.setattr(remote_module, "file_digest", no_digest)
+    runner = _executor().create_run(ExecutionSpec(
+        argv=("true",), input_file=None, output_file=None,
+        directory=str(root), launch=_launch(
+            root, tmp_path / "remote", input_files=FileSyncPolicy.ALWAYS,
+        ),
+    ))
+    with pytest.raises(FileNotFoundError, match="Local input file"):
+        asyncio.run(runner._stage_file(root / "missing.dat", {}, required=True))

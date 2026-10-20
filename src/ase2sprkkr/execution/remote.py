@@ -24,7 +24,7 @@ from .base import (
 )
 from ..common.async_utils import run_coro_sync as _run_sync
 from ..common.file_versions import file_digest
-from .transport import expand_local_files, has_file_magic
+from .transport import expand_local_files, has_file_magic, local_file_signature
 
 
 class FileSyncPolicy(str, Enum):
@@ -257,17 +257,21 @@ class RemoteRunner:
             used[target] = source
             return target
 
-        local_digest = file_digest(source, missing_ok=True)
-        remote_digest = await self.executor.transport.file_digest(target)
-        if required and local_digest is None:
-            if policy == FileSyncPolicy.ALWAYS:
+        if policy == FileSyncPolicy.ALWAYS:
+            exists = local_file_signature(source) is not None
+            if required and not exists:
                 raise FileNotFoundError(f"Local input file does not exist: {source}")
-            if remote_digest is None:
+            transfer = exists
+        else:
+            local_digest = file_digest(source, missing_ok=True)
+            remote_digest = await self.executor.transport.file_digest(target)
+            if required and local_digest is None and remote_digest is None:
                 raise FileNotFoundError(
                     f"Input file exists neither locally nor remotely: {source}"
                 )
+            transfer = policy.should_transfer(local_digest, remote_digest)
 
-        if policy.should_transfer(local_digest, remote_digest):
+        if transfer:
             if uploads is None:
                 await self.executor.transport.put_file(source, target)
             else:
@@ -455,16 +459,23 @@ class RemoteRunner:
 
     async def _sync_one_output(self, local, remote, required):
         policy = self.executor.output_files
-        remote_digest = await self.executor.transport.file_digest(remote)
-        if remote_digest is None:
+        if policy == FileSyncPolicy.ALWAYS:
+            exists = await self.executor.transport.file_signature(remote) is not None
+        else:
+            remote_digest = await self.executor.transport.file_digest(remote)
+            exists = remote_digest is not None
+        if not exists:
             if required:
                 raise FileNotFoundError(
                     f"Declared remote output file was not created: {remote}"
                 )
             return False
-        local_digest = file_digest(local, missing_ok=True)
-        if policy.should_transfer(remote_digest, local_digest):
+        if policy == FileSyncPolicy.ALWAYS:
             await self.executor.transport.get_file(remote, local)
+        else:
+            local_digest = file_digest(local, missing_ok=True)
+            if policy.should_transfer(remote_digest, local_digest):
+                await self.executor.transport.get_file(remote, local)
         return True
 
     async def _sync_cache_entry(self, local, remote, before, *, source_pattern=None):
@@ -480,7 +491,7 @@ class RemoteRunner:
                 after is None or after == before
                 or (
                     self.executor.output_files == FileSyncPolicy.MISSING
-                    and file_digest(local, missing_ok=True) is not None
+                    and os.path.isfile(local)
                 )
             ):
                 state = "skipped"
