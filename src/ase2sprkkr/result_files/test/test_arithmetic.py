@@ -191,18 +191,29 @@ def test_dos_numpy_array_arithmetic_uses_elementwise_values():
 
 
 def test_bsf_const_e_origin_is_part_of_arithmetic_grid():
-    from pathlib import Path
     import pytest
-    from .. import ResultFile
+    from ..definitions.bsf import BSFResultFile
 
-    examples = Path(__file__).resolve().parents[1] / "examples"
-    bsf = ResultFile.from_file(str(examples / "SnTe_BLOCHSF.bsf"), unknown=False)
-    if bsf.MODE() != "CONST-E":
-        pytest.skip("Fixture has no CONST-E origin vector")
-    origin = bsf.VECK_START()
-    if origin is None:
-        pytest.skip("Fixture has no explicit origin vector")
-    shifted = bsf.copy(copy_values=True)
-    shifted.VECK_START = np.asarray(origin) + 0.1
+    class _GridOnlyBSF(BSFResultFile):
+        def __init__(self, start):
+            self._grid = {
+                "MODE": "CONST-E", "KEYWORD": "BSF", "NQ_EFF": 1,
+                "NK1": 2, "NK2": 2, "VECK_START": start,
+                "VECK1": np.array([1., 0., 0.]),
+                "VECK2": np.array([0., 1., 0.]),
+                "ERYD": np.array([0., 0.]),
+            }
+
+        def __getitem__(self, name):
+            return lambda: self._grid[name]
+
+        def RAW_DATA(self):
+            return np.ones((4,))
+
+        def MODE(self):
+            return self._grid["MODE"]
+
+    first = _GridOnlyBSF(np.array([0., 0., 0.]))
+    shifted = _GridOnlyBSF(np.array([0.1, 0., 0.]))
     with pytest.raises(ValueError, match="BSF VECK_START grids"):
-        bsf + shifted
+        first._check_arithmetic(shifted)
