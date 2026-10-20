@@ -160,3 +160,43 @@ def test_remote_executor_allows_missing_optional_input_pattern(tmp_path):
     )
     result = _processed_run(executor, spec).run()
     assert result.return_code == 0
+
+
+def test_optional_output_declaration_survives_manifest_roundtrip(tmp_path):
+    import dataclasses
+    from ..base import ExecutionSpec
+    from ..run_model import FileManifest
+
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    optional = TaskFile(workdir / "maybe-*.dat", optional=True)
+    required = TaskFile(workdir / "required.dat")
+    spec = ExecutionSpec(
+        argv=("true",),
+        input_file=workdir / "input.inp",
+        output_file=workdir / "stdout.out",
+        directory=str(workdir),
+        output_files=(optional, required),
+    )
+    manifest = FileManifest.from_spec(spec)
+    assert [(entry.local_path, entry.optional) for entry in manifest.outputs] == [
+        (str(optional), True), (str(required), False),
+    ]
+    restored = FileManifest(**dataclasses.asdict(manifest))
+    assert restored.outputs == manifest.outputs
+
+
+def test_optional_outputs_with_absent_required_output_still_fail(tmp_path):
+    """Optional files may be absent, but required files remain mandatory."""
+    workdir = tmp_path / "local" / "calculation"
+    executor, spec, _, _ = _text_run(
+        tmp_path,
+        declared_output_files=(
+            TaskFile(workdir / "optional-*.dat", optional=True),
+            TaskFile(workdir / "must-exist.dat"),
+        ),
+        code="print('done')",
+    )
+    result_runner = _processed_run(executor, spec)
+    result_runner.run()
+    assert result_runner.state.value == "failed"
