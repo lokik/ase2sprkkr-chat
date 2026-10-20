@@ -289,44 +289,37 @@ def test_live_only_channel_is_delivered_during_other_channel_replay():
     asyncio.run(run())
 
 
-def test_backpressured_live_only_channel_disconnects_instead_of_losing_bytes():
-    async def run():
-        streams = SupervisorStreams("saved-stdout", None)
-        writer = _FakeFollowerWriter(buffered=_HIGH)
-        follower = _Follower(writer, {"out": 0, "err": 0}, replay=True)
-        streams._followers.add(follower)
-
-        streams.publish("err", b"must not vanish")
-
-        assert writer.transport.aborted
-        assert follower.offsets["err"] == 0
-        assert writer.frames == []
-
-    asyncio.run(run())
-
-
-@pytest.mark.parametrize("spooled", (False, True))
+@pytest.mark.parametrize(
+    "spooled, replaying",
+    [
+        (False, False),  # Live-only stdout
+        (True, False),   # Saved stdout can be replayed
+        (False, True),   # Live-only stderr while saved stdout is replayed
+    ],
+)
 @pytest.mark.parametrize("already_full", (False, True))
-def test_publish_backpressure_before_and_after_write(spooled, already_full):
+def test_publish_backpressure_before_and_after_write(spooled, replaying, already_full):
     async def check():
-        streams = SupervisorStreams("saved-stdout" if spooled else None, None)
+        streams = SupervisorStreams("saved-stdout" if spooled or replaying else None, None)
+        kind = "err" if replaying else "out"
         data = b"payload"
-        wire = frame("out", 0, data)
+        wire = frame(kind, 0, data)
         # Either begin over the limit or cross it on this particular write.
         buffered = _HIGH if already_full else _HIGH - len(wire) + 1
         writer = _FakeFollowerWriter(buffered=buffered)
-        follower = _Follower(writer, {"out": 0, "err": 0}, replay=False)
+        follower = _Follower(writer, {"out": 0, "err": 0}, replay=replaying)
         streams._followers.add(follower)
 
-        streams.publish("out", data)
+        streams.publish(kind, data)
 
         assert writer.frames == ([] if already_full else [wire])
-        assert follower.offsets["out"] == (0 if already_full else len(data))
+        assert follower.offsets[kind] == (0 if already_full else len(data))
         if spooled:
             assert follower.replay
             assert follower.wake.is_set()
             assert not writer.transport.aborted
         else:
+            # No spool for this channel: disconnect rather than lose bytes.
             assert writer.transport.aborted
 
     asyncio.run(check())
