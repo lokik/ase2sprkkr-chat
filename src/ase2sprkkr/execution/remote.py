@@ -751,10 +751,6 @@ class RemoteRunner:
         )
 
     def wait(self):
-        if self._thread is None:
-            if self._state == RunState.NEW:
-                raise RuntimeError("Run has not been submitted")
-            raise RuntimeError("Attached run has not been started")
         return wait_for_monitor(self)
 
     def run(self):
