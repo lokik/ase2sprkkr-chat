@@ -455,3 +455,170 @@ def test_ssh_endpoint_compression_roundtrips_from_transport():
         assert endpoint.ssh_zstd is compressed
         restored = create_executor_from_endpoint(endpoint)
         assert restored.transport.zstd is compressed
+
+
+@pytest.mark.parametrize("factory", (LocalTransport, _LoopbackSshTransport))
+def test_transport_run_cancellation_reaps_subprocess(tmp_path, factory):
+    pid_file = tmp_path / "command.pid"
+
+    async def check():
+        command = (
+            sys.executable, "-c",
+            f"import os, time; open({str(pid_file)!r}, 'w').write(str(os.getpid())); "
+            "time.sleep(30)",
+        )
+        task = asyncio.create_task(factory().run(command))
+        pid = None
+        try:
+            pid = await _wait_for_command_pid(pid_file)
+            await _cancel_and_check_reaped(task, pid)
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            if pid is not None:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    asyncio.run(check())
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Requires POSIX shell and PID semantics")
+def test_ssh_get_file_cancellation_reaps_process_and_removes_temp(tmp_path):
+    pid_file = tmp_path / "download.pid"
+    source = tmp_path / "source"
+    destination = tmp_path / "downloaded"
+    source.write_bytes(b"source bytes")
+    destination.write_bytes(b"old destination")
+
+    class SlowDownloadTransport(_LoopbackSshTransport):
+        def _command(self, argv, cwd=None):
+            if argv[0] == "cat":
+                return (
+                    sys.executable, "-c",
+                    f"import os, time; open({str(pid_file)!r}, 'w').write(str(os.getpid())); "
+                    "time.sleep(30)",
+                )
+            return super()._command(argv, cwd)
+
+    async def check():
+        task = asyncio.create_task(SlowDownloadTransport().get_file(source, destination))
+        pid = None
+        try:
+            pid = await _wait_for_command_pid(pid_file)
+            await _cancel_and_check_reaped(task, pid)
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            if pid is not None:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    asyncio.run(check())
+    assert destination.read_bytes() == b"old destination"
+    assert not tuple(tmp_path.glob(".downloaded.*.tmp"))
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Requires POSIX shell tools")
+def test_ssh_get_file_preserves_subprocess_failure(tmp_path):
+    source = tmp_path / "source"
+    source.write_bytes(b"source bytes")
+    destination = tmp_path / "downloaded"
+
+    class FailingDownloadTransport(_LoopbackSshTransport):
+        def _command(self, argv, cwd=None):
+            if argv[0] == "cat":
+                return (
+                    sys.executable, "-c",
+                    "import sys; sys.stderr.write('download failed'); sys.exit(17)",
+                )
+            return super()._command(argv, cwd)
+
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        asyncio.run(FailingDownloadTransport().get_file(source, destination))
+    assert failure.value.returncode == 17
+    assert b"download failed" in failure.value.stderr
+    assert not destination.exists()
+    assert not tuple(tmp_path.glob(".downloaded.*.tmp"))
+
+
+@pytest.mark.parametrize(
+    "method, command, stdout, expected",
+    [
+        ("file_digest", 'sha256sum -- "$1"',
+         b"1234abcd  folder name/result.out\n", "1234abcd"),
+        ("file_signature", 'stat -c "%s|%Y|%y" -- "$1"',
+         b"10|1729000000|2024-10-15 12:00:00.250000000 +0000\n",
+         (10, 1729000000250000000)),
+    ],
+)
+@pytest.mark.parametrize("returncode", (0, 3, 17))
+def test_ssh_file_probes_use_same_absent_and_error_contract(
+    method, command, stdout, expected, returncode,
+):
+    calls = []
+
+    class ProbedTransport(SshTransport):
+        async def run(self, argv, *, cwd=None, input=None, check=True):
+            calls.append((argv, check))
+            return subprocess.CompletedProcess(
+                argv, returncode, stdout=stdout, stderr=b"probe failure",
+            )
+
+    path = "folder name/result.out"
+    query = getattr(ProbedTransport("example-host"), method)
+    if returncode == 17:
+        with pytest.raises(subprocess.CalledProcessError) as error:
+            asyncio.run(query(path))
+        assert error.value.returncode == 17
+        assert error.value.output == stdout
+        assert error.value.stderr == b"probe failure"
+    else:
+        assert asyncio.run(query(path)) == (None if returncode == 3 else expected)
+    assert calls == [
+        (("sh", "-c", f'[ -f "$1" ] || exit 3; {command}', "sh", path), False),
+    ]
+
+
+@pytest.mark.parametrize("factory", (LocalTransport, _LoopbackSshTransport))
+@pytest.mark.parametrize("check", (False, True))
+@pytest.mark.parametrize("send_input", (False, True))
+def test_transport_run_uses_start_and_preserves_completion(factory, check, send_input):
+    class Observed(factory):
+        def __init__(self):
+            super().__init__()
+            self.started = []
+
+        async def start(self, argv, *, cwd=None, stdin=None):
+            self.started.append((tuple(argv), cwd, stdin))
+            return await super().start(argv, cwd=cwd, stdin=stdin)
+
+    transport = Observed()
+    async def execute():
+        return await transport.run(
+            (sys.executable, "-c",
+             "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read()); "
+             "sys.stderr.write('diagnostic'); sys.exit(7)"),
+            input=b"payload" if send_input else None, check=check,
+        )
+
+    if check:
+        with pytest.raises(subprocess.CalledProcessError) as error:
+            asyncio.run(execute())
+        assert error.value.returncode == 7
+        assert error.value.output == (b"payload" if send_input else b"")
+        assert error.value.stderr == b"diagnostic"
+    else:
+        result = asyncio.run(execute())
+        assert result.returncode == 7
+        assert result.stdout == (b"payload" if send_input else b"")
+        assert result.stderr == b"diagnostic"
+    assert len(transport.started) == 1
+    assert transport.started[0][2] == (
+        asyncio.subprocess.PIPE if send_input else None
+    )
