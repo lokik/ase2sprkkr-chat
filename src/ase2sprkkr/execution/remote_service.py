@@ -239,20 +239,17 @@ def _local_submit(request):
     published = False
     try:
         try:
-            try:
-                process = subprocess.Popen(
-                    [sys.executable, "-m", "ase2sprkkr.execution.remote_process_worker"],
-                    cwd=directory,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    env=env,
-                    start_new_session=True,
-                    close_fds=True,
-                    pass_fds=(start_fd, socket_write_fd),
-                )
-            except OSError as exc:
-                raise SubmissionNotStarted(str(exc)) from exc
+            process = subprocess.Popen(
+                [sys.executable, "-m", "ase2sprkkr.execution.remote_process_worker"],
+                cwd=directory,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=env,
+                start_new_session=True,
+                close_fds=True,
+                pass_fds=(start_fd, socket_write_fd),
+            )
         finally:
             os.close(start_fd)
             os.close(socket_write_fd)
