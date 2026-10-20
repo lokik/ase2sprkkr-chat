@@ -2,10 +2,7 @@ import pytest
 
 import ase2sprkkr.configuration as configuration
 from ase2sprkkr.configuration import definition
-from ase2sprkkr.configuration_migration import (
-    clean_legacy_configuration,
-    migrate_legacy_configuration,
-)
+from ase2sprkkr.configuration_migration import clean_legacy_configuration
 from ase2sprkkr.configuration_yaml import (
     YamlConfigurationWarning,
     load_configuration_yaml,
