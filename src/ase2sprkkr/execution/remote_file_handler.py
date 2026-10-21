@@ -102,8 +102,20 @@ class RemoteFileHandler:
             )
         uploads = []
         for match in matches:
-            relative = os.path.relpath(match, mapping.local_root)
-            remote = os.path.join(mapping.remote_root, relative)
+            # Expand a declared wildcard relative to its frozen remote target,
+            # rather than remapping the local workspace a second time.
+            from pathlib import PurePosixPath
+            import posixpath
+            local_root = os.path.dirname(source)
+            remote_root = posixpath.dirname(remote_pattern)
+            if has_file_magic(local_root):
+                # Patterns in parent directories must still preserve layout.
+                root = mapping.local_root
+                remote_root = mapping.remote_root
+            else:
+                root = local_root
+            relative = os.path.relpath(match, root)
+            remote = posixpath.join(remote_root, *PurePosixPath(relative).parts)
             await self._stage_file(
                 mapping, spec, match, used, uploads=uploads, required=required,
                 remote_path=remote,
