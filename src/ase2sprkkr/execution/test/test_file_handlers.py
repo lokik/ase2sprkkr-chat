@@ -1,6 +1,5 @@
 """Shared file strategies have no mutable state belonging to individual runs."""
 import asyncio
-from dataclasses import replace
 
 import pytest
 
@@ -175,6 +174,7 @@ def test_collect_keeps_later_outputs_and_caches_after_missing_required_file(tmp_
             )
             for name in ("first.out", "missing.out", "last.out")
         ),
+        local_root=str(local), remote_root=str(remote), output_sync="always",
         caches=(
             FileEntry(
                 str(local / "restart.pot"), str(remote / "restart.pot"),
@@ -183,9 +183,7 @@ def test_collect_keeps_later_outputs_and_caches_after_missing_required_file(tmp_
         ),
     )
     endpoint = RemoteEndpointExecutor(LocalTransport())
-    context = asyncio.run(endpoint.resolve_files(LaunchSpec(
-        local_root=str(local), remote_root=str(remote), output_sync="always",
-    )))
+
     collected, error = asyncio.run(endpoint.file_handler.collect(
         manifest, ExecutionOutcome(), required=True,
     ))
@@ -248,16 +246,10 @@ def test_collect_rejects_materialized_cache_output_collision_before_download(tmp
                                      availability_state="pending"),),
         local_root=str(local), remote_root=str(remote),
     )
-    frozen, error = materialize_manifest(manifest, remote=True)
-    assert error is None
-    endpoint = RemoteEndpointExecutor(LocalTransport())
-    context = asyncio.run(endpoint.resolve_files(LaunchSpec(
-        local_root=str(local), remote_root=str(remote),
-    )))
-    with pytest.raises(ValueError, match="Conflicting output/cache file destination"):
-        asyncio.run(endpoint.file_handler.collect(
-            frozen, ExecutionOutcome(), required=True,
-        ))
+    # Wildcard expansion creates the collision, which must be rejected
+    # immediately rather than producing a manifest that can be downloaded.
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        materialize_manifest(manifest, remote=True)
     assert destination.read_text() == "original local value"
 
 
@@ -352,11 +344,10 @@ def test_always_input_sync_uploads_without_unnecessary_digest_checks(tmp_path):
             pytest.fail(f"ALWAYS must not hash input files: {path}")
 
     handler = RemoteEndpointExecutor(NoDigestTransport()).file_handler
-    mapping = FileManifest(local_root=str(local), remote_root=str(remote), input_sync="always")
     spec = ExecutionSpec(
         argv=("true",), directory=str(local), input_file=str(source),
     )
-    manifest = asyncio.run(handler.prepare(FileManifest.from_spec(spec).with_remote(local_root=str(local), remote_root=str(remote), input_sync=mapping.input_sync, output_sync=mapping.output_sync), spec))
+    manifest = asyncio.run(handler.prepare(FileManifest.from_spec(spec).with_remote(local_root=str(local), remote_root=str(remote), input_sync="always"), spec))
 
     assert (remote / source.name).read_text() == "input"
     assert manifest.inputs[0].remote_path == str(remote / source.name)
@@ -422,11 +413,11 @@ def test_cache_missing_policy_uses_signature_and_local_existence(tmp_path, monke
     source.write_text("updated")
     target = local / "restart.pot"
     target.write_text("existing")
-    manifest = FileManifest(caches=(
-        FileEntry(str(target), str(source), pre_run_signature=(0, 0)),
-    ))
+    manifest = FileManifest(
+        caches=(FileEntry(str(target), str(source), pre_run_signature=(0, 0)),),
+        local_root=str(local), remote_root=str(remote), output_sync="missing",
+    )
     handler = RemoteEndpointExecutor(NoDigestTransport()).file_handler
-    manifest = replace(manifest, local_root=str(local), remote_root=str(remote), output_sync="missing")
 
     first, error = asyncio.run(handler.collect(manifest, ExecutionOutcome()))
     assert error is None
@@ -461,8 +452,8 @@ def test_collect_retries_failed_files_without_redownloading_successes(tmp_path):
 
     transport = FlakyTransport()
     handler = RemoteEndpointExecutor(transport).file_handler
-    mapping = FileManifest(local_root=str(local), remote_root=str(remote), output_sync="always")
-    manifest = FileManifest(outputs=tuple(
+    manifest = FileManifest(local_root=str(local), remote_root=str(remote),
+                            output_sync="always", outputs=tuple(
         FileEntry(str(local / name), str(remote / name),
                   availability_state="pending")
         for name in ("first.out", "second.out")
