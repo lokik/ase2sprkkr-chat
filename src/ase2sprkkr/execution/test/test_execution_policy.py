@@ -16,7 +16,7 @@ from ase2sprkkr.execution.local import LocalExecutor, LocalRunner
 from ase2sprkkr.execution.manager import (
     FileAvailabilityState,
     ExecutionManager,
-    ProjectRunner,
+    PersistentRun,
     RunStore,
 )
 from ase2sprkkr.execution.postprocessing import PostprocessingRunner
@@ -154,7 +154,8 @@ def _project_wrapper(tmp_path, runner):
         endpoint=endpoint,
     )
     processed = PostprocessingRunner(runner, lambda outcome: outcome)
-    return manager, ProjectRunner(manager, executor, processed, record)
+    processed.hooks = PersistentRun(manager, executor, record)
+    return manager, processed
 
 
 def test_definite_pre_submit_failure_becomes_submission_failure(tmp_path):
