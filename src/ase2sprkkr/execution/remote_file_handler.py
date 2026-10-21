@@ -395,6 +395,10 @@ class RemoteFileHandler:
         planned = {}
         for value in paths:
             local = os.path.abspath(os.fspath(value))
+            # Validate the requested canonical location before selecting a
+            # frozen wildcard member. This also rejects symlink escapes when
+            # no historical member is present.
+            mapping.map_path(local)
             if has_file_magic(local):
                 selected = tuple(
                     entry for entry in entries if entry is not None
