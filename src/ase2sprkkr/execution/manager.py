@@ -161,13 +161,14 @@ def _manifest_accesses(record):
         # Resolve aliases only on the host whose filesystem is accessible.
         return os.path.normpath(resolved) if remote else os.path.realpath(resolved)
 
-    reads = {path(entry) for entry in files.input_entries}
-    reads.update(path(cache) for cache in files.caches)
-    writes = {path(entry) for entry in (files.stdout, files.stderr, *files.outputs)}
+    inputs = {path(entry) for entry in files.input_entries} - {None}
+    caches = {path(entry) for entry in files.caches} - {None}
+    reads = inputs | caches
+    writes = {path(entry) for entry in (files.stdout, files.stderr, *files.outputs)} - {None}
+    writes.update(caches)
     if remote and (files.mapping is None or files.mapping.input_sync != "never"):
-        writes.update(path(entry) for entry in files.input_entries)
-    writes.update(path(cache) for cache in files.caches)
-    return reads - {None}, writes - {None}
+        writes.update(inputs)
+    return reads, writes
 
 
 def _path_overlap(a, b):
