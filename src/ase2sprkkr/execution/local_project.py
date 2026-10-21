@@ -198,25 +198,25 @@ class LocalProjectRunner:
         return self.result
 
     def _thread_main(self):
+        # Monitoring and both cleanups must be attempted independently; a
+        # secondary cleanup error must not hide an earlier monitor failure.
         try:
-            self._monitor()
-        except BaseException as exc:
-            self._exception = exc
-            self._failure_message = str(exc)
-            self._failure_phase = self._failure_phase or FailurePhase.EXECUTION
-            self._state = RunState.FAILED
+            for action in (
+                self._monitor,
+                self._output_observers.finish_bytes,
+                lambda: close_output_files(self.spec.output_file, self.spec.error_file),
+            ):
+                try:
+                    action()
+                except BaseException as exc:
+                    if self._exception is None:
+                        self._exception = exc
+            if self._exception is not None:
+                self._failure_message = str(self._exception)
+                self._failure_phase = self._failure_phase or FailurePhase.EXECUTION
+                self._state = RunState.FAILED
         finally:
-            self._output_observers.finish_bytes()
-            try:
-                close_output_files(self.spec.output_file, self.spec.error_file)
-            except BaseException as exc:
-                if self._exception is None:
-                    self._exception = exc
-                    self._failure_message = str(exc)
-                    self._failure_phase = self._failure_phase or FailurePhase.EXECUTION
-                    self._state = RunState.FAILED
-            finally:
-                finish_monitor(self)
+            finish_monitor(self)
 
     def _request(self):
         def paths(values):
