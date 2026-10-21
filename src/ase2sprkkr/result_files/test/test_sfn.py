@@ -53,14 +53,16 @@ ACOEF_FM
   0.00000000000000000E+00  0.00000000000000000E+00  1.00000000000000000E+00 -1.00000000000000000E+00"""
 
 
+@pytest.fixture(scope="module")
 def synthetic_potential():
+    """Shared Fe structure; its consumers only inspect it."""
     return Potential.from_atoms(bulk("Fe", "bcc", a=2.0))
 
 
 @pytest.fixture(scope="module")
-def parsed_sfn():
+def parsed_sfn(synthetic_potential):
     """Read-only SFN model shared by grammar and plotting checks."""
-    return definition.read_from_string(SFN, potential=synthetic_potential())
+    return definition.read_from_string(SFN, potential=synthetic_potential)
 
 
 def test_sfn_grammar_and_generated_mesh_view(parsed_sfn):
@@ -107,6 +109,17 @@ def test_sfn_write_roundtrip(tmp_path):
             copy.faces[0].VERTICES(), original.faces[0].VERTICES()
         )
 
+    # Use the same parsed SFN to check validation; rejected setters must
+    # not require rebuilding the grammar or parsing the fixture again.
+    invalid_values = (
+        (output.RADIAL_MESHES[0].RMESH, np.ones((2, 2))),
+        (output.RADIAL_MESHES[0].SHAPE_FUNCTIONS[0].VALUES, np.ones(2)),
+        (output.VORONOI_MESHES[0].FACES[0].VERTICES, np.ones((2, 3))),
+    )
+    for option, value in invalid_values:
+        with pytest.raises(DataValidityError, match=r"expected \(3[,)]"):
+            option.set(value)
+
 
 @pytest.mark.slow
 @pytest.mark.skipif(
@@ -151,19 +164,6 @@ def test_written_sfn_is_accepted_by_sprkkr(tmp_path):
     assert len(second.iterations) == 1
 
 
-def test_sfn_dependent_array_lengths_are_validated():
-    output = definition.read_from_string(SFN)
-
-    invalid_values = (
-        (output.RADIAL_MESHES[0].RMESH, np.ones((2, 2))),
-        (output.RADIAL_MESHES[0].SHAPE_FUNCTIONS[0].VALUES, np.ones(2)),
-        (output.VORONOI_MESHES[0].FACES[0].VERTICES, np.ones((2, 3))),
-    )
-    for option, value in invalid_values:
-        with pytest.raises(DataValidityError, match=r"expected \(3[,)]"):
-            option.set(value)
-
-
 def test_sfn_is_registered(tmp_path):
     path = tmp_path / "shape.sfn"
     path.write_text(SFN)
@@ -177,8 +177,8 @@ def test_sfn_is_registered(tmp_path):
         output.plot_cell(mesh=0, show=False)
 
 
-def test_output_file_read_from_file_accepts_potential():
-    potential = synthetic_potential()
+def test_output_file_read_from_file_accepts_potential(synthetic_potential):
+    potential = synthetic_potential
     output = SFNResultFile(definition=definition)
 
     output.read_from_file(StringIO(SFN), potential=potential)
@@ -250,6 +250,7 @@ def test_sfn_shape_reconstruction_and_plot_dispatch(tmp_path, parsed_sfn):
     output.plot_slice(
         separate_plots=True,
         filename=tmp_path / "shape.png",
+        dpi=72,
         plane="xy",
         n=21,
         colorbar=False,
@@ -309,7 +310,7 @@ def test_sfn_potential_cell_and_periodic_plots(tmp_path, monkeypatch):
     figure = output.plot_periodic(mesh=0, show=False)
     plt.close(figure)
 
-def test_sfn_isosurface_in_the_cell(monkeypatch):
+def test_sfn_isosurface_in_the_cell(monkeypatch, parsed_sfn):
     import matplotlib.pyplot as plt
 
     measure = ModuleType("skimage.measure")
@@ -335,9 +336,7 @@ def test_sfn_isosurface_in_the_cell(monkeypatch):
     monkeypatch.setitem(sys.modules, "skimage", skimage)
     monkeypatch.setitem(sys.modules, "skimage.measure", measure)
 
-    potential = Potential.from_atoms(bulk("Fe"))
-    output = definition.read_from_string(SFN, potential=potential)
-    figure = output.plot_shape(mesh=0, n=9, show=False)
+    figure = parsed_sfn.plot_shape(mesh=0, n=9, show=False)
     axis = figure.axes[0]
     assert len(axis.lines) == 12
     assert requested_levels == [pytest.approx(0.5)]
