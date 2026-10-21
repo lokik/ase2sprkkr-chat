@@ -166,3 +166,38 @@ def test_callback_failure_does_not_change_finished_state():
     with pytest.raises(ValueError, match="user callback"):
         run.wait()
     assert run.state is RunState.FINISHED
+
+def test_persistence_failure_is_distinct_from_calculation_and_can_be_retried():
+    from ase2sprkkr.execution.run_hooks import PersistenceError
+
+    backend = Backend()
+    attempts, observed, processed = [], [], []
+
+    class Hooks:
+        def completed(self, run):
+            attempts.append(run.state)
+            if len(attempts) == 1:
+                raise OSError("store is unavailable")
+
+    run = CalculationRun(
+        backend, lambda result: processed.append(result) or result,
+        callback=lambda result: observed.append(result), hooks=Hooks(),
+    )
+    run.submit()
+    backend.release.set()
+
+    with pytest.raises(PersistenceError, match="persist calculation"):
+        run.wait()
+    assert run.state is RunState.FINISHED
+    assert len(processed) == 1
+    assert observed == []
+    assert isinstance(run.persistence_error.__cause__, OSError)
+
+    run.retry_persistence()
+    assert run.persistence_error is None
+    assert run.wait() is backend.result
+    assert len(attempts) == 2
+    assert len(processed) == 1
+    assert observed == [backend.result]
+    run.retry_persistence()
+    assert len(attempts) == 2

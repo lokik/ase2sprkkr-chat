@@ -7,6 +7,7 @@ from threading import Event, Lock
 
 from .base import (FailurePhase, RunState, SubmissionNotStarted,
                    finish_monitor)
+from .run_hooks import PersistenceError
 
 
 class CalculationRun:
@@ -17,10 +18,13 @@ class CalculationRun:
     task-agnostic callable after successful raw execution.
     """
 
-    def __init__(self, runner, process_result, callback=None, *, resources=None):
+    def __init__(self, runner, process_result, callback=None, *, resources=None,
+                 hooks=None):
         self._runner = runner
         self._process_result = process_result
         self.callback = callback
+        self.hooks = hooks
+        self.persistence_error = None
         self.result = None
         self._resources = resources
         self._cancel_requested = Event()
@@ -190,7 +194,54 @@ class CalculationRun:
                 # Persist before releasing resources or waking public waiters.
                 # A callback failure must not alter a completed backend state.
                 self._settled = True
-                finish_monitor(self, cleanup=self._close_resources)
+                self._publish_completion()
+
+    def _publish_completion(self):
+        """Persistence must succeed before completion is published to observers."""
+        try:
+            if self.hooks is not None:
+                self.hooks.completed(self)
+        except BaseException as exc:
+            self.persistence_error = (
+                exc if isinstance(exc, PersistenceError)
+                else PersistenceError("Could not persist calculation completion")
+            )
+            if self.persistence_error is not exc:
+                self.persistence_error.__cause__ = exc
+            # A completed backend is never reclassified as a failed calculation.
+            # No completion callback or backend acknowledgment is emitted here.
+            try:
+                self._close_resources()
+            finally:
+                self._done.set()
+        else:
+            finish_monitor(self, cleanup=self._close_resources)
+
+    def retry_persistence(self):
+        """Retry the durable completion without executing or parsing the job again."""
+        with self._completion_lock:
+            if not self._settled:
+                raise RuntimeError("Calculation has not completed")
+            if self.persistence_error is None:
+                return
+            if self.hooks is None:
+                raise RuntimeError("No persistence hook is configured")
+            try:
+                self.hooks.completed(self)
+            except BaseException as exc:
+                self.persistence_error = (
+                    exc if isinstance(exc, PersistenceError)
+                    else PersistenceError("Could not persist calculation completion")
+                )
+                if self.persistence_error is not exc:
+                    self.persistence_error.__cause__ = exc
+                raise self.persistence_error
+            self.persistence_error = None
+            if self.callback is not None:
+                try:
+                    self.callback(self.result)
+                except BaseException as exc:
+                    self._callback_exception = exc
 
     def _close_resources(self):
         if self._resources is not None:
@@ -337,6 +388,8 @@ class CalculationRun:
             if not self._done.is_set():
                 self._complete_observation(outcome)
         self._done.wait()
+        if self.persistence_error is not None:
+            raise self.persistence_error
         if self._exception is not None:
             raise self._exception
         if self._callback_exception is not None:
