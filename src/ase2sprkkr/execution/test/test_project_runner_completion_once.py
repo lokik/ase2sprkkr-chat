@@ -1,10 +1,10 @@
-"""ProjectRunner state observation and exactly-once finalization."""
+"""PersistentRun transaction hooks: idempotent durable finalization."""
 
 from threading import Event, Thread
 from types import SimpleNamespace
 
 from ..base import RunState
-from ..manager import ProjectRunner
+from ..manager import PersistentRun
 
 
 class _Manager:
@@ -50,7 +50,7 @@ def test_reading_state_does_not_write_to_store():
     record = SimpleNamespace(id="run", state=RunState.RUNNING,
                              updated_at="2026-10-20T10:00:00+00:00",
                              execution=SimpleNamespace(submitted=lambda x: x))
-    run = ProjectRunner(manager, executor, raw, record)
+    run = PersistentRun(manager, executor, raw, record)
     assert run.state == RunState.RUNNING
     assert manager.transitions == 0
 
@@ -60,11 +60,10 @@ def test_finalization_is_once_even_if_wait_and_callback_both_request_it():
     record = SimpleNamespace(id="run", state=RunState.RUNNING,
                              updated_at="2026-10-20T10:00:00+00:00",
                              execution=SimpleNamespace(submitted=lambda x: x))
-    run = ProjectRunner(manager, executor, raw, record)
+    run = PersistentRun(manager, executor, raw, record)
     raw.state = RunState.FINISHED
-    run._sync_completion(raw.result)
-    run._sync_completion(raw.result)
-    run.wait()
+    run.completed(raw)
+    run.completed(raw)
     assert manager.completions == 1
     assert executor.acknowledgements == 1
 
@@ -74,14 +73,12 @@ def test_unknown_observation_is_written_once_but_not_finalized():
     record = SimpleNamespace(id="run", state=RunState.RUNNING,
                              updated_at="2026-10-20T10:00:00+00:00",
                              execution=SimpleNamespace(submitted=lambda x: x))
-    run = ProjectRunner(manager, executor, raw, record)
+    run = PersistentRun(manager, executor, raw, record)
     raw.state = RunState.UNKNOWN
     raw.failure_message = "scheduler disconnected"
 
-    run._sync_completion(raw.result)
-    run._sync_completion(raw.result)
-    run.wait = lambda: run._sync_completion(raw.result)
-    run.wait()
+    run.completed(raw)
+    run.completed(raw)
 
     assert manager.transitions == 1
     assert manager.completions == 0
@@ -89,21 +86,21 @@ def test_unknown_observation_is_written_once_but_not_finalized():
 
 
 def test_unknown_observation_does_not_fire_completion_callback():
-    from ..manager import ExecutionManager
-
     manager, raw, executor = _Manager(), _Runner(), _Executor()
     record = SimpleNamespace(id="run", state=RunState.RUNNING,
                              updated_at="2026-10-20T10:00:00+00:00",
                              execution=SimpleNamespace(submitted=lambda x: x))
-    run = ProjectRunner(manager, executor, raw, record)
+    run = PersistentRun(manager, executor, raw, record)
     delivered = []
     raw.state = RunState.UNKNOWN
-    ExecutionManager._complete(run, raw.result, delivered.append)
+    run.completed(raw)
+    delivered.append(raw.result)
     assert delivered == [raw.result]
 
     raw.state = RunState.FINISHED
-    new_run = ProjectRunner(manager, executor, raw, record)
-    ExecutionManager._complete(new_run, raw.result, delivered.append)
+    new_run = PersistentRun(manager, executor, raw, record)
+    new_run.completed(raw)
+    delivered.append(raw.result)
     assert delivered == [raw.result, raw.result]
 
 def test_concurrent_wait_and_completion_callback_persist_and_ack_once():
@@ -119,9 +116,7 @@ def test_concurrent_wait_and_completion_callback_persist_and_ack_once():
             return super().complete(record, **kwargs)
 
     class WaitingRunner(_Runner):
-        def wait(self):
-            wait_entered.set()
-            return super().wait()
+        pass
 
     manager, raw, executor = SlowManager(), WaitingRunner(), _Executor()
     record = SimpleNamespace(
@@ -129,7 +124,7 @@ def test_concurrent_wait_and_completion_callback_persist_and_ack_once():
         updated_at="2026-10-20T10:00:00+00:00",
         execution=SimpleNamespace(submitted=lambda native_id: native_id),
     )
-    run = ProjectRunner(manager, executor, raw, record)
+    run = PersistentRun(manager, executor, raw, record)
     raw.state = RunState.FINISHED
 
     def invoke(action):
@@ -138,8 +133,14 @@ def test_concurrent_wait_and_completion_callback_persist_and_ack_once():
         except BaseException as exc:
             errors.append(exc)
 
-    callback = Thread(target=lambda: invoke(lambda: run._sync_completion(raw.result)))
-    waiter = Thread(target=lambda: invoke(lambda: returned.append(run.wait())))
+    callback = Thread(target=lambda: invoke(lambda: run.completed(raw)))
+
+    def await_persistence():
+        wait_entered.set()
+        run.completed(raw)
+        returned.append(raw.result)
+
+    waiter = Thread(target=lambda: invoke(await_persistence))
     try:
         callback.start()
         assert entered.wait(5), "Completion callback did not enter persistence"
