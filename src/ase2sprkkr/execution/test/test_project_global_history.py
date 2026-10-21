@@ -1,10 +1,14 @@
 """Global run history and cross-project namespace regression tests."""
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from threading import Event
+from uuid import UUID
 
 import pytest
 
 from ..base import RunState
+from ...common.file_locks import FileLock
 from ..manager import DuplicateSubmissionError, RunStore
 from ..project_manager import ExecutionManager
 from ..projects import ProjectRepository, ProjectDeleteError
@@ -103,3 +107,113 @@ def test_unknown_run_prevents_project_deletion_until_terminal(tmp_path):
     )
     projects.delete(project.id, expected_generation=project.generation)
     assert manager.store.runs() == ()
+
+
+def test_default_project_store_is_guarded_and_shared(tmp_path):
+    projects = ProjectRepository(tmp_path / "projects")
+    project = projects.create("Project")
+    first = ExecutionManager(project_repository=projects, project=project)
+    second = ExecutionManager(project_repository=projects, project=project)
+    assert first.store is second.store is projects.run_store
+    assert first.store.projects_directory == projects.directory
+    assert first.store.directory == projects.runs_directory
+
+    record = first.new_record(task="DOS", directory=tmp_path / "work")
+    assert len(record.project_id) == 32  # The repository stores UUID.hex filenames.
+    first.store.save(record)
+    assert first.store.get(record.id) == record
+    assert (projects.directory / f"{project.id}.json").is_file()
+    assert (projects.directory / f".runs-{project.id}.lock").is_file()
+    assert not (projects.directory / f".runs-{str(UUID(project.id))}.lock").exists()
+
+
+def test_deleted_project_cannot_resurrect_run_history(tmp_path):
+    projects = ProjectRepository(tmp_path / "projects")
+    root = projects.create("Root")
+    child = projects.create("Child", parent_id=root.id)
+    manager = ExecutionManager(project_repository=projects, project=child)
+    other = ExecutionManager(
+        project_repository=ProjectRepository(projects.directory), project=child,
+    )
+    record = manager.new_record(task="DOS", directory=tmp_path / "work")
+    manager.store.save(record)
+    manager.complete(record, state=RunState.FAILED)
+    projects.delete(child.id, expected_generation=child.generation)
+    for store in (manager.store, other.store):
+        with pytest.raises(KeyError, match="no longer exists"):
+            store.save(record)
+        with pytest.raises(KeyError, match="no longer exists"):
+            store.update(record, lambda latest: latest)
+        assert store.runs() == ()
+
+
+def test_project_deletion_waits_for_in_progress_run_update(tmp_path, monkeypatch):
+    projects = ProjectRepository(tmp_path / "projects")
+    root = projects.create("Root")
+    child = projects.create("Child", parent_id=root.id)
+    manager = ExecutionManager(project_repository=projects, project=child)
+    record = manager.new_record(task="DOS", directory=tmp_path / "work")
+    manager.store.save(record)
+    started, release, deletion_at_guard = Event(), Event(), Event()
+    original_write = manager.store._write_unlocked
+
+    def interrupted_write(value):
+        started.set()
+        assert release.wait(10)
+        return original_write(value)
+
+    monkeypatch.setattr(manager.store, "_write_unlocked", interrupted_write)
+    independent_projects = ProjectRepository(projects.directory)
+    guard_path = projects.directory / f".runs-{child.id}.lock"
+    original_file_lock = independent_projects._file_lock
+
+    def observe_deletion_lock(path):
+        if path == guard_path:
+            deletion_at_guard.set()
+        return original_file_lock(path)
+
+    monkeypatch.setattr(independent_projects, "_file_lock", observe_deletion_lock)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        writer = pool.submit(
+            manager.store.update, record,
+            lambda latest: replace(latest, state=RunState.FAILED),
+        )
+        try:
+            assert started.wait(10)
+            deletion = pool.submit(
+                independent_projects.delete, child.id,
+                expected_generation=child.generation,
+            )
+            assert deletion_at_guard.wait(10)
+            # An explicit non-blocking probe proves that the writer holds the
+            # same guard that deletion is attempting to enter. No scheduling-
+            # dependent sleep or short Future timeout is needed.
+            probe = FileLock(guard_path)
+            try:
+                assert not probe.acquire(blocking=False)
+                assert not deletion.done()
+            finally:
+                probe.release()
+        finally:
+            release.set()
+        assert writer.result(timeout=10).state is RunState.FAILED
+        deletion.result(timeout=10)
+    assert manager.store.runs() == ()
+
+def test_guarded_run_store_rejects_noncanonical_project_identity(tmp_path):
+    """An alias must not persist a run that deletion would fail to recognize."""
+    projects = ProjectRepository(tmp_path / "projects")
+    project = projects.create("Project")
+    manager = ExecutionManager(project_repository=projects, project=project)
+    record = manager.new_record(task="DOS", directory=tmp_path / "work")
+    aliased = replace(record, project_id=str(UUID(project.id)))
+    with pytest.raises(ValueError, match="canonical project ID"):
+        manager.store.save(aliased)
+    with pytest.raises(ValueError, match="canonical project ID"):
+        manager.store.update(aliased, lambda latest: latest)
+    assert manager.store.runs() == ()
+
+    # Standalone stores are not coupled to a ProjectRepository.
+    custom = RunStore(tmp_path / "custom-runs")
+    custom.save(aliased)
+    assert custom.get(aliased.id) == aliased
