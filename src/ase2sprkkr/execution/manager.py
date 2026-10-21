@@ -28,7 +28,7 @@ from .base import (
 )
 from .endpoint import ExecutorEndpoint, endpoint_for_executor
 from .pool import default_executor_pool
-from .postprocessing import PostprocessingRunner
+from .postprocessing import CalculationRun
 from .run_model import (
     ArtifactAvailabilityState, Execution, WorkingDirectory, FileManifest,
 )
@@ -946,7 +946,7 @@ class ExecutionManager:
         set_manifest = getattr(raw, "set_manifest", None)
         if set_manifest is not None:
             set_manifest(record.files)
-        processed = PostprocessingRunner(raw, process_result, resources=resources)
+        processed = CalculationRun(raw, process_result, resources=resources)
         project_run = ProjectRunner(self, executor, processed, record, spec=spec)
         processed.callback = lambda result: self._complete(
             project_run, result, callback
@@ -995,7 +995,7 @@ class ExecutionManager:
             output_listener=output_listener,
             start=False,
         )
-        processed = PostprocessingRunner(raw, process_result)
+        processed = CalculationRun(raw, process_result)
         project_run = ProjectRunner(self, executor, processed, record)
         processed.callback = lambda result: self._complete(
             project_run, result, callback
@@ -1007,7 +1007,7 @@ class ExecutionManager:
 class ProjectRunner:
     """Caller-owned runner that persists the public lifecycle directly."""
 
-    def __init__(self, manager, executor, runner, record, *, spec=None):
+    def __init__(self, manager, executor, runner: CalculationRun, record, *, spec=None):
         self._spec = spec
         self._lifecycle_lock = Lock()
         self._submission_in_progress = False
@@ -1037,7 +1037,7 @@ class ProjectRunner:
 
     @property
     def execution(self):
-        proposed = getattr(self._runner, "execution", None)
+        proposed = self._runner.execution
         if proposed is not None:
             return proposed
         if self.backend_id is None:
@@ -1046,7 +1046,7 @@ class ProjectRunner:
 
     @property
     def files(self):
-        return getattr(self._runner, "files", None)
+        return self._runner.files
 
     @property
     def exception(self):
@@ -1054,7 +1054,7 @@ class ProjectRunner:
 
     @property
     def failure_phase(self):
-        return _failure_phase(getattr(self._runner, "failure_phase", None))
+        return _failure_phase(self._runner.failure_phase)
 
     @property
     def state(self):
@@ -1098,9 +1098,7 @@ class ProjectRunner:
                         )
                     self._record = replace(self._record, files=files, execution=execution)
                 self._record = self.manager.reserve(self._record)
-                set_manifest = getattr(self._runner, "set_manifest", None)
-                if set_manifest is not None:
-                    set_manifest(self._record.files)
+                self._runner.set_manifest(self._record.files)
                 self._monitor_record_version = self._record.updated_at
             except BaseException:
                 # Reservation failed before backend submission. Cleanup must
@@ -1112,8 +1110,7 @@ class ProjectRunner:
                 raise
             backend_submit_attempted = False
             try:
-                prepare = getattr(self._runner, "prepare_submission", None)
-                if prepare is not None and prepare():
+                if self._runner.prepare_submission():
                     # Persist the exact staged file map and target directory before
                     # calling the backend. A lost submit reply can then be recovered
                     # without depending on live runner state.
@@ -1132,7 +1129,7 @@ class ProjectRunner:
                 submitted = True
             except SubmissionNotStarted as exc:
                 phase = self.failure_phase or FailurePhase.SUBMISSION
-                message = getattr(self._runner, "failure_message", None) or str(exc)
+                message = self._runner.failure_message or str(exc)
                 self._record = self.manager.complete(
                     self._record,
                     state=RunState.FAILED,
@@ -1237,7 +1234,7 @@ class ProjectRunner:
                 return
             state = self._runner.state
             phase = self.failure_phase
-            message = getattr(self._runner, "failure_message", None)
+            message = self._runner.failure_message
             error = self._runner.exception
             if message is None and error is not None:
                 message = str(error)
@@ -1261,7 +1258,7 @@ class ProjectRunner:
                 self._record,
                 state=state,
                 execution=self.execution,
-                return_code=getattr(self._runner, "return_code", None),
+                return_code=self._runner.return_code,
                 message=message,
                 failure_phase=phase,
                 artifacts_available=artifacts_available,
