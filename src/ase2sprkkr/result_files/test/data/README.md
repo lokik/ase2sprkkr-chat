@@ -16,3 +16,25 @@ not intended to replace the full-resolution numerical reference data.
 The full files remain available for integration, high-resolution visualization,
 quantitative regression and physically faithful spectra. These smoke tests only
 check parser shape contracts and finite values.
+
+## Regenerating smaller fixtures
+
+From the repository checkout, run the utility on the original examples:
+
+```sh
+python src/ase2sprkkr/result_files/test/compact_spectral_data.py \
+  src/ase2sprkkr/result_files/examples/FePt.new_BSFEK_BLOCHSF.bsf \
+  src/ase2sprkkr/result_files/test/data/FePt_BSFEK_small.bsf \
+  --energies 8 --kpoints 12
+
+python src/ase2sprkkr/result_files/test/compact_spectral_data.py \
+  src/ase2sprkkr/result_files/examples/WSe2_ARPES.spc \
+  src/ase2sprkkr/result_files/test/data/WSe2_ARPES_small.spc \
+  --energies 8 --kpoints 12
+```
+
+The utility validates each native data block before selecting its subgrid.
+Generated files should be parsed by `ResultFile.from_file`, their declared
+dimensions compared to the actual data shape, and the plotting smoke test run
+before promoting them as replacements. Keep original large datasets for
+numerical comparisons requiring exact original dimensions, energies or pixels.
