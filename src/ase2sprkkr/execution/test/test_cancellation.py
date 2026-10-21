@@ -149,9 +149,12 @@ def test_project_cancel_returns_while_backend_submission_is_blocked():
             return self
 
     class Backend(_BackendRunner):
-        backend_id = "job-1"
         execution = Execution()
         exception = None
+
+        def __init__(self):
+            super().__init__()
+            self.backend_id = "job-1"
 
     class Store:
         def __init__(self):
