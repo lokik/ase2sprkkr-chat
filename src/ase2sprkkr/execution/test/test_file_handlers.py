@@ -69,18 +69,17 @@ def test_remote_handler_is_shared_without_run_state(tmp_path):
     assert a.files is None and b.files is None
 
     async def prepare():
-        first = await a.file_handler.prepare(await endpoint.resolve_mapping(a.spec.launch), a.spec)
-        second = await b.file_handler.prepare(await endpoint.resolve_mapping(b.spec.launch), b.spec)
+        first = await a.file_handler.prepare(FileManifest.from_spec(a.spec).with_remote(local_root=str(tmp_path), remote_root=str(tmp_path / 'target')), a.spec)
+        second = await b.file_handler.prepare(FileManifest.from_spec(b.spec).with_remote(local_root=str(tmp_path), remote_root=str(tmp_path / 'target')), b.spec)
         return first, second
 
     first, second = asyncio.run(prepare())
     assert first is not second
-    assert first.mapping == second.mapping
+    assert (first.local_root, first.remote_root) == (second.local_root, second.remote_root)
 
 
 def test_materialized_manifest_freezes_membership(tmp_path):
     from ase2sprkkr.execution.file_availability import materialize_manifest
-    from ase2sprkkr.execution import FileMapping
 
     local, remote = tmp_path / "local", tmp_path / "remote"
     local.mkdir()
@@ -89,7 +88,7 @@ def test_materialized_manifest_freezes_membership(tmp_path):
     manifest = FileManifest(
         outputs=(FileEntry(str(local / "result-*.dat"),
                            str(remote / "result-*.dat"), availability_state="pending"),),
-        mapping=FileMapping(str(local), str(remote)),
+        local_root=str(local), remote_root=str(remote),
     )
     frozen, error = materialize_manifest(manifest, remote=True)
     assert error is None
@@ -103,7 +102,6 @@ def test_materialized_manifest_freezes_membership(tmp_path):
 
 def test_empty_wildcard_is_not_materialization_failure(tmp_path):
     from ase2sprkkr.execution.file_availability import materialize_manifest
-    from ase2sprkkr.execution import FileMapping
 
     local, remote = tmp_path / "local", tmp_path / "remote"
     local.mkdir()
@@ -111,7 +109,7 @@ def test_empty_wildcard_is_not_materialization_failure(tmp_path):
     manifest = FileManifest(
         outputs=(FileEntry(str(local / "*.out"), str(remote / "*.out"),
                            availability_state="pending"),),
-        mapping=FileMapping(str(local), str(remote)),
+        local_root=str(local), remote_root=str(remote),
     )
     frozen, error = materialize_manifest(manifest, remote=True)
     assert error is None
@@ -120,7 +118,6 @@ def test_empty_wildcard_is_not_materialization_failure(tmp_path):
 
 
 def test_collect_continues_after_one_output_download_fails(tmp_path):
-    from ase2sprkkr.execution import FileMapping
     from ase2sprkkr.execution.base import ExecutionOutcome
     import types
 
@@ -135,7 +132,7 @@ def test_collect_continues_after_one_output_download_fails(tmp_path):
             FileEntry(str(local / first.name), str(first), availability_state="pending"),
             FileEntry(str(local / second.name), str(second), availability_state="pending"),
         ),
-        mapping=FileMapping(str(local), str(remote)),
+        local_root=str(local), remote_root=str(remote),
     )
     endpoint = RemoteEndpointExecutor(LocalTransport())
     context = asyncio.run(endpoint.resolve_mapping(LaunchSpec(
@@ -150,7 +147,7 @@ def test_collect_continues_after_one_output_download_fails(tmp_path):
 
     endpoint.file_handler._sync_file = fail_first
     captured, error = asyncio.run(
-        endpoint.file_handler.collect(context, manifest, ExecutionOutcome())
+        endpoint.file_handler.collect(manifest, ExecutionOutcome())
     )
     assert isinstance(error, OSError)
     assert captured.outputs[0].availability_state == "failed"
@@ -189,7 +186,7 @@ def test_collect_keeps_later_outputs_and_caches_after_missing_required_file(tmp_
         local_root=str(local), remote_root=str(remote), output_sync="always",
     )))
     collected, error = asyncio.run(endpoint.file_handler.collect(
-        context, manifest, ExecutionOutcome(), required=True,
+        manifest, ExecutionOutcome(), required=True,
     ))
 
     assert isinstance(error, FileNotFoundError)
@@ -206,7 +203,6 @@ def test_collect_keeps_later_outputs_and_caches_after_missing_required_file(tmp_
 def test_materialized_manifest_can_download_and_rehydrate(tmp_path):
     from dataclasses import asdict
     from ase2sprkkr.execution.file_availability import materialize_manifest
-    from ase2sprkkr.execution import FileMapping
     from ase2sprkkr.execution.base import ExecutionOutcome
 
     local, remote = tmp_path / "local", tmp_path / "remote"
@@ -216,7 +212,7 @@ def test_materialized_manifest_can_download_and_rehydrate(tmp_path):
     manifest = FileManifest(
         outputs=(FileEntry(str(local / "*.out"), str(remote / "*.out"),
                            availability_state="pending"),),
-        mapping=FileMapping(str(local), str(remote)),
+        local_root=str(local), remote_root=str(remote),
     )
     frozen, error = materialize_manifest(manifest, remote=True)
     assert error is None
@@ -225,7 +221,7 @@ def test_materialized_manifest_can_download_and_rehydrate(tmp_path):
         LaunchSpec(local_root=str(local), remote_root=str(remote)),
     ))
     completed, error = asyncio.run(
-        endpoint.file_handler.collect(context, frozen, ExecutionOutcome())
+        endpoint.file_handler.collect(frozen, ExecutionOutcome())
     )
     assert error is None
     assert (local / "one.out").read_text() == "one"
@@ -235,7 +231,6 @@ def test_materialized_manifest_can_download_and_rehydrate(tmp_path):
 
 
 def test_collect_rejects_materialized_cache_output_collision_before_download(tmp_path):
-    from ase2sprkkr.execution import FileMapping
     from ase2sprkkr.execution.base import ExecutionOutcome
     from ase2sprkkr.execution.file_availability import materialize_manifest
 
@@ -250,7 +245,7 @@ def test_collect_rejects_materialized_cache_output_collision_before_download(tmp
                            availability_state="pending"),),
         caches=(FileEntry(str(destination), str(remote / "result.dat"),
                                      availability_state="pending"),),
-        mapping=FileMapping(str(local), str(remote)),
+        local_root=str(local), remote_root=str(remote),
     )
     frozen, error = materialize_manifest(manifest, remote=True)
     assert error is None
@@ -266,7 +261,6 @@ def test_collect_rejects_materialized_cache_output_collision_before_download(tmp
 
 
 def test_materialization_assigns_cache_baselines_to_concrete_members(tmp_path):
-    from ase2sprkkr.execution import FileMapping
     from ase2sprkkr.execution.file_availability import materialize_manifest
 
     local, remote = tmp_path / "local", tmp_path / "remote"
@@ -282,7 +276,7 @@ def test_materialization_assigns_cache_baselines_to_concrete_members(tmp_path):
                                  availability_state="pending"),
             FileEntry(remote_path=previous, pre_run_signature=(3, 17)),
         ),
-        mapping=FileMapping(str(local), str(remote)),
+        local_root=str(local), remote_root=str(remote),
     )
     frozen, error = materialize_manifest(manifest, remote=True)
     assert error is None
@@ -295,7 +289,6 @@ def test_materialization_assigns_cache_baselines_to_concrete_members(tmp_path):
 
 
 def test_materialization_keeps_failed_wildcard_declaration(tmp_path, monkeypatch):
-    from ase2sprkkr.execution import FileMapping
     from ase2sprkkr.execution import file_availability
 
     local, remote = tmp_path / "local", tmp_path / "remote"
@@ -308,7 +301,7 @@ def test_materialization_keeps_failed_wildcard_declaration(tmp_path, monkeypatch
             FileEntry(str(local / "complete.out"), str(remote / "complete.out"),
                       availability_state="pending"),
         ),
-        mapping=FileMapping(str(local), str(remote)),
+        local_root=str(local), remote_root=str(remote),
     )
 
     def broken_scan(source, root):
@@ -342,7 +335,6 @@ def test_collect_rejects_two_remote_cache_sources_with_one_destination(tmp_path)
 
 def test_collect_downloads_shared_remote_source_to_both_local_destinations(tmp_path):
     """Deduplicate transfers, not distinct destinations for one source."""
-    from ase2sprkkr.execution import FileMapping
     from ase2sprkkr.execution.base import ExecutionOutcome
 
     local, remote = tmp_path / "local", tmp_path / "remote"
@@ -356,9 +348,9 @@ def test_collect_downloads_shared_remote_source_to_both_local_destinations(tmp_p
         for target in targets
     ))
     handler = RemoteEndpointExecutor(LocalTransport()).file_handler
-    mapping = FileMapping(str(local), str(remote))
+    mapping = FileManifest(local_root=str(local), remote_root=str(remote))
     collected, error = asyncio.run(
-        handler.collect(mapping, manifest, ExecutionOutcome())
+        handler.collect(manifest, ExecutionOutcome())
     )
 
     assert error is None
@@ -369,7 +361,6 @@ def test_collect_downloads_shared_remote_source_to_both_local_destinations(tmp_p
 
 def test_always_input_sync_uploads_without_unnecessary_digest_checks(tmp_path):
     """ALWAYS does not need hashes of either the local or remote input."""
-    from ase2sprkkr.execution import FileMapping
 
     local, remote = tmp_path / "local", tmp_path / "remote"
     local.mkdir()
@@ -382,11 +373,11 @@ def test_always_input_sync_uploads_without_unnecessary_digest_checks(tmp_path):
             pytest.fail(f"ALWAYS must not hash input files: {path}")
 
     handler = RemoteEndpointExecutor(NoDigestTransport()).file_handler
-    mapping = FileMapping(str(local), str(remote), input_sync="always")
+    mapping = FileManifest(local_root=str(local), remote_root=str(remote), input_sync="always")
     spec = ExecutionSpec(
         argv=("true",), directory=str(local), input_file=str(source),
     )
-    manifest = asyncio.run(handler.prepare(mapping, spec))
+    manifest = asyncio.run(handler.prepare(FileManifest.from_spec(spec).with_remote(local_root=str(local), remote_root=str(remote), input_sync=mapping.input_sync, output_sync=mapping.output_sync), spec))
 
     assert (remote / source.name).read_text() == "input"
     assert manifest.inputs[0].remote_path == str(remote / source.name)
@@ -394,7 +385,6 @@ def test_always_input_sync_uploads_without_unnecessary_digest_checks(tmp_path):
 
 def test_cheap_remote_sync_decisions_do_not_hash_files(tmp_path, monkeypatch):
     """Existence checks suffice for ALWAYS/MISSING and absent CHANGED outputs."""
-    from ase2sprkkr.execution import FileMapping
     from ase2sprkkr.execution.base import ExecutionOutcome
     from ase2sprkkr.execution import remote_file_handler
 
@@ -422,12 +412,12 @@ def test_cheap_remote_sync_decisions_do_not_hash_files(tmp_path, monkeypatch):
         source.write_text("remote")
         if local_exists:
             target.write_text("local")
-        mapping = FileMapping(str(local), str(remote), output_sync=policy)
+        mapping = FileManifest(local_root=str(local), remote_root=str(remote), output_sync=policy)
         manifest = FileManifest(outputs=(
             FileEntry(str(target), str(source), availability_state="pending"),
         ))
         result, error = asyncio.run(handler.collect(
-            mapping, manifest, ExecutionOutcome(), required=True,
+            manifest, ExecutionOutcome(), required=True,
         ))
         assert error is None
         assert target.read_text() == expected
@@ -436,7 +426,6 @@ def test_cheap_remote_sync_decisions_do_not_hash_files(tmp_path, monkeypatch):
 
 def test_cache_missing_policy_uses_signature_and_local_existence(tmp_path, monkeypatch):
     """Cache baselines matter even when output content hashes are unnecessary."""
-    from ase2sprkkr.execution import FileMapping
     from ase2sprkkr.execution.base import ExecutionOutcome
     from ase2sprkkr.execution import remote_file_handler
 
@@ -459,15 +448,15 @@ def test_cache_missing_policy_uses_signature_and_local_existence(tmp_path, monke
         FileEntry(str(target), str(source), pre_run_signature=(0, 0)),
     ))
     handler = RemoteEndpointExecutor(NoDigestTransport()).file_handler
-    mapping = FileMapping(str(local), str(remote), output_sync="missing")
+    mapping = FileManifest(local_root=str(local), remote_root=str(remote), output_sync="missing")
 
-    first, error = asyncio.run(handler.collect(mapping, manifest, ExecutionOutcome()))
+    first, error = asyncio.run(handler.collect(manifest, ExecutionOutcome()))
     assert error is None
     assert first.caches[0].availability_state == "skipped"
     assert target.read_text() == "existing"
 
     target.unlink()
-    second, error = asyncio.run(handler.collect(mapping, manifest, ExecutionOutcome()))
+    second, error = asyncio.run(handler.collect(manifest, ExecutionOutcome()))
     assert error is None
     assert second.caches[0].availability_state == "available"
     assert target.read_text() == "updated"
@@ -475,7 +464,6 @@ def test_cache_missing_policy_uses_signature_and_local_existence(tmp_path, monke
 
 def test_collect_retries_failed_files_without_redownloading_successes(tmp_path):
     """A terminal reattach preserves a completed transfer even if its source vanished."""
-    from ase2sprkkr.execution import FileMapping
     from ase2sprkkr.execution.base import ExecutionOutcome
 
     local, remote = tmp_path / "local", tmp_path / "remote"
@@ -495,7 +483,7 @@ def test_collect_retries_failed_files_without_redownloading_successes(tmp_path):
 
     transport = FlakyTransport()
     handler = RemoteEndpointExecutor(transport).file_handler
-    mapping = FileMapping(str(local), str(remote), output_sync="always")
+    mapping = FileManifest(local_root=str(local), remote_root=str(remote), output_sync="always")
     manifest = FileManifest(outputs=tuple(
         FileEntry(str(local / name), str(remote / name),
                   availability_state="pending")
@@ -503,7 +491,7 @@ def test_collect_retries_failed_files_without_redownloading_successes(tmp_path):
     ))
 
     partial, error = asyncio.run(handler.collect(
-        mapping, manifest, ExecutionOutcome(), required=True,
+        manifest, ExecutionOutcome(), required=True,
     ))
     assert isinstance(error, OSError)
     assert [e.availability_state for e in partial.outputs] == ["failed", "available"]
@@ -512,7 +500,7 @@ def test_collect_retries_failed_files_without_redownloading_successes(tmp_path):
     second.unlink()  # The remote file is no longer accessible on reattach.
     transport.fail_first = False
     completed, error = asyncio.run(handler.collect(
-        mapping, partial, ExecutionOutcome(), required=True,
+        partial, ExecutionOutcome(), required=True,
     ))
     assert error is None
     assert [e.availability_state for e in completed.outputs] == ["available", "available"]
@@ -523,7 +511,6 @@ def test_collect_retries_failed_files_without_redownloading_successes(tmp_path):
 
 def test_collect_retries_available_file_only_if_local_copy_is_missing(tmp_path):
     """An available receipt does not hide a deleted local file."""
-    from ase2sprkkr.execution import FileMapping
     from ase2sprkkr.execution.base import ExecutionOutcome
 
     local, remote = tmp_path / "local", tmp_path / "remote"
@@ -536,9 +523,9 @@ def test_collect_retries_available_file_only_if_local_copy_is_missing(tmp_path):
         FileEntry(str(destination), str(source), availability_state="available"),
     ))
     handler = RemoteEndpointExecutor(LocalTransport()).file_handler
-    mapping = FileMapping(str(local), str(remote), output_sync="always")
+    mapping = FileManifest(local_root=str(local), remote_root=str(remote), output_sync="always")
     received, error = asyncio.run(handler.collect(
-        mapping, manifest, ExecutionOutcome(), required=True,
+        manifest, ExecutionOutcome(), required=True,
     ))
     assert error is None
     assert destination.read_text() == "restored"
@@ -547,7 +534,6 @@ def test_collect_retries_available_file_only_if_local_copy_is_missing(tmp_path):
 
 def test_collect_does_not_recheck_skipped_terminal_files(tmp_path):
     """Skipping an optional cache/output freezes that decision across attach."""
-    from ase2sprkkr.execution import FileMapping
     from ase2sprkkr.execution.base import ExecutionOutcome
 
     class NoRemoteChecks(LocalTransport):
@@ -571,7 +557,7 @@ def test_collect_does_not_recheck_skipped_terminal_files(tmp_path):
     )
     handler = RemoteEndpointExecutor(NoRemoteChecks()).file_handler
     result, error = asyncio.run(handler.collect(
-        FileMapping(str(local), str(remote)), manifest, ExecutionOutcome(),
+        manifest, ExecutionOutcome(),
     ))
     assert error is None
     assert result == manifest
