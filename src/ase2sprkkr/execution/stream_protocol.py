@@ -11,15 +11,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-import struct
-
 from .base import RunState
+from .frame_codec import (
+    STREAM_HEADER as _HEADER, KIND_TO_CODE as _KIND_TO_CODE,
+    CODE_TO_KIND as _CODE_TO_KIND, encode_frame, read_frame,
+)
 
 
 STREAM_MAGIC = b"A2SSTRM1"
-_HEADER = struct.Struct("!cQ")
-_KIND_TO_CODE = {"out": b"O", "err": b"E"}
-_CODE_TO_KIND = {value: key for key, value in _KIND_TO_CODE.items()}
 
 
 class StreamProtocolError(RuntimeError):
@@ -32,12 +31,12 @@ def encode_stream_frame(kind, data):
     except KeyError as exc:
         raise ValueError(f"Unknown stream kind: {kind!r}") from exc
     data = bytes(data)
-    return _HEADER.pack(code, len(data)) + data
+    return encode_frame(code, data)
 
 
 def encode_terminal_frame(outcome):
     data = json.dumps(outcome, separators=(",", ":")).encode("utf8")
-    return _HEADER.pack(b"T", len(data)) + data
+    return encode_frame(b"T", data)
 
 
 async def _read_exactly(source, size):
@@ -56,16 +55,20 @@ async def read_stream_frames(source):
         raise StreamProtocolError("Remote stream has an unknown protocol header")
 
     while True:
-        first = await source.read(1)
-        if not first:
+        try:
+            record = await read_frame(source, allow_eof=True)
+        except asyncio.IncompleteReadError as exc:
+            raise StreamProtocolError(
+                "Remote stream ended in the middle of a frame"
+            ) from exc
+        except ValueError as exc:
+            raise StreamProtocolError("Stream frame is too large") from exc
+        if record is None:
             return
-        rest = await _read_exactly(source, _HEADER.size - 1)
-        code, size = _HEADER.unpack(first + rest)
+        code, _, payload = record
         if code == b"T":
-            if size > 4096:
-                raise StreamProtocolError("Terminal frame is too large")
             try:
-                outcome = json.loads(await _read_exactly(source, size))
+                outcome = json.loads(payload)
             except (ValueError, UnicodeError) as exc:
                 raise StreamProtocolError("Invalid terminal frame JSON") from exc
             if not isinstance(outcome, dict):
@@ -76,15 +79,13 @@ async def read_stream_frames(source):
                 raise StreamProtocolError("Invalid terminal frame outcome") from exc
             yield "terminal", outcome
             return
-        if size > 65536:
-            raise StreamProtocolError("Stream frame is too large")
         try:
             kind = _CODE_TO_KIND[code]
         except KeyError as exc:
             raise StreamProtocolError(
                 f"Remote stream contains an unknown channel code: {code!r}"
             ) from exc
-        yield kind, await _read_exactly(source, size)
+        yield kind, payload
 
 
 class FramedRunningCommand:
