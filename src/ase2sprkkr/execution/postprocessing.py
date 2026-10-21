@@ -294,9 +294,7 @@ class CalculationRun:
 
     def _submit_raw(self, *, attached=False):
         if attached:
-            start = getattr(self._runner, "start", None)
-            if start is not None:
-                start()
+            self._runner.start()
             return
 
         # There is one preflight, submission and error boundary for both
