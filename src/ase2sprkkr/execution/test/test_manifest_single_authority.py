@@ -96,3 +96,39 @@ def test_staging_rejects_unresolved_remote_entries_before_transfer(tmp_path):
     with pytest.raises(ValueError, match="unresolved path"):
         asyncio.run(RemoteFileHandler(LocalTransport()).prepare(invalid, spec))
     assert not (remote / "input.dat").exists()
+
+
+@pytest.mark.parametrize("pattern,files", [
+    ("part-*.dat", ("part-1.dat", "part-2.dat")),
+    ("part-*/result.dat", ("part-a/result.dat", "part-b/result.dat")),
+])
+def test_wildcard_inputs_use_the_frozen_manifest_workspace(tmp_path, pattern, files):
+    import asyncio
+    from ase2sprkkr.execution.base import ExecutionSpec
+    from ase2sprkkr.execution.remote_file_handler import RemoteFileHandler
+    from ase2sprkkr.execution.transport import LocalTransport
+
+    local = tmp_path / "local"
+    remote = tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    for name in files:
+        source = local / name
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(name)
+    spec = ExecutionSpec(
+        argv=("true",), directory=str(local),
+        input_file=None, output_file=None, input_files=(pattern,),
+    )
+    manifest = FileManifest.from_spec(spec).with_remote(
+        local_root=str(local), remote_root=str(remote),
+    )
+    prepared = asyncio.run(RemoteFileHandler(LocalTransport()).prepare(manifest, spec))
+    for name in files:
+        assert (remote / name).read_text() == name
+    assert {entry.local_path for entry in prepared.inputs} == {
+        str(local / name) for name in files
+    }
+    assert {entry.remote_path for entry in prepared.inputs} == {
+        str(remote / name) for name in files
+    }
