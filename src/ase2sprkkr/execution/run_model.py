@@ -280,7 +280,7 @@ class FileManifest:
         for path in paths(primary, *spec.input_files):
             if not any(_same_local_file(path, prior) for prior in inputs):
                 inputs.append(path)
-        stdin = file_path(spec.stdin, directory)
+        stdin = file_path(getattr(spec, "stdin", None), directory)
         stdout = file_path(getattr(spec, "output_file", None), directory)
         stderr = file_path(getattr(spec, "error_file", None), directory)
         outputs = paths(*getattr(spec, "output_files", ()))
