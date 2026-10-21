@@ -40,7 +40,7 @@ def test_shared_codec_rejects_oversized_frames_before_reading_payload(offset, li
     async def check():
         code = b"T" if limit == MAX_TERMINAL else b"O"
         wire = encode_frame(code, b"x" * (limit + 1), offset=offset)
-        with pytest.raises(ValueError, match="Oversized stream frame"):
+        with pytest.raises(ValueError, match="frame is too large"):
             await read_frame(_reader(wire), offsets=offset is not None)
 
     asyncio.run(check())
