@@ -39,7 +39,7 @@ def local_manifest(files, status):
     for entry in (files.stdout, files.stderr):
         if entry is None or entry.local_path is None:
             continue
-        if status.failure_phase == FailurePhase.ARTIFACTS:
+        if status.failure_phase == FailurePhase.FILES:
             state, message = "failed", status.message or "Output publication failed"
         elif published and entry.availability_state in (None, "pending", "skipped"):
             # Exact stream availability may be inspected locally, but never
@@ -73,7 +73,7 @@ def _local_status_from_facts(backend_id, facts, files=None):
         if facts.get("materialization_error") and status.state == RunState.FINISHED:
             status = replace(
                 status, state=RunState.FAILED,
-                failure_phase=FailurePhase.ARTIFACTS,
+                failure_phase=FailurePhase.FILES,
                 message=facts["materialization_error"],
             )
     return status

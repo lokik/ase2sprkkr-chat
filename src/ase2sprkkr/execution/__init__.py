@@ -16,7 +16,7 @@ from .base import (
     RunStatus,
 )
 from .run_model import (
-    ArtifactAvailabilityState, Execution, WorkingDirectory, FileEntry,
+    FileAvailabilityState, Execution, WorkingDirectory, FileEntry,
     FileMapping, FileManifest,
 )
 from .endpoint import ExecutorEndpoint
@@ -47,7 +47,7 @@ from .transport import LocalTransport, RunningCommand, SshTransport, Transport
 RemoteExecutor = RemoteEndpointExecutor
 
 __all__ = [
-    "ArtifactAvailabilityState",
+    "FileAvailabilityState",
     "Execution",
     "WorkingDirectory",
     "FileEntry",

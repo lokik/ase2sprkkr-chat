@@ -246,7 +246,7 @@ class FailurePhase(str, Enum):
     SUBMISSION = "submission"
     LAUNCH = "launch"
     EXECUTION = "execution"
-    ARTIFACTS = "artifacts"
+    FILES = "files"
     DOWNLOAD = "download"
     POSTPROCESSING = "postprocessing"
 

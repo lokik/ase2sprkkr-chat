@@ -276,7 +276,7 @@ class LocalRunner:
                     # The secondary close error is available separately.
                     return self.result
                 self._state = RunState.FAILED
-                self._failure_phase = FailurePhase.ARTIFACTS
+                self._failure_phase = FailurePhase.FILES
                 self._failure_message = str(cleanup_error)
                 raise cleanup_error
 

@@ -1,4 +1,4 @@
-"""Local artifact discovery shared by process and PSI/J runners.
+"""Local file discovery shared by process and PSI/J runners.
 
 No transport or execution state lives here. The caller decides whether the
 producer's output streams are safe to consider published.
@@ -113,7 +113,7 @@ def materialize_manifest(manifest, *, remote=False, include_streams=True):
         return tuple(found)
 
     outputs = tuple(concrete for entry in manifest.outputs for concrete in resolve(entry))
-    # Remote-only cache entries carry pre-run signatures, not artifacts.
+    # Remote-only cache entries carry pre-run signatures, not files.
     # Apply those baselines to the frozen concrete entries and drop the
     # placeholders once membership is known.
     baselines = {
@@ -137,7 +137,7 @@ def materialize_manifest(manifest, *, remote=False, include_streams=True):
 
 
 def discover_local_files(files, *, include_streams=True):
-    """Read local artifacts using the common materializer."""
+    """Read local files using the common materializer."""
     materialized, error = materialize_manifest(files, include_streams=include_streams)
     if error is not None:
         raise error
