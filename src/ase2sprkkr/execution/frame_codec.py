@@ -46,6 +46,7 @@ async def read_frame(source, *, offsets=False, allow_eof=False):
     code, size = fields[0], fields[-1]
     limit = MAX_TERMINAL if code == b"T" else MAX_DATA
     if size > limit:
-        raise ValueError("Oversized stream frame")
+        kind = "Terminal" if code == b"T" else "Stream"
+        raise ValueError(f"{kind} frame is too large")
     payload = await source.readexactly(size)
     return code, (fields[1] if offsets else None), payload
