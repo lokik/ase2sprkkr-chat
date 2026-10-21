@@ -45,7 +45,6 @@ def test_restart_and_normal_save_preserve_status_and_electronic_data():
     assert serialize(restart_scf=False) == "ITR-L-BULK"
     assert potential.SCF_INFO.SCFSTATUS() == "ITR-L-BULK"
 
-
     # Return to a converged base before testing the transient result override.
     potential.SCF_INFO.SCFSTATUS = "CONVERGED"
     assert potential.SCF_INFO.SCFSTATUS() == "CONVERGED"
