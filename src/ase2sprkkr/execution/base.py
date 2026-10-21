@@ -441,7 +441,11 @@ class LaunchSpec:
 
 
 def _pathlike(value):
+    # Keep a TaskFile-like declaration's optional policy until FileManifest
+    # has converted it to a file entry. Ordinary PathLike values stay strings.
     if isinstance(value, os.PathLike):
+        if hasattr(value, "optional"):
+            return value
         return os.fspath(value)
     return value
 
