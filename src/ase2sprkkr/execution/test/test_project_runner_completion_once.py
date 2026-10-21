@@ -50,7 +50,7 @@ def test_reading_state_does_not_write_to_store():
     record = SimpleNamespace(id="run", state=RunState.RUNNING,
                              updated_at="2026-10-20T10:00:00+00:00",
                              execution=SimpleNamespace(submitted=lambda x: x))
-    run = PersistentRun(manager, executor, raw, record)
+    run = PersistentRun(manager, executor, record)
     assert run.state == RunState.RUNNING
     assert manager.transitions == 0
 
@@ -60,7 +60,7 @@ def test_finalization_is_once_even_if_wait_and_callback_both_request_it():
     record = SimpleNamespace(id="run", state=RunState.RUNNING,
                              updated_at="2026-10-20T10:00:00+00:00",
                              execution=SimpleNamespace(submitted=lambda x: x))
-    run = PersistentRun(manager, executor, raw, record)
+    run = PersistentRun(manager, executor, record)
     raw.state = RunState.FINISHED
     run.completed(raw)
     run.completed(raw)
@@ -73,7 +73,7 @@ def test_unknown_observation_is_written_once_but_not_finalized():
     record = SimpleNamespace(id="run", state=RunState.RUNNING,
                              updated_at="2026-10-20T10:00:00+00:00",
                              execution=SimpleNamespace(submitted=lambda x: x))
-    run = PersistentRun(manager, executor, raw, record)
+    run = PersistentRun(manager, executor, record)
     raw.state = RunState.UNKNOWN
     raw.failure_message = "scheduler disconnected"
 
@@ -90,7 +90,7 @@ def test_unknown_observation_does_not_fire_completion_callback():
     record = SimpleNamespace(id="run", state=RunState.RUNNING,
                              updated_at="2026-10-20T10:00:00+00:00",
                              execution=SimpleNamespace(submitted=lambda x: x))
-    run = PersistentRun(manager, executor, raw, record)
+    run = PersistentRun(manager, executor, record)
     delivered = []
     raw.state = RunState.UNKNOWN
     run.completed(raw)
@@ -98,7 +98,7 @@ def test_unknown_observation_does_not_fire_completion_callback():
     assert delivered == [raw.result]
 
     raw.state = RunState.FINISHED
-    new_run = PersistentRun(manager, executor, raw, record)
+    new_run = PersistentRun(manager, executor, record)
     new_run.completed(raw)
     delivered.append(raw.result)
     assert delivered == [raw.result, raw.result]
@@ -124,7 +124,7 @@ def test_concurrent_wait_and_completion_callback_persist_and_ack_once():
         updated_at="2026-10-20T10:00:00+00:00",
         execution=SimpleNamespace(submitted=lambda native_id: native_id),
     )
-    run = PersistentRun(manager, executor, raw, record)
+    run = PersistentRun(manager, executor, record)
     raw.state = RunState.FINISHED
 
     def invoke(action):
