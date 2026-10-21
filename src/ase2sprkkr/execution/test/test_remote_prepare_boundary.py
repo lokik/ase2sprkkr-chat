@@ -56,10 +56,6 @@ def test_prepared_manifest_is_durable_before_remote_backend_submit(tmp_path, mon
     # The test substitutes an opaque backend id and disables the monitor;
     # supply the corresponding fake status instead of invoking the CLI.
     executor.connection.status = status
-    # This test is exclusively about the pre-submit durability boundary.
-    # Avoid starting a background completion worker for a synthetic backend
-    # which intentionally has no process to wait for.
-    monkeypatch.setattr(run._runner, "_start_completion", lambda: None)
     run.submit()
 
     assert len(submitted) == 1
@@ -148,4 +144,4 @@ def test_postprocessing_rejected_submit_preserves_error_and_does_not_monitor(met
         getattr(runner, method)()
     assert caught.value is failure
     assert runner._started is False
-    assert runner._thread is None
+    assert runner._done.is_set() is False
