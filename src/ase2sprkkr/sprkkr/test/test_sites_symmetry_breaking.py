@@ -206,6 +206,7 @@ class TestSymmetryCheckReferenceSystem:
 
         _, site0, site1 = _two_shared_sites()
         original_vref = site0.site_type.reference_system.vref
+        _ = site0.reference_system.vref
         with pytest.raises(RuntimeError, match="break_symmetry"):
             site0.reference_system = ReferenceSystem(original_vref + 1.0, 0.0)
         site0.break_symmetry()
