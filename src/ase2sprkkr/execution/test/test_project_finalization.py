@@ -11,6 +11,7 @@ from ase2sprkkr.execution import (
     RunState,
     RunStore,
 )
+from ase2sprkkr.execution.base import ExecutionResources
 from ase2sprkkr.execution.manager import ExecutionManager
 from ase2sprkkr.outputs.project_results import (
     UnrecoverableProjectResultError,

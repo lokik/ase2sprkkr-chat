@@ -385,6 +385,7 @@ def test_always_input_sync_uploads_without_unnecessary_digest_checks(tmp_path):
     mapping = FileMapping(str(local), str(remote), input_sync="always")
     spec = ExecutionSpec(
         argv=("true",), directory=str(local), input_file=str(source),
+        output_file=None,
     )
     manifest = asyncio.run(handler.prepare(mapping, spec))
 

@@ -12,7 +12,7 @@ def test_status_command_forwards_opaque_remote_handle(monkeypatch):
     monkeypatch.setattr(
         remote_service,
         "status_remote",
-        lambda value: calls.append(value) or {"state": "running"},
+        lambda value, files=None: calls.append((value, files)) or {"state": "running"},
     )
     output = []
     monkeypatch.setattr(remote_command, "_print_json", output.append)
@@ -23,7 +23,7 @@ def test_status_command_forwards_opaque_remote_handle(monkeypatch):
         None,
     )
 
-    assert calls == [remote_id]
+    assert calls == [(remote_id, None)]
     assert output == [{"state": "running"}]
 
 
