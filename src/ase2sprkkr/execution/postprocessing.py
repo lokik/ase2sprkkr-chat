@@ -54,6 +54,23 @@ class CalculationRun:
         runner.callback = self._backend_completed
 
     @property
+    def id(self):
+        if self.hooks is None:
+            raise AttributeError("Untracked calculation has no persistent ID")
+        return self.hooks.id
+
+    @property
+    def record(self):
+        if self.hooks is None:
+            raise AttributeError("Untracked calculation has no RunRecord")
+        return self.hooks.record
+
+    def refresh(self):
+        if self.hooks is None:
+            raise RuntimeError("Untracked calculation has no persistent record")
+        return self.hooks.refresh()
+
+    @property
     def cancellation_requested(self):
         """Single source of truth for cancellation across project and processing."""
         return self._cancel_requested.is_set()
@@ -201,7 +218,9 @@ class CalculationRun:
         """Persistence must succeed before completion is published to observers."""
         try:
             if self.hooks is not None:
-                self.hooks.completed(self)
+                persisted_state = self.hooks.completed(self)
+                if persisted_state is not None:
+                    self._state = RunState(persisted_state)
         except BaseException as exc:
             self.persistence_error = (
                 exc if isinstance(exc, PersistenceError)
@@ -228,7 +247,9 @@ class CalculationRun:
             if self.hooks is None:
                 raise RuntimeError("No persistence hook is configured")
             try:
-                self.hooks.completed(self)
+                persisted_state = self.hooks.completed(self)
+                if persisted_state is not None:
+                    self._state = RunState(persisted_state)
             except BaseException as exc:
                 self.persistence_error = (
                     exc if isinstance(exc, PersistenceError)
@@ -410,12 +431,16 @@ class CalculationRun:
     def submit(self):
         return self._start_submission()
 
-    def start(self):
+    def start(self, *, attached=None):
         with self._lock:
             if self._started:
                 return
-            attached = self._runner.state != RunState.NEW
-        return self._start_submission(attached=attached)
+            if attached is None:
+                attached = self._runner.state != RunState.NEW
+        result = self._start_submission(attached=attached)
+        if attached and self.hooks is not None:
+            self.hooks.attached(self)
+        return result
 
     def _dispatch_cancel(self):
         try:
@@ -453,12 +478,13 @@ class CalculationRun:
     def close(self):
         """Release an unstarted calculation without launching a backend."""
         with self._lock:
-            if self._resources is None or self._settled:
+            if self._settled:
                 return
             if (self._preparing or self._submitting or self._started
                     or self._submission_uncertain or self._runner.state != RunState.NEW):
                 raise RuntimeError("Cannot close resources of a submitted or uncertain run")
-            self._resources.close()
+            if self._resources is not None:
+                self._resources.close()
             self._state = RunState.CANCELLED
             self._settled = True
             self._done.set()
@@ -484,6 +510,8 @@ class CalculationRun:
         return stop()
 
     def cancel(self):
+        if self.hooks is not None and not self.hooks.can_cancel(self):
+            return None
         self.request_cancel()
         with self._lock:
             if self._settled or self._runner.state in (

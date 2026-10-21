@@ -821,9 +821,9 @@ def test_project_persistence_failure_can_be_retried_without_resubmitting(
 
     with pytest.raises(PersistenceError, match="persist calculation"):
         run.wait()
-    assert run._runner.state is RunState.FINISHED
-    assert run._runner.persistence_error is not None
+    assert run.state is RunState.FINISHED
+    assert run.persistence_error is not None
     assert store.get(run.id).state != RunState.FINISHED
-    run._runner.retry_persistence()
+    run.retry_persistence()
     assert store.get(run.id).state is RunState.FINISHED
     assert len(calls) == 2

@@ -921,10 +921,10 @@ class ExecutionManager:
         if set_manifest is not None:
             set_manifest(record.files)
         processed = CalculationRun(raw, process_result, resources=resources)
-        project_run = ProjectRunner(self, executor, processed, record, spec=spec)
-        processed.hooks = project_run
+        persistence = PersistentRun(self, executor, processed, record, spec=spec)
+        processed.hooks = persistence
         processed.callback = callback
-        return project_run
+        return processed
 
     def refresh(self, records=None):
         records = tuple(self.store.runs(active=True) if records is None else records)
@@ -969,15 +969,15 @@ class ExecutionManager:
             start=False,
         )
         processed = CalculationRun(raw, process_result)
-        project_run = ProjectRunner(self, executor, processed, record)
-        processed.hooks = project_run
+        persistence = PersistentRun(self, executor, processed, record)
+        processed.hooks = persistence
         processed.callback = callback
-        project_run.start()
-        return project_run
+        processed.start(attached=True)
+        return processed
 
 
-class ProjectRunner:
-    """Caller-owned runner that persists the public lifecycle directly."""
+class PersistentRun:
+    """Durable record and transactional hooks for one CalculationRun."""
 
     def __init__(self, manager, executor, runner: CalculationRun, record, *, spec=None):
         self._spec = spec
@@ -1162,6 +1162,23 @@ class ProjectRunner:
     def completed(self, run: CalculationRun):
         """Durably record an observed completion before user notifications."""
         self._sync_completion(run.result)
+        return self._record.state
+
+    def attached(self, run: CalculationRun):
+        """Synchronize an attached observation without resubmitting its job."""
+        with self._completion_lock:
+            state = run.state
+            if (not self._completion_persisted and run.backend_id is not None
+                    and state != RunState.NEW):
+                self._record = self.manager.transition(
+                    self._record, state=state,
+                    execution=self.execution, failure_phase=self.failure_phase,
+                )
+                self._monitor_record_version = self._record.updated_at
+
+    def can_cancel(self, run: CalculationRun):
+        """A durable terminal record cannot be cancelled by a stale observer."""
+        return not self._record.state.is_terminal
 
     def _sync_completion(self, result):
         # Callback and wait() can reach this path concurrently. Only the
@@ -1283,3 +1300,8 @@ class ProjectRunner:
                     )
                     self._monitor_record_version = self._record.updated_at
 
+
+
+# Existing tests still exercise the previous project facade directly. It is
+# not constructed by ExecutionManager; callers receive CalculationRun.
+ProjectRunner = PersistentRun

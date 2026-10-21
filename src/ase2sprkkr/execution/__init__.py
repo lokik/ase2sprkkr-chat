@@ -25,6 +25,7 @@ from .manager import (
     CorruptRunRecord,
     DuplicateSubmissionError,
     ProjectRunner,
+    PersistentRun,
     RunRecord,
     RunStore,
 )
@@ -77,6 +78,7 @@ __all__ = [
     "CorruptRunRecord",
     "ExecutionManager",
     "ProjectRunner",
+    "PersistentRun",
     "Project",
     "ProjectRepository",
     "ProjectRepositoryError",
