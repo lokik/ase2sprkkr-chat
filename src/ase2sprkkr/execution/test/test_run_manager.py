@@ -19,6 +19,7 @@ from ase2sprkkr.execution.manager import ExecutionManager
 
 class _RawRunner:
     def __init__(self, on_submit=None):
+        self.callback = None
         self.on_submit = on_submit
         self.state = RunState.NEW
         self.backend_id = None
@@ -52,6 +53,8 @@ class _RawRunner:
             self.state = RunState.FAILED
             self.failure_phase = FailurePhase.EXECUTION
             self.failure_message = f"process exited with {return_code}"
+        if self.callback is not None:
+            self.callback(self.result)
         self._done.set()
 
     def cancel(self):
