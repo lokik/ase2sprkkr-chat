@@ -1258,7 +1258,11 @@ class ProjectRunner:
         try:
             return self._runner.wait()
         finally:
-            if self._record.state != RunState.NEW:
+            # A failed durable completion must be retried explicitly, not
+            # silently during wait() while the caller is handling the error.
+            if (self._record.state != RunState.NEW
+                    and not (isinstance(self._runner, CalculationRun)
+                             and self._runner.persistence_error is not None)):
                 self._sync_completion(self.result)
 
     def run(self):
