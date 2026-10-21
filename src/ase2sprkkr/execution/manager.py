@@ -536,12 +536,24 @@ class ExecutionManager:
             changes = {"state": merged_state, "updated_at": now}
             if not latest.state.is_terminal and merged_state.is_terminal:
                 changes["finished_at"] = now
-            merged_result_files = self._merged_result_files(latest, files)
-            if merged_result_files is not latest.files:
-                changes["files"] = merged_result_files
+            # Completed history is immutable through ordinary transitions.
+            # Availability updates have their own explicit operation.
+            if not final_locked:
+                merged_result_files = self._merged_result_files(latest, files)
+                if merged_result_files is not latest.files:
+                    changes["files"] = merged_result_files
             if execution is not _UNCHANGED and execution is not None:
-                if latest.execution.backend_id is not None and execution.backend_id != latest.execution.backend_id:
-                    raise ValueError("Backend identity cannot change")
+                if execution.endpoint != latest.execution.endpoint:
+                    raise ValueError("Execution endpoint cannot change")
+                if execution.directory.local != latest.execution.directory.local:
+                    raise ValueError("Execution local directory cannot change")
+                if latest.execution.backend_id is not None:
+                    if execution.backend_id != latest.execution.backend_id:
+                        raise ValueError("Backend identity cannot change")
+                    if execution.directory != latest.execution.directory:
+                        raise ValueError("Submitted execution directory cannot change")
+                elif final_locked and execution != latest.execution:
+                    raise ValueError("Final execution identity cannot change")
                 changes["execution"] = execution
             if return_code is not _UNCHANGED and return_code is not None:
                 if not final_locked or latest.return_code is None:
@@ -1043,13 +1055,17 @@ class ProjectRunner:
     @property
     def state(self):
         """Observe runner state without persisting a transition."""
+        # The durable terminal record is authoritative even after the backend
+        # has ceased to be reachable following receipt acknowledgement.
+        if self._record.state.is_terminal:
+            return self._record.state
         state = self._runner.state
         if state == RunState.NEW and self._record.state != RunState.NEW:
             return self._record.state
         if state == RunState.UNKNOWN and self._record.state != RunState.NEW:
             # The completed observer cannot overwrite a newer refresh.
             return self._record.state
-        return self._record.state if self._record.state.is_terminal else state
+        return state
 
     def add_output_listener(self, callback):
         return self._runner.add_output_listener(callback)
