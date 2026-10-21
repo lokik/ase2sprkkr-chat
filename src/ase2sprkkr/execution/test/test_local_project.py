@@ -287,7 +287,7 @@ def test_submission_cleanup_uses_manifest_to_protect_caches(tmp_path):
 
     from ase2sprkkr.execution.file_availability import prepare_local_files
     from ase2sprkkr.execution.remote_service import _request_spec
-    from ase2sprkkr.execution.run_model import FileEntry, FileManifest, CacheEntry
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
 
     for name in ("stale.dat", "input.dat", "stdin.dat", "cache.dat", "sync-cache.dat"):
         (tmp_path / name).write_text(name)
@@ -299,8 +299,8 @@ def test_submission_cleanup_uses_manifest_to_protect_caches(tmp_path):
     manifest = FileManifest(
         outputs=(located("*.dat"),),
         caches=(
-            CacheEntry(located("cache.dat")),
-            CacheEntry(located("sync-cache.dat")),
+            located("cache.dat"),
+            located("sync-cache.dat"),
         ),
     )
     request = {
