@@ -7,7 +7,7 @@ import pytest
 
 from ..base import ExecutionSpec, FailurePhase, RunState
 from ..remote import RemoteRunner
-from ..remote_endpoint import _RemoteRun
+from ..remote import RemoteRunner
 from ..run_model import FileEntry, FileManifest
 from ..transport import LocalTransport
 
@@ -27,7 +27,7 @@ def _make_runner(tmp_path, monkeypatch, *, stdout=b"same", stderr=b"error"):
     local_err.write_bytes(stderr)
     remote_out.write_bytes(b"same")
     remote_err.write_bytes(b"error")
-    runner = _RemoteRun(
+    runner = RemoteRunner(
         SimpleNamespace(transport=LocalTransport()),
         ExecutionSpec(argv=(), input_file=None, output_file=str(local_out),
                       error_file=str(local_err), directory=str(tmp_path)),

@@ -1,6 +1,6 @@
 """Crash boundary: remote staging metadata must be persisted before submit."""
 
-from ase2sprkkr.execution.remote_endpoint import _RemoteRun
+from ase2sprkkr.execution.remote import RemoteRunner
 from ase2sprkkr.execution import (
     ExecutionSpec, FileEntry, FileManifest, FileMapping,
     LaunchSpec, RemoteEndpointExecutor, RunState, RunStore, LocalTransport,
@@ -43,7 +43,7 @@ def test_prepared_manifest_is_durable_before_remote_backend_submit(tmp_path, mon
         submitted.append(current)
         return {"state": "running", "remote_id": "opaque-job"}
 
-    monkeypatch.setattr(_RemoteRun, "_prepare_async", prepare)
+    monkeypatch.setattr(RemoteRunner, "_prepare_async", prepare)
     monkeypatch.setattr("ase2sprkkr.execution.remote_endpoint.start_monitor", lambda *args, **kwargs: None)
     executor.connection.submit = submit
 

@@ -20,7 +20,6 @@ from .base import (
 )
 from .remote import FileSyncPolicy, RemoteRunner, _run_sync
 from .remote_file_handler import RemoteFileHandler
-from ..common.file_versions import file_digest
 from .target_connection import SSHConnection
 from .supervisor_monitor import backend_status_from_facts
 from .run_model import WorkingDirectory
@@ -41,148 +40,6 @@ def _relative_local_path(path, local_root):
             f"Local path {path} is outside mapped root {root}; "
             "specify local_root/remote_root explicitly"
         ) from exc
-
-
-class _RemoteRun(RemoteRunner):
-    """One remote run whose persistent lifecycle is owned by the client."""
-
-    def __init__(self, *args, run_id=None, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._run_id = run_id
-        self._prepared = None
-
-    async def _complete_terminal(self, facts, backend_state):
-        """Finalize delivery once, including integrity of streamed channels."""
-        await super()._complete_terminal(facts, backend_state)
-        if self._state != RunState.FINISHED or self.files is None:
-            return
-
-        # A broken follow connection can leave either channel incomplete even
-        # when the backend finished successfully. Verify both physical files.
-        checked = set()
-        for kind, entry in (("stdout", self.files.stdout),
-                            ("stderr", self.files.stderr)):
-            if entry is None or entry.local_path is None or entry.remote_path is None:
-                continue
-            local = entry.local_path
-            if local in checked:
-                continue  # Merged stdout/stderr is one physical file.
-            checked.add(local)
-            try:
-                signature = await self.executor.endpoint.transport.file_signature(entry.remote_path)
-                if signature is None:
-                    raise FileNotFoundError(
-                        f"Remote {kind} output is missing: {entry.remote_path}"
-                    )
-                # FOLLOW writes through a separate descriptor. Flush the
-                # runner's buffered handles before verifying the local copy.
-                for stream in (self.spec.output_file, self.spec.error_file):
-                    if stream is not None and not stream.closed:
-                        stream.flush()
-                stat = os.stat(local)
-                if stat.st_size != signature[0]:
-                    raise RuntimeError(
-                        f"Streamed local {kind} size does not match the "
-                        f"authoritative remote output: {local}"
-                    )
-                remote_digest = await self.executor.endpoint.transport.file_digest(entry.remote_path)
-                if remote_digest is None or file_digest(local) != remote_digest:
-                    raise RuntimeError(
-                        f"Streamed local {kind} contents differ from remote output: {local}"
-                    )
-                if await self.executor.endpoint.transport.file_signature(entry.remote_path) != signature:
-                    raise RuntimeError(f"Remote {kind} output changed during verification")
-
-                os.utime(local, ns=(stat.st_atime_ns, signature[1]))
-            except Exception as exc:
-                self._state = RunState.FAILED
-                self._failure_phase = FailurePhase.DOWNLOAD
-                self._failure_message = str(exc)
-                self._files = self._files.with_file_availability(local, "failed", str(exc))
-                raise
-
-    async def _prepare_async(self):
-        try:
-            remote_directory = await self.executor.map_path(self.spec.directory)
-            await self.executor.endpoint.transport.run(("mkdir", "-p", "--", remote_directory))
-            manifest = await self.file_handler.prepare(
-                self.executor, self.spec,
-            )
-            # The runner owns backend identity, command construction and the
-            # submission protocol. FileHandler knows only file locations.
-            mapped = {entry.local_path: entry.remote_path
-                      for entry in (*manifest.inputs, *(cache.file for cache in manifest.caches))
-                      if entry.local_path is not None}
-            def argv(args):
-                return [mapped.get(file_path(os.fspath(arg), self.spec.directory),
-                                   os.fspath(arg)) for arg in args]
-            request = {
-                "id": self._run_id,
-                "executor": self.executor.endpoint.backend,
-                "executor_options": self.executor.endpoint.backend_options,
-                "directory": remote_directory,
-                **self.spec.command_request(argv),
-                "input_file": None if self.spec.input_file is None else
-                    mapped.get(file_path(self.spec.input_file, self.spec.directory)),
-                "stdin": None if self.spec.stdin is None else
-                    mapped.get(file_path(self.spec.stdin, self.spec.directory)),
-                "output_file": (None if manifest.stdout is None
-                                else manifest.stdout.remote_path),
-                "error_file": (None if manifest.stderr is None
-                               else manifest.stderr.remote_path),
-                "files": asdict(manifest),
-            }
-            return request, manifest
-        except Exception as exc:
-            # No calculation has been launched yet. Persisted preflight and
-            # direct submission must classify this known failure identically.
-            self._failure_phase = FailurePhase.SUBMISSION
-            self._failure_message = str(exc)
-            raise SubmissionNotStarted(str(exc)) from exc
-
-    def prepare_submission(self):
-        """Complete all staging before the client commits SUBMITTING metadata."""
-        with self._lock:
-            if self._state != RunState.NEW:
-                raise RuntimeError(f"Run is already {self._state.value}")
-            if self._prepared is not None:
-                return
-            request, manifest = _run_sync(self._prepare_async())
-            self._prepared = (request, manifest)
-            self._remote_directory = request["directory"]
-            self._files = manifest
-
-    async def _submit_async(self):
-        if self._prepared is None:
-            request, manifest = await self._prepare_async()
-        else:
-            request, manifest = self._prepared
-
-        request["detached"] = self._run_id is not None
-        status = await self.executor.endpoint.connection.submit(request)
-        remote_id = status.get("remote_id")
-        if not remote_id:
-            raise RuntimeError("Remote submit returned no remote_id")
-        if status.get("files") is not None:
-            from .run_model import FileManifest
-            manifest = FileManifest(**status["files"])
-        return remote_id, manifest, status, request
-
-    def submit(self):
-        with self._lock:
-            if self._state != RunState.NEW:
-                raise RuntimeError(f"Run is already {self._state.value}")
-            remote_id, manifest, status, request = _run_sync(self._submit_async())
-            self._state = RunState(status["state"])
-            self._return_code = status.get("return_code")
-            self.result.return_code = self._return_code
-            phase = status.get("failure_phase")
-            self._failure_phase = None if phase is None else FailurePhase(phase)
-            self._failure_message = status.get("error")
-            self._backend_id = str(remote_id)
-            self._remote_directory = request["directory"]
-            self._files = manifest
-        start_monitor(self, missing_backend="Run has no backend reference")
 
 
 class _RemoteRunContext:
@@ -236,7 +93,7 @@ class _RemoteRunContext:
         return local
 
     def create_run(self, spec, callback=None, *, run_id=None):
-        return _RemoteRun(self, spec, callback=callback, run_id=run_id)
+        return RemoteRunner(self, spec, callback=callback, run_id=run_id)
 
     async def attach(self, run, callback=None, output_listener=None, start=True):
         execution = run.execution
@@ -272,7 +129,7 @@ class _RemoteRunContext:
                 ),
             )
             phase = status.get("failure_phase")
-            runner = _RemoteRun(
+            runner = RemoteRunner(
                 self,
                 spec,
                 callback=callback,

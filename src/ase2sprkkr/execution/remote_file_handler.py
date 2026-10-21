@@ -278,6 +278,37 @@ class RemoteFileHandler:
             )
         return manifest, first_error
 
+    async def verify_streams(self, manifest, spec):
+        """Verify locally delivered FOLLOW streams against their remote copies."""
+        from ..common.file_versions import file_digest
+        checked = set()
+        for kind, entry in (("stdout", manifest.stdout), ("stderr", manifest.stderr)):
+            if entry is None or entry.local_path is None or entry.remote_path is None:
+                continue
+            local = entry.local_path
+            if local in checked:
+                continue
+            checked.add(local)
+            signature = await self.transport.file_signature(entry.remote_path)
+            if signature is None:
+                raise FileNotFoundError(f"Remote {kind} output is missing: {entry.remote_path}")
+            for stream in (spec.output_file, spec.error_file):
+                if stream is not None and not stream.closed:
+                    stream.flush()
+            stat = os.stat(local)
+            if stat.st_size != signature[0]:
+                raise RuntimeError(
+                    f"Streamed local {kind} size does not match the authoritative remote output: {local}"
+                )
+            digest = await self.transport.file_digest(entry.remote_path)
+            if digest is None or file_digest(local) != digest:
+                raise RuntimeError(
+                    f"Streamed local {kind} contents differ from remote output: {local}"
+                )
+            if await self.transport.file_signature(entry.remote_path) != signature:
+                raise RuntimeError(f"Remote {kind} output changed during verification")
+            os.utime(local, ns=(stat.st_atime_ns, signature[1]))
+
     async def restore(self, run, paths, context, *, destinations=None):
         """Restore only persisted concrete files; caller checks digests."""
         destinations = {} if destinations is None else {
