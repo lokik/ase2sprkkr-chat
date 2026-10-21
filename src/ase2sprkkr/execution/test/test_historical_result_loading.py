@@ -6,7 +6,6 @@ from ase2sprkkr.execution import (
     FileAvailabilityState,
     ExecutionSpec,
     Executor,
-    ExecutorPool,
     FileState,
     FileManifest,
     RunState,
@@ -54,7 +53,7 @@ def _spec(tmp_path):
 
 
 def _manager(store):
-    return ExecutionManager(store, executor_pool=ExecutorPool())
+    return ExecutionManager(store)
 
 
 def _terminal_run(tmp_path, *, state=RunState.FINISHED, return_code=0, task="DOS"):
