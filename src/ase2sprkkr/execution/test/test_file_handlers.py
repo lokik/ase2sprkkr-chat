@@ -280,7 +280,7 @@ def test_materialization_assigns_cache_baselines_to_concrete_members(tmp_path):
             FileEntry(str(local / "restart-*.pot"),
                                  str(remote / "restart-*.pot"),
                                  availability_state="pending"),
-            FileEntry(remote_path=previous), (3, 17)),
+            FileEntry(remote_path=previous, pre_run_signature=(3, 17)),
         ),
         mapping=FileMapping(str(local), str(remote)),
     )
@@ -322,7 +322,7 @@ def test_materialization_keeps_failed_wildcard_declaration(tmp_path, monkeypatch
 
 
 def test_collect_rejects_two_remote_cache_sources_with_one_destination(tmp_path):
-        from ase2sprkkr.execution.base import ExecutionOutcome
+    from ase2sprkkr.execution.base import ExecutionOutcome
 
     local = tmp_path / "restart.pot"
     local.write_text("preserve")
