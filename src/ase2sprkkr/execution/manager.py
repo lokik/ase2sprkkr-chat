@@ -651,8 +651,7 @@ class ExecutionManager:
                     and submission_conflicts(record, active)
                 )
                 if not conflicts:
-                    if record.files is not None:
-                        sync_result_files(record.files.input_files)
+                    sync_result_files(record.files.input_files)
                     return self.transition(
                         record,
                         state=RunState.SUBMITTING,
@@ -721,7 +720,7 @@ class ExecutionManager:
         phase = _failure_phase(failure_phase)
         result_files = record.files if files is None else files
 
-        if result_files is not None and result_files.failed_files:
+        if result_files.failed_files:
             files_available = False
             if state == RunState.FINISHED:
                 # The successful backend does not excuse a required download
@@ -730,7 +729,7 @@ class ExecutionManager:
                 phase = FailurePhase.DOWNLOAD
                 message = result_files.availability_message or message
 
-        if files_available and result_files is not None:
+        if files_available:
             try:
                 result_files = capture_result_files(result_files)
             except OSError as exc:
