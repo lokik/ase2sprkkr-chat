@@ -232,6 +232,8 @@ def test_guarded_run_store_rejects_missing_or_foreign_project_id(tmp_path):
         forged = replace(original, project_id=bad_id)
         with pytest.raises(ValueError, match="project ID|project identity"):
             manager.store.update(forged, lambda latest: latest)
+        with pytest.raises(ValueError, match="project ID|project identity"):
+            manager.store.save(forged)
         assert manager.store.get(original.id) == original
 
     with pytest.raises(ValueError, match="canonical project ID"):
