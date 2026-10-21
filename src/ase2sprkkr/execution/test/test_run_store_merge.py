@@ -187,7 +187,7 @@ def test_terminal_persistent_run_state_does_not_query_backend(tmp_path):
             raise AssertionError("Terminal state must not query backend")
 
     run = CalculationRun(Backend(), lambda outcome: outcome)
-    run.hooks = PersistentRun(manager, object(), run, finished)
+    run.hooks = PersistentRun(manager, object(), finished)
     assert run.state is RunState.FINISHED
 
 
