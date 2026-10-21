@@ -12,6 +12,12 @@ from ase2sprkkr.execution.base import (
     SubmissionNotStarted,
 )
 from ase2sprkkr.execution.postprocessing import PostprocessingRunner
+from ase2sprkkr.execution.manager import PersistentRun
+
+
+def _tracked(manager, executor, processed, record):
+    processed.hooks = PersistentRun(manager, executor, processed, record)
+    return processed
 from ase2sprkkr.sprkkr.calculation import PreparedCalculation
 from ase2sprkkr.sprkkr.profile import SPRKKRProfile
 
@@ -258,7 +264,6 @@ def test_cancel_before_submission_never_starts_backend():
 
 
 def test_failed_project_reservation_releases_prepared_resources():
-    from ase2sprkkr.execution.manager import ProjectRunner
 
     input_file = io.BytesIO(b"input")
     resources = ExecutionResources(input_file)
@@ -270,9 +275,9 @@ def test_failed_project_reservation_releases_prepared_resources():
         def reserve(self, record):
             raise ValueError("reservation rejected")
 
-    project = ProjectRunner(
+    project = _tracked(
         FailedReservation(), None, postprocessed,
-        SimpleNamespace(state=RunState.NEW),
+        SimpleNamespace(state=RunState.NEW, updated_at="new", files=None),
     )
     with pytest.raises(ValueError, match="reservation rejected"):
         project.submit()
@@ -388,7 +393,6 @@ def test_cancel_during_submit_waits_for_submission_then_requests_cancel():
 
 
 def test_project_cancel_during_reservation_does_not_close_in_use_inputs():
-    from ase2sprkkr.execution.manager import ProjectRunner
 
     input_file = io.BytesIO(b"input")
     resources = ExecutionResources(input_file)
@@ -407,9 +411,9 @@ def test_project_cancel_during_reservation_does_not_close_in_use_inputs():
     processed = PostprocessingRunner(
         raw, lambda outcome: outcome, resources=resources,
     )
-    project = ProjectRunner(
+    project = _tracked(
         SlowRejectedReservation(), None, processed,
-        SimpleNamespace(state=RunState.NEW),
+        SimpleNamespace(state=RunState.NEW, updated_at="new", files=None),
     )
 
     def reserve():
@@ -463,7 +467,6 @@ def test_callback_persists_before_prepared_resources_are_closed():
 
 
 def test_manifest_persistence_failure_does_not_submit_backend():
-    from ase2sprkkr.execution.manager import ProjectRunner
 
     resources = ExecutionResources(io.BytesIO(b"input"))
     submissions = []
@@ -480,7 +483,8 @@ def test_manifest_persistence_failure_does_not_submit_backend():
 
     class FailingStore:
         def reserve(self, record):
-            return SimpleNamespace(state=RunState.SUBMITTING, id="reserved")
+            return SimpleNamespace(state=RunState.SUBMITTING, id="reserved",
+                                   updated_at="reserved", files=None)
 
         def transition(self, record, **kwargs):
             transitions.append(kwargs)
@@ -493,9 +497,10 @@ def test_manifest_persistence_failure_does_not_submit_backend():
     processed = PostprocessingRunner(
         PreparedBackend(), lambda outcome: outcome, resources=resources,
     )
-    project = ProjectRunner(
+    project = _tracked(
         FailingStore(), None, processed,
-        SimpleNamespace(state=RunState.NEW, id="reserved"),
+        SimpleNamespace(state=RunState.NEW, id="reserved",
+                        updated_at="new", files=None),
     )
 
     with pytest.raises(OSError, match="manifest write failed"):
@@ -553,7 +558,6 @@ def test_cancel_during_preflight_does_not_close_inputs_until_preflight_ends():
 
 
 def test_project_cancel_during_manifest_staging_never_submits_backend():
-    from ase2sprkkr.execution.manager import ProjectRunner
 
     resources = ExecutionResources(io.BytesIO(b"input"))
     entered, release = Event(), Event()
@@ -570,7 +574,8 @@ def test_project_cancel_during_manifest_staging_never_submits_backend():
 
     class Store:
         def reserve(self, record):
-            return SimpleNamespace(state=RunState.SUBMITTING, id="run")
+            return SimpleNamespace(state=RunState.SUBMITTING, id="run",
+                                   updated_at="reserved", files=None)
 
         def transition(self, record, **changes):
             return record
@@ -580,7 +585,9 @@ def test_project_cancel_during_manifest_staging_never_submits_backend():
             return SimpleNamespace(state=changes["state"], id="run")
 
     processed = PostprocessingRunner(Backend(), lambda outcome: outcome, resources=resources)
-    project = ProjectRunner(Store(), None, processed, SimpleNamespace(state=RunState.NEW, id="run"))
+    project = _tracked(Store(), None, processed, SimpleNamespace(
+        state=RunState.NEW, id="run", updated_at="new", files=None,
+    ))
 
     def submit():
         try:
