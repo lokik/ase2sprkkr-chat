@@ -2,6 +2,14 @@
 from __future__ import annotations
 
 from .manager import ExecutionManager
+
+
+_nonproject_manager = ExecutionManager()
+
+
+def default_execution_manager():
+    """Process-wide owner of executors for non-project calculations."""
+    return _nonproject_manager
 from .projects import Project, ProjectRepository
 
 

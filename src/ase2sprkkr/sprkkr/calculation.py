@@ -21,11 +21,11 @@ from ..bindings.empty_spheres import add_empty_spheres
 from ..common.file_utils import Directory
 from ..common.temporary import temporary_option_value
 from ..execution.base import ExecutionResources
-from ..execution.persistence import resolve_project_manager
+from ..execution.persistence import resolve_project_manager, default_execution_manager
 from ..execution.postprocessing import PostprocessingRunner
 from ..input_parameters.input_parameters import InputParameters
 from ..potentials.potentials import Potential
-from .profile import SPRKKRProfile, executor_from_profile
+from .profile import SPRKKRProfile
 from .sprkkr_atoms import SPRKKRAtoms
 
 
@@ -867,9 +867,13 @@ def _create_sprkkr_run(
             print_output=print_output,
             directory=prepared.directory,
         )
-        if executor is None:
-            executor = executor_from_profile(profile)
         project_context = resolve_project_manager(project)
+        if executor is None:
+            manager = (
+                project_context[0] if project_context is not None
+                else default_execution_manager()
+            )
+            executor = manager.executors.for_profile(profile)
 
         execution_profile = profile
         if task.mpi:
