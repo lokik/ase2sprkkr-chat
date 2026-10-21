@@ -309,7 +309,7 @@ def test_sfn_potential_cell_and_periodic_plots(tmp_path, monkeypatch):
     figure = output.plot_periodic(mesh=0, show=False)
     plt.close(figure)
 
-def test_sfn_isosurface_in_the_cell(monkeypatch):
+def test_sfn_isosurface_in_the_cell(monkeypatch, parsed_sfn):
     import matplotlib.pyplot as plt
 
     measure = ModuleType("skimage.measure")
@@ -335,9 +335,7 @@ def test_sfn_isosurface_in_the_cell(monkeypatch):
     monkeypatch.setitem(sys.modules, "skimage", skimage)
     monkeypatch.setitem(sys.modules, "skimage.measure", measure)
 
-    potential = Potential.from_atoms(bulk("Fe"))
-    output = definition.read_from_string(SFN, potential=potential)
-    figure = output.plot_shape(mesh=0, n=9, show=False)
+    figure = parsed_sfn.plot_shape(mesh=0, n=9, show=False)
     axis = figure.axes[0]
     assert len(axis.lines) == 12
     assert requested_levels == [pytest.approx(0.5)]
