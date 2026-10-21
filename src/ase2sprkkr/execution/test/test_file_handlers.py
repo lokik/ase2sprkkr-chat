@@ -471,3 +471,107 @@ def test_cache_missing_policy_uses_signature_and_local_existence(tmp_path, monke
     assert error is None
     assert second.caches[0].availability_state == "available"
     assert target.read_text() == "updated"
+
+
+def test_collect_retries_failed_files_without_redownloading_successes(tmp_path):
+    """A terminal reattach preserves a completed transfer even if its source vanished."""
+    from ase2sprkkr.execution import FileMapping
+    from ase2sprkkr.execution.base import ExecutionOutcome
+
+    local, remote = tmp_path / "local", tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    first, second = remote / "first.out", remote / "second.out"
+    first.write_text("first")
+    second.write_text("second")
+
+    class FlakyTransport(LocalTransport):
+        fail_first = True
+
+        async def get_file(self, source, destination):
+            if str(source) == str(first) and self.fail_first:
+                raise OSError("temporary transfer failure")
+            await super().get_file(source, destination)
+
+    transport = FlakyTransport()
+    handler = RemoteEndpointExecutor(transport).file_handler
+    mapping = FileMapping(str(local), str(remote), output_sync="always")
+    manifest = FileManifest(outputs=tuple(
+        FileEntry(str(local / name), str(remote / name),
+                  availability_state="pending")
+        for name in ("first.out", "second.out")
+    ))
+
+    partial, error = asyncio.run(handler.collect(
+        mapping, manifest, ExecutionOutcome(), required=True,
+    ))
+    assert isinstance(error, OSError)
+    assert [e.availability_state for e in partial.outputs] == ["failed", "available"]
+    assert (local / "second.out").read_text() == "second"
+
+    second.unlink()  # The remote file is no longer accessible on reattach.
+    transport.fail_first = False
+    completed, error = asyncio.run(handler.collect(
+        mapping, partial, ExecutionOutcome(), required=True,
+    ))
+    assert error is None
+    assert [e.availability_state for e in completed.outputs] == ["available", "available"]
+    assert (local / "first.out").read_text() == "first"
+    assert (local / "second.out").read_text() == "second"
+    assert [e.availability_state for e in partial.outputs] == ["failed", "available"]
+
+
+def test_collect_retries_available_file_only_if_local_copy_is_missing(tmp_path):
+    """An available receipt does not hide a deleted local artifact."""
+    from ase2sprkkr.execution import FileMapping
+    from ase2sprkkr.execution.base import ExecutionOutcome
+
+    local, remote = tmp_path / "local", tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    source = remote / "result.dat"
+    source.write_text("restored")
+    destination = local / "result.dat"
+    manifest = FileManifest(outputs=(
+        FileEntry(str(destination), str(source), availability_state="available"),
+    ))
+    handler = RemoteEndpointExecutor(LocalTransport()).file_handler
+    mapping = FileMapping(str(local), str(remote), output_sync="always")
+    received, error = asyncio.run(handler.collect(
+        mapping, manifest, ExecutionOutcome(), required=True,
+    ))
+    assert error is None
+    assert destination.read_text() == "restored"
+    assert received.outputs[0].availability_state == "available"
+
+
+def test_collect_does_not_recheck_skipped_terminal_files(tmp_path):
+    """Skipping an optional cache/output freezes that decision across attach."""
+    from ase2sprkkr.execution import FileMapping
+    from ase2sprkkr.execution.base import ExecutionOutcome
+
+    class NoRemoteChecks(LocalTransport):
+        async def file_signature(self, path):
+            pytest.fail(f"Skipped files must not be rechecked: {path}")
+
+        async def file_digest(self, path):
+            pytest.fail(f"Skipped files must not be rehashed: {path}")
+
+        async def get_file(self, source, destination):
+            pytest.fail(f"Skipped files must not be downloaded: {source}")
+
+    local, remote = tmp_path / "local", tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    manifest = FileManifest(
+        outputs=(FileEntry(str(local / "missing.out"), str(remote / "missing.out"),
+                           availability_state="skipped"),),
+        caches=(FileEntry(str(local / "restart.pot"), str(remote / "restart.pot"),
+                          availability_state="skipped"),),
+    )
+    handler = RemoteEndpointExecutor(NoRemoteChecks()).file_handler
+    result, error = asyncio.run(handler.collect(
+        FileMapping(str(local), str(remote)), manifest, ExecutionOutcome(),
+    ))
+    assert error is None
+    assert result == manifest

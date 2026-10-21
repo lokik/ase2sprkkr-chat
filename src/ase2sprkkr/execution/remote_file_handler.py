@@ -266,6 +266,14 @@ class RemoteFileHandler:
         for is_cache, entry, before in candidates:
             if entry.local_path is None or entry.remote_path is None:
                 continue
+            # Terminal receipts describe a frozen artifact set. An already
+            # delivered local file (or an intentionally skipped declaration)
+            # must not be re-evaluated on attach. Retry only incomplete
+            # deliveries, including available files subsequently removed.
+            if entry.availability_state == "skipped":
+                continue
+            if entry.availability_state == "available" and os.path.isfile(entry.local_path):
+                continue
             kind = "cache" if is_cache else "output"
             if has_file_magic(entry.remote_path):
                 exc = RuntimeError("Cannot collect unresolved wildcard")
