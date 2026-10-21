@@ -157,9 +157,9 @@ def _manifest_accesses(record):
         value = entry.remote_path if remote else entry.local_path
         if value is None:
             return None
-        return os.path.normpath(
-            value if os.path.isabs(value) else os.path.join(directory.target, value)
-        )
+        resolved = value if os.path.isabs(value) else os.path.join(directory.target, value)
+        # Resolve aliases only on the host whose filesystem is accessible.
+        return os.path.normpath(resolved) if remote else os.path.realpath(resolved)
 
     reads = {path(entry) for entry in files.input_entries}
     reads.update(path(cache) for cache in files.caches)
@@ -167,11 +167,6 @@ def _manifest_accesses(record):
     if remote and (files.mapping is None or files.mapping.input_sync != "never"):
         writes.update(path(entry) for entry in files.input_entries)
     writes.update(path(cache) for cache in files.caches)
-    # Resolve local symlink aliases before comparing read/write targets.
-    # Remote paths belong to a different host and remain lexical.
-    if not remote:
-        reads = {os.path.realpath(value) for value in reads if value is not None}
-        writes = {os.path.realpath(value) for value in writes if value is not None}
     return reads - {None}, writes - {None}
 
 
