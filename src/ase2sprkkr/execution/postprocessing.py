@@ -122,8 +122,9 @@ class CalculationRun:
             return self._state
         # Reattached persistent runs may already be terminal, even if their
         # backend is gone. Do not query a stale or released backend.
-        if self.hooks is not None and self.hooks.record.state.is_terminal:
-            return self.hooks.record.state
+        record = getattr(self.hooks, "record", None)
+        if record is not None and record.state.is_terminal:
+            return record.state
         if self._processing:
             return RunState.POSTPROCESSING
         state = self._runner.state
