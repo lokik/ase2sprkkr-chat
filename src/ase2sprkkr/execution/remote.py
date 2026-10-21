@@ -376,10 +376,16 @@ class RemoteRunner:
         )
 
     async def _sync_patterns(self, patterns, *, kind, required=False,
-                             excluded_remote=(), excluded_local=()):
-        """Expand declarations once; the entry handlers own transfer policy."""
+                             excluded_remote=(), excluded_local=(),
+                             seen_remote=None):
+        """Expand declarations once; the entry handlers own transfer policy.
+
+        Reuse seen_remote between individually synchronized output patterns
+        so intersecting globs never download the same file twice.
+        """
         remote_root = await self.executor._resolved_remote_root()
-        selected = set(excluded_remote)
+        selected = seen_remote if seen_remote is not None else set()
+        selected.update(excluded_remote)
         excluded_local = set(excluded_local)
         for pattern in patterns:
             local_pattern = os.fspath(await self.executor.unmap_path(pattern))
@@ -440,12 +446,13 @@ class RemoteRunner:
                 path for path in (self.result.output_file, self.result.error_file)
                 if path is not None
             }
+            seen_remote = set(self._output_targets.values())
             for pattern in self._output_patterns:
                 await self._sync_patterns(
                     (pattern,), kind="output",
                     required=required and pattern not in self._optional_output_patterns,
-                    excluded_remote=self._output_targets.values(),
                     excluded_local=primary,
+                    seen_remote=seen_remote,
                 )
 
     async def _sync_one_output(self, local, remote, required):

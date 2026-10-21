@@ -179,6 +179,45 @@ def test_exact_and_wildcard_outputs_share_availability_tracking(tmp_path):
         ) == 1
 
 
+@pytest.mark.parametrize("optional_first", (True, False))
+def test_overlapping_wildcard_outputs_download_once(tmp_path, optional_first):
+    """Required and optional overlapping globs share one concrete download."""
+    from .test_remote import _SpyTransport
+
+    transport = _SpyTransport()
+    workdir = tmp_path / "local" / "calculation"
+    broad = TaskFile(workdir / "part-*.dat", optional=True)
+    narrow = TaskFile(workdir / "part-a*.dat")
+    patterns = (broad, narrow) if optional_first else (narrow, broad)
+    executor, spec, _, remote_root = _text_run(
+        tmp_path, transport,
+        declared_output_files=patterns,
+        output_files=FileSyncPolicy.ALWAYS,
+        code=(
+            "from pathlib import Path; "
+            "Path('part-a.dat').write_text('a'); "
+            "Path('part-b.dat').write_text('b')"
+        ),
+    )
+
+    runner = _processed_run(executor, spec)
+    result = runner.run()
+    assert result.return_code == 0
+    assert (workdir / "part-a.dat").read_text() == "a"
+    assert (workdir / "part-b.dat").read_text() == "b"
+
+    remote_workdir = remote_root / "calculation"
+    for filename in ("part-a.dat", "part-b.dat"):
+        remote = remote_workdir / filename
+        assert sum(source == remote for source, _ in transport.get_files) == 1
+
+    outputs = {entry.local_path: entry for entry in runner.files.outputs}
+    assert outputs[str(broad)].availability_state == "available"
+    assert outputs[str(narrow)].availability_state == "available"
+    assert outputs[str(workdir / "part-a.dat")].availability_state == "available"
+    assert outputs[str(workdir / "part-b.dat")].availability_state == "available"
+
+
 def test_exact_and_wildcard_caches_keep_individual_sync_states(tmp_path):
     workdir = tmp_path / "local" / "calculation"
     workdir.mkdir(parents=True)
