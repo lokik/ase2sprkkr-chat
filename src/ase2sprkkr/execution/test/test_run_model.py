@@ -379,9 +379,11 @@ def test_optional_taskfile_survives_manifest_and_roundtrip(tmp_path):
     optional_output = TaskFile(tmp_path / "maybe-*.dat", optional=True)
     required_output = TaskFile(tmp_path / "required.dat")
     optional_cache = TaskFile(tmp_path / "restart.pot", optional=True)
+    optional_input = TaskFile(tmp_path / "maybe.in", optional=True)
     spec = ExecutionSpec(
         argv=("true",), directory=str(tmp_path), input_file=None,
-        output_file=None, output_files=(optional_output, required_output),
+        output_file=None, input_files=(optional_input,),
+        output_files=(optional_output, required_output),
         cache_files=(optional_cache,),
     )
     manifest = FileManifest.from_spec(spec)
@@ -389,6 +391,7 @@ def test_optional_taskfile_survives_manifest_and_roundtrip(tmp_path):
         (str(optional_output), True), (str(required_output), False),
     ]
     assert manifest.caches[0].optional is True
+    assert manifest.inputs[0].optional is True
     assert FileManifest(**asdict(manifest)) == manifest
     with pytest.raises(TypeError, match="optional"):
         FileEntry(str(tmp_path / "wrong"), optional="true")
