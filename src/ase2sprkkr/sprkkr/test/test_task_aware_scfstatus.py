@@ -10,14 +10,14 @@ EXAMPLES = Path(__file__).parents[2] / "potentials" / "examples"
 
 
 def test_scf_status_serialization_follows_effective_task(tmp_path):
-    # Parse the FePt potential once; every independent serialization scenario
-    # explicitly sets its input status and writes to a fresh directory.
+    # Parse FePt once. Check DOS conversion before any save can normalize
+    # the potential, then exercise status resets between successive cases.
     potential = Potential.from_file(EXAMPLES / "FePt.new.pot")
     cases = (
-        ("SCF", None, "START", "SCF", "START"),
         ("DOS", None, "START", "DOS", "CONVERGED"),
-        ("SCF", "DOS", "START", "DOS", "CONVERGED"),
         ("DOS", None, "ITR-BULK", "DOS", "ITR-BULK"),
+        ("SCF", None, "START", "SCF", "START"),
+        ("SCF", "DOS", "START", "DOS", "CONVERGED"),
     )
     for index, (input_parameters, task, status, expected_task, expected_status) in enumerate(cases):
         directory = tmp_path / str(index)
