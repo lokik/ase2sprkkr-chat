@@ -174,6 +174,18 @@ def test_persistence_failure_is_distinct_from_calculation_and_can_be_retried():
     attempts, observed, processed = [], [], []
 
     class Hooks:
+        def before_submit(self, run):
+            pass
+
+        def prepared(self, run):
+            pass
+
+        def submitted(self, run):
+            pass
+
+        def submission_failed(self, run, error, *, uncertain):
+            pytest.fail(f"Unexpected submission failure: {error}")
+
         def completed(self, run):
             attempts.append(run.state)
             if len(attempts) == 1:

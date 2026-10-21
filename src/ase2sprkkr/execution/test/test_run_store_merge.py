@@ -171,20 +171,24 @@ def test_terminal_refresh_cannot_replace_manifest_or_execution(tmp_path):
     assert manager.store.get(original.id).execution == finished.execution
 
 
-def test_terminal_project_runner_state_does_not_query_backend(tmp_path):
-    from ase2sprkkr.execution.manager import ProjectRunner
+def test_terminal_persistent_run_state_does_not_query_backend(tmp_path):
+    from ase2sprkkr.execution.manager import PersistentRun
+    from ase2sprkkr.execution.postprocessing import CalculationRun
 
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
     record = _record(manager, tmp_path)
     finished = manager.transition(record, state=RunState.FINISHED)
 
     class Backend:
+        callback = None
+
         @property
         def state(self):
             raise AssertionError("Terminal state must not query backend")
 
-    project_run = ProjectRunner(manager, object(), Backend(), finished)
-    assert project_run.state is RunState.FINISHED
+    run = CalculationRun(Backend(), lambda outcome: outcome)
+    run.hooks = PersistentRun(manager, object(), run, finished)
+    assert run.state is RunState.FINISHED
 
 
 def test_explicit_availability_update_preserves_terminal_snapshot(tmp_path):
