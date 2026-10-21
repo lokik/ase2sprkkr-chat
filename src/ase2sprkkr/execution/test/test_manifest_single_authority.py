@@ -44,3 +44,55 @@ def test_remote_reservation_does_not_silently_remap_existing_entry(tmp_path):
     manifest = FileManifest(outputs=(file,))
     with pytest.raises(ValueError, match="differs from manifest"):
         manifest.with_remote(local_root=str(local), remote_root="/scratch")
+
+
+def test_staging_uses_reserved_targets_without_remapping(tmp_path):
+    import asyncio
+
+    from ase2sprkkr.execution.base import ExecutionSpec
+    from ase2sprkkr.execution.remote_file_handler import RemoteFileHandler
+    from ase2sprkkr.execution.transport import LocalTransport
+
+    local = tmp_path / "local"
+    remote = tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    (local / "input.dat").write_bytes(b"input")
+    spec = ExecutionSpec(
+        argv=("true",), directory=str(local),
+        input_file="input.dat", output_file="output.dat",
+    )
+    manifest = FileManifest.from_spec(spec).with_remote(
+        local_root=str(local), remote_root=str(remote),
+    )
+    prepared = asyncio.run(RemoteFileHandler(LocalTransport()).prepare(manifest, spec))
+    assert (remote / "input.dat").read_bytes() == b"input"
+    assert prepared.inputs[0].remote_path == str(remote / "input.dat")
+    assert prepared.stdout.remote_path == str(remote / "output.dat")
+    assert prepared.local_root == str(local)
+    assert prepared.remote_root == str(remote)
+
+
+def test_staging_rejects_unresolved_remote_entries_before_transfer(tmp_path):
+    import asyncio
+    from dataclasses import replace
+
+    from ase2sprkkr.execution.base import ExecutionSpec
+    from ase2sprkkr.execution.remote_file_handler import RemoteFileHandler
+    from ase2sprkkr.execution.transport import LocalTransport
+
+    local, remote = tmp_path / "local", tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    (local / "input.dat").write_bytes(b"input")
+    spec = ExecutionSpec(
+        argv=("true",), directory=str(local),
+        input_file="input.dat", output_file="output.dat",
+    )
+    manifest = FileManifest.from_spec(spec).with_remote(
+        local_root=str(local), remote_root=str(remote),
+    )
+    invalid = replace(manifest, stdout=replace(manifest.stdout, remote_path=None))
+    with pytest.raises(ValueError, match="unresolved path"):
+        asyncio.run(RemoteFileHandler(LocalTransport()).prepare(invalid, spec))
+    assert not (remote / "input.dat").exists()
