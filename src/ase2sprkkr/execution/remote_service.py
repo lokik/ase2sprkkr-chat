@@ -299,10 +299,10 @@ def _local_submit(request):
         if observed_path != socket_path:
             raise RuntimeError("Remote supervisor did not create its follow socket")
     except BaseException as exc:
-        if not released and not published:
-            # The worker is still blocked on the parent's release pipe:
-            # there cannot yet be a calculation process. Only in this state
-            # may submission cleanup kill the worker or delete scratch.
+        if not released:
+            # The worker is still blocked on the parent's release pipe,
+            # even if a submission identity ticket has been published.
+            # No calculation has started, so this side still owns cleanup.
             if process is not None:
                 try:
                     os.killpg(process.pid, signal.SIGKILL)
@@ -313,10 +313,12 @@ def _local_submit(request):
             shutil.rmtree(socket_dir, ignore_errors=True)
             if validated_scratch is not None:
                 shutil.rmtree(validated_scratch, ignore_errors=True)
+            if published:
+                acknowledge_submission(run_id)
         # Once released, the worker may already have started its child in
         # another process group. Do NOT kill its supervisor or remove its
         # socket/workspace: the worker owns the job and terminal cleanup.
-        if isinstance(exc, OSError) and not published and not released:
+        if isinstance(exc, OSError) and not released:
             raise SubmissionNotStarted(str(exc)) from exc
         raise
     finally:
