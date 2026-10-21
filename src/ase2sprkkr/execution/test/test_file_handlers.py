@@ -522,7 +522,7 @@ def test_collect_retries_failed_files_without_redownloading_successes(tmp_path):
 
 
 def test_collect_retries_available_file_only_if_local_copy_is_missing(tmp_path):
-    """An available receipt does not hide a deleted local artifact."""
+    """An available receipt does not hide a deleted local file."""
     from ase2sprkkr.execution import FileMapping
     from ase2sprkkr.execution.base import ExecutionOutcome
 

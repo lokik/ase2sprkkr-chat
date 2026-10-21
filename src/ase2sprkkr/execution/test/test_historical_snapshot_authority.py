@@ -30,7 +30,7 @@ def test_later_primary_output_is_not_mistaken_for_uncaptured_history(tmp_path):
         files=FileManifest.from_spec(spec),
     )
     store.save(record)
-    record = manager.complete(record, state=RunState.FINISHED, return_code=0, artifacts_available=False)
+    record = manager.complete(record, state=RunState.FINISHED, return_code=0, files_available=False)
 
     # The original run produced no output. Reusing the directory later must not
     # make this unrelated file part of the historical result.

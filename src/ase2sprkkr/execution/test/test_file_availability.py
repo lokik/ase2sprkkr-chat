@@ -1,4 +1,4 @@
-"""Contracts shared by local project and PSI/J artifact discovery."""
+"""Contracts shared by local project and PSI/J file discovery."""
 
 from ..file_availability import discover_local_files
 from ..run_model import FileEntry, FileManifest

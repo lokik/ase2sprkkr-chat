@@ -1,4 +1,4 @@
-"""Focused regression tests for historical artifact file operations."""
+"""Focused regression tests for historical file file operations."""
 
 from ase2sprkkr.execution.file_history import (
     capture_result_files, file_is_current, missing_result_files,
