@@ -134,7 +134,7 @@ class ManagedRunner:
     def start(self):
         if self.backend_id is None:
             return self.submit()
-        return start_monitor(self, missing_backend=self._missing_backend_message)
+        return start_monitor(self)
 
     def wait(self):
         return wait_for_monitor(self)
