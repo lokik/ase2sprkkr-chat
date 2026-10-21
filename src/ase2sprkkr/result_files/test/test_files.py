@@ -97,6 +97,9 @@ class TestOutput:
                     output.KEYWORD() if extension in ("bsf", "spc") else None,
                     # SPC's single-angle and 2D plotting branches differ.
                     (output.NP() > 1, output.NT() > 1) if extension == "spc" else None,
+                    # DOS plots also branch on the number of atom types
+                    # (including the total curve) and spin channels.
+                    (output.n_types(), output.n_spins()) if extension == "dos" else None,
                 )
                 if plot_kind in plotted_modes:
                     continue
