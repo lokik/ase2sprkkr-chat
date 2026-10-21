@@ -42,11 +42,15 @@ class RemoteFileHandler:
         self.transport = transport
 
     async def _stage_file(self, mapping, spec, value, used, *,
-                          uploads=None, required=True):
+                          uploads=None, required=True, remote_path=None):
         source = _local_path(spec, value)
         if source is None:
             return None
-        target = mapping.map_path(source)
+        # The frozen FileEntry, not a second mapping operation, owns the target.
+        # Expanded wildcard children inherit the declaration's workspace rule.
+        if remote_path is None:
+            raise ValueError(f"Missing frozen target for input: {source}")
+        target = remote_path
         previous = used.get(target)
         if previous is not None and previous != source:
             raise ValueError(f"Remote input target collision: {target}")
@@ -89,7 +93,7 @@ class RemoteFileHandler:
         return target
 
     async def _stage_input_pattern(self, mapping, spec, value, used, *,
-                                   required=True):
+                                   remote_pattern, required=True):
         source = _local_path(spec, value)
         matches = expand_local_files(source, mapping.local_root)
         if not matches and required:
@@ -98,8 +102,11 @@ class RemoteFileHandler:
             )
         uploads = []
         for match in matches:
+            relative = os.path.relpath(match, mapping.local_root)
+            remote = os.path.join(mapping.remote_root, relative)
             await self._stage_file(
                 mapping, spec, match, used, uploads=uploads, required=required,
+                remote_path=remote,
             )
         if uploads:
             await self.transport.put_files(
@@ -114,9 +121,11 @@ class RemoteFileHandler:
                     if entry.local_path is not None)
         for local, is_pattern in _unique_declared_paths(spec, declared):
             if is_pattern:
-                remote_pattern = mapping.map_path(local)
+                remote_pattern = next(entry.remote_path for entry in cache_entries
+                                      if entry.local_path == local)
                 await self._stage_input_pattern(
-                    mapping, spec, local, used, required=False,
+                    mapping, spec, local, used, remote_pattern=remote_pattern,
+                    required=False,
                 )
                 if FileSyncPolicy(mapping.output_sync) != FileSyncPolicy.NEVER:
                     for remote in await self.transport.expand_files(remote_pattern, root):
@@ -124,6 +133,8 @@ class RemoteFileHandler:
                 continue
             remote = await self._stage_file(
                 mapping, spec, local, used, required=False,
+                remote_path=next(entry.remote_path for entry in cache_entries
+                                 if entry.local_path == local),
             )
             before = (None if FileSyncPolicy(mapping.output_sync) == FileSyncPolicy.NEVER
                       else await self.transport.file_signature(remote))
@@ -152,13 +163,23 @@ class RemoteFileHandler:
             if source is None:
                 continue
             if source != primary and has_file_magic(source):
-                await self._stage_input_pattern(mapping, spec, source, used)
+                await self._stage_input_pattern(
+                    mapping, spec, source, used, remote_pattern=entry.remote_path,
+                )
             else:
-                await self._stage_file(mapping, spec, source, used)
+                await self._stage_file(
+                    mapping, spec, source, used, remote_path=entry.remote_path,
+                )
         if primary is not None:
-            await self._stage_file(mapping, spec, primary, used)
+            await self._stage_file(
+                mapping, spec, primary, used,
+                remote_path=manifest.primary_input.remote_path,
+            )
         if manifest.stdin is not None and manifest.stdin.local_path is not None:
-            await self._stage_file(mapping, spec, manifest.stdin.local_path, used)
+            await self._stage_file(
+                mapping, spec, manifest.stdin.local_path, used,
+                remote_path=manifest.stdin.remote_path,
+            )
 
         # Cache staging shares the collision map, not input file identity.
         input_sources = tuple(dict.fromkeys(used.values()))
@@ -186,7 +207,10 @@ class RemoteFileHandler:
                 continue
             if has_file_magic(local):
                 continue
-            inputs.append(FileEntry(local_path=local, remote_path=mapping.map_path(local)))
+            remote = next((target for target, source in used.items() if source == local), None)
+            if remote is None:
+                raise RuntimeError(f"Staged input is missing a target: {local}")
+            inputs.append(FileEntry(local_path=local, remote_path=remote))
 
         return replace(
             manifest,
