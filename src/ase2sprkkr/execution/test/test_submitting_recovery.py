@@ -7,7 +7,7 @@ from ase2sprkkr.execution import (
     DuplicateSubmissionError,
     ExecutionSpec,
     Executor,
-    ExecutorPool,
+    Executors,
     RunState,
     RunStatus,
     RunStore,
@@ -76,7 +76,7 @@ def test_confirmed_absent_stale_submission_releases_namespace(tmp_path):
     executor = _RecoveringExecutor(None)
     manager = ExecutionManager(
         RunStore(tmp_path / "runs"),
-        executor_pool=ExecutorPool(),
+        executors=Executors(),
         submitting_grace=0,
     )
     abandoned = _run(manager, executor, tmp_path)
@@ -117,7 +117,7 @@ def test_unresolved_or_recovered_submission_keeps_duplicate_protection(
     executor = _RecoveringExecutor(recovered)
     manager = ExecutionManager(
         RunStore(tmp_path / "runs"),
-        executor_pool=ExecutorPool(),
+        executors=Executors(),
         submitting_grace=grace,
     )
     uncertain = _run(manager, executor, tmp_path)
