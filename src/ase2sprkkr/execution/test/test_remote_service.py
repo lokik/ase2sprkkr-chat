@@ -215,7 +215,9 @@ def test_psij_cancellation_does_not_invent_terminal_state(monkeypatch, tmp_path)
     assert calls == ["42", "cancel"]
 
 
-def _stub_terminal_psij_job(monkeypatch, state, return_code, observed):
+def _stub_terminal_psij_job(
+    monkeypatch, state, return_code, observed, *, subscribe_error=None,
+):
     from types import SimpleNamespace
 
     class Job:
@@ -226,13 +228,23 @@ def _stub_terminal_psij_job(monkeypatch, state, return_code, observed):
         )
 
         def wait(self):
-            observed.append("wait")
-            return self.status
+            raise AssertionError("Remote FOLLOW must not create a job.wait thread")
 
     class Backend:
         def attach_native_job(self, native_id):
             observed.append(("attach", native_id))
             return Job()
+
+        def _observe_job(self, job, callback):
+            observed.append("observe")
+            if subscribe_error is not None:
+                raise subscribe_error
+            callback(job.status)
+
+            def detach():
+                observed.append("detach")
+
+            return detach
 
     monkeypatch.setattr(remote_service, "_psij_executor", lambda _: Backend())
 
@@ -251,8 +263,8 @@ def test_follow_waits_for_psij_terminal_without_repeated_status_probes(tmp_path,
     outcome = remote_service.follow_remote(remote_id, io.BytesIO(), io.BytesIO())
 
     assert outcome["state"] == RunState.FINISHED.value
-    assert observed == [("attach", "42"), "wait"]
-    assert checks == [remote_id]
+    assert observed == [("attach", "42"), "observe", "detach"]
+    assert checks == []
 
 
 def test_follow_uses_native_terminal_when_status_query_is_transient_unknown(tmp_path, monkeypatch):
@@ -270,8 +282,8 @@ def test_follow_uses_native_terminal_when_status_query_is_transient_unknown(tmp_
     assert outcome["state"] == RunState.FAILED.value
     assert outcome["return_code"] == 7
     assert outcome["failure_phase"] == FailurePhase.EXECUTION.value
-    assert observed == [("attach", "42"), "wait"]
-    assert checks == [remote_id]
+    assert observed == [("attach", "42"), "observe", "detach"]
+    assert checks == []
 
 
 def test_follow_fallback_treats_completed_nonzero_psij_as_failed(
@@ -293,7 +305,7 @@ def test_follow_fallback_treats_completed_nonzero_psij_as_failed(
         "failure_phase": FailurePhase.EXECUTION.value,
         "error": None,
     }
-    assert observed == [("attach", "42"), "wait"]
+    assert observed == [("attach", "42"), "observe", "detach"]
 
 
 def test_cancel_requests_supervisor_without_inventing_terminal_state(
@@ -724,6 +736,225 @@ def test_supervisor_stdin_close_failure_preserves_terminal_receipt(
         assert return_code == 0
         assert receipt["failure_phase"] == FailurePhase.EXECUTION.value
         assert "stdin close failed" in receipt["error"]
+
+
+
+
+def test_psij_follow_uses_callback_status_not_stale_job_status(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    _, remote_id = _psij_handle(tmp_path)
+    result_status = SimpleNamespace(
+        state=SimpleNamespace(name="FAILED"), exit_code=4, message="failed",
+    )
+    stale = SimpleNamespace(state=SimpleNamespace(name="ACTIVE"), exit_code=None)
+    subscriptions = []
+
+    class Job:
+        status = stale
+        def wait(self):
+            raise AssertionError("Native wait must not be called")
+
+    class Backend:
+        def attach_native_job(self, native_id):
+            assert native_id == "42"
+            return Job()
+
+        def _observe_job(self, job, callback):
+            callback(result_status)
+            subscriptions.append("subscribe")
+            return lambda: subscriptions.append("detach")
+
+    monkeypatch.setattr(remote_service, "_psij_executor", lambda _: Backend())
+    monkeypatch.setattr(remote_service, "status_remote",
+                        lambda _: pytest.fail("Redundant status probe"))
+    result = remote_service.follow_remote(remote_id, io.BytesIO(), io.BytesIO())
+    assert result == {
+        "state": "failed", "return_code": 4,
+        "failure_phase": "execution", "error": "failed",
+    }
+    assert subscriptions == ["subscribe", "detach"]
+
+
+def test_psij_follow_uncertain_subscription_uses_one_slurm_probe(monkeypatch, tmp_path):
+    _, remote_id = _psij_handle(tmp_path)
+    events = []
+    _stub_terminal_psij_job(
+        monkeypatch, "ACTIVE", None, events,
+        subscribe_error=OSError("PSI/J status subscription unavailable"),
+    )
+    probes = []
+    def status(_):
+        probes.append(True)
+        return {"state": "unknown"}
+    monkeypatch.setattr(remote_service, "status_remote", status)
+    result = remote_service.follow_remote(remote_id, io.BytesIO(), io.BytesIO())
+    assert result["state"] == "unknown"
+    assert result["return_code"] is None
+    assert len(probes) == 1
+
+
+def test_psij_follow_uncertain_subscription_other_scheduler_never_reprobes(monkeypatch, tmp_path):
+    handle, _ = _psij_handle(tmp_path)
+    handle["backend"] = "pbs"
+    handle["url"] = "ssh://remote"
+    remote_id = remote_service._encode_handle(handle)
+    events = []
+    _stub_terminal_psij_job(
+        monkeypatch, "ACTIVE", None, events,
+        subscribe_error=OSError("PSI/J status subscription unavailable"),
+    )
+    monkeypatch.setattr(remote_service, "status_remote",
+                        lambda _: pytest.fail("Unexpected PSI/J status probe"))
+    result = remote_service.follow_remote(remote_id, io.BytesIO(), io.BytesIO())
+    assert result["state"] == "unknown"
+
+
+
+def test_psij_follow_receives_late_status_from_another_thread(tmp_path, monkeypatch):
+    import asyncio
+    import threading
+    from types import SimpleNamespace
+
+    _, remote_id = _psij_handle(tmp_path)
+    # PSI/J attach initially reports NEW before any actual scheduler observation.
+    pending = SimpleNamespace(state=SimpleNamespace(name="NEW"), exit_code=None)
+    finished = SimpleNamespace(state=SimpleNamespace(name="COMPLETED"), exit_code=0,
+                               message=None)
+    subscribed = threading.Event()
+    callback = []
+    detached = []
+
+    class Job:
+        status = pending
+
+        def wait(self):
+            raise AssertionError("remote FOLLOW must never call job.wait()")
+
+    class Backend:
+        def attach_native_job(self, native_id):
+            return Job()
+
+        def _observe_job(self, job, receive):
+            callback.append(receive)
+            subscribed.set()
+            return lambda: detached.append(True)
+
+    monkeypatch.setattr(remote_service, "_psij_executor", lambda _: Backend())
+    monkeypatch.setattr(remote_service, "status_remote",
+                        lambda _: pytest.fail("terminal callback needs no probe"))
+
+    def native_worker():
+        assert subscribed.wait(2)
+        callback[0](finished)
+
+    worker = threading.Thread(target=native_worker)
+    worker.start()
+    try:
+        outcome = remote_service.follow_remote(
+            remote_id, io.BytesIO(), io.BytesIO(), poll_interval=0.01,
+        )
+    finally:
+        worker.join(timeout=2)
+
+    assert not worker.is_alive()
+    assert outcome["state"] == RunState.FINISHED.value
+    assert outcome["return_code"] == 0
+    assert detached == [True]
+
+
+def test_psij_follow_cancellation_detaches_without_cancelling_job(
+    tmp_path, monkeypatch,
+):
+    import asyncio
+    from types import SimpleNamespace
+
+    _, remote_id = _psij_handle(tmp_path)
+    calls = []
+    active = SimpleNamespace(state=SimpleNamespace(name="ACTIVE"), exit_code=None)
+
+    class Job:
+        status = active
+
+        def wait(self):
+            raise AssertionError("native wait is forbidden")
+
+        def cancel(self):
+            calls.append("job cancelled")
+
+    async def check():
+        # Bind the event to the running loop, including on Python 3.9.
+        attached = asyncio.Event()
+
+        class Backend:
+            def attach_native_job(self, native_id):
+                return Job()
+
+            def _observe_job(self, job, callback):
+                calls.append("observing")
+                attached.set()
+                return lambda: calls.append("detached")
+
+        monkeypatch.setattr(remote_service, "_psij_executor", lambda _: Backend())
+        task = asyncio.create_task(remote_service._follow_scheduler_async(
+            remote_id, {"out": io.BytesIO(), "err": io.BytesIO()},
+            {"out": None, "err": None}, {"out": 0, "err": 0}, 0.01,
+        ))
+        await asyncio.wait_for(attached.wait(), 2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert calls == ["observing", "detached"]
+
+    asyncio.run(check())
+
+
+
+def test_psij_follow_unknown_callback_ends_observation_without_waiting(
+    tmp_path, monkeypatch,
+):
+    import asyncio
+    from types import SimpleNamespace
+
+    handle, _ = _psij_handle(tmp_path)
+    handle["backend"] = "pbs"
+    handle["url"] = "ssh://remote"
+    remote_id = remote_service._encode_handle(handle)
+    pending = SimpleNamespace(state=SimpleNamespace(name="ACTIVE"), exit_code=None)
+    unknown = SimpleNamespace(state=SimpleNamespace(name="UNKNOWN"), exit_code=None)
+    received = []
+    class Job:
+        status = pending
+        def wait(self):
+            raise AssertionError("No blocking wait permitted")
+        def cancel(self):
+            raise AssertionError("UNKNOWN observation must not cancel job")
+    class Backend:
+        def attach_native_job(self, native_id):
+            return Job()
+        def _observe_job(self, job, callback):
+            received.append(("observe", callback))
+            return lambda: received.append(("detach", None))
+    monkeypatch.setattr(remote_service, "_psij_executor", lambda _: Backend())
+    monkeypatch.setattr(remote_service, "status_remote",
+                        lambda _: pytest.fail("PBS must not invoke Slurm fallback"))
+
+    async def check():
+        task = asyncio.create_task(remote_service._follow_scheduler_async(
+            remote_id, {"out": io.BytesIO(), "err": io.BytesIO()},
+            {"out": None, "err": None}, {"out": 0, "err": 0}, 0.01,
+        ))
+        for _ in range(30):
+            if received:
+                break
+            await asyncio.sleep(0)
+        assert received and received[0][0] == "observe"
+        received[0][1](unknown)
+        return await asyncio.wait_for(task, 2)
+
+    result = asyncio.run(check())
+    assert result["state"] == RunState.UNKNOWN.value
+    assert result["return_code"] is None
+    assert [x[0] for x in received] == ["observe", "detach"]
 
 
 @pytest.mark.parametrize("failure_point", ("socket_directory", "first_pipe", "second_pipe"))

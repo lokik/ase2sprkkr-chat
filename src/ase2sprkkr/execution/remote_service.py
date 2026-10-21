@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 from uuid import uuid4
 
-from .growing_file_tail import follow_job_files
+from .growing_file_tail import follow_growing_files
 from .file_availability import clear_declared_outputs, validate_output_collisions
 from .base import ExecutionSpec, FailurePhase, LaunchSpec, RunState, SubmissionNotStarted
 from .remote_process_worker import _SPEC_ENV, _START_FD_ENV
@@ -482,35 +482,99 @@ def recover_remote(run_id, request, *, submitted_at=None):
 
 
 async def _follow_scheduler_async(remote_id, streams, paths, offsets, poll_interval):
-    """Follow scheduler-owned files while PSI/J waits for terminal completion."""
+    """Follow PSI/J output files and observe terminal callbacks."""
     from .psij import _psij_state
 
     handle = _decode_handle(remote_id)
-    executor = _psij_executor(handle)
+    executor = _psij_executor(
+        {"backend": handle["backend"], "url": handle.get("url")}
+    )
     job = executor.attach_native_job(handle["native_id"])
 
     def emit(kind, data):
         streams[kind].write(data)
         streams[kind].flush()
 
-    async def terminal(_native_status):
-        status = await asyncio.to_thread(status_remote, remote_id)
-        if RunState(status["state"]).is_terminal:
-            return status
-        native = job.status
-        state = _psij_state(native)
+    async def uncertain(reason):
+        if str(handle["backend"]).lower() == "slurm" and handle.get("url") is None:
+            try:
+                status = await asyncio.to_thread(status_remote, remote_id)
+            except (OSError, subprocess.CalledProcessError):
+                pass
+            else:
+                if RunState(status["state"]).is_terminal:
+                    return status
+        return {
+            "state": RunState.UNKNOWN.value, "return_code": None,
+            "failure_phase": None, "error": reason,
+        }
+
+    async def terminal(native):
+        state = _psij_state(native, attached=True)
+        if not state.is_terminal:
+            return await uncertain("PSI/J callback returned without a terminal state")
         return _status_reply(
             state, getattr(native, "exit_code", None),
-            failure_phase=(
-                FailurePhase.EXECUTION if state == RunState.FAILED else None
-            ),
+            failure_phase=FailurePhase.EXECUTION if state == RunState.FAILED else None,
             error=getattr(native, "message", None),
         )
 
-    return await follow_job_files(
-        paths, emit, job.wait, terminal=terminal, offsets=offsets,
-        poll_interval=max(poll_interval, 1.0),
-    )
+    # Reuse PSI/J's job-status callback subscription. A blocking job.wait()
+    # thread per FOLLOW would survive cancellation and repeated attachments.
+    # _observe_job() multiplexes listeners on one cached native Job.
+    loop = asyncio.get_running_loop()
+    completed = loop.create_future()
+
+    def receive(native, *, initial=False):
+        def publish():
+            state = _psij_state(native, attached=True)
+            native_name = getattr(getattr(native, "state", None), "name", None)
+            # An attached job starts at NEW while its scheduler state loads.
+            # Only an explicit later UNKNOWN callback ends the observation.
+            # The job remains eligible for another attach in that case.
+            uncertain = (
+                not initial and native_name == "UNKNOWN"
+                and state == RunState.UNKNOWN
+            )
+            if not completed.done() and (state.is_terminal or uncertain):
+                completed.set_result(native)
+
+        # PSI/J may invoke callbacks from a native worker thread, even during
+        # detach. Never mutate the Future directly from that thread.
+        if not loop.is_closed():
+            try:
+                loop.call_soon_threadsafe(publish)
+            except RuntimeError:
+                # The observation's event loop was closed during teardown.
+                pass
+
+    try:
+        detach = executor._observe_job(job, receive)
+    except (OSError, RuntimeError) as exc:
+        # A failed subscription is an inconclusive observation, not evidence
+        # that the calculation failed. Retain #24's independent Slurm probe.
+        reason = f"PSI/J callback registration failed: {exc}"
+
+        async def registration_failed():
+            return await uncertain(reason)
+        return await follow_growing_files(
+            paths, emit, registration_failed, offsets=offsets,
+            poll_interval=max(poll_interval, 1.0),
+        )
+
+    try:
+        # Handles a job already terminal before/while registering the callback.
+        receive(job.status, initial=True)
+
+        async def terminal_status():
+            return await terminal(completed.result()) if completed.done() else None
+
+        return await follow_growing_files(
+            paths, emit, terminal_status, offsets=offsets,
+            poll_interval=max(poll_interval, 1.0), wakeup=completed,
+        )
+    finally:
+        detach()
 
 
 def follow_remote(
