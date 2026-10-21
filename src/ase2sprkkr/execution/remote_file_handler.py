@@ -160,18 +160,24 @@ class RemoteFileHandler:
         used = {}
         primary = (None if manifest.primary_input is None
                    else manifest.primary_input.local_path)
-        for entry in manifest.inputs:
-            source = entry.local_path
-            if source is None:
-                continue
-            if source != primary and has_file_magic(source):
-                await self._stage_input_pattern(mapping, spec, source, used, required=not entry.optional)
-            else:
-                await self._stage_file(mapping, spec, source, used, required=not entry.optional)
+        # Primary input and stdin are mandatory references. Stage them first,
+        # so an optional auxiliary alias cannot weaken their requirements.
         if primary is not None:
             await self._stage_file(mapping, spec, primary, used)
         if manifest.stdin is not None and manifest.stdin.local_path is not None:
             await self._stage_file(mapping, spec, manifest.stdin.local_path, used)
+        for entry in manifest.inputs:
+            source = entry.local_path
+            if source is None or source == primary:
+                continue
+            if has_file_magic(source):
+                await self._stage_input_pattern(
+                    mapping, spec, source, used, required=not entry.optional,
+                )
+            else:
+                await self._stage_file(
+                    mapping, spec, source, used, required=not entry.optional,
+                )
 
         # Cache staging shares the collision map, not input file identity.
         input_sources = tuple(dict.fromkeys(used.values()))
