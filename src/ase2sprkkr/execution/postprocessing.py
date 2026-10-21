@@ -332,7 +332,10 @@ class CalculationRun:
             if self.hooks is not None:
                 try:
                     self.hooks.submission_failed(
-                        self, exc, uncertain=self._backend_submit_attempted,
+                        self, exc, uncertain=(
+                            self._backend_submit_attempted
+                            and not isinstance(exc, SubmissionNotStarted)
+                        ),
                     )
                 except BaseException as hook_exc:
                     # Do not hide the original submission failure, especially
