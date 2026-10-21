@@ -239,8 +239,6 @@ def test_project_manager_returns_one_public_calculation_runner(tmp_path):
 
 
 def test_executors_are_owned_by_manager_and_keyed_by_endpoint(tmp_path):
-    from ase2sprkkr.execution.pool import Executors
-
     manager = _manager(tmp_path)
     assert isinstance(manager.executors, Executors)
     assert isinstance(manager.executors.pool, ExecutorPool)

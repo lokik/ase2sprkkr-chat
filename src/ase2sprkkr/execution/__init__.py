@@ -28,7 +28,7 @@ from .manager import (
     RunRecord,
     RunStore,
 )
-from .pool import ExecutorPool, default_executor_pool
+from .pool import ExecutorPool, Executors, default_executor_pool
 from .postprocessing import CalculationRun, PostprocessingRunner
 from .projects import (
     Project,
@@ -84,6 +84,7 @@ __all__ = [
     "ProjectDeleteError",
     "default_projects_directory",
     "ExecutorPool",
+    "Executors",
     "default_executor_pool",
     "LocalExecutor",
     "LocalRunner",
