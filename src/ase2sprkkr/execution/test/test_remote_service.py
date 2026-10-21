@@ -743,6 +743,7 @@ def test_ephemeral_supervisor_cleans_scratch_if_stream_start_fails(tmp_path, mon
     scratch = tmp_path / "ase2sprkkr-Test1234"
     scratch.mkdir()
     output = scratch / "stdout.txt"
+    (tmp_path / "follow").mkdir()
     original_start = SupervisorStreams.start
 
     async def partial_start(self):
