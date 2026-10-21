@@ -561,6 +561,9 @@ class PsijExecutor(Executor):
         )
         self._jobs = OrderedDict()
         self._observers = {}
+        # Retain terminal callback facts while listeners are still attached.
+        # PSI/J's job.status may lag behind the delivered native status.
+        self._terminal_observations = {}
         self._jobs_lock = RLock()
         self._max_idle_jobs = 64
 
@@ -618,6 +621,9 @@ class PsijExecutor(Executor):
             return job
 
     def _observe_job(self, job, observer):
+        # A first registration can receive a synchronous native callback.
+        # Replay is only needed for subscribers joining an existing group.
+        replay_terminal = None
         with self._jobs_lock:
             observers = self._observers.get(job)
             if observers is None:
@@ -630,9 +636,11 @@ class PsijExecutor(Executor):
                     job.set_job_status_callback(self._dispatch_job_status)
                 except BaseException:
                     del self._observers[job]
+                    self._terminal_observations.pop(job, None)
                     raise
             else:
                 observers.add(observer)
+                replay_terminal = self._terminal_observations.get(job)
 
         def detach():
             with self._jobs_lock:
@@ -652,18 +660,33 @@ class PsijExecutor(Executor):
                 except Exception:
                     _log.exception("Failed to disable PSI/J job status callback")
                 native_id = job.native_id
+                observed_terminal = self._terminal_observations.pop(job, None)
                 if (native_id is not None
                         and self._jobs.get(str(native_id)) is job
-                        and _psij_state(job.status) in (
-                            RunState.FINISHED, RunState.FAILED, RunState.CANCELLED,
-                        )):
+                        and (observed_terminal is not None
+                             or _psij_state(job.status).is_terminal)):
                     del self._jobs[str(native_id)]
                 self._trim_jobs()
+
+        # The callback is application code: never invoke it under _jobs_lock.
+        # This is the already-observed terminal fact, not stale job.status.
+        if replay_terminal is not None:
+            try:
+                observer(replay_terminal)
+            except BaseException:
+                detach()
+                raise
         return detach
 
     def _dispatch_job_status(self, job, status):
         with self._jobs_lock:
             observers = tuple(self._observers.get(job, ()))
+            if not observers or job in self._terminal_observations:
+                # A native terminal callback is definitive. Ignore later
+                # stale/duplicate notifications, including ACTIVE regressions.
+                return
+            if _psij_state(status).is_terminal:
+                self._terminal_observations[job] = status
         for observer in observers:
             observer(status)
 
@@ -677,7 +700,10 @@ class PsijExecutor(Executor):
             return _slurm_status_native(native_id)
 
         job = self._status_job(native_id)
-        status = getattr(job, "status", None)
+        with self._jobs_lock:
+            status = self._terminal_observations.get(job)
+            if status is None:
+                status = getattr(job, "status", None)
         state = _psij_state(status, attached=True)
         return_code = getattr(status, "exit_code", None)
         if state in (RunState.FINISHED, RunState.FAILED, RunState.CANCELLED):
