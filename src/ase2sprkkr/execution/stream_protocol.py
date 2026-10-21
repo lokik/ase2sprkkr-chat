@@ -62,7 +62,7 @@ async def read_stream_frames(source):
                 "Remote stream ended in the middle of a frame"
             ) from exc
         except ValueError as exc:
-            raise StreamProtocolError("Stream frame is too large") from exc
+            raise StreamProtocolError(str(exc)) from exc
         if record is None:
             return
         code, _, payload = record
