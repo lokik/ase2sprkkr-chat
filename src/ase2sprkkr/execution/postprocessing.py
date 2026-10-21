@@ -318,16 +318,19 @@ class CalculationRun:
     def wait(self):
         if not self._started and not self._settled:
             raise RuntimeError("Run has not been started")
-        # Production runners call back before raw.wait() returns; support
-        # lightweight external runners that only report from wait(), too.
+        # Production runners notify before raw.wait() returns. A lightweight
+        # external runner may only report its terminal state from wait().
+        # Preserve a callback's canonical completion if raw.wait() later fails.
         try:
             outcome = self._runner.wait()
         except BaseException as exc:
-            self._complete_observation(
-                getattr(self._runner, "result", None), error=exc,
-            )
+            if not self._done.is_set():
+                self._complete_observation(
+                    getattr(self._runner, "result", None), error=exc,
+                )
         else:
-            self._complete_observation(outcome)
+            if not self._done.is_set():
+                self._complete_observation(outcome)
         self._done.wait()
         if self._exception is not None:
             raise self._exception
