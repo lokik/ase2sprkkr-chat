@@ -307,6 +307,9 @@ def test_sparse_numbered():
     parameters = definition.read_from_file(
         io.StringIO("ENERGY NE=1 Ime=0.5 Ime1=0.4 Ime5=0.8")
     )
+    # Preserve the unmodified parsed state for the later dangerous-value
+    # checks instead of re-parsing the same input after mutation tests.
+    pristine_parameters = parameters.copy(copy_values=True)
     assert parameters.ENERGY.Ime() == 0.5
     assert parameters.ENERGY.Ime[5] == 0.8
     assert_equal(parameters.ENERGY.Ime[:], [0.4, 0.5, 0.5, 0.5, 0.8])
@@ -343,9 +346,7 @@ def test_sparse_numbered():
     parameters.ENERGY.Ime[1:3] = 7.0
     assert_equal(parameters.ENERGY.Ime[:], [7.0, 7.0, 3.0, 8.0])
 
-    parameters = definition.read_from_file(
-        io.StringIO("ENERGY NE=1 Ime=0.5 Ime1=0.4 Ime5=0.8")
-    )
+    parameters = pristine_parameters
     with pytest.raises(DataValidityError):
         parameters.ENERGY.Ime = "ss"
     parameters.ENERGY.Ime.set_dangerous("uu")
