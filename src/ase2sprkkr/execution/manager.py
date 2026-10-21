@@ -226,12 +226,14 @@ def submission_conflicts(left: RunRecord, right: RunRecord) -> bool:
     if (_paths_overlap(left_writes, right_reads | right_writes, local=local)
             or _paths_overlap(right_writes, left_reads, local=local)):
         return True
-    # Without declared writes, preserve namespace-based protection for legacy
-    # and generic executors that cannot describe their output footprint.
-    if not left_writes or not right_writes:
-        return (same_directory and left.task == right.task
-                and left.dataset == right.dataset)
-    return False
+    # Without declared writes, preserve namespace-based protection for generic
+    # executors that cannot describe their output footprint.
+    return (
+        (not left_writes or not right_writes)
+        and same_directory
+        and left.task == right.task
+        and left.dataset == right.dataset
+    )
 
 
 class RunStore:
