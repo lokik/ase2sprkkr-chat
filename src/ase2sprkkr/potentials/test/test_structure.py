@@ -35,11 +35,17 @@ def _assert_nested_almost_equal(actual, expected):
     assert actual == expected
 
 
+@pytest.fixture(scope="module")
+def lattice_definition():
+    # Reuse the immutable format description and its grammar across elements.
+    return PotentialDefinition(
+        "pot", [LatticeSectionDefinition("LATTICE"), SitesSectionDefinition("SITES")]
+    )
+
+
 @pytest.mark.parametrize("element", ["Co", "Ni", "U", "Ge", "As", "Na", "In", "Pr"])
-def test_lattice_round_trip(element):
-    lattice_definition = LatticeSectionDefinition("LATTICE")
-    sites_definition = SitesSectionDefinition("SITES")
-    definition = PotentialDefinition("pot", [lattice_definition, sites_definition])
+def test_lattice_round_trip(element, lattice_definition):
+    definition = lattice_definition
     potential = Potential(definition=definition)
     lattice = potential.LATTICE
 
