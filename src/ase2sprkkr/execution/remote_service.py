@@ -299,28 +299,24 @@ def _local_submit(request):
         if observed_path != socket_path:
             raise RuntimeError("Remote supervisor did not create its follow socket")
     except BaseException as exc:
-        stopped = process is None
-        if not published and process is not None:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            if not released:
-                # Before the start token, the worker cannot have launched
-                # its child. Wait for its exit before deleting its cwd.
+        if not released and not published:
+            # The worker is still blocked on the parent's release pipe:
+            # there cannot yet be a calculation process. Only in this state
+            # may submission cleanup kill the worker or delete scratch.
+            if process is not None:
                 try:
-                    process.wait(timeout=5)
-                    stopped = True
-                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
                     pass
-        if not published:
+                # Reap the worker before deleting its working directory.
+                process.wait()
             shutil.rmtree(socket_dir, ignore_errors=True)
-            if not released and stopped and validated_scratch is not None:
+            if validated_scratch is not None:
                 shutil.rmtree(validated_scratch, ignore_errors=True)
-            # Once released, the worker may have spawned a process in a
-            # separate process group. Its own finally block owns scratch;
-            # removing it here would race with a still-running calculation.
-        if isinstance(exc, OSError) and not published:
+        # Once released, the worker may already have started its child in
+        # another process group. Do NOT kill its supervisor or remove its
+        # socket/workspace: the worker owns the job and terminal cleanup.
+        if isinstance(exc, OSError) and not published and not released:
             raise SubmissionNotStarted(str(exc)) from exc
         raise
     finally:
