@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from ase2sprkkr.execution.base import ExecutionSpec, RunState
+from ase2sprkkr.execution.base import ExecutionSpec, RunState, close_output_files
 from ase2sprkkr.execution.local import LocalRunner
 from ase2sprkkr.execution.local_project import LocalProjectRunner
 from ase2sprkkr.execution.remote import RemoteRunner
@@ -50,6 +50,18 @@ def test_local_runners_close_unique_output_handles(monkeypatch, tmp_path, backen
 
     assert stdout.close_calls == 1
     assert stderr.close_calls == 1
+
+
+def test_close_failure_still_closes_other_output_handles():
+    """A failed close cannot skip subsequent handles; preserve its error."""
+    class Faulty:
+        def close(self):
+            raise OSError("cannot close output")
+
+    other = _TrackedOutput()
+    with pytest.raises(OSError, match="cannot close output"):
+        close_output_files(Faulty(), other)
+    assert other.close_calls == 1
 
 
 def test_remote_monitor_closes_merged_output_once_after_follow_failure(tmp_path):
