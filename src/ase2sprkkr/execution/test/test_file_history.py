@@ -1,6 +1,6 @@
 """Focused regression tests for historical artifact file operations."""
 
-from ase2sprkkr.execution.artifact_history import (
+from ase2sprkkr.execution.file_history import (
     capture_result_files, file_is_current, missing_result_files,
 )
 from ase2sprkkr.execution.run_model import FileEntry, FileManifest

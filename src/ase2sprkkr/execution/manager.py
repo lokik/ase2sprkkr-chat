@@ -26,7 +26,7 @@ from .base import (
     RunStatus,
     SubmissionNotStarted,
 )
-from .artifact_history import (
+from .file_history import (
     capture_result_files, file_is_current, missing_result_files, sync_result_files,
 )
 from .endpoint import ExecutorEndpoint, endpoint_for_executor

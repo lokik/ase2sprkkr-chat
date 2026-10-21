@@ -1,4 +1,4 @@
-"""Immutable local file snapshots and historical artifact integrity.
+"""Immutable local file snapshots and historical file integrity.
 
 Pure file operations live here; run lifecycle and durable RunRecord updates
 remain the responsibility of ExecutionManager.
