@@ -1374,3 +1374,36 @@ def test_psij_callback_follow_preserves_manifest_receipt_boundary(tmp_path, monk
     assert frozen["files"]["outputs"][0]["source"] == str(local / "*.dat")
     assert remote_mailbox.read_outcome(receipt)["files"] == frozen["files"]
     assert observed == [("attach", "42"), "observe", "detach"]
+
+
+def test_remote_ack_retries_failed_unlink_barrier_without_losing_terminal_state(
+    tmp_path, monkeypatch,
+):
+    """A lost durability barrier on ACK is recoverable through the service API."""
+    from ase2sprkkr.execution import remote_mailbox
+
+    monkeypatch.setenv("ASE2SPRKKR_REMOTE_STATE_DIR", str(tmp_path))
+    _, remote_id, outcome = _process_handle(tmp_path)
+    monkeypatch.setattr(remote_service, "_process_running", lambda _handle: False)
+    assert remote_mailbox.publish_outcome("a" * 32, RunState.FINISHED, 0)
+    assert remote_service.status_remote(remote_id)["state"] == "finished"
+
+    original_sync = remote_mailbox.fsync_directory
+    calls = 0
+
+    def interrupt_ack_sync(directory):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("directory barrier interrupted")
+        return original_sync(directory)
+
+    monkeypatch.setattr(remote_mailbox, "fsync_directory", interrupt_ack_sync)
+    with pytest.raises(OSError, match="directory barrier interrupted"):
+        remote_service.acknowledge_remote(remote_id)
+    assert not outcome.exists()
+
+    # Retrying the same protocol request durably commits the deletion.
+    assert remote_service.acknowledge_remote(remote_id) == {"acknowledged": False}
+    assert calls == 2
+    assert remote_service.status_remote(remote_id)["state"] == "unknown"
