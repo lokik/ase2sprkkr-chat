@@ -979,6 +979,9 @@ class PersistentRun:
         self.executor = executor
         self._record = record
         self._completion_lock = Lock()
+        # Network ACK is best-effort and intentionally separate from the
+        # durable terminal state: a new instance retries it after a crash.
+        self._terminal_acknowledged = False
         self._monitor_record_version = record.updated_at
 
     @property
@@ -1109,10 +1112,25 @@ class PersistentRun:
         """A durable terminal record cannot be cancelled by a stale observer."""
         return not self._record.state.is_terminal
 
+    def _acknowledge_terminal(self, run):
+        """ACK only a durable terminal result; retry after a lost ACK reply."""
+        if (self._terminal_acknowledged or not self._record.state.is_terminal
+                or run.backend_id is None):
+            return
+        acknowledge = getattr(self.executor, "acknowledge", None)
+        if acknowledge is not None:
+            try:
+                acknowledge(self._record)
+            except (OSError, RuntimeError):
+                # Backend receipts remain safely repeatable after this failure.
+                return
+        self._terminal_acknowledged = True
+
     def completed(self, run: CalculationRun):
         """Persist one observation, taking idempotence from the durable record."""
         with self._completion_lock:
             if self._record.state.is_terminal:
+                self._acknowledge_terminal(run)
                 return self._record.state
             state = run.state
             phase = _failure_phase(run.failure_phase)
@@ -1148,17 +1166,9 @@ class PersistentRun:
                 files_available=files_available,
                 files=run.files,
             )
-            # ACK is strictly after RunStore's crash-durable terminal transition.
-            # A lost ACK reply is harmless: backend receipts are idempotently deleted.
-            # Keep the persisted result even if the acknowledgement cannot be sent.
-            if self._record.state.is_terminal and run.backend_id is not None:
-                acknowledge = getattr(self.executor, "acknowledge", None)
-                if acknowledge is not None:
-                    try:
-                        acknowledge(self._record)
-                    except (OSError, RuntimeError):
-                        pass
-
+            # ACK follows the crash-durable transition. A new PersistentRun
+            # retries a lost ACK, without repeating terminal persistence.
+            self._acknowledge_terminal(run)
             return self._record.state
 
     def refresh(self):
