@@ -276,7 +276,7 @@ def test_transaction_use_joins_active_transaction():
     assert not hasattr(parameters, "_active_transaction")
 
 
-def test_caught_nested_set_rolls_back_only_nested_changes():
+def test_nested_set_rolls_back_at_caught_or_uncaught_transaction_boundary():
     def reject_two(option, values, _why):
         if option() == 2:
             return DataValidityError("two rejected")
@@ -291,40 +291,24 @@ def test_caught_nested_set_rolls_back_only_nested_changes():
     )
     parameters = definition.create_object()
 
+    # A caught nested failure rolls back only the failed operation.
     with ConfigurationTransaction(parameters):
         parameters.CONTROL.FIRST.set(2)
         with pytest.raises(DataValidityError, match="two rejected"):
             parameters.CONTROL.SECOND.set(2)
+    assert parameters.CONTROL.FIRST() == 2
+    assert parameters.CONTROL.SECOND() == 1
 
+    # Uncaught failure also rolls back changes staged by the outer transaction.
+    with pytest.raises(DataValidityError, match="two rejected"):
+        with ConfigurationTransaction(parameters):
+            parameters.CONTROL.FIRST.set(3)
+            parameters.CONTROL.SECOND.set(2)
     assert parameters.CONTROL.FIRST() == 2
     assert parameters.CONTROL.SECOND() == 1
 
 
-def test_uncaught_nested_set_rolls_back_the_whole_transaction():
-    def reject_two(option, values, _why):
-        if option() == 2:
-            return DataValidityError("two rejected")
-
-    definition = cd.InputParametersDefinition.definition_from_dict(
-        {
-            "CONTROL": [
-                V("FIRST", 1),
-                V("SECOND", 1, validators=reject_two),
-            ]
-        }
-    )
-    parameters = definition.create_object()
-
-    with pytest.raises(DataValidityError, match="two rejected"):
-        with ConfigurationTransaction(parameters):
-            parameters.CONTROL.FIRST.set(2)
-            parameters.CONTROL.SECOND.set(2)
-
-    assert parameters.CONTROL.FIRST() == 1
-    assert parameters.CONTROL.SECOND() == 1
-
-
-def test_transaction_savepoint_rolls_back_only_its_changes():
+def test_transaction_savepoints_restore_other_and_repeated_option_changes():
     definition = cd.InputParametersDefinition.definition_from_dict(
         {"CONTROL": [V("FIRST", 1), V("SECOND", 1)]}
     )
@@ -332,34 +316,24 @@ def test_transaction_savepoint_rolls_back_only_its_changes():
 
     with ConfigurationTransaction(parameters) as transaction:
         parameters.CONTROL.FIRST.stage(transaction, 2)
+
+        # A failed savepoint on a different option preserves the outer change.
         with pytest.raises(RuntimeError, match="abort savepoint"):
             with transaction.savepoint():
                 parameters.CONTROL.SECOND.stage(transaction, 3)
                 raise RuntimeError("abort savepoint")
-
         assert parameters.CONTROL.FIRST() == 2
         assert parameters.CONTROL.SECOND() == 1
 
-    assert parameters.CONTROL.FIRST() == 2
-    assert parameters.CONTROL.SECOND() == 1
-
-
-def test_transaction_savepoint_rolls_back_repeated_option_change():
-    definition = cd.InputParametersDefinition.definition_from_dict(
-        {"CONTROL": [V("VALUE", 1)]}
-    )
-    parameters = definition.create_object()
-
-    with ConfigurationTransaction(parameters) as transaction:
-        parameters.CONTROL.VALUE.stage(transaction, 2)
+        # A failed savepoint on the already staged option restores its value.
         with pytest.raises(RuntimeError, match="abort savepoint"):
             with transaction.savepoint():
-                parameters.CONTROL.VALUE.stage(transaction, 3)
+                parameters.CONTROL.FIRST.stage(transaction, 3)
                 raise RuntimeError("abort savepoint")
+        assert parameters.CONTROL.FIRST() == 2
 
-        assert parameters.CONTROL.VALUE() == 2
-
-    assert parameters.CONTROL.VALUE() == 2
+    assert parameters.CONTROL.FIRST() == 2
+    assert parameters.CONTROL.SECOND() == 1
 
 
 def test_option_hook_is_coalesced_and_runs_outside_transaction():
@@ -396,7 +370,7 @@ def test_option_stage_registers_its_change():
     assert option() == 1
 
 
-def test_unknown_member_is_converted_before_transaction_commit():
+def test_unknown_member_is_rejected_or_discarded_without_partial_commit():
     section = cd.InputSectionDefinition("CONTROL", [V("KNOWN", 1)])
     section.custom_class = CustomOption.factory(V, int)
     parameters = cd.InputParametersDefinition([section]).create_object()
@@ -409,6 +383,16 @@ def test_unknown_member_is_converted_before_transaction_commit():
 
     assert parameters.CONTROL.KNOWN() == 1
     assert "EXTRA" not in parameters.CONTROL
+
+    # Silently discarded invalid additions must not leave a custom option.
+    parameters.CONTROL.set(
+        {"EXTRA": "not-an-integer"},
+        unknown="add",
+        retain_invalid="none",
+        report_invalid="ignore",
+    )
+    assert "EXTRA" not in parameters.CONTROL
+    assert parameters.CONTROL.KNOWN() == 1
 
 
 def test_add_with_invalid_value_rolls_back_custom_member():
@@ -442,18 +426,3 @@ def test_discard_and_ignore_unconvertible_staged_values():
     )
 
     assert parameters.CONTROL.VALUE() == 1
-
-
-def test_discarded_invalid_value_does_not_add_custom_member():
-    section = cd.InputSectionDefinition("CONTROL", [V("KNOWN", 1)])
-    section.custom_class = CustomOption.factory(V, int)
-    parameters = cd.InputParametersDefinition([section]).create_object()
-
-    parameters.CONTROL.set(
-        {"EXTRA": "not-an-integer"},
-        unknown="add",
-        retain_invalid="none",
-        report_invalid="ignore",
-    )
-
-    assert "EXTRA" not in parameters.CONTROL

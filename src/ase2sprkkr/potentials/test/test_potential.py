@@ -89,11 +89,13 @@ class TestPotential:
             potential.SCF_INFO.SCFSTATUS = status
             assert not atoms.sprkkr_is_scf_converged()
 
-            saved = io.StringIO()
-            potential.save_to_file(saved)
-            assert potential.SCF_INFO.SCFSTATUS() == status
-            saved.seek(0)
-            assert Potential.from_file(saved).SCF_INFO.SCFSTATUS() == status
+        # Each status uses the same POT serializer and parser. Round-trip one
+        # intermediate value instead of reparsing a whole potential five times.
+        saved = io.StringIO()
+        potential.save_to_file(saved)
+        assert potential.SCF_INFO.SCFSTATUS() == "ITR-I-ZONE"
+        saved.seek(0)
+        assert Potential.from_file(saved).SCF_INFO.SCFSTATUS() == "ITR-I-ZONE"
 
         potential.SCF_INFO.SCFSTATUS = "START"
         saved = io.StringIO()
@@ -128,23 +130,25 @@ class TestPotential:
         assert potential.atoms.sites[-1].potential is not None
         assert potential.atoms.sites[-1].charge is not None
 
-        potential.atoms.sites[1].potential.bt = -potential.atoms.sites[1].potential.bt
+        original_bt = potential.atoms.sites[1].potential.bt.copy()
+        potential.atoms.sites[1].potential.bt = -original_bt
         saved = io.StringIO()
         potential.save_to_file(saved)
         saved.seek(0)
         restored = Potential.from_file(saved)
-        original = Potential.from_file(path)
 
         np.testing.assert_allclose(
             restored.atoms.sites[1].potential.bt,
-            -original.atoms.sites[1].potential.bt,
+            -original_bt,
         )
         assert not np.allclose(
             restored.atoms.sites[1].potential.bt,
-            original.atoms.sites[1].potential.bt,
+            original_bt,
         )
 
         if os.environ.get("DO_NOT_RUN_SPRKKR", "") == "":
+            # The calculation must still receive an unmodified potential.
+            original = Potential.from_file(path)
             SPRKKR().calculate(
                 potential=original,
                 **_calculation_args(

@@ -598,9 +598,8 @@ class PsijRunner:
         return self.wait()
 
     async def run_async(self):
-        if self._thread is None:
-            self.start()
-        return await asyncio.to_thread(self.wait)
+        # Scheduler submission may block synchronously; offload the whole run.
+        return await asyncio.to_thread(self.run)
 
     def stop_observation(self):
         """Stop monitoring without cancelling the scheduler calculation."""

@@ -2,9 +2,19 @@
 from pathlib import Path
 import numpy as np
 import pytest
+from importlib.util import find_spec
 
 h5py = pytest.importorskip("h5py")
 from ase2sprkkr.result_files.nexus import write_arpes_nexus
+
+
+@pytest.fixture(scope="module")
+def wse2_spc():
+    """Read-only parsed WSe2 spectrum for independent export/unit assertions."""
+    from ase2sprkkr.result_files import ResultFile
+
+    source = Path(__file__).resolve().parents[1] / "examples" / "WSe2_ARPES.spc"
+    return ResultFile.from_file(str(source), try_only="spc")
 
 
 class SPC:
@@ -53,13 +63,14 @@ class SPC:
 @pytest.mark.parametrize("mode,np_", [("energy",1),("energy",2),("kx_ky",2)])
 def test_native_modes(tmp_path, mode, np_):
     spc=SPC(mode,np_)
-    dest=tmp_path/"map.nxs"
+    dest=tmp_path/f"native_{mode}_{np_}.nxs"
     with pytest.warns(UserWarning,match="No SPR-KKR input"):
         assert write_arpes_nexus(spc,dest)==dest
     expected=(2,2,3) if mode=="energy" and np_>1 else (
         (2,3) if mode=="energy" else (np_,3)
     )
     with h5py.File(dest) as f:
+        assert f.attrs["file_name"] == dest.name
         data=f["entry/data"]
         assert data["data"].shape==expected
         np.testing.assert_array_equal(data["data"],spc.raw[:,2].reshape(expected))
@@ -80,6 +91,12 @@ def test_native_modes(tmp_path, mode, np_):
             assert data["energy"].attrs["units"]=="eV"
             assert data["k_parallel"].attrs["units"] == "1/angstrom"
             assert "native_units" not in data["k_parallel"].attrs
+
+    # Keep the core kx_ky assertions active if optional nexusformat is absent.
+    if mode == "kx_ky" and find_spec("nexusformat") is not None:
+        from nexusformat.nexus import nxopen
+        with nxopen(str(dest)) as root:
+            assert root.get_default().nxsignal.shape == expected
 
 
 def test_explicit_input_precedence_and_original_options(tmp_path,monkeypatch):
@@ -111,11 +128,6 @@ def test_explicit_input_precedence_and_original_options(tmp_path,monkeypatch):
         np.testing.assert_array_equal(original["SPEC_EL/NK1"],3)
         np.testing.assert_array_equal(original["SPEC_EL/K1"],[1,0])
         assert "k_basis" not in f["entry/data"]
-
-
-def test_missing_input_warning(tmp_path):
-    with pytest.warns(UserWarning,match="No SPR-KKR input"):
-        write_arpes_nexus(SPC(),tmp_path/"missing.nxs")
 
 
 def test_explicit_invalid_input_raises(tmp_path):
@@ -165,34 +177,14 @@ def test_atomic_output_on_failure(tmp_path):
     assert list(tmp_path.iterdir())==[target]
 
 
-def test_real_wse2_spectrum(tmp_path):
-    from ase2sprkkr.result_files import ResultFile
-    source=Path(__file__).resolve().parents[1]/"examples"/"WSe2_ARPES.spc"
-    spc=ResultFile.from_file(str(source),try_only="spc")
+def test_real_wse2_spectrum(tmp_path, wse2_spc):
+    spc = wse2_spc
     out=tmp_path/"real.nxs"
     with pytest.warns(UserWarning,match="No SPR-KKR input"):
         spc.to_nexus(out)
     with h5py.File(out) as f:
         np.testing.assert_array_equal(f["entry/data/data"],spc.TOTAL())
         np.testing.assert_array_equal(f["entry/sprkkr_spc/raw_data"],spc.RAW_DATA())
-
-
-def test_independent_nexus_reader(tmp_path):
-    nxopen = pytest.importorskip("nexusformat.nexus").nxopen
-    dest=tmp_path/"reader.nxs"
-    with pytest.warns(UserWarning):
-        write_arpes_nexus(SPC("kx_ky",2),dest)
-    with nxopen(str(dest)) as root:
-        assert root.get_default().nxsignal.shape==(2,3)
-
-
-
-def test_atomic_output_filename_is_final_target(tmp_path):
-    target=tmp_path/"real-target.nxs"
-    with pytest.warns(UserWarning):
-        write_arpes_nexus(SPC(),target)
-    with h5py.File(target) as f:
-        assert f.attrs["file_name"]=="real-target.nxs"
 
 
 def test_native_au_constant_energy_spc(tmp_path):
@@ -460,10 +452,8 @@ def test_three_dimensional_physical_coordinates_are_default(tmp_path):
         np.testing.assert_array_equal(data["theta"], spc.THETA())
 
 
-def test_native_k_parallel_is_inverse_angstrom(tmp_path):
-    from ase2sprkkr.result_files import ResultFile
-    source = Path(__file__).resolve().parents[1] / "examples" / "WSe2_ARPES.spc"
-    spc = ResultFile.from_file(str(source), try_only="spc")
+def test_native_k_parallel_is_inverse_angstrom(tmp_path, wse2_spc):
+    spc = wse2_spc
     with pytest.warns(UserWarning, match="No SPR-KKR input"):
         spc.to_nexus(tmp_path / "units.nxs")
     with h5py.File(tmp_path / "units.nxs") as f:
@@ -501,16 +491,14 @@ def test_extended_scan_provenance(tmp_path):
         assert not bool(original["SPEC_STR/TRANSP_BAR"][()])
 
 
-def test_native_wse2_k_parallel_physical_units_from_energy_dispersion():
+def test_native_wse2_k_parallel_physical_units_from_energy_dispersion(wse2_spc):
     """Energy spacing independently establishes 1/angstrom, not pi/angstrom.
 
     At fixed theta, the free-electron relation yields
     dE = (hbar^2 / 2m) * d(k_parallel^2) / sin(theta)^2.
     This does not require knowing the photon energy or work function.
     """
-    from ase2sprkkr.result_files import ResultFile
-    source = Path(__file__).resolve().parents[1] / "examples" / "WSe2_ARPES.spc"
-    spc = ResultFile.from_file(str(source), try_only="spc")
+    spc = wse2_spc
     assert spc.NP() == 1
     # The NT points at each energy have the same polar angles.
     last_angle_per_energy = spc.RAW_DATA()[spc.NT() - 1::spc.NT()]

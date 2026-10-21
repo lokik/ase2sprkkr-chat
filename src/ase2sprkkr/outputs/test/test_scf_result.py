@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from ..readers import scf as scf_reader
-from ..readers.scf import ScfOutputParser, ScfResult
+from ..readers.scf import ScfResult
 from ..task_result import TaskResult
 
 
@@ -54,13 +54,3 @@ def test_new_task_continuation_is_independent_of_original_calculator(
     assert calculator.input_parameters.task_definition.name == "DOS"
 
 
-def test_scf_info_output_includes_final_status(capsys):
-    output = Path(__file__).parent.parent / "examples" / "scf.out"
-    parser = ScfOutputParser("info")
-    result = ScfResult(None, None, None)
-
-    parser.read_from_file(output, read_args=[result])
-
-    assert parser.print_info is True
-    assert parser.print_output is False
-    assert "OK: The computation converged." in capsys.readouterr().out

@@ -1,8 +1,6 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 from ...potentials.potentials import Potential
 from ..calculation import PreparedCalculation
 from ..calculator import SPRKKR
@@ -11,57 +9,38 @@ from ..calculator import SPRKKR
 EXAMPLES = Path(__file__).parents[2] / "potentials" / "examples"
 
 
-def _save_status(tmp_path, *, input_parameters, status, task=None):
+def test_scf_status_serialization_follows_effective_task(tmp_path):
+    # Parse FePt once. Check DOS conversion before any save can normalize
+    # the potential, then exercise status resets between successive cases.
     potential = Potential.from_file(EXAMPLES / "FePt.new.pot")
-    potential.SCF_INFO.SCFSTATUS = status
-    calculator = SPRKKR()
-
-    parameters, _, potential_file, _ = calculator.save_input(
-        potential=potential,
-        input_parameters=input_parameters,
-        task=task,
-        directory=tmp_path,
-        input_file="task.inp",
-        potential_file="task.pot",
-        output_file=False,
-        empty_spheres=False,
-    )
-
-    saved = Potential.from_file(potential_file)
-    return (
-        parameters.task_name.upper(),
-        potential.SCF_INFO.SCFSTATUS(),
-        saved.SCF_INFO.SCFSTATUS(),
-    )
-
-
-@pytest.mark.parametrize(
-    ("input_parameters", "task", "status", "expected_task", "expected_status"),
-    [
-        ("SCF", None, "START", "SCF", "START"),
+    cases = (
         ("DOS", None, "START", "DOS", "CONVERGED"),
-        ("SCF", "DOS", "START", "DOS", "CONVERGED"),
         ("DOS", None, "ITR-BULK", "DOS", "ITR-BULK"),
-    ],
-)
-def test_scf_status_serialization_follows_effective_task(
-    tmp_path,
-    input_parameters,
-    task,
-    status,
-    expected_task,
-    expected_status,
-):
-    actual_task, in_memory_status, saved_status = _save_status(
-        tmp_path,
-        input_parameters=input_parameters,
-        task=task,
-        status=status,
+        ("SCF", None, "START", "SCF", "START"),
+        ("SCF", "DOS", "START", "DOS", "CONVERGED"),
     )
+    for index, (input_parameters, task, status, expected_task, expected_status) in enumerate(cases):
+        directory = tmp_path / str(index)
+        directory.mkdir()
+        potential.SCF_INFO.SCFSTATUS = status
+        calculator = SPRKKR()
 
-    assert actual_task == expected_task
-    assert in_memory_status == status
-    assert saved_status == expected_status
+        parameters, _, potential_file, _ = calculator.save_input(
+            potential=potential,
+            input_parameters=input_parameters,
+            task=task,
+            directory=directory,
+            input_file="task.inp",
+            potential_file="task.pot",
+            output_file=False,
+            empty_spheres=False,
+        )
+
+        saved = Potential.from_file(potential_file)
+        case = f"{input_parameters=}, {task=}, {status=}"
+        assert parameters.task_name.upper() == expected_task, case
+        assert potential.SCF_INFO.SCFSTATUS() == status, case
+        assert saved.SCF_INFO.SCFSTATUS() == expected_status, case
 
 
 def test_calculate_serializes_status_before_mocked_execution(tmp_path, monkeypatch):

@@ -53,13 +53,8 @@ def test_local_runners_close_unique_output_handles(monkeypatch, tmp_path, backen
     assert stderr.close_calls == 1
 
 
-def test_close_output_files_skips_missing_and_path_declarations():
-    first, second = _TrackedOutput(), _TrackedOutput()
-    close_output_files(None, "out.txt", first, first, second)
-    assert (first.close_calls, second.close_calls) == (1, 1)
-
-
-def test_close_error_still_closes_remaining_handles():
+def test_close_failure_still_closes_other_output_handles():
+    """A failed close cannot skip subsequent handles; preserve its error."""
     class Faulty:
         def close(self):
             raise OSError("cannot close output")

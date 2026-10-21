@@ -97,10 +97,10 @@ dipole moment   1      0.0000000000000000      0.0000000000000000      0.0000000
         assert os.fspath(result.output_file) == os.path.join(directory, "scf.out")
         assert result.path_to("output") == os.path.join(directory, "scf.out")
 
-    def test_output(self):
+    def test_output(self, capsys):
         path = EXAMPLES / "scf.out"
 
-        for reader in ScfOutputParser, ScfOutputParser():
+        for reader in ScfOutputParser, ScfOutputParser("info"):
             result = ScfResult(None, None, None)
             reader.read_from_file(path, read_args=[result])
 
@@ -119,6 +119,11 @@ dipole moment   1      0.0000000000000000      0.0000000000000000      0.0000000
             assert values["Data"].actions() == ("data",)
             assert values["Data"].data() is result
             assert values["potential"] is result.files["potential"]
+
+            if isinstance(reader, ScfOutputParser):
+                assert reader.print_info is True
+                assert reader.print_output is False
+                assert "OK: The computation converged." in capsys.readouterr().out
 
     def test_scf_restart_without_emin_block(self):
         result = TaskResult.from_file(EXAMPLES / "Al_SCF.out")
