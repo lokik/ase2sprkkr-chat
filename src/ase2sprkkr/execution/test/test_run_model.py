@@ -369,3 +369,26 @@ def test_manifest_rejects_stream_output_remote_source_disagreement():
             stdout=FileEntry("/local/run.out", "/remote/run.out"),
             outputs=(FileEntry("/local/run.out", "/remote/another.out"),),
         )
+
+
+
+def test_optional_taskfile_survives_manifest_and_roundtrip(tmp_path):
+    from ase2sprkkr.execution.base import ExecutionSpec
+    from ase2sprkkr.input_parameters.task_definition import TaskFile
+
+    optional_output = TaskFile(tmp_path / "maybe-*.dat", optional=True)
+    required_output = TaskFile(tmp_path / "required.dat")
+    optional_cache = TaskFile(tmp_path / "restart.pot", optional=True)
+    spec = ExecutionSpec(
+        argv=("true",), directory=str(tmp_path), input_file=None,
+        output_file=None, output_files=(optional_output, required_output),
+        cache_files=(optional_cache,),
+    )
+    manifest = FileManifest.from_spec(spec)
+    assert [(item.local_path, item.optional) for item in manifest.outputs] == [
+        (str(optional_output), True), (str(required_output), False),
+    ]
+    assert manifest.caches[0].optional is True
+    assert FileManifest(**asdict(manifest)) == manifest
+    with pytest.raises(TypeError, match="optional"):
+        FileEntry(str(tmp_path / "wrong"), optional="true")
