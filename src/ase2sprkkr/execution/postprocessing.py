@@ -32,6 +32,7 @@ class CalculationRun:
         self._submission_uncertain = False
         self._backend_submit_attempted = False
         self._submitting = False
+        self._completion_deferred = False
         self._preparing = False
         self._cancel_after_prepare = False
 
@@ -217,7 +218,18 @@ class CalculationRun:
                 # Persist before releasing resources or waking public waiters.
                 # A callback failure must not alter a completed backend state.
                 self._settled = True
-                self._publish_completion()
+                # A backend may invoke its callback synchronously inside
+                # submit(). Its identity must be durably stored by submitted()
+                # before the completion hook can write a terminal record.
+                with self._lock:
+                    if (self._submitting and self._backend_submit_attempted
+                            and self.hooks is not None):
+                        self._completion_deferred = True
+                        publish = False
+                    else:
+                        publish = True
+                if publish:
+                    self._publish_completion()
 
     def _publish_completion(self):
         """Persistence must succeed before completion is published to observers."""
@@ -277,8 +289,8 @@ class CalculationRun:
     def request_cancel(self):
         """Latch cancellation without touching resources or blocking the submitter.
 
-        ProjectRunner uses this while reserving/staging; there is no backend
-        identity yet and the prepared inputs still belong to that operation.
+        Cancellation may arrive during reservation/staging, before a backend
+        identity exists. The submitting operation still owns the inputs.
         """
         self._cancel_requested.set()
 
@@ -402,6 +414,8 @@ class CalculationRun:
             with self._lock:
                 self._submission_uncertain = uncertain
                 self._submitting = False
+                deferred = self._completion_deferred
+                self._completion_deferred = False
                 if not uncertain:
                     self._state = (RunState.CANCELLED
                                    if isinstance(exc, asyncio.CancelledError)
@@ -417,13 +431,28 @@ class CalculationRun:
                     )
                     self._settled = True
                     self._done.set()
-            if not uncertain:
+            if deferred:
+                # The backend finished, but the submission transaction did
+                # not complete. Do not publish a terminal record without
+                # first recovering its durable backend identity.
+                failure = PersistenceError(
+                    "Backend finished before submission identity was persisted"
+                )
+                failure.__cause__ = exc
+                self.persistence_error = failure
+                try:
+                    self._close_resources()
+                finally:
+                    self._done.set()
+            elif not uncertain:
                 self._close_resources()
             raise
 
         with self._lock:
             self._started = True
             self._submitting = False
+            deferred = self._completion_deferred
+            self._completion_deferred = False
             dispatch = (self._cancel_requested.is_set()
                         and not self._settled
                         and self._runner.state not in (
@@ -431,6 +460,8 @@ class CalculationRun:
                         ) and not self._cancel_dispatched)
             if dispatch:
                 self._cancel_dispatched = True
+        if deferred:
+            self._publish_completion()
         if dispatch:
             return self._dispatch_cancel()
         return None
