@@ -232,6 +232,11 @@ def _validate_file_declarations(entries):
                 continue
             if {role, previous_role} == {"input", "stdin"}:
                 continue
+            # Multiple local destinations may deliberately retrieve the same
+            # remote result. Only a shared *destination* is a collision.
+            if (same_remote and not same_local
+                    and role == previous_role and role in ("output", "cache")):
+                continue
             if {role, previous_role} == {"stdout", "stderr"}:
                 if (entry.local_path is None or previous.local_path is None
                         or not same_local
