@@ -135,7 +135,9 @@ class TestDefinitionCallbacks:
 
 class TestInputParametersPickle:
     def test_root_validators_survive_copy(self):
-        definition = InputParameters.create("SCF")._definition.copy(
+        # Only the schema is under test; constructing the complete
+        # InputParameters instance would initialize all its runtime options.
+        definition = _schema_for("SCF").copy(
             validators=(_copy_validator,)
         )
         copied = definition.copy()
