@@ -11,7 +11,7 @@ from ase2sprkkr.execution.manager import PersistentRun
 
 
 def _tracked(manager, executor, processed, record):
-    processed.hooks = PersistentRun(manager, executor, processed, record)
+    processed.hooks = PersistentRun(manager, executor, record)
     return processed
 
 
