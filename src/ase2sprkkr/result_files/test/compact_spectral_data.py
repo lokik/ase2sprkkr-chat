@@ -30,6 +30,10 @@ def set_field(header, name, n):
 
 
 def regular_subset(n, max_points, *, endpoints=False):
+    if max_points < 1:
+        raise ValueError('Sampling limit must be positive')
+    if endpoints and n > 1 and max_points < 2:
+        raise ValueError('Endpoint-preserving grids require at least two points')
     if n <= max_points:
         return np.arange(n)
     if endpoints:
@@ -38,6 +42,8 @@ def regular_subset(n, max_points, *, endpoints=False):
         count = max((k for k in range(2, max_points + 1)
                      if (n - 1) % (k - 1) == 0), default=2)
         return np.arange(0, n, (n - 1) // (count - 1))
+    if max_points == 1:
+        return np.array([0])
     step = max(1, (n - 1) // (max_points - 1))
     return np.arange(0, n, step)[:max_points]
 
