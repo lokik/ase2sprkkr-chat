@@ -240,3 +240,45 @@ def test_failed_ack_is_retryable_without_rewriting_completion():
     recovered.completed(raw)
     assert executor.attempts == 2
     assert manager.completions == 0
+
+
+def test_lost_ack_reply_after_receipt_deletion_is_safe_on_retry(tmp_path, monkeypatch):
+    """A lost reply after a successful delete must not repeat durable completion."""
+    from uuid import uuid4
+
+    from .. import remote_mailbox
+
+    monkeypatch.setenv("ASE2SPRKKR_REMOTE_STATE_DIR", str(tmp_path))
+    receipt_id = uuid4().hex
+    assert remote_mailbox.publish_outcome(receipt_id, RunState.FINISHED, 0)
+
+    class LostReplyExecutor:
+        def __init__(self):
+            self.attempts = []
+            self.fail_reply = True
+
+        def acknowledge(self, record):
+            self.attempts.append(remote_mailbox.acknowledge_outcome(receipt_id))
+            if self.fail_reply:
+                self.fail_reply = False
+                raise OSError("response lost after durable receipt deletion")
+
+    manager, raw, executor = _Manager(), _Runner(), LostReplyExecutor()
+    record = SimpleNamespace(
+        id="run", state=RunState.RUNNING,
+        updated_at="2026-10-20T10:00:00+00:00",
+        execution=SimpleNamespace(submitted=lambda value: value),
+    )
+    raw.state = RunState.FINISHED
+    persistence = PersistentRun(manager, executor, record)
+    assert persistence.completed(raw) is RunState.FINISHED
+    assert remote_mailbox.read_outcome(receipt_id) is None
+    assert manager.completions == 1
+    assert executor.attempts == [True]
+
+    # The server has no receipt left. Its idempotent ACK returns False, but
+    # successful communication still resolves the client's uncertainty.
+    assert persistence.completed(raw) is RunState.FINISHED
+    assert persistence.completed(raw) is RunState.FINISHED
+    assert manager.completions == 1
+    assert executor.attempts == [True, False]
