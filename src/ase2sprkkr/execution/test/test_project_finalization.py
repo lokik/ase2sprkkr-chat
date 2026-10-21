@@ -702,7 +702,8 @@ def test_concurrent_wait_and_completion_callback_persist_only_once(
 def test_cancel_after_persisted_completion_does_not_touch_backend_or_store(
     tmp_path, monkeypatch, terminal,
 ):
-    from ase2sprkkr.execution.manager import ProjectRunner
+    from ase2sprkkr.execution.manager import PersistentRun
+    from ase2sprkkr.execution.postprocessing import CalculationRun
     store = RunStore(tmp_path / "runs")
     manager = ExecutionManager(store)
     record = manager.new_record(task="DOS", directory=tmp_path)
@@ -710,19 +711,18 @@ def test_cancel_after_persisted_completion_does_not_touch_backend_or_store(
     calls = []
 
     class Raw:
+        callback = None
         state = RunState.RUNNING
+
         def cancel(self):
             calls.append("backend")
             raise AssertionError("terminal backend cancellation")
-    class Processed:
-        state = RunState.RUNNING
-        def cancel(self):
-            return Raw().cancel()
 
-    project = ProjectRunner(manager, None, Processed(), record)
+    run = CalculationRun(Raw(), lambda result: result)
+    run.hooks = PersistentRun(manager, None, run, record)
     monkeypatch.setattr(manager, "transition", lambda *a, **k: calls.append("store"))
-    assert project.cancel() is None
-    assert project.cancel() is None
+    assert run.cancel() is None
+    assert run.cancel() is None
     assert calls == []
     assert store.get(record.id).state == terminal
 
