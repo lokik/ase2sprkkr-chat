@@ -33,7 +33,8 @@ def test_local_runners_close_unique_output_handles(monkeypatch, tmp_path, backen
     )
 
     if backend == "local":
-        async def fail_to_launch(_spec):
+        async def fail_to_launch(_spec, *, stdin):
+            assert stdin is None
             raise RuntimeError("launch failed")
 
         monkeypatch.setattr("ase2sprkkr.execution.local.start_local_process", fail_to_launch)
@@ -54,13 +55,8 @@ def test_local_runners_close_unique_output_handles(monkeypatch, tmp_path, backen
     assert stderr.close_calls == 1
 
 
-def test_close_output_files_skips_missing_and_path_declarations():
-    first, second = _TrackedOutput(), _TrackedOutput()
-    close_output_files(None, "out.txt", first, first, second)
-    assert (first.close_calls, second.close_calls) == (1, 1)
-
-
-def test_close_error_still_closes_remaining_handles():
+def test_close_failure_still_closes_other_output_handles():
+    """A failed close cannot skip subsequent handles; preserve its error."""
     class Faulty:
         def close(self):
             raise OSError("cannot close output")

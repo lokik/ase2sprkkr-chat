@@ -1489,3 +1489,37 @@ def test_psij_preparation_reuses_declared_outputs_for_check_and_cleanup(
     assert output_file.read_bytes() == b""
     assert error_file.read_bytes() == b""
     assert not extra_output.exists()
+
+
+def test_psij_run_async_does_not_block_event_loop_during_submit(monkeypatch, tmp_path):
+    class BlockingBackend(_Backend):
+        def __init__(self):
+            super().__init__()
+            self.entered = threading.Event()
+            self.release = threading.Event()
+
+        def submit(self, job):
+            self.entered.set()
+            if not self.release.wait(5):
+                raise TimeoutError("PSI/J submission blocked the event loop")
+            super().submit(job)
+
+    backend = BlockingBackend()
+    runner = _executor(monkeypatch, backend).create_run(ExecutionSpec(
+        argv=("program",), directory=str(tmp_path),
+        input_file=None, output_file=None, error_file=None,
+    ))
+
+    async def exercise():
+        running = asyncio.create_task(runner.run_async())
+        try:
+            assert await asyncio.wait_for(
+                asyncio.to_thread(backend.entered.wait, 3), 4,
+            )
+            assert not running.done(), "PSI/J submission blocked the event loop"
+        finally:
+            backend.release.set()
+        return await asyncio.wait_for(running, 5)
+
+    assert asyncio.run(exercise()).return_code == 0
+    assert runner.state == RunState.FINISHED

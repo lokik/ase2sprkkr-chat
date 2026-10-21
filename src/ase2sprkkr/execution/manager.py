@@ -31,6 +31,7 @@ from .artifact_history import (
 )
 from .endpoint import ExecutorEndpoint, endpoint_for_executor
 from .pool import default_executor_pool
+from .projects import _project_id
 from .postprocessing import CalculationRun
 from .run_model import (
     ArtifactAvailabilityState, Execution, WorkingDirectory, FileManifest,
@@ -218,11 +219,29 @@ def submission_conflicts(left: RunRecord, right: RunRecord) -> bool:
 class RunStore:
     """Project run history stored as date-sharded durable JSON files."""
 
-    def __init__(self, directory):
-        """A run store belongs to exactly one project directory."""
+    def __init__(self, directory, *, projects_directory=None):
+        """A run store belongs to one directory; project stores guard deletion."""
         self.directory = Path(directory).expanduser()
+        self.projects_directory = (
+            None if projects_directory is None else Path(projects_directory).expanduser()
+        )
         self._lock = RLock()
         self._warned_corrupt = set()
+
+    @contextmanager
+    def _project_guard(self, record):
+        if self.projects_directory is None:
+            yield
+            return
+        if record.project_id is None:
+            raise ValueError("Project run history requires a canonical project ID")
+        project_id = _project_id(record.project_id)
+        if record.project_id != project_id:
+            raise ValueError("Project run history requires a canonical project ID")
+        with FileLock(self.projects_directory / f".runs-{project_id}.lock"):
+            if not (self.projects_directory / f"{project_id}.json").is_file():
+                raise KeyError(f"Project {project_id} no longer exists")
+            yield
 
     @staticmethod
     def _bucket(created_at):
@@ -235,6 +254,8 @@ class RunStore:
         return self.directory / self._bucket(record.created_at) / f"{record.id}.json"
 
     def _run_lock_path(self, record):
+        if self.projects_directory is not None:
+            return self.directory / f".{record.id}.lock"
         path = self._path(record)
         return path.with_name(f".{record.id}.lock")
 
@@ -295,18 +316,32 @@ class RunStore:
         with self._lock, FileLock(self.directory / ".submit.lock"):
             yield
 
+    def _check_persisted_project(self, record):
+        if self.projects_directory is None:
+            return
+        filename = f"{record.id}.json"
+        for day in self._day_directories(newest=False):
+            path = day / filename
+            if path.is_file() and self._decode(path).project_id != record.project_id:
+                raise ValueError("Run write cannot change persistent project identity")
+
     def save(self, record: RunRecord):
-        with self._lock:
-            return self._write_unlocked(record)
+        with self._lock, FileLock(self._run_lock_path(record)):
+            self._check_persisted_project(record)
+            with self._project_guard(record):
+                return self._write_unlocked(record)
 
     def update(self, record: RunRecord, updater):
         with self._lock, FileLock(self._run_lock_path(record)):
-            path = self._path(record)
-            latest = self._decode(path) if path.is_file() else record
-            updated = updater(latest)
-            if updated.id != latest.id or updated.created_at != latest.created_at:
-                raise ValueError("Run update cannot change persistent identity")
-            return self._write_unlocked(updated)
+            self._check_persisted_project(record)
+            with self._project_guard(record):
+                path = self._path(record)
+                latest = self._decode(path) if path.is_file() else record
+                updated = updater(latest)
+                if (updated.id != latest.id or updated.created_at != latest.created_at
+                        or updated.project_id != latest.project_id):
+                    raise ValueError("Run update cannot change persistent identity")
+                return self._write_unlocked(updated)
 
     def get(self, run_id):
         return self._decode(self._path_for_id(run_id))
@@ -354,8 +389,11 @@ class ExecutionManager:
         if submitting_grace < 0:
             raise ValueError("submitting_grace must be non-negative")
         self.projects = project_repository
-        if self.projects is not None and store is None:
-            store = RunStore(self.projects.directory.parent / "projects_runs")
+        if self.projects is not None:
+            canonical_store = self.projects.run_store
+            if store is not None and store is not canonical_store:
+                raise ValueError("Project-bound execution requires the repository run store")
+            store = canonical_store
         self.store = store
         self.executor_pool = (
             executor_pool if executor_pool is not None else default_executor_pool()
@@ -474,12 +512,22 @@ class ExecutionManager:
             changes = {"state": merged_state, "updated_at": now}
             if not latest.state.is_terminal and merged_state.is_terminal:
                 changes["finished_at"] = now
-            merged_result_files = self._merged_result_files(latest, files)
-            if merged_result_files is not latest.files:
-                changes["files"] = merged_result_files
+            if not final_locked:
+                merged_result_files = self._merged_result_files(latest, files)
+                if merged_result_files is not latest.files:
+                    changes["files"] = merged_result_files
             if execution is not _UNCHANGED and execution is not None:
-                if latest.execution.backend_id is not None and execution.backend_id != latest.execution.backend_id:
-                    raise ValueError("Backend identity cannot change")
+                if execution.endpoint != latest.execution.endpoint:
+                    raise ValueError("Execution endpoint cannot change")
+                if execution.directory.local != latest.execution.directory.local:
+                    raise ValueError("Execution local directory cannot change")
+                if latest.execution.backend_id is not None:
+                    if execution.backend_id != latest.execution.backend_id:
+                        raise ValueError("Backend identity cannot change")
+                    if execution.directory != latest.execution.directory:
+                        raise ValueError("Submitted execution directory cannot change")
+                elif final_locked and execution != latest.execution:
+                    raise ValueError("Final execution identity cannot change")
                 changes["execution"] = execution
             if return_code is not _UNCHANGED and return_code is not None:
                 if not final_locked or latest.return_code is None:
