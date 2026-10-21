@@ -149,3 +149,45 @@ def test_optional_alias_cannot_weaken_mandatory_stdin(tmp_path):
         asyncio.run(handler.prepare(
             mapping, spec_obj, FileManifest.from_spec(spec_obj),
         ))
+
+
+@pytest.mark.parametrize("present", (False, True))
+def test_optional_exact_output_absence_vs_transfer_error(tmp_path, present):
+    """Optional tolerates absence, but never a failed transfer of an existing file."""
+    import asyncio
+    from types import SimpleNamespace
+    from ase2sprkkr.execution.remote_file_handler import RemoteFileHandler
+    from ase2sprkkr.execution.run_model import FileMapping
+    from ase2sprkkr.execution.transport import LocalTransport
+
+    local = tmp_path / "local"
+    remote = tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    remote_file = remote / "optional.dat"
+    if present:
+        remote_file.write_text("present")
+
+    class FailingTransfer(LocalTransport):
+        async def get_file(self, source, destination):
+            raise OSError("simulated transfer failure")
+
+    mapping = FileMapping(str(local), str(remote))
+    files = FileManifest(
+        outputs=(FileEntry(str(local / "optional.dat"),
+                           str(remote_file), optional=True,
+                           availability_state="pending"),),
+        mapping=mapping,
+    )
+    outcome = SimpleNamespace(output_file=None, error_file=None)
+    completed, error = asyncio.run(
+        RemoteFileHandler(FailingTransfer()).collect(
+            mapping, files, outcome, required=True))
+    entry = completed.outputs[0]
+    if present:
+        assert isinstance(error, OSError)
+        assert "simulated transfer failure" in str(error)
+        assert entry.availability_state == "failed"
+    else:
+        assert error is None
+        assert entry.availability_state == "skipped"
