@@ -250,7 +250,9 @@ class RemoteFileHandler:
                 if first_error is None:
                     first_error = exc
                 continue
-            identity = (kind, entry.remote_path)
+            # One source may legitimately be requested at several local paths.
+            # Suppress only repeated declarations of the same transfer.
+            identity = (kind, entry.remote_path, entry.local_path)
             if identity in seen:
                 continue
             seen.add(identity)

@@ -160,7 +160,7 @@ def test_collect_continues_after_one_output_download_fails(tmp_path):
 
 def test_collect_keeps_later_outputs_and_caches_after_missing_required_file(tmp_path):
     """A missing mandatory output fails the run, not subsequent transfers."""
-        from ase2sprkkr.execution.base import ExecutionOutcome
+    from ase2sprkkr.execution.base import ExecutionOutcome
 
     local, remote = tmp_path / "local", tmp_path / "remote"
     local.mkdir()
@@ -339,3 +339,31 @@ def test_collect_rejects_two_remote_cache_sources_with_one_destination(tmp_path)
             context, manifest, ExecutionOutcome(),
         ))
     assert local.read_text() == "preserve"
+
+def test_collect_downloads_shared_remote_source_to_both_local_destinations(tmp_path):
+    """Deduplicate transfers, not distinct destinations for one source."""
+    from ase2sprkkr.execution import FileMapping
+    from ase2sprkkr.execution.base import ExecutionOutcome
+
+    local, remote = tmp_path / "local", tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    source = remote / "shared.out"
+    source.write_text("result")
+    targets = (local / "first.out", local / "second.out")
+    manifest = FileManifest(outputs=tuple(
+        FileEntry(str(target), str(source), availability_state="pending")
+        for target in targets
+    ))
+    handler = RemoteEndpointExecutor(LocalTransport()).file_handler
+    mapping = FileMapping(str(local), str(remote))
+    collected, error = asyncio.run(
+        handler.collect(mapping, manifest, ExecutionOutcome())
+    )
+
+    assert error is None
+    assert all(target.read_text() == "result" for target in targets)
+    assert [entry.availability_state for entry in collected.outputs] == [
+        "available", "available",
+    ]
+
