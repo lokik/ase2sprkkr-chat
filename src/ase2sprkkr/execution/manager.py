@@ -1103,11 +1103,16 @@ class PersistentRun:
             with self._completion_lock:
                 if not self._record.state.is_terminal:
                     observed = run.state
-                    if observed == RunState.FINISHED:
-                        observed = RunState.POSTPROCESSING
+                    if observed.is_terminal:
+                        # A backend may complete synchronously inside submit().
+                        # The public completion callback is deferred until its
+                        # identity is durable; do not commit a terminal record
+                        # without its return code, error and file snapshot.
+                        observed = RunState.SUBMITTING
                     self._record = self.manager.transition(
                         self._record, state=observed, execution=self._execution_for(run, self._record),
-                        failure_phase=_failure_phase(run.failure_phase),
+                        failure_phase=(None if observed == RunState.SUBMITTING
+                                       else _failure_phase(run.failure_phase)),
                         files=run.files if run.files is not None else _UNCHANGED,
                     )
                     self._monitor_record_version = self._record.updated_at

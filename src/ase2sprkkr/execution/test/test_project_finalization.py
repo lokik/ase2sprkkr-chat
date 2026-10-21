@@ -105,6 +105,53 @@ def test_result_processor_failure_is_postprocessing_failure(tmp_path):
     assert record.finished_at is not None
 
 
+@pytest.mark.parametrize("processor_fails", (False, True))
+def test_synchronous_completion_persists_backend_before_terminal_record(
+    tmp_path, monkeypatch, processor_fails,
+):
+    """Submission ACK must never see an incomplete terminal record."""
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    acknowledged = []
+
+    def acknowledge(_executor, record):
+        persisted = store.get(record.id)
+        acknowledged.append(persisted)
+        assert persisted.execution.backend_id == "job-1"
+        assert not persisted.state.is_terminal
+        assert persisted.finished_at is None
+
+    monkeypatch.setattr(manager, "_acknowledge_submission", acknowledge)
+
+    def processor(outcome):
+        if processor_fails:
+            raise ValueError("synchronous parse failure")
+        return outcome
+
+    run = manager.create_run(
+        _Executor(),
+        ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
+        process_result=processor, task="DOS",
+    )
+    run.submit()
+    assert len(acknowledged) == 1
+    if processor_fails:
+        with pytest.raises(ValueError, match="synchronous parse failure"):
+            run.wait()
+    else:
+        assert run.wait().return_code == 0
+
+    persisted = store.get(run.id)
+    assert persisted.state == (RunState.FAILED if processor_fails else RunState.FINISHED)
+    assert persisted.failure_phase == (
+        FailurePhase.POSTPROCESSING if processor_fails else None
+    )
+    assert persisted.message == (
+        "synchronous parse failure" if processor_fails else None
+    )
+    assert persisted.finished_at is not None
+
+
 def test_unrecoverable_processor_reconstruction_fails_postprocessing(tmp_path):
     store = RunStore(tmp_path / "runs")
     manager = ExecutionManager(store)
