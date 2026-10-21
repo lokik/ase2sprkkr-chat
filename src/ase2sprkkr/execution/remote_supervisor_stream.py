@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ._durability import fsync_directory
+from .stream_protocol import decode_terminal_payload
 from .frame_codec import (
     OFFSET_HEADER as _HEADER, KIND_TO_CODE as _CODES,
     CODE_TO_KIND as _BACK, MAX_DATA as _CHUNK,
@@ -41,7 +42,7 @@ async def receive(reader):
         except ValueError as exc:
             raise ValueError("Oversized supervisor frame") from exc
         if code == b"T":
-            yield "terminal", 0, json.loads(payload)
+            yield "terminal", 0, decode_terminal_payload(payload)
             return
         if code not in _BACK:
             raise ValueError("Invalid supervisor channel")

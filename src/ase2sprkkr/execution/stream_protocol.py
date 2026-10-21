@@ -39,6 +39,21 @@ def encode_terminal_frame(outcome):
     return encode_frame(b"T", data)
 
 
+def decode_terminal_payload(data):
+    """Validate terminal facts shared by supervisor and SSH stream frames."""
+    try:
+        outcome = json.loads(data)
+    except (ValueError, UnicodeError) as exc:
+        raise StreamProtocolError("Invalid terminal frame JSON") from exc
+    if not isinstance(outcome, dict):
+        raise StreamProtocolError("Invalid terminal frame outcome")
+    try:
+        RunState(outcome.get("state"))
+    except (TypeError, ValueError) as exc:
+        raise StreamProtocolError("Invalid terminal frame outcome") from exc
+    return outcome
+
+
 async def _read_exactly(source, size):
     try:
         return await source.readexactly(size)
@@ -67,17 +82,7 @@ async def read_stream_frames(source):
             return
         code, _, payload = record
         if code == b"T":
-            try:
-                outcome = json.loads(payload)
-            except (ValueError, UnicodeError) as exc:
-                raise StreamProtocolError("Invalid terminal frame JSON") from exc
-            if not isinstance(outcome, dict):
-                raise StreamProtocolError("Invalid terminal frame outcome")
-            try:
-                RunState(outcome.get("state"))
-            except (TypeError, ValueError) as exc:
-                raise StreamProtocolError("Invalid terminal frame outcome") from exc
-            yield "terminal", outcome
+            yield "terminal", decode_terminal_payload(payload)
             return
         try:
             kind = _CODE_TO_KIND[code]
