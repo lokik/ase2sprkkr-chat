@@ -104,7 +104,8 @@ class ManagedRunner:
             self._state = RunState.FAILED
 
     def _finish_monitoring(self):
-        """Optional backend-specific observation cleanup before callbacks."""
+        """Flush incomplete UTF-8 data before notifying completion callbacks."""
+        self._output_observers.finish_bytes()
 
     def _thread_main(self):
         """One exception, cleanup, callback and completion boundary for all monitors."""

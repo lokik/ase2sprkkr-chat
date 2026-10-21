@@ -46,6 +46,7 @@ def test_psij_inherits_common_lifecycle_without_inheriting_supervisor_monitor():
                  "cancel", "add_output_listener", "add_output_error_listener"):
         assert getattr(PsijRunner, name) is getattr(ManagedRunner, name)
     assert PsijRunner._monitor is not ManagedRunner._monitor
+    assert PsijRunner._finish_monitoring is ManagedRunner._finish_monitoring
 
 
 def test_managed_runner_uses_terminal_backend_facts(tmp_path):
@@ -56,6 +57,30 @@ def test_managed_runner_uses_terminal_backend_facts(tmp_path):
     result = asyncio.run(runner._monitor())
     assert result.return_code == 0
     assert runner._state is RunState.FINISHED
+
+
+def test_managed_runner_flushes_partial_utf8_before_callback(tmp_path):
+    """SSH/local-project lifecycle closes decoders before publishing completion."""
+    spec = ExecutionSpec(
+        argv=(), directory=str(tmp_path), input_file=None, output_file=None,
+    )
+    runner = _ManagedStub(spec)
+    received = []
+    runner.add_output_listener(
+        lambda text, kind: received.append((kind, text))
+    )
+    runner.callback = lambda result: received.append(("callback", "done"))
+
+    async def follow():
+        runner._output_observers.emit_bytes(b"\\xe2", "out")
+        return {"state": "finished", "return_code": 0, "files": {"outputs": []}}
+
+    runner._follow_once = follow
+    runner._thread_main()
+
+    assert received == [("out", "\\ufffd"), ("callback", "done")]
+    assert runner._state is RunState.FINISHED
+    assert runner._done.is_set()
 
 
 def test_managed_runner_cancellation_is_dispatched_once(tmp_path):

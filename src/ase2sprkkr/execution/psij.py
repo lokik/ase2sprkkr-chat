@@ -532,10 +532,6 @@ class PsijRunner(ManagedRunner):
     def _cancel_backend(self):
         return self._job.cancel()
 
-    def _finish_monitoring(self):
-        self._output_observers.finish_bytes()
-
-
 class PsijExecutor(Executor):
     """Execute calculations through a PSI/J backend such as Slurm or PBS."""
 
