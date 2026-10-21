@@ -16,6 +16,7 @@ from .base import (
     OutputObservers,
     close_output_files,
     finish_monitor,
+    file_path,
     wait_for_monitor,
     RunState,
     SubmissionNotStarted,
