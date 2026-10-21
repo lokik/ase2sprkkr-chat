@@ -955,9 +955,7 @@ class ExecutionManager:
         raw = executor.create_project_run(spec, run_id=record.id)
         # The manifest is owned by RunRecord. Local execution observes its
         # publication outcomes, without persisting an independent file list.
-        set_manifest = getattr(raw, "set_manifest", None)
-        if set_manifest is not None:
-            set_manifest(record.files)
+        raw.set_manifest(record.files)
         processed = CalculationRun(raw, process_result, resources=resources)
         persistence = PersistentRun(self, executor, record, spec=spec)
         processed.hooks = persistence
