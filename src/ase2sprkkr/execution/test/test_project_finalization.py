@@ -793,3 +793,36 @@ def test_unknown_observation_closes_owned_streams_but_attach_can_recover(tmp_pat
         assert submissions == ["submit"]
     finally:
         recovered._runner._runner.output_stream.close()
+
+def test_project_persistence_failure_can_be_retried_without_resubmitting(
+    tmp_path, monkeypatch,
+):
+    """A failed durable commit does not invalidate a completed calculation."""
+    from ase2sprkkr.execution.run_hooks import PersistenceError
+
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    calls = []
+    original_complete = manager.complete
+
+    def fail_once(*args, **kwargs):
+        calls.append(kwargs["state"])
+        if len(calls) == 1:
+            raise OSError("disk write failed")
+        return original_complete(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "complete", fail_once)
+    run = manager.create_run(
+        _Executor(), SimpleNamespace(directory=str(tmp_path)),
+        process_result=lambda result: result, task="DOS",
+    )
+    run.submit()
+
+    with pytest.raises(PersistenceError, match="persist calculation"):
+        run.wait()
+    assert run._runner.state is RunState.FINISHED
+    assert run._runner.persistence_error is not None
+    assert store.get(run.id).state != RunState.FINISHED
+    run._runner.retry_persistence()
+    assert store.get(run.id).state is RunState.FINISHED
+    assert len(calls) == 2

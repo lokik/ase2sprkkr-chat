@@ -922,9 +922,8 @@ class ExecutionManager:
             set_manifest(record.files)
         processed = CalculationRun(raw, process_result, resources=resources)
         project_run = ProjectRunner(self, executor, processed, record, spec=spec)
-        processed.callback = lambda result: self._complete(
-            project_run, result, callback
-        )
+        processed.hooks = project_run
+        processed.callback = callback
         return project_run
 
     def refresh(self, records=None):
@@ -971,9 +970,8 @@ class ExecutionManager:
         )
         processed = CalculationRun(raw, process_result)
         project_run = ProjectRunner(self, executor, processed, record)
-        processed.callback = lambda result: self._complete(
-            project_run, result, callback
-        )
+        processed.hooks = project_run
+        processed.callback = callback
         project_run.start()
         return project_run
 
@@ -1199,6 +1197,10 @@ class ProjectRunner:
                     failure_phase=self.failure_phase,
                 )
                 self._monitor_record_version = self._record.updated_at
+
+    def completed(self, run: CalculationRun):
+        """Durably record an observed completion before user notifications."""
+        self._sync_completion(run.result)
 
     def _sync_completion(self, result):
         # Callback and wait() can reach this path concurrently. Only the
