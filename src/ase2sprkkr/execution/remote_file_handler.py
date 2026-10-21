@@ -301,6 +301,13 @@ class RemoteFileHandler:
               for cache in manifest.caches),
         )
         seen = set()
+        # Overlapping output globs can materialize the same physical file.
+        # The first declaration must not make a second mandatory declaration
+        # optional: resolve the effective requirement across all aliases.
+        mandatory_outputs = {
+            (entry.local_path, entry.remote_path)
+            for entry in manifest.outputs if not entry.optional
+        }
         first_error = None
         for is_cache, entry, before in candidates:
             if entry.local_path is None or entry.remote_path is None:
@@ -335,7 +342,12 @@ class RemoteFileHandler:
                 state = ("skipped" if FileSyncPolicy(mapping.output_sync) == FileSyncPolicy.NEVER
                          else await self._sync_file(
                              mapping, entry, is_cache=is_cache,
-                             before=before, required=required and not entry.optional,
+                             before=before,
+                             required=required and (
+                                 not entry.optional if is_cache else
+                                 (entry.local_path, entry.remote_path)
+                                 in mandatory_outputs
+                             ),
                          ))
             except Exception as exc:
                 manifest = manifest.with_file_availability(
