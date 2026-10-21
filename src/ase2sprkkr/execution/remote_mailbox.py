@@ -49,6 +49,10 @@ def drop_submission(run_id):
     try:
         path.unlink()
     except FileNotFoundError:
+        # A previous attempt may have removed the entry but failed its
+        # directory barrier. Re-sync before confirming the absent receipt.
+        if path.parent.is_dir():
+            fsync_directory(path.parent)
         return False
     fsync_directory(path.parent)
     return True
@@ -131,6 +135,10 @@ def acknowledge_outcome(receipt_id):
     try:
         path.unlink()
     except FileNotFoundError:
+        # A previous attempt may have removed the entry but failed its
+        # directory barrier. Re-sync before confirming the absent receipt.
+        if path.parent.is_dir():
+            fsync_directory(path.parent)
         return False
     fsync_directory(path.parent)
     return True
