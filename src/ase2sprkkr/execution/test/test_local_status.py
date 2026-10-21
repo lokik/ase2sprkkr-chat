@@ -51,7 +51,7 @@ def test_lost_is_not_a_run_state():
         (RunState.CANCELLED, None, "available"),
         (RunState.FAILED, FailurePhase.EXECUTION, "available"),
         (RunState.FAILED, FailurePhase.LAUNCH, "skipped"),
-        (RunState.FAILED, FailurePhase.ARTIFACTS, "failed"),
+        (RunState.FAILED, FailurePhase.FILES, "failed"),
     ],
 )
 def test_local_recovery_and_status_share_projection_without_extra_query(

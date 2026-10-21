@@ -55,7 +55,7 @@ def _record(executor, runner, run_id, directory):
 
 
 @pytest.mark.parametrize("mode", ("local", "ssh"))
-def test_project_round_trip_freezes_same_artifacts(mode, tmp_path):
+def test_project_round_trip_freezes_same_files(mode, tmp_path):
     directory = tmp_path / "local" / "calculation"
     directory.mkdir(parents=True)
     stdout, stderr = directory / "run.out", directory / "run.err"

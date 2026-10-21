@@ -219,7 +219,7 @@ def test_output_cleanup_error_clears_runner_state(tmp_path):
         runner.run()
     assert output.closed
     assert runner.state is RunState.FAILED
-    assert runner.failure_phase is FailurePhase.ARTIFACTS
+    assert runner.failure_phase is FailurePhase.FILES
     assert runner._process is None
     assert runner._loop is None
 
