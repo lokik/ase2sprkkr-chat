@@ -5,7 +5,7 @@ import pytest
 from ase2sprkkr.execution.base import LaunchSpec
 from ase2sprkkr.execution.endpoint import ExecutorEndpoint
 from ase2sprkkr.execution.run_model import (
-    ArtifactAvailabilityState, Execution, FileEntry, FileManifest,
+    FileAvailabilityState, Execution, FileEntry, FileManifest,
     FileMapping, FileSyncPolicy, WorkingDirectory,
 )
 
@@ -66,7 +66,7 @@ def test_manifest_versions_and_availability_roundtrip():
         FileEntry("/local/test", availability_state="inconsistent")
 
 
-def test_each_artifact_tracks_its_own_transfer_outcome():
+def test_each_file_tracks_its_own_transfer_outcome():
     manifest = FileManifest(
         outputs=(
             FileEntry("/local/one", "/remote/one", "pending"),
@@ -80,10 +80,10 @@ def test_each_artifact_tracks_its_own_transfer_outcome():
     )
     assert manifest.outputs[0].availability_state == "available"
     assert manifest.outputs[1].availability_state == "failed"
-    assert manifest.failed_artifacts == (manifest.outputs[1],)
+    assert manifest.failed_files == (manifest.outputs[1],)
     assert manifest.availability_state == "failed"
     manifest = manifest.with_file_availability("/local/cache", "skipped", kind="cache")
-    assert [entry.availability_state for entry in manifest.artifacts] == [
+    assert [entry.availability_state for entry in manifest.files] == [
         "available", "failed", "skipped",
     ]
     assert manifest.availability_message == "connection lost"
@@ -111,7 +111,7 @@ def test_merged_stdout_stderr_has_only_one_file_status():
         stderr=FileEntry("/local/combined", "/remote/combined", "pending"),
     )
     manifest = manifest.with_file_availability("/local/combined", "available")
-    assert len(manifest.artifacts) == 1
+    assert len(manifest.files) == 1
     assert manifest.stdout.availability_state == "available"
     assert manifest.stderr.availability_state == "available"
     assert FileManifest(**asdict(manifest)) == manifest
@@ -144,7 +144,7 @@ def test_materialized_wildcard_members_have_independent_availability():
 def test_recovered_stream_paths_update_only_declared_stream_locations():
     manifest = FileManifest(
         inputs=(FileEntry("/local/input", "/remote/input"),),
-        outputs=(FileEntry("/local/artifact", "/remote/artifact"),),
+        outputs=(FileEntry("/local/file", "/remote/file"),),
         caches=(FileEntry("/local/cache", "/remote/cache", pre_run_signature=(12, 34)),),
         stdout=FileEntry(
             "/local/stdout", "/previous/stdout",
@@ -257,7 +257,7 @@ def test_only_stdout_and_stderr_may_share_a_file():
         stdout=FileEntry("/local/shared", "/remote/shared"),
         stderr=FileEntry("/local/shared", "/remote/shared"),
     )
-    assert len(files.artifacts) == 1
+    assert len(files.files) == 1
     with pytest.raises(ValueError, match="Duplicate file declaration"):
         FileManifest(
             outputs=(FileEntry("/local/shared", "/remote/shared"),),
@@ -266,17 +266,17 @@ def test_only_stdout_and_stderr_may_share_a_file():
 
 
 def test_availability_enum_is_shared_between_model_and_manager():
-    from ase2sprkkr.execution import ArtifactAvailabilityState
-    from ase2sprkkr.execution.manager import ArtifactAvailabilityState as ManagerState
-    from ase2sprkkr.execution.run_model import ArtifactAvailabilityState as ModelState
+    from ase2sprkkr.execution import FileAvailabilityState
+    from ase2sprkkr.execution.manager import FileAvailabilityState as ManagerState
+    from ase2sprkkr.execution.run_model import FileAvailabilityState as ModelState
 
-    assert ModelState is ManagerState is ArtifactAvailabilityState
+    assert ModelState is ManagerState is FileAvailabilityState
     assert {state.value for state in ModelState} == {
         "pending", "available", "failed", "skipped",
     }
 
 
-@pytest.mark.parametrize("state", list(ArtifactAvailabilityState))
+@pytest.mark.parametrize("state", list(FileAvailabilityState))
 def test_file_entry_accepts_enum_but_serializes_status_as_string(state):
     entry = FileEntry("/local/file", availability_state=state)
     assert type(entry.availability_state) is str
@@ -285,13 +285,13 @@ def test_file_entry_accepts_enum_but_serializes_status_as_string(state):
     assert FileEntry(**asdict(entry)) == entry
 
 
-def test_invalid_artifact_availability_is_rejected():
+def test_invalid_file_availability_is_rejected():
     with pytest.raises(ValueError, match="availability"):
         FileEntry("/local/file", availability_state="new-state")
     with pytest.raises(ValueError, match="error belongs"):
         FileEntry(
             "/local/file",
-            availability_state=ArtifactAvailabilityState.PENDING,
+            availability_state=FileAvailabilityState.PENDING,
             availability_message="error",
         )
 

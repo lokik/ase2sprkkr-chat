@@ -96,7 +96,7 @@ def test_late_uncaptured_manifest_cannot_destroy_historical_snapshot(tmp_path):
     running = manager.transition(original, state=RunState.RUNNING)
     completed = manager.complete(
         running, state=RunState.FINISHED, return_code=0,
-        artifacts_available=True,
+        files_available=True,
     )
     assert completed.files.captured_at is not None
     assert len(completed.files.output_versions) == 1
@@ -198,7 +198,7 @@ def test_explicit_availability_update_preserves_terminal_snapshot(tmp_path):
         files=FileManifest(outputs=(FileEntry(local_path=output),)),
     )
     terminal = manager.transition(original, state=RunState.FINISHED)
-    updated = manager.update_artifact_availability(terminal, output, "skipped")
+    updated = manager.update_file_availability(terminal, output, "skipped")
 
     assert updated.state is RunState.FINISHED
     assert updated.finished_at == terminal.finished_at
