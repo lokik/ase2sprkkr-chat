@@ -629,3 +629,164 @@ def test_postprocessing_retry_accepts_unchanged_output_with_stale_input(
     assert current.state is RunState.FINISHED
     assert current.files == failed.files
 
+
+def test_concurrent_wait_and_completion_callback_persist_only_once(
+    tmp_path, monkeypatch, callback_fails,
+):
+    """Waiters cannot repeat persistence or close inputs before the callback."""
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    input_stream = io.BytesIO(b"input")
+    resources = ExecutionResources(input_stream)
+    persisting, release = Event(), Event()
+    completions, callbacks, errors = [], [], []
+    complete = manager.complete
+
+    def gated_complete(*args, **kwargs):
+        completions.append(kwargs["state"])
+        persisting.set()
+        assert release.wait(5), "persistence remained blocked"
+        return complete(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "complete", gated_complete)
+
+    def callback(_result):
+        callbacks.append((store.get(run.id).state, input_stream.closed))
+        if callback_fails:
+            raise ValueError("user callback error")
+
+    run = manager.create_run(
+        _Executor(), SimpleNamespace(directory=str(tmp_path)),
+        process_result=lambda outcome: outcome,
+        task="DOS", callback=callback, resources=resources,
+    )
+    run.submit()
+    waiting = None
+
+    def wait():
+        try:
+            run.wait()
+        except BaseException as exc:
+            errors.append(exc)
+
+    try:
+        assert persisting.wait(5)
+        waiting = Thread(target=wait)
+        waiting.start()
+        assert not input_stream.closed
+        # The fake backend can report FINISHED during submit(), before
+        # completion persistence starts. That state observation is valid;
+        # the assertions below verify single durable completion and cleanup.
+    finally:
+        release.set()
+        if waiting is not None:
+            waiting.join(5)
+
+    assert waiting is not None and not waiting.is_alive()
+    assert completions == [RunState.FINISHED]
+    assert callbacks == [(RunState.FINISHED, False)]
+    assert input_stream.closed
+    assert store.get(run.id).state == RunState.FINISHED
+    if callback_fails:
+        assert len(errors) == 1
+        assert isinstance(errors[0], ValueError)
+        assert str(errors[0]) == "user callback error"
+    else:
+        assert errors == []
+
+@pytest.mark.parametrize("terminal", [RunState.FINISHED, RunState.FAILED, RunState.CANCELLED])
+def test_cancel_after_persisted_completion_does_not_touch_backend_or_store(
+    tmp_path, monkeypatch, terminal,
+):
+    from ase2sprkkr.execution.manager import ProjectRunner
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    record = manager.new_record(task="DOS", directory=tmp_path)
+    record = manager.transition(record, state=terminal)
+    calls = []
+
+    class Raw:
+        state = RunState.RUNNING
+        def cancel(self):
+            calls.append("backend")
+            raise AssertionError("terminal backend cancellation")
+    class Processed:
+        state = RunState.RUNNING
+        def cancel(self):
+            return Raw().cancel()
+
+    project = ProjectRunner(manager, None, Processed(), record)
+    monkeypatch.setattr(manager, "transition", lambda *a, **k: calls.append("store"))
+    assert project.cancel() is None
+    assert project.cancel() is None
+    assert calls == []
+    assert store.get(record.id).state == terminal
+
+def test_unknown_observation_closes_owned_streams_but_attach_can_recover(tmp_path):
+    """UNKNOWN ends an observer, not the backend; recovery opens fresh handles."""
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    original = (tmp_path / "output.txt").open("w+b")
+    original.write(b"recoverable result")
+    original.flush()
+    resources = ExecutionResources(original)
+    callbacks = []
+    submissions = []
+
+    class ObservedRunner(_RawRunner):
+        def __init__(self, *, recovered=False):
+            super().__init__()
+            self.recovered = recovered
+            self.state = RunState.FINISHED if recovered else RunState.NEW
+            self.backend_id = "existing-job" if recovered else None
+            self.result = ExecutionOutcome(
+                output_file=None, return_code=0 if recovered else None,
+            )
+            self.output_stream = None
+
+        def submit(self):
+            submissions.append("submit")
+            self.backend_id = "existing-job"
+            self.state = RunState.UNKNOWN
+
+        def start(self):
+            self.output_stream = (tmp_path / "output.txt").open("rb")
+            self.result.output_file = self.output_stream
+
+        def wait(self):
+            return self.result
+
+    class ExecutorWithAttach(_Executor):
+        def create_project_run(self, spec, *, run_id, callback=None):
+            return ObservedRunner()
+
+        def attach(self, record, *, output_listener=None, start=False):
+            assert record.state == RunState.UNKNOWN
+            assert original.closed
+            return ObservedRunner(recovered=True)
+
+    executor = ExecutorWithAttach()
+    first = manager.create_run(
+        executor, SimpleNamespace(directory=str(tmp_path)),
+        task="DOS", process_result=lambda outcome: outcome,
+        callback=lambda _: callbacks.append("unknown"), resources=resources,
+    )
+    first.submit()
+    assert first.wait().return_code is None
+    assert original.closed
+    assert store.get(first.id).state == RunState.UNKNOWN
+    assert store.get(first.id).finished_at is None
+    assert callbacks == ["unknown"]
+
+    recovered = manager.attach(
+        first.id, executor=executor,
+        process_result=lambda outcome: outcome.output_file.read(),
+        callback=lambda _: callbacks.append("finished"),
+    )
+    try:
+        assert recovered.wait() == b"recoverable result"
+        assert store.get(first.id).state == RunState.FINISHED
+        assert callbacks == ["unknown", "finished"]
+        assert submissions == ["submit"]
+    finally:
+        recovered._runner._runner.output_stream.close()
