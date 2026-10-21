@@ -1,5 +1,5 @@
 from os import listdir
-from os.path import dirname, join as path_join, isfile
+from os.path import dirname, join as path_join, isfile, getsize
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -20,10 +20,15 @@ class TestOutput:
     @pytest.mark.slow
     def test_output(self):
         directory = path_join(dirname(dirname(__file__)), "examples")
-        for filename in listdir(directory):
+        # Plot the smallest representative for each rendering branch. Parsing
+        # and data-shape checks still run for every real reference file.
+        filenames = sorted(
+            (name for name in listdir(directory) if isfile(path_join(directory, name))),
+            key=lambda name: getsize(path_join(directory, name)),
+        )
+        plotted_modes = set()
+        for filename in filenames:
             path = path_join(directory, filename)
-            if not isfile(path):
-                continue
 
             extension = path.rsplit(".", 1)[1]
             output = ResultFile.from_file(path, unknown=False)
@@ -83,6 +88,21 @@ class TestOutput:
             if hasattr(output, "plot"):
                 if isinstance(output, JXCResultFile):
                     continue
+                # BSF/SPC rendering branches are selected by mode and keyword.
+                # Large fixtures with the same branch need not be rasterized
+                # again merely to repeat a plotting smoke check.
+                plot_kind = (
+                    extension,
+                    output.MODE() if extension in ("bsf", "spc") else None,
+                    output.KEYWORD() if extension in ("bsf", "spc") else None,
+                    # SPC's single-angle and 2D plotting branches differ.
+                    (output.NP() > 1, output.NT() > 1) if extension == "spc" else None,
+                    # DOS plots also branch on the number of atom types
+                    # (including the total curve) and spin channels.
+                    (output.n_types(), output.n_spins()) if extension == "dos" else None,
+                )
+                if plot_kind in plotted_modes:
+                    continue
                 with tempfile.NamedTemporaryFile() as target:
                     # Smoke-test plotting at screen resolution. Using the
                     # production default (600–800 DPI) rasterizes large BSF,
@@ -91,6 +111,7 @@ class TestOutput:
                     if "exclude_vc" in getattr(output, "plot_parameters", {}):
                         kwargs["exclude_vc"] = False
                     output.plot(**kwargs)
+                plotted_modes.add(plot_kind)
 
     def test_guess_potential_filename_and_manual_override(self, tmp_path):
         output_path = tmp_path / "Fe_JXC_XCPLTEN_Jij.dat"
