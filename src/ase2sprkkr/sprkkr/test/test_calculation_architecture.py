@@ -217,8 +217,8 @@ def test_prepared_calculation_constructs_its_runner(tmp_path, fe_bulk):
 
 
 def test_failed_potential_serialization_preserves_primary_error_and_cleans_files(
-    monkeypatch, tmp_path
-, fe_bulk):
+    monkeypatch, tmp_path, fe_bulk
+):
     calculator = SPRKKR(
         atoms=fe_bulk.copy(),
         directory=tmp_path,
@@ -247,8 +247,8 @@ def test_failed_potential_serialization_preserves_primary_error_and_cleans_files
 
 
 def test_reader_file_not_found_is_not_relabelled_as_missing_executable(
-    monkeypatch, tmp_path
-, fe_bulk):
+    monkeypatch, tmp_path, fe_bulk
+):
     calculator = SPRKKR(
         atoms=fe_bulk.copy(),
         directory=tmp_path,
