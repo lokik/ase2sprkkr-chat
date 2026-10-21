@@ -80,12 +80,12 @@ class FileEntry:
     remote_path: Optional[str] = None
     availability_state: Optional[str] = None
     availability_message: Optional[str] = None
-    source_pattern: Optional[str] = None
+    source: Optional[str] = None
 
     def __post_init__(self):
         import os
-        if self.source_pattern is not None:
-            object.__setattr__(self, "source_pattern", os.fspath(self.source_pattern))
+        if self.source is not None:
+            object.__setattr__(self, "source", os.fspath(self.source))
 
         for name in ("local_path", "remote_path"):
             value = getattr(self, name)
@@ -262,7 +262,9 @@ class FileManifest:
     @property
     def availability_message(self):
         failures = self.failed_artifacts
-        return None if not failures else failures[0].availability_message
+        if failures:
+            return failures[0].availability_message
+        return None
 
     def with_remote_stream_paths(self, *, stdout=None, stderr=None):
         """Update recovered stream locations without changing artifact identity.
@@ -295,13 +297,12 @@ class FileManifest:
 
     def with_file_availability(
         self, local_path, state, message=None, *,
-        remote_path=None, kind="output", source_pattern=None,
+        remote_path=None, kind="output", source=None,
     ):
-        """Update one artifact, adding each wildcard match as it is discovered.
+        """Update one file, recording availability or a transfer failure.
 
-        The pattern declaration retains its own independent status. A child's
-        source_pattern identifies the declaration, including after restart.
-        Duplicate stream/output declarations of one path are updated together.
+        Materialized files have an optional source. A missing wildcard match
+        produces no FileEntry; transfer failures belong to concrete entries.
         """
         import os
         path = os.fspath(local_path)
@@ -317,13 +318,23 @@ class FileManifest:
         file = FileEntry(
             local_path=path, remote_path=remote_path,
             availability_state=state, availability_message=message,
-            source_pattern=source_pattern,
+            source=source,
         )
         if kind == "output":
             return replace(self, outputs=(*self.outputs, file))
         if kind == "cache":
             return replace(self, caches=(*self.caches, CacheEntry(file)))
         raise ValueError(f"Unknown artifact kind: {kind!r}")
+
+    def has_wildcards(self):
+        """Whether any declared output/cache path still needs materializing."""
+        from .transport import has_file_magic
+        return any(
+            entry is not None and
+            has_file_magic(entry.remote_path or entry.local_path)
+            for entry in (*self.outputs, *(cache.file for cache in self.caches))
+            if entry.local_path is not None
+        )
 
     @property
     def input_file(self):

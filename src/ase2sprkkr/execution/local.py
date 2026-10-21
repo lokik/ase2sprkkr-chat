@@ -19,7 +19,7 @@ from .base import (
     RunState,
     SubmissionNotStarted,
 )
-from .file_availability import clear_declared_outputs, validate_output_collisions
+from .file_availability import prepare_local_files
 from .local_process import (
     materialize_local_spec,
     pump_stream,
@@ -130,24 +130,8 @@ class LocalRunner:
             return self.result
 
         try:
-            protected = [
-                file_path(value, self.spec.directory)
-                for value in (self.spec.input_file, self.spec.stdin,
-                              *self.spec.input_files, *self.spec.cache_files)
-            ]
-            # Preserve already-open stdout/stderr handles: an unlink would
-            # disconnect their inode from the named destination.
-            outputs = [
-                file_path(value, self.spec.directory)
-                for value in self.spec.output_files
-            ]
-            validate_output_collisions(
-                (*outputs, self.result.output_file, self.result.error_file),
-                protected=protected,
-            )
-            clear_declared_outputs(
-                outputs,
-                protected=(*protected, self.result.output_file, self.result.error_file),
+            prepare_local_files(
+                self.spec, preserve_open_streams=True,
             )
             try:
                 self._process = await start_local_process(self.spec)
@@ -263,6 +247,10 @@ class LocalExecutor(Executor):
 
     name = "local"
 
+    def __init__(self):
+        from .target_connection import LocalConnection
+        self.connection = LocalConnection()
+
     def create_run(self, spec: ExecutionSpec, callback=None):
         return LocalRunner(materialize_local_spec(spec), callback=callback)
 
@@ -279,12 +267,11 @@ class LocalExecutor(Executor):
         )
 
     def recover_submission(self, run_id, submission, *, submitted_at=None):
-        from .remote_service import recover_remote
+        from ..common.async_utils import run_coro_sync as _run_sync
         from .local_project import _local_status_from_facts
-        reply = recover_remote(run_id, {
-            "executor": "local",
-            "directory": submission.execution.directory.local,
-        })
+        reply = _run_sync(self.connection.recover(
+            run_id, submission.execution.directory.local, submitted_at=submitted_at,
+        ))
         if reply is None:
             # The absence of a ticket is not proof that submission never
             # happened. Never authorize an automatic duplicate launch.
@@ -301,12 +288,12 @@ class LocalExecutor(Executor):
         )
 
     def acknowledge_submission(self, run):
-        from .remote_service import acknowledge_submission
-        acknowledge_submission(run.id)
+        from ..common.async_utils import run_coro_sync as _run_sync
+        _run_sync(self.connection.acknowledge_submission(run.id))
 
     def acknowledge(self, run):
-        from .remote_service import acknowledge_remote
-        acknowledge_remote(run.execution.backend_id)
+        from ..common.async_utils import run_coro_sync as _run_sync
+        _run_sync(self.connection.acknowledge(run.execution.backend_id))
 
     def status(self, *runs):
         from .local_project import local_status

@@ -394,7 +394,7 @@ def test_psij_project_manifest_marks_concrete_and_wildcard_files(monkeypatch, tm
     runner.wait()
     assert runner.files.stdout.availability_state == "available"
     assert runner.files.outputs[0].availability_state == "available"
-    matches = [entry for entry in runner.files.outputs if entry.source_pattern is not None]
+    matches = [entry for entry in runner.files.outputs if entry.source is not None]
     assert len(matches) == 1
     assert matches[0].availability_state == "available"
 
@@ -414,38 +414,56 @@ def test_psij_missing_optional_output_is_skipped(monkeypatch, tmp_path):
     assert runner.files.outputs[0].availability_state == "skipped"
 
 
-@pytest.mark.parametrize(
-    "mpi, process_count",
-    [(16, 16), ("auto", None)],
-)
-def test_psij_mpi_job_uses_mpi_executable_and_requested_resources(
-    monkeypatch, tmp_path, mpi, process_count,
-):
-    executor = _executor(monkeypatch, _Backend())
-    input_path = tmp_path / "run.inp"
-    with input_path.open("w+b") as input_file, (tmp_path / "run.out").open("wb") as output_file:
-        spec = ExecutionSpec(
-            argv=("program",),
-            mpi_argv=("programMPI", str(input_path)),
-            launch=LaunchSpec.from_mpi(mpi),
-            input_file=input_file,
-            output_file=output_file,
-            directory=str(tmp_path),
-            stdin=input_file,
-        )
+def test_psij_mpi_process_count_becomes_resource_spec(monkeypatch, tmp_path):
+    backend = _Backend()
+    executor = _executor(monkeypatch, backend)
+    input_file = open(tmp_path / "run.inp", "wb+")
+    output_file = open(tmp_path / "run.out", "wb")
+    spec = ExecutionSpec(
+        argv=("program",),
+        mpi_argv=("programMPI", str(tmp_path / "run.inp")),
+        launch=LaunchSpec.from_mpi(16),
+        input_file=input_file,
+        output_file=output_file,
+        directory=str(tmp_path),
+        stdin=input_file,
+    )
 
-        runner = executor.create_run(spec)
-        job_spec = runner._job.spec
+    runner = executor.create_run(spec)
+    job_spec = runner._job.spec
 
-        assert job_spec.executable == "programMPI"
-        assert job_spec.arguments == [str(input_path)]
-        assert job_spec.launcher == "srun"
-        assert job_spec.stdin_path == str(input_path)
-        if process_count is None:
-            assert job_spec.resources is None
-        else:
-            assert job_spec.resources.process_count == process_count
+    assert job_spec.executable == "programMPI"
+    assert job_spec.arguments == [str(tmp_path / "run.inp")]
+    assert job_spec.resources.process_count == 16
+    assert job_spec.launcher == "srun"
+    assert job_spec.stdin_path == str(tmp_path / "run.inp")
+    input_file.close()
+    output_file.close()
 
+
+def test_psij_auto_uses_mpi_without_fixed_process_count(monkeypatch, tmp_path):
+    backend = _Backend()
+    executor = _executor(monkeypatch, backend)
+    input_file = open(tmp_path / "run.inp", "wb+")
+    output_file = open(tmp_path / "run.out", "wb")
+    spec = ExecutionSpec(
+        argv=("program",),
+        mpi_argv=("programMPI", str(tmp_path / "run.inp")),
+        launch=LaunchSpec.from_mpi("auto"),
+        input_file=input_file,
+        output_file=output_file,
+        directory=str(tmp_path),
+        stdin=input_file,
+    )
+
+    runner = executor.create_run(spec)
+    job_spec = runner._job.spec
+
+    assert job_spec.executable == "programMPI"
+    assert job_spec.resources is None
+    assert job_spec.launcher == "srun"
+    input_file.close()
+    output_file.close()
 
 def test_psij_status_is_nonblocking_and_explicit_wait_synchronizes(monkeypatch):
     executor = _executor(monkeypatch, _Backend())
@@ -573,25 +591,26 @@ def test_psij_status_and_attach_check_complete_endpoint(monkeypatch, tmp_path):
             ),
         ),
     )
-    seen = []
-    state = psij_backend.RunStatus(RunState.RUNNING, backend_id="456")
-
-    def status_native(native_id):
-        seen.append(native_id)
-        return state
-
-    monkeypatch.setattr(executor, "status_native", status_native)
-    assert executor.status(matching) == (state,)
+    expected = psij_backend.RunStatus(RunState.RUNNING, backend_id="456")
+    monkeypatch.setattr(executor, "status_native", lambda native_id: expected)
+    assert executor.status(matching) == (expected,)
     attached = executor.attach(matching, start=False)
     assert attached.backend_id == "456"
-    assert seen == ["456"]
 
-    # A completed native result must also propagate its return code.
-    state = psij_backend.RunStatus(
+
+def test_psij_record_status_uses_native_status(monkeypatch, tmp_path):
+    executor = _executor(monkeypatch, _Backend())
+    expected = psij_backend.RunStatus(
         RunState.FINISHED, backend_id="456", return_code=0,
     )
-    assert executor.status(matching) == (state,)
-    assert seen == ["456", "456"]
+    seen = []
+    def status_native(native_id):
+        seen.append(native_id)
+        return expected
+
+    monkeypatch.setattr(executor, "status_native", status_native)
+    assert executor.status(_psij_run(tmp_path, "456")) == (expected,)
+    assert seen == ["456"]
 
 
 def test_psij_uncertain_submit_without_native_id_stays_recoverable(monkeypatch, tmp_path):

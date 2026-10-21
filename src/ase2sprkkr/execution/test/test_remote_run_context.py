@@ -25,7 +25,7 @@ def test_run_context_is_staging_policy_not_executor(tmp_path):
 
     assert not isinstance(context, Executor)
     assert context.endpoint is endpoint
-    assert context.transport is endpoint.transport
+    assert context.endpoint.transport is endpoint.transport
     assert context.local_root == tmp_path.resolve()
     assert context.remote_root == "/scratch/a"
 
@@ -71,14 +71,14 @@ def test_attach_restores_typed_manifest_without_sync_dictionary(tmp_path, monkey
         outputs=(
             entry("exact.out"),
             entry("data-*.out"),
-            entry("data-a.out", source_pattern=str(local / "data-*.out")),
+            entry("data-a.out", source=str(local / "data-*.out")),
             FileEntry(str(local / "local-only.out")),
         ),
         caches=(
             CacheEntry(entry("cache.dat"), (2, 3)),
             CacheEntry(entry("restart-*.pot")),
             CacheEntry(entry("restart-a.pot",
-                             source_pattern=str(local / "restart-*.pot"))),
+                             source=str(local / "restart-*.pot"))),
             CacheEntry(FileEntry(remote_path=str(remote / "remote-only.dat")), (5, 7)),
             CacheEntry(FileEntry(str(local / "local-only-cache.dat"))),
         ),
@@ -99,20 +99,11 @@ def test_attach_restores_typed_manifest_without_sync_dictionary(tmp_path, monkey
     async def status(*args, **kwargs):
         return {"state": "running"}
 
-    monkeypatch.setattr(context, "_status", status)
+    monkeypatch.setattr(endpoint.connection, "status", status)
     runner = asyncio.run(context.attach(run, start=False))
     try:
-        assert runner._output_targets == {
-            str(local / "exact.out"): str(remote / "exact.out"),
-        }
-        assert runner._output_patterns == (str(remote / "data-*.out"),)
-        assert runner._cache_targets == {
-            str(local / "cache.dat"): (str(remote / "cache.dat"), (2, 3)),
-        }
-        assert runner._cache_patterns == (str(remote / "restart-*.pot"),)
-        assert runner._cache_before == {
-            str(remote / "remote-only.dat"): (5, 7),
-        }
+        assert runner.files is run.files
+        assert runner.files.caches[0].before == (2, 3)
     finally:
         runner.spec.output_file.close()
 
@@ -129,11 +120,11 @@ def test_absolute_remote_root_needs_no_remote_home_query(tmp_path, monkeypatch):
         calls.append("home")
         raise AssertionError("Absolute remote roots must not query remote HOME")
 
-    monkeypatch.setattr(endpoint, "_remote_home", remote_home)
+    monkeypatch.setattr(endpoint.connection, "remote_home", remote_home)
     directory = tmp_path / "calculation"
     directory.mkdir()
     assert asyncio.run(context.map_path(directory)) == "/work/calculation"
-    assert asyncio.run(context.map_directory(directory)) == "/work/calculation"
+    assert asyncio.run(context.map_path(directory)) == "/work/calculation"
     assert asyncio.run(context.unmap_path("/work/calculation")) == directory
     assert asyncio.run(context._resolved_remote_root()) == "/work"
     assert calls == []
@@ -161,7 +152,7 @@ def test_home_relative_remote_root_still_resolves_home_once(
         calls.append("home")
         return "/home/user"
 
-    monkeypatch.setattr(endpoint, "_remote_home", remote_home)
+    monkeypatch.setattr(endpoint.connection, "remote_home", remote_home)
     assert asyncio.run(context._resolved_remote_root()) == expected
     assert calls == ["home"]
 
@@ -204,7 +195,7 @@ def test_attach_closes_stdout_if_opening_stderr_fails(tmp_path, monkeypatch):
     async def status(*args, **kwargs):
         return {"state": "running"}
 
-    monkeypatch.setattr(context, "_status", status)
+    monkeypatch.setattr(endpoint.connection, "status", status)
     opened = []
     actual_open = builtins.open
 
@@ -235,6 +226,7 @@ def test_unmap_rejects_symlink_parent_outside_local_root(tmp_path):
         asyncio.run(context.unmap_path("/remote/redirect/output.dat"))
 
 
+
 def test_unmap_preserves_internal_symlink_spelling(tmp_path):
     root = tmp_path / "local"
     actual = root / "actual"
@@ -245,3 +237,4 @@ def test_unmap_preserves_internal_symlink_spelling(tmp_path):
     assert asyncio.run(context.unmap_path("/remote/alias/output.dat")) == (
         root / "alias" / "output.dat"
     )
+

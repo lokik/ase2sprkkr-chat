@@ -21,55 +21,38 @@ import tempfile
 import shutil
 import time
 from pathlib import Path
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from .growing_file_tail import follow_job_files
-from .file_availability import clear_declared_outputs, validate_output_collisions
+from .file_availability import prepare_local_files
+from .file_availability import materialize_manifest
+from .run_model import FileManifest
+from dataclasses import asdict
 from .base import ExecutionSpec, FailurePhase, LaunchSpec, RunState, SubmissionNotStarted
 from .remote_process_worker import _SPEC_ENV, _START_FD_ENV
-from .remote_mailbox import publish_outcome, read_outcome, acknowledge_outcome, _state_root
-from ._durability import durable_mkdir, durable_write_json, fsync_directory
+from .remote_mailbox import (
+    publish_outcome, read_outcome, acknowledge_outcome,
+    publish_submission, read_submission, drop_submission,
+)
 
 
 
-def _status_reply(state, return_code=None, *, failure_phase=None, error=None):
+
+def _status_reply(state, return_code=None, *, failure_phase=None,
+                  error=None, files=None, materialization_error=None):
     """Encode backend status facts for the common remote-service wire contract."""
     return {
         "state": state.value,
         "return_code": return_code,
         "error": error,
         "failure_phase": None if failure_phase is None else failure_phase.value,
+        "files": files,
+        "materialization_error": materialization_error,
     }
 
 
-def _submission_ticket(run_id):
-    if not isinstance(run_id, str) or re.fullmatch(r"[0-9a-f]{32}", run_id) is None:
-        raise ValueError("Invalid project run id")
-    return _state_root() / "remote-submissions" / (run_id + ".json")
-
-
-def _publish_submission(run_id, reply):
-    """Temporary identity handoff, never a target-side run lifecycle record."""
-    path = _submission_ticket(run_id)
-    durable_mkdir(path.parent, parents=True, exist_ok=True, mode=0o700)
-    durable_write_json(path, reply, mode=0o600)
-
-
-def _recover_submission(run_id):
-    try:
-        return json.loads(_submission_ticket(run_id).read_text())
-    except FileNotFoundError:
-        return None
-
-
 def acknowledge_submission(run_id):
-    path = _submission_ticket(run_id)
-    try:
-        path.unlink()
-    except FileNotFoundError:
-        return {"acknowledged": False}
-    fsync_directory(path.parent)
-    return {"acknowledged": True}
+    return {"acknowledged": drop_submission(run_id)}
 
 
 def _encode_handle(data):
@@ -144,18 +127,21 @@ def _process_running(handle):
 
 def _request_spec(request):
     mpi_argv = request.get("mpi_argv")
-    sync = request.get("client_sync") or {}
-    input_files = tuple(request.get("input_files", ()))
-    output_files = tuple(dict.fromkeys((
-        *request.get("output_files", ()),
-        *sync.get("output_files", ()),
-        *sync.get("output_patterns", ()),
-    )))
-    cache_files = tuple(dict.fromkeys((
-        *request.get("cache_files", ()),
-        *(item["path"] for item in sync.get("cache_files", ())),
-        *sync.get("cache_patterns", ()),
-    )))
+    supplied = request.get("files")
+    manifest = None if supplied is None else FileManifest(**supplied)
+    input_files = (
+        tuple(request.get("input_files", ())) if manifest is None else
+        tuple(entry.remote_path for entry in manifest.inputs if entry.remote_path)
+    )
+    output_files = (
+        tuple(request.get("output_files", ())) if manifest is None else
+        tuple(entry.remote_path for entry in manifest.outputs if entry.remote_path)
+    )
+    cache_files = (
+        tuple(request.get("cache_files", ())) if manifest is None else
+        tuple(cache.file.remote_path for cache in manifest.caches
+              if cache.file.remote_path)
+    )
     return ExecutionSpec(
         argv=tuple(request["argv"]),
         input_file=request.get("input_file"),
@@ -170,22 +156,6 @@ def _request_spec(request):
         launch=LaunchSpec(**(request.get("launch") or {})),
         mpi_uses_stdin=request.get("mpi_uses_stdin", True),
     )
-
-
-def _clean_request_outputs(spec, directory, output_path=None, error_path=None):
-    """Clear prior outputs while protecting inputs and caches in the parsed spec."""
-    declared = tuple(
-        _absolute(directory, path)
-        for path in (*spec.output_files, output_path, error_path)
-        if path is not None
-    )
-    protected = tuple(
-        _absolute(directory, path)
-        for path in (spec.input_file, spec.stdin, *spec.input_files, *spec.cache_files)
-        if path is not None
-    )
-    validate_output_collisions(declared, protected=protected)
-    clear_declared_outputs(declared, protected=protected)
 
 
 def _local_submit(request):
@@ -205,9 +175,10 @@ def _local_submit(request):
         for path in (output_path, error_path):
             if path is not None:
                 Path(path).parent.mkdir(parents=True, exist_ok=True)
-        _clean_request_outputs(original_spec, directory, output_path, error_path)
+        prepare_local_files(
+            original_spec, output_file=output_path, error_file=error_path,
+        )
     except (OSError, ValueError) as exc:
-        # Pre-launch validation and filesystem failures are known non-submissions.
         raise SubmissionNotStarted(str(exc)) from exc
 
     run_id = str(request.get("id") or uuid4().hex)
@@ -229,6 +200,7 @@ def _local_submit(request):
             "receipt_id": receipt_id,
             "socket_dir": socket_dir,
             "detached": bool(request.get("detached", True)),
+            "files": request.get("files"),
         }
         env = os.environ.copy()
         env["ASE2SPRKKR_RUN_ID"] = run_id
@@ -274,7 +246,7 @@ def _local_submit(request):
         # Durable identity precedes releasing the supervisor. Until this
         # receipt is safely stored, the child cannot launch a calculation.
         if request.get("detached"):
-            _publish_submission(run_id, {"remote_id": remote_id})
+            publish_submission(run_id, {"remote_id": remote_id})
             published = True
 
         os.write(release_fd, b"1")
@@ -308,6 +280,7 @@ def _local_submit(request):
         "error_file": error_path,
         "return_code": None,
         "failure_phase": None,
+        "files": request.get("files"),
     }
     return reply
 
@@ -317,6 +290,18 @@ def _psij_executor(options):
 
     options = options or {}
     return PsijExecutor(options.get("backend") or "slurm", url=options.get("url"))
+
+
+def _psij_receipt_id(run_id, backend, url, native_id, directory):
+    """Stable project-job receipt across submit and native PSI/J recovery."""
+    if not run_id:
+        return uuid4().hex
+    identity = json.dumps(
+        ("ase2sprkkr-psij", str(run_id), backend, url, str(native_id),
+         os.fspath(directory)),
+        separators=(",", ":"),
+    )
+    return uuid5(NAMESPACE_URL, identity).hex
 
 
 def _psij_submit(request):
@@ -338,7 +323,12 @@ def _psij_submit(request):
             "kind": "psij",
             "backend": executor.backend,
             "url": executor.url,
-            "native_id": backend_id,
+            "native_id": str(backend_id),
+            "receipt_id": _psij_receipt_id(
+                request.get("id"), executor.backend, executor.url,
+                backend_id, request["directory"],
+            ),
+            "directory": request["directory"],
         }
     )
     return {
@@ -349,6 +339,7 @@ def _psij_submit(request):
         "output_file": runner.result.output_file,
         "error_file": runner.result.error_file,
         "return_code": runner.return_code,
+        "files": request.get("files"),
         "failure_phase": (
             None if runner.failure_phase is None else runner.failure_phase.value
         ),
@@ -375,37 +366,54 @@ def _process_outcome(receipt_id):
         failure_phase = None if raw_phase is None else FailurePhase(raw_phase)
     except (KeyError, TypeError, ValueError) as exc:
         raise RuntimeError("Invalid remote process outcome artifact") from exc
-    return state, return_code, failure_phase, data.get("error")
+    return state, return_code, failure_phase, data.get("error"), data.get("files"), data.get("materialization_error")
 
 
-def status_remote(remote_id):
-    """Query backend facts; the client supplies any terminal receipt path."""
+def status_remote(remote_id, files=None):
+    """Return backend facts and a materialized manifest at completion."""
     handle = _decode_handle(remote_id)
+    receipt_id = handle.get("receipt_id")
+    outcome = _process_outcome(receipt_id) if receipt_id else None
+    if outcome is not None:
+        state, code, phase, error, frozen, resolution_error = outcome
+        return _status_reply(
+            state, code, failure_phase=phase, error=error,
+            files=frozen, materialization_error=resolution_error,
+        )
     if handle["kind"] == "process":
-        outcome = _process_outcome(handle["receipt_id"])
-        if outcome is not None:
-            state, return_code, failure_phase, error = outcome
-        else:
-            state = RunState.RUNNING if _process_running(handle) else RunState.UNKNOWN
-            return_code = None
-            failure_phase = None
-            error = None
-        return _status_reply(
-            state, return_code, failure_phase=failure_phase, error=error,
-        )
-
-    if handle["kind"] == "psij":
-        if str(handle["backend"]).lower() == "slurm" and handle.get("url") is None:
-            from .psij import _slurm_status_native
-            status = _slurm_status_native(handle["native_id"])
-        else:
-            executor = _psij_executor(handle)
-            status = executor.status_native(handle["native_id"])
-        return _status_reply(
-            status.state, status.return_code,
-            failure_phase=status.failure_phase, error=status.message,
-        )
-    raise ValueError("Unsupported remote execution id")
+        state = RunState.RUNNING if _process_running(handle) else RunState.UNKNOWN
+        return _status_reply(state)
+    if handle["kind"] != "psij":
+        raise ValueError("Unsupported remote execution id")
+    if str(handle["backend"]).lower() == "slurm" and handle.get("url") is None:
+        from .psij import _slurm_status_native
+        status = _slurm_status_native(handle["native_id"])
+    else:
+        status = _psij_executor(handle).status_native(handle["native_id"])
+    frozen = None
+    resolution_error = None
+    if status.state.is_terminal:
+        supplied = files
+        if supplied is not None:
+            result, issue = materialize_manifest(supplied, remote=True)
+            frozen = asdict(result)
+            resolution_error = None if issue is None else str(issue)
+        if receipt_id and supplied is not None:
+            publish_outcome(
+                receipt_id, status.state, status.return_code,
+                status.failure_phase, error=status.message,
+                files=frozen, materialization_error=resolution_error,
+            )
+            outcome = _process_outcome(receipt_id)
+            if outcome is not None:
+                state, code, phase, error, frozen, resolution_error = outcome
+                return _status_reply(state, code, failure_phase=phase, error=error,
+                                     files=frozen, materialization_error=resolution_error)
+    return _status_reply(
+        status.state, status.return_code,
+        failure_phase=status.failure_phase, error=status.message,
+        files=frozen, materialization_error=resolution_error,
+    )
 
 
 def cancel_remote(remote_id, timeout=1.0):
@@ -440,16 +448,17 @@ def cancel_remote(remote_id, timeout=1.0):
 def acknowledge_remote(remote_id):
     """Drop the terminal receipt only after the client persists its run state."""
     handle = _decode_handle(remote_id)
-    if handle["kind"] != "process":
+    if handle["kind"] not in ("process", "psij"):
         return {"acknowledged": False}
-    return {"acknowledged": acknowledge_outcome(handle["receipt_id"])}
+    receipt_id = handle.get("receipt_id")
+    return {"acknowledged": bool(receipt_id and acknowledge_outcome(receipt_id))}
 
 
 def recover_remote(run_id, request, *, submitted_at=None):
     """Recover an uncertain submit using backend-native identity only."""
     executor = request.get("executor", "local")
     if executor == "local":
-        reply = _recover_submission(run_id)
+        reply = read_submission(run_id)
         if reply is None:
             return None
         return dict(reply, directory=request["directory"], **status_remote(reply["remote_id"]))
@@ -465,7 +474,12 @@ def recover_remote(run_id, request, *, submitted_at=None):
     native_id = facts["native_id"]
     remote_id = _encode_handle({
         "kind": "psij", "backend": backend.backend,
-        "url": backend.url, "native_id": native_id,
+        "url": backend.url, "native_id": str(native_id),
+        "receipt_id": _psij_receipt_id(
+            run_id, backend.backend, backend.url, native_id,
+            request["directory"],
+        ),
+        "directory": request["directory"],
     })
     state = facts["state"]
     return {

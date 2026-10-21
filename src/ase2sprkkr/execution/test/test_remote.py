@@ -164,12 +164,8 @@ def test_remote_input_file_and_stdin_staged_only_once(tmp_path):
     executor, spec, _, remote_root = _text_run(tmp_path, transport)
     runner = executor.create_run(spec)
 
-    async def prepare():
-        directory = await runner.executor.map_directory(spec.directory)
-        return await runner._prepare_request("one-run", directory)
-
     try:
-        request = asyncio.run(prepare())
+        request, _files = asyncio.run(runner._prepare_async())
         target = remote_root / "calculation" / "input.txt"
         assert request["input_file"] == str(target)
         assert request["stdin"] == str(target)
@@ -499,7 +495,7 @@ def test_remote_directory_mapping_defaults_to_home():
     context = endpoint._context(endpoint, LaunchSpec())
     local = Path.home() / "calculations" / "Fe"
 
-    mapped = asyncio.run(context.map_directory(local))
+    mapped = asyncio.run(context.map_path(local))
 
     assert mapped == (Path.home() / "calculations" / "Fe").as_posix()
 
@@ -512,7 +508,7 @@ def test_remote_directory_mapping_can_replace_remote_root(tmp_path):
     )
     local = Path.home() / "calculations" / "Fe"
 
-    mapped = asyncio.run(context.map_directory(local))
+    mapped = asyncio.run(context.map_path(local))
 
     assert mapped == "/scratch/tester/calculations/Fe"
 
@@ -529,7 +525,7 @@ def test_remote_directory_mapping_can_replace_both_roots(tmp_path):
         ),
     )
 
-    mapped = asyncio.run(context.map_directory(local))
+    mapped = asyncio.run(context.map_path(local))
 
     assert mapped == "/scratch/tester/projects/project/Fe"
 
@@ -543,7 +539,7 @@ def test_remote_directory_mapping_rejects_path_outside_local_root(tmp_path):
     )
 
     with pytest.raises(ValueError, match="outside mapped root"):
-        asyncio.run(context.map_directory(tmp_path / "elsewhere"))
+        asyncio.run(context.map_path(tmp_path / "elsewhere"))
 
 
 def test_remote_none_stream_files_are_live_only(tmp_path):
@@ -597,20 +593,25 @@ def test_file_sync_transfer_decision_is_direction_independent(
 
 
 def test_remote_argv_reuses_staged_path_identity(tmp_path):
-    """Relative, absolute and Path arguments share the staging resolver."""
-    from ..remote import RemoteRunner
-
-    work = tmp_path / "work"
+    """Path arguments must share the same staged input identity."""
+    local_root = tmp_path / "local"
+    work = local_root / "work"
+    work.mkdir(parents=True)
     source = work / "input.dat"
-    runner = object.__new__(RemoteRunner)
-    runner.spec = SimpleNamespace(directory=str(work))
-    arguments = ("program", "input.dat", source, "--verbose", "./missing.dat")
-    staged = {str(source): "/remote/work/input.dat"}
-
-    assert runner._remote_argv(arguments, staged) == [
-        "program", "/remote/work/input.dat", "/remote/work/input.dat",
-        "--verbose", "./missing.dat",
+    source.write_text("input")
+    remote_root = tmp_path / "remote"
+    spec = ExecutionSpec(
+        argv=("program", "input.dat", source, "--verbose", "./missing.dat"),
+        directory=str(work), input_file=str(source), output_file=None,
+        launch=LaunchSpec(local_root=local_root, remote_root=remote_root),
+    )
+    runner = _executor().create_run(spec)
+    request, manifest = asyncio.run(runner._prepare_async())
+    target = str(remote_root / "work" / "input.dat")
+    assert request["argv"] == [
+        "program", target, target, "--verbose", "./missing.dat",
     ]
+    assert manifest.inputs[0].remote_path == target
 
 
 @pytest.mark.parametrize("preflight", (False, True))
@@ -659,7 +660,7 @@ def test_remote_submit_failure_is_not_misclassified_as_failed_preparation(
     async def fail_after_preparation(_request):
         raise OSError("backend submission uncertain")
 
-    monkeypatch.setattr(executor, "_submit", fail_after_preparation)
+    monkeypatch.setattr(executor.connection, "submit", fail_after_preparation)
     if preflight:
         runner.prepare_submission()
 

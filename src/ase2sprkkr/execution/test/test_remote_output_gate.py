@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -6,46 +7,37 @@ from ase2sprkkr.execution import ExecutionSpec, RunState, FileManifest, FileEntr
 from ase2sprkkr.execution.remote import FileSyncPolicy, RemoteRunner
 
 
-class _Follow:
-    def __init__(self, output=b"streamed\n", error=b""):
-        self.terminal = None
-        self.stdout = asyncio.StreamReader()
-        self.stderr = asyncio.StreamReader()
-        self.stdout.feed_data(output)
-        self.stdout.feed_eof()
-        self.stderr.feed_data(error)
-        self.stderr.feed_eof()
-
-    async def wait(self):
-        return 0
-
-
 class _Executor:
     output_files = FileSyncPolicy.NEVER
 
     def __init__(self, state):
+        from ase2sprkkr.execution.remote_file_handler import RemoteFileHandler
+
         self.backend_state = RunState(state)
         self.sync_calls = 0
+        self.endpoint = SimpleNamespace(
+            connection=self,
+            file_handler=RemoteFileHandler(None),
+            transport=None,
+        )
 
-    async def _follow(self, directory, run_id, reference=None, *, offsets=None):
-        return _Follow()
+    async def follow(self, run_id, files, *, offsets=None, on_chunk):
+        on_chunk("out", b"streamed\n")
+        return None
 
-    async def _status(self, directory, run_id, reference=None):
+    async def status(self, run_id, files=None):
         return {
             "state": self.backend_state.value,
             "return_code": 0 if self.backend_state == RunState.FINISHED else None,
             "failure_phase": None,
         }
 
+    async def cancel(self, run_id):
+        return {"state": "cancelled"}
+
 
 class _GateRunner(RemoteRunner):
-    async def _sync_output_files(self, required):
-        self.executor.sync_calls += 1
-        await super()._sync_output_files(required)
-
-    async def _sync_cache_files(self):
-        self.executor.sync_calls += 1
-        await super()._sync_cache_files()
+    pass
 
 
 def _run(tmp_path, state, *, original=b"old\n"):
@@ -68,6 +60,13 @@ def _run(tmp_path, state, *, original=b"old\n"):
         ).initialize_availability(),
         state=RunState.RUNNING,
     )
+    original = runner.file_handler.collect
+
+    async def counting_collect(*args, **kwargs):
+        executor.sync_calls += 2
+        return await original(*args, **kwargs)
+
+    runner.file_handler.collect = counting_collect
     return runner, executor, destination, output
 
 
@@ -102,56 +101,62 @@ async def _unavailable_output(required):
     raise OSError("remote output could not be downloaded")
 
 
-@pytest.mark.parametrize(
-    "backend_state, expected_state, expected_phase",
-    [
-        pytest.param(
-            RunState.FINISHED, RunState.FAILED, "download",
-            id="finished-backend-download-failed",
-        ),
-        pytest.param(
-            RunState.FAILED, RunState.FAILED, "execution",
-            id="execution-failed-diagnostics-unavailable",
-        ),
-        pytest.param(
-            RunState.CANCELLED, RunState.CANCELLED, None,
-            id="cancelled-diagnostics-unavailable",
-        ),
-    ],
-)
-def test_diagnostic_download_failure_preserves_backend_outcome(
-    tmp_path, backend_state, expected_state, expected_phase,
-):
-    runner, executor, destination, output = _run(tmp_path, backend_state)
-    runner._sync_output_files = _unavailable_output
+def test_successful_backend_with_failed_download_fails_run(tmp_path):
+    runner, executor, destination, output = _run(tmp_path, RunState.FINISHED)
+    async def fail_collect(*args, **kwargs):
+        return args[1], OSError("remote output could not be downloaded")
+    runner.file_handler.collect = fail_collect
 
-    if backend_state is RunState.FAILED:
-        async def failed_status(*_args):
-            return {
-                "state": "failed",
-                "return_code": 17,
-                "failure_phase": "execution",
-                "error": "SPR-KKR exited with status 17",
-            }
+    with pytest.raises(OSError, match="could not be downloaded"):
+        asyncio.run(runner._monitor())
 
-        executor._status = failed_status
-
-    if backend_state is RunState.FINISHED:
-        with pytest.raises(OSError, match="could not be downloaded"):
-            asyncio.run(runner._monitor())
-        assert runner.return_code == 0
-    else:
-        result = asyncio.run(runner._monitor())
-        if backend_state is RunState.FAILED:
-            assert result.return_code == 17
-            assert runner.failure_message == "SPR-KKR exited with status 17"
-
-    assert runner.state is expected_state
-    assert (None if runner.failure_phase is None else runner.failure_phase.value) == expected_phase
+    assert runner.state == RunState.FAILED
+    assert runner.failure_phase.value == "download"
+    assert runner.return_code == 0
     assert runner.files.availability_state == "failed"
     assert "could not be downloaded" in runner.files.availability_message
     assert destination.read_bytes() == b"streamed\n"
     assert output.closed is True
+
+
+def test_failed_backend_keeps_execution_failure_when_diagnostics_cannot_download(tmp_path):
+    runner, executor, destination, output = _run(tmp_path, RunState.FAILED)
+    async def fail_collect(*args, **kwargs):
+        return args[1], OSError("remote output could not be downloaded")
+    runner.file_handler.collect = fail_collect
+
+    async def failed_status(*_args):
+        return {
+            "state": "failed",
+            "return_code": 17,
+            "failure_phase": "execution",
+            "error": "SPR-KKR exited with status 17",
+        }
+
+    executor.status = failed_status
+    result = asyncio.run(runner._monitor())
+
+    assert runner.state == RunState.FAILED
+    assert runner.failure_phase.value == "execution"
+    assert runner.failure_message == "SPR-KKR exited with status 17"
+    assert result.return_code == 17
+    assert runner.files.availability_state == "failed"
+    assert "could not be downloaded" in runner.files.availability_message
+    assert destination.read_bytes() == b"streamed\n"
+    assert output.closed is True
+
+
+def test_cancelled_backend_survives_diagnostic_download_failure(tmp_path):
+    runner, _, destination, _ = _run(tmp_path, RunState.CANCELLED)
+    async def fail_collect(*args, **kwargs):
+        return args[1], OSError("remote output could not be downloaded")
+    runner.file_handler.collect = fail_collect
+    asyncio.run(runner._monitor())
+    assert runner.state == RunState.CANCELLED
+    assert runner.failure_phase is None
+    assert runner.files.availability_state == "failed"
+    assert destination.read_bytes() == b"streamed\n"
+
 
 
 def test_remote_stderr_incomplete_after_success_is_download_failure(tmp_path):
@@ -173,7 +178,7 @@ def test_remote_stderr_incomplete_after_success_is_download_failure(tmp_path):
             return hashlib.sha256(b"streamed\n").hexdigest()
 
     executor = _Executor(RunState.FINISHED)
-    executor.transport = Transport()
+    executor.endpoint.transport = Transport()
     runner = _RemoteRun(
         executor,
         ExecutionSpec(
@@ -231,8 +236,8 @@ def test_follow_write_is_idempotent_across_attached_clients(tmp_path):
 @pytest.mark.parametrize(
     "stage, exception_type, message",
     [
-        ("_follow", ConnectionError, "SSH disconnected"),
-        ("_status", OSError, "SSH lost during status query"),
+        ("follow", ConnectionError, "SSH disconnected"),
+        ("status", OSError, "SSH lost during status query"),
     ],
 )
 def test_remote_transport_failure_is_recoverable_unknown(

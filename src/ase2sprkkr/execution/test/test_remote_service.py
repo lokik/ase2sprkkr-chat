@@ -66,7 +66,7 @@ def test_remote_status_wire_reply_is_shared_between_process_and_psij(
 
     monkeypatch.setattr(
         remote_service, "_process_outcome",
-        lambda receipt_id: (state, return_code, phase, error),
+        lambda receipt_id: (state, return_code, phase, error, None, None),
     )
     monkeypatch.setattr(
         psij, "_slurm_status_native",
@@ -80,6 +80,8 @@ def test_remote_status_wire_reply_is_shared_between_process_and_psij(
         "return_code": return_code,
         "error": error,
         "failure_phase": None if phase is None else phase.value,
+        "files": None,
+        "materialization_error": None,
     }
 
     assert remote_service.status_remote(process_id) == expected
@@ -292,6 +294,8 @@ def test_follow_fallback_treats_completed_nonzero_psij_as_failed(
         "return_code": 7,
         "failure_phase": FailurePhase.EXECUTION.value,
         "error": None,
+        "files": None,
+        "materialization_error": None,
     }
     assert observed == [("attach", "42"), "wait"]
 
@@ -360,7 +364,8 @@ def test_uncertain_submit_uses_only_temporary_identity_ticket(tmp_path, monkeypa
         "socket_path": "/tmp/fake-socket",
     })
     reply = {"remote_id": handle, "directory": str(tmp_path), "state": "running"}
-    remote_service._publish_submission(run_id, reply)
+    from ase2sprkkr.execution import remote_mailbox
+    remote_mailbox.publish_submission(run_id, reply)
     recovered = remote_service.recover_remote(run_id, {
         "executor": "local", "directory": str(tmp_path),
     })
@@ -501,10 +506,15 @@ def test_scheduler_request_protects_remote_cache_wildcards(tmp_path):
         "input_files": ["case.inp"],
         "output_file": "case.out",
         "output_files": ["*.pot", "case.out"],
-        "cache_files": ["known-restart.pot"],
-        "client_sync": {
-            "cache_patterns": ["restart-*.pot"],
-            "cache_files": [{"path": "external-cache.pot", "before": None}],
+        "files": {
+            "outputs": [
+                {"remote_path": "*.pot"}, {"remote_path": "case.out"},
+            ],
+            "caches": [
+                {"file": {"remote_path": "known-restart.pot"}},
+                {"file": {"remote_path": "restart-*.pot"}},
+                {"file": {"remote_path": "external-cache.pot"}},
+            ],
         },
     }
     spec = remote_service._request_spec(request)
@@ -538,7 +548,7 @@ def test_failed_submission_ticket_cannot_leave_calculation_running(tmp_path, mon
     def reject(_run_id, _reply):
         raise OSError("ticket store unavailable")
 
-    monkeypatch.setattr(remote_service, "_publish_submission", reject)
+    monkeypatch.setattr(remote_service, "publish_submission", reject)
     with pytest.raises(SubmissionNotStarted, match="ticket store unavailable"):
         remote_service.submit_remote(request)
     assert not marker.exists()
@@ -546,6 +556,7 @@ def test_failed_submission_ticket_cannot_leave_calculation_running(tmp_path, mon
 
 def test_remote_cleanup_preserves_cache_matches_while_removing_stale_outputs(tmp_path):
     from ase2sprkkr.execution.base import ExecutionSpec
+    from ase2sprkkr.execution.file_availability import prepare_local_files
 
     # Output patterns may include protected inputs/caches, but must only
     # remove results, not restart state.
@@ -563,7 +574,7 @@ def test_remote_cleanup_preserves_cache_matches_while_removing_stale_outputs(tmp
         output_file="run.log", output_files=("*.out",),
         cache_files=("restart.out",),
     )
-    remote_service._clean_request_outputs(spec, work, str(stdout))
+    prepare_local_files(spec, output_file=str(stdout))
 
     assert cache.read_text() == "restart.out"
     assert input_file.read_text() == "main.inp"
@@ -573,6 +584,7 @@ def test_remote_cleanup_preserves_cache_matches_while_removing_stale_outputs(tmp
 
 def test_remote_cleanup_checks_collisions_before_deleting_any_output(tmp_path):
     from ase2sprkkr.execution.base import ExecutionSpec
+    from ase2sprkkr.execution.file_availability import prepare_local_files
 
     work = tmp_path / "calculation"
     work.mkdir()
@@ -587,7 +599,7 @@ def test_remote_cleanup_checks_collisions_before_deleting_any_output(tmp_path):
         cache_files=("restart.dat",),
     )
     with pytest.raises(ValueError, match="overlaps protected"):
-        remote_service._clean_request_outputs(spec, work)
+        prepare_local_files(spec)
 
     assert stale.read_text() == "old"
     assert cache.read_text() == "restart"
@@ -724,6 +736,46 @@ def test_supervisor_stdin_close_failure_preserves_terminal_receipt(
         assert return_code == 0
         assert receipt["failure_phase"] == FailurePhase.EXECUTION.value
         assert "stdin close failed" in receipt["error"]
+
+
+def test_psij_terminal_receives_and_freezes_client_manifest(tmp_path, monkeypatch):
+    from dataclasses import asdict
+    from uuid import uuid4
+
+    from ase2sprkkr.execution import FileEntry, FileManifest, FileMapping, remote_mailbox
+
+    monkeypatch.setenv("ASE2SPRKKR_REMOTE_STATE_DIR", str(tmp_path / "state"))
+    local, target = tmp_path / "local", tmp_path / "target"
+    local.mkdir()
+    target.mkdir()
+    (target / "one.dat").write_text("first")
+    manifest = FileManifest(
+        outputs=(FileEntry(str(local / "*.dat"), str(target / "*.dat"),
+                           availability_state="pending"),),
+        mapping=FileMapping(str(local), str(target)),
+    )
+    monkeypatch.setattr(psij, "_slurm_status_native", lambda _id: RunStatus(
+        RunState.FINISHED, backend_id="42", return_code=0,
+    ))
+    receipt = uuid4().hex
+    handle, _ = _psij_handle(tmp_path)
+    handle.update(receipt_id=receipt, directory=str(target))
+    remote_id = remote_service._encode_handle(handle)
+
+    # A status probe without the manifest cannot freeze membership.
+    assert remote_service.status_remote(remote_id)["files"] is None
+    assert remote_mailbox.read_outcome(receipt) is None
+
+    reply = remote_service.status_remote(remote_id, asdict(manifest))
+    assert reply["state"] == "finished"
+    assert reply["materialization_error"] is None
+    assert len(reply["files"]["outputs"]) == 1
+    assert reply["files"]["outputs"][0]["source"] == str(local / "*.dat")
+
+    (target / "two.dat").write_text("later")
+    repeated = remote_service.status_remote(remote_id, asdict(manifest))
+    assert repeated["files"] == reply["files"]
+    assert remote_mailbox.read_outcome(receipt)["files"] == reply["files"]
 
 
 @pytest.mark.parametrize("failure_point", ("socket_directory", "first_pipe", "second_pipe"))

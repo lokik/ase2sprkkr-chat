@@ -20,6 +20,8 @@ def test_terminal_outcome_survives_reads_until_ack():
         "return_code": 7,
         "failure_phase": "execution",
         "error": None,
+        "files": None,
+        "materialization_error": None,
     }
     assert remote_mailbox.read_outcome(key) == expected
     assert remote_mailbox.read_outcome(key) == expected
@@ -54,3 +56,13 @@ def test_receipt_state_root_respects_override_and_xdg(tmp_path, monkeypatch, ove
         monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg"))
         root = tmp_path / "xdg" / "ase2sprkkr"
     assert remote_mailbox._path(key) == root / "remote-outcomes" / f"{key}.json"
+
+
+def test_submission_ticket_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASE2SPRKKR_REMOTE_STATE_DIR", str(tmp_path))
+    key = uuid4().hex
+    assert remote_mailbox.read_submission(key) is None
+    remote_mailbox.publish_submission(key, {"remote_id": "native"})
+    assert remote_mailbox.read_submission(key) == {"remote_id": "native"}
+    assert remote_mailbox.drop_submission(key)
+    assert not remote_mailbox.drop_submission(key)

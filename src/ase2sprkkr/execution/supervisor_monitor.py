@@ -1,0 +1,129 @@
+"""Shared client-side supervisor observation for local and SSH.
+
+FOLLOW is only observational. Backend status and the frozen manifest are
+authoritative; artifact delivery is supplied by each runner.
+"""
+from __future__ import annotations
+
+import asyncio
+
+from .base import FailurePhase, RunState, RunStatus, close_output_files, finish_monitor
+
+_TERMINAL = {RunState.FINISHED, RunState.FAILED, RunState.CANCELLED}
+_FOLLOW_ERRORS = (OSError, ConnectionError, RuntimeError, ValueError)
+
+
+def backend_status_from_facts(facts, backend_id, *, needs_delivery=False,
+                              execution=None, files=None):
+    """Interpret raw backend facts once for local and SSH clients.
+
+    The backend cannot declare a remote calculation FINISHED to the client
+    until its artifacts have been delivered. A local project's results are
+    already on its filesystem, so it never enters DOWNLOADING.
+    """
+    state = RunState(facts.get("state", RunState.UNKNOWN.value))
+    phase = facts.get("failure_phase")
+    phase = None if phase is None else FailurePhase(phase)
+    if needs_delivery and (
+        state == RunState.FINISHED or
+        (state == RunState.FAILED and phase not in
+         (FailurePhase.SUBMISSION, FailurePhase.LAUNCH))
+    ):
+        state = RunState.DOWNLOADING
+    return RunStatus(
+        state, backend_id=backend_id, execution=execution, files=files,
+        return_code=facts.get("return_code"), message=facts.get("error"),
+        failure_phase=phase,
+    )
+
+
+async def observe_supervisor(follow, status):
+    """Return (facts, follow_error, status_error) without guessing completion."""
+    follow_error = None
+    facts = None
+    try:
+        facts = await follow()
+    except _FOLLOW_ERRORS as exc:
+        follow_error = exc
+
+    if facts is None or (
+        facts.get("state") in {state.value for state in _TERMINAL}
+        and facts.get("files") is None
+    ):
+        try:
+            facts = await status()
+        except (OSError, ConnectionError) as exc:
+            return None, follow_error, exc
+    return facts, follow_error, None
+
+
+async def monitor_supervisor(runner, follow, status, complete):
+    """Shared FOLLOW -> facts -> terminal artifact completion state machine."""
+    try:
+        facts, follow_error, status_error = await observe_supervisor(follow, status)
+        if facts is None:
+            runner._state = RunState.UNKNOWN
+            runner._failure_phase = None
+            runner._failure_message = str(
+                follow_error or status_error or "Supervisor status unavailable"
+            )
+            return runner.result
+
+        state = RunState(facts.get("state", "unknown"))
+        runner._return_code = facts.get("return_code")
+        runner.result.return_code = runner._return_code
+        phase = facts.get("failure_phase")
+        runner._failure_phase = None if phase is None else FailurePhase(phase)
+        runner._failure_message = facts.get("error")
+        if state not in _TERMINAL:
+            runner._state = RunState.UNKNOWN
+            runner._failure_phase = None
+            runner._failure_message = str(
+                follow_error or runner._failure_message or
+                f"Supervisor FOLLOW ended without terminal backend state ({state.value})"
+            )
+            return runner.result
+
+        await complete(facts, state)
+        return runner.result
+    except BaseException as exc:
+        if runner._failure_phase is None:
+            runner._failure_phase = FailurePhase.EXECUTION
+        if runner._failure_message is None:
+            runner._failure_message = str(exc)
+        if runner._state != RunState.CANCELLED:
+            runner._state = RunState.FAILED
+        raise
+    finally:
+        # Each cleanup must run, and neither may mask the primary monitor
+        # failure. Report the first cleanup failure if monitoring succeeded.
+        import sys
+        primary = sys.exc_info()[1]
+        cleanup_error = None
+        for action in (
+            runner._output_observers.finish_bytes,
+            lambda: close_output_files(runner.spec.output_file, runner.spec.error_file),
+        ):
+            try:
+                action()
+            except BaseException as exc:
+                if cleanup_error is None:
+                    cleanup_error = exc
+        if primary is None and cleanup_error is not None:
+            raise cleanup_error
+
+
+def supervisor_thread_main(runner):
+    """Identical monitoring, exception and callback boundary for both modes."""
+    try:
+        asyncio.run(runner._monitor())
+    except BaseException as exc:
+        runner._exception = exc
+        if runner._failure_message is None:
+            runner._failure_message = str(exc)
+        if runner._failure_phase is None:
+            runner._failure_phase = FailurePhase.EXECUTION
+        if runner._state != RunState.CANCELLED:
+            runner._state = RunState.FAILED
+    finally:
+        finish_monitor(runner)

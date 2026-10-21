@@ -23,20 +23,21 @@ def _runner(tmp_path):
     ))
     runner = RemoteRunner(
         _Executor(), ExecutionSpec(argv=(), input_file=None, output_file=None, directory=str(tmp_path)),
-        files=manifest, output_targets={local: remote},
+        files=manifest,
     )
     return runner, local
 
 
 def test_optional_missing_remote_output_is_skipped(tmp_path):
     runner, local = _runner(tmp_path)
-    asyncio.run(runner._sync_output_files(required=False))
-    assert runner.files.outputs[0].availability_state == "skipped"
+    manifest, error = asyncio.run(runner.file_handler.collect(runner.executor, runner.files, runner.result, required=False))
+    assert error is None
+    assert manifest.outputs[0].availability_state == "skipped"
     assert not (tmp_path / "local-optional.out").exists()
 
 
 def test_required_missing_remote_output_is_failed(tmp_path):
     runner, local = _runner(tmp_path)
-    with pytest.raises(FileNotFoundError, match="was not created"):
-        asyncio.run(runner._sync_output_files(required=True))
-    assert runner.files.outputs[0].availability_state == "failed"
+    manifest, error = asyncio.run(runner.file_handler.collect(runner.executor, runner.files, runner.result, required=True))
+    assert isinstance(error, FileNotFoundError)
+    assert manifest.outputs[0].availability_state == "failed"
