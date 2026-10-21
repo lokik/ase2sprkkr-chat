@@ -24,8 +24,12 @@ class ExecutionManager(_ExecutionManager):
             identity = project.id if isinstance(project, Project) else str(project)
             current = self.projects.project(identity)
             self._project_id = current.id
-            if store is None:
-                store = self.projects.run_store
+            canonical_store = self.projects.run_store
+            if store is not None and store is not canonical_store:
+                raise ValueError(
+                    "Project-bound execution requires the repository run store"
+                )
+            store = canonical_store
         super().__init__(
             store, executor_pool=executor_pool,
             submitting_grace=submitting_grace,
