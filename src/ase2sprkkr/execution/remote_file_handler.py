@@ -309,7 +309,8 @@ class RemoteFileHandler:
             if has_file_magic(entry.remote_path):
                 exc = RuntimeError("Cannot collect unresolved wildcard")
                 manifest = manifest.with_file_availability(
-                    entry.local_path, "failed", str(exc), kind=kind,
+                    entry.local_path, "failed", str(exc),
+                    kind=kind, remote_path=entry.remote_path,
                 )
                 if first_error is None:
                     first_error = exc
@@ -330,13 +331,15 @@ class RemoteFileHandler:
                          ))
             except Exception as exc:
                 manifest = manifest.with_file_availability(
-                    entry.local_path, "failed", str(exc), kind=kind,
+                    entry.local_path, "failed", str(exc),
+                    kind=kind, remote_path=entry.remote_path,
                 )
                 if first_error is None:
                     first_error = exc
                 continue
             manifest = manifest.with_file_availability(
                 entry.local_path, state, kind=kind,
+                remote_path=entry.remote_path,
             )
         return manifest, first_error
 

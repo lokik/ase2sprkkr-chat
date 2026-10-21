@@ -268,12 +268,26 @@ class FileManifest:
             )
     @property
     def artifacts(self):
-        """Output streams, declared outputs and caches (one status per local file)."""
-        entries = (self.stdout, self.stderr, *self.outputs, *self.caches)
+        """Distinct artifact identities, preserving failures on shared paths.
+
+        stdout/stderr aliases of one physical remote file count only once,
+        but an output and a cache at the same local path are different roles.
+        Two conflicting states must not hide one another during aggregation.
+        """
         unique = {}
-        for entry in entries:
-            if entry is not None and entry.local_path is not None:
-                unique[entry.local_path] = entry
+        groups = (
+            ("output", (self.stdout, self.stderr, *self.outputs)),
+            ("cache", self.caches),
+        )
+        for kind, entries in groups:
+            for entry in entries:
+                if entry is None or entry.local_path is None:
+                    continue
+                key = (
+                    kind, entry.local_path, entry.remote_path,
+                    entry.availability_state, entry.availability_message,
+                )
+                unique.setdefault(key, entry)
         return tuple(unique.values())
 
     @property
@@ -330,34 +344,63 @@ class FileManifest:
 
     def with_file_availability(
         self, local_path, state, message=None, *,
-        remote_path=None, kind="output", source=None,
+        remote_path=None, kind=None, source=None,
     ):
-        """Update one file, recording availability or a transfer failure.
+        """Update one artifact identity, not every role sharing its local path.
 
-        Materialized files have an optional source. A missing wildcard match
-        produces no FileEntry; transfer failures belong to concrete entries.
+        A shared stdout/stderr destination is one output identity when both
+        entries name the same remote file. Ambiguous output/cache destinations
+        or distinct remote sources require an explicit kind or remote path.
         """
         import os
+
+        if kind not in (None, "output", "cache"):
+            raise ValueError(f"Unknown artifact kind: {kind!r}")
         path = os.fspath(local_path)
-        matches = any(x.local_path == path for x in self.artifacts)
-        if matches:
-            return self._map_artifacts(
-                lambda item: replace(
-                    item,
-                    availability_state=state,
-                    availability_message=message,
-                ) if item.local_path == path else item
+        groups = (
+            ("output", (self.stdout, self.stderr, *self.outputs)),
+            ("cache", self.caches),
+        )
+        identities = {
+            (category, entry.remote_path)
+            for category, entries in groups if kind is None or kind == category
+            for entry in entries
+            if entry is not None and entry.local_path == path
+            and (remote_path is None or entry.remote_path == remote_path)
+        }
+        if len(identities) > 1:
+            raise ValueError(
+                f"Ambiguous artifact destination {path}: specify kind or remote_path"
             )
+        if identities:
+            selected_kind, selected_remote = next(iter(identities))
+
+            def update(entry, category):
+                if (entry is not None and category == selected_kind
+                        and entry.local_path == path
+                        and entry.remote_path == selected_remote):
+                    return replace(
+                        entry, availability_state=state,
+                        availability_message=message,
+                    )
+                return entry
+
+            return replace(
+                self,
+                stdout=update(self.stdout, "output"),
+                stderr=update(self.stderr, "output"),
+                outputs=tuple(update(entry, "output") for entry in self.outputs),
+                caches=tuple(update(entry, "cache") for entry in self.caches),
+            )
+
         file = FileEntry(
             local_path=path, remote_path=remote_path,
             availability_state=state, availability_message=message,
             source=source,
         )
-        if kind == "output":
+        if kind in (None, "output"):
             return replace(self, outputs=(*self.outputs, file))
-        if kind == "cache":
-            return replace(self, caches=(*self.caches, file))
-        raise ValueError(f"Unknown artifact kind: {kind!r}")
+        return replace(self, caches=(*self.caches, file))
 
     def has_wildcards(self):
         """Whether any declared output/cache path still needs materializing."""
