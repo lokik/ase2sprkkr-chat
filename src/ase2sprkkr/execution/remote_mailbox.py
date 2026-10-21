@@ -105,8 +105,21 @@ def read_outcome(receipt_id):
     except FileNotFoundError:
         return None
     try:
+        if not isinstance(result, dict):
+            raise TypeError("Receipt must be an object")
         if not RunState(result["state"]).is_terminal:
             raise ValueError("Receipt is not terminal")
+        code = result["return_code"]
+        if code is not None and (isinstance(code, bool) or not isinstance(code, int)):
+            raise TypeError("Invalid return code")
+        phase = result["failure_phase"]
+        if phase is not None:
+            FailurePhase(phase)
+        if result["files"] is not None and not isinstance(result["files"], dict):
+            raise TypeError("Invalid frozen manifest")
+        for field in ("error", "materialization_error"):
+            if result[field] is not None and not isinstance(result[field], str):
+                raise TypeError(f"Invalid {field}")
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("Invalid terminal receipt") from exc
     return result
