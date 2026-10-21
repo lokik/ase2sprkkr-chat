@@ -668,3 +668,64 @@ def test_ephemeral_target_preflight_error_removes_unlaunched_scratch(tmp_path, m
     with pytest.raises(SubmissionNotStarted, match="cannot materialize stdin"):
         remote_service.submit_remote(request)
     assert not scratch.exists()
+
+
+@pytest.mark.parametrize("released", (False, True))
+def test_remote_submit_handoff_failure_respects_supervisor_ownership(
+    tmp_path, monkeypatch, released,
+):
+    import os
+    import subprocess
+    from ase2sprkkr.execution import remote_service
+
+    scratch = tmp_path / "ase2sprkkr-AbCd1234"
+    scratch.mkdir()
+    events = []
+
+    class Child:
+        pid = 123456
+        def wait(self):
+            events.append("reap")
+            return -9
+
+    def popen(*args, **kwargs):
+        events.append("start")
+        return Child()
+
+    def killpg(pid, signal):
+        events.append("kill")
+
+    def write(fd, data):
+        if data == b"1":
+            if released:
+                events.append("release")
+                return 1
+            raise OSError("release failed")
+        return real_write(fd, data)
+
+    real_write = os.write
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr(os, "killpg", killpg)
+    monkeypatch.setattr(os, "write", write)
+    monkeypatch.setattr(remote_service, "_process_info", lambda pid: ("123", "R"))
+    monkeypatch.setattr(remote_service, "_publish_submission", lambda *args: None)
+
+    # Avoid blocking on the worker readiness pipe after the release token.
+    original_fdopen = os.fdopen
+    def fdopen(fd, *args, **kwargs):
+        if kwargs.get("closefd") and released:
+            events.append("handshake")
+            raise OSError("ready reply lost")
+        return original_fdopen(fd, *args, **kwargs)
+    monkeypatch.setattr(os, "fdopen", fdopen)
+
+    request = {
+        "executor": "local", "argv": ["true"], "directory": str(scratch),
+        "temporary_directory": True, "detached": False,
+    }
+    with pytest.raises(OSError, match="release failed|ready reply lost"):
+        remote_service.submit_remote(request)
+
+    assert ("kill" in events) is not released
+    assert ("reap" in events) is not released
+    assert scratch.exists() is released
