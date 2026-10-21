@@ -412,3 +412,17 @@ def test_manifest_rejects_two_remote_outputs_claiming_one_local_destination():
             FileEntry("/local/result.out", "/remote/first.out"),
             FileEntry("/local/result.out", "/remote/second.out"),
         ))
+
+
+def test_materialized_wildcard_collision_is_deferred_to_delivery():
+    declaration = FileEntry("/local/*.dat", "/remote/*.dat")
+    member = FileEntry("/local/data.dat", "/remote/data.dat",
+                       source="/local/*.dat")
+    cache = FileEntry("/local/data.dat", "/remote/data.dat")
+    # Discovery must preserve both records rather than crash while building
+    # the immutable manifest. The transfer preflight rejects their collision.
+    manifest = FileManifest(outputs=(member,), caches=(cache,))
+    assert manifest.outputs == (member,)
+    assert manifest.caches == (cache,)
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest(outputs=(cache,), caches=(cache,))
