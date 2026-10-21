@@ -27,26 +27,32 @@ class TestBuild:
         with pytest.warns(DeprecationWarning, match="hkl2 parameter"):
             semiinfinite_system(atoms, 1, atoms2=atoms.copy(), hkl2=(0, 0, 1))
 
-    @pytest.mark.parametrize(
-        "repeat, symbols",
-        (
+    def test_zero_repeat(self):
+        atoms = bulk("Cu", "sc", a=2.0)
+        SPRKKRAtoms.promote_ase_atoms(atoms)
+
+        # All three variants use the same pristine bulk structure. Construct
+        # it and initialize its sites once, then exercise each repeat policy.
+        for repeat, symbols in (
             ((0, 0), "CuX"),
             ((2, 0), "Cu3X"),
             ((0, 2), "CuX3"),
-        ),
-    )
-    def test_zero_repeat(self, repeat, symbols):
-        atoms = bulk("Cu", "sc", a=2.0)
-        SPRKKRAtoms.promote_ase_atoms(atoms)
-        system = semiinfinite_system(atoms, repeat)
+        ):
+            system = semiinfinite_system(atoms, repeat)
 
-        assert str(system.symbols) == symbols
-        np.testing.assert_allclose(system.positions, (atoms * (1, 1, len(system))).positions)
-        np.testing.assert_allclose(system.cell[2], len(system) * atoms.cell[2])
-        np.testing.assert_array_equal(system.regions["left"].ids, [0])
-        np.testing.assert_array_equal(system.regions["central"].ids, np.arange(1, len(system) - 1))
-        np.testing.assert_array_equal(system.regions["right"].ids, [len(system) - 1])
-        assert len(np.unique(system.positions, axis=0)) == len(system)
+            assert str(system.symbols) == symbols
+            np.testing.assert_allclose(
+                system.positions, (atoms * (1, 1, len(system))).positions
+            )
+            np.testing.assert_allclose(system.cell[2], len(system) * atoms.cell[2])
+            np.testing.assert_array_equal(system.regions["left"].ids, [0])
+            np.testing.assert_array_equal(
+                system.regions["central"].ids, np.arange(1, len(system) - 1)
+            )
+            np.testing.assert_array_equal(
+                system.regions["right"].ids, [len(system) - 1]
+            )
+            assert len(np.unique(system.positions, axis=0)) == len(system)
 
     def test_stack_last_region_is_open_ended(self):
         atoms = bulk("Cu", "sc", a=2.0)
