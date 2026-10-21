@@ -179,7 +179,19 @@ class RemoteRunner(ManagedRunner):
                     if entry is None:
                         return None
                     prior = availability.get((entry.local_path, entry.remote_path))
-                    if prior is None:
+                    # The supervisor's frozen terminal facts are
+                    # authoritative. Only an already completed local delivery
+                    # can replace a still-pending terminal receipt; never
+                    # revert a frozen FAILED/SKIPPED outcome to PENDING.
+                    if entry.availability_state in ("failed", "skipped"):
+                        return entry
+                    if prior is None or prior.availability_state not in (
+                        "available", "skipped",
+                    ):
+                        return entry
+                    if (prior.availability_state == "available"
+                            and (entry.local_path is None
+                                 or not os.path.isfile(entry.local_path))):
                         return entry
                     return replace(
                         entry, availability_state=prior.availability_state,
