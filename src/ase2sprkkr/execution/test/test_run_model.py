@@ -6,7 +6,7 @@ from ase2sprkkr.execution.base import LaunchSpec
 from ase2sprkkr.execution.endpoint import ExecutorEndpoint
 from ase2sprkkr.execution.run_model import (
     FileAvailabilityState, Execution, FileEntry, FileManifest,
-    FileMapping, FileSyncPolicy, WorkingDirectory,
+    FileSyncPolicy, WorkingDirectory,
 )
 
 
@@ -302,17 +302,22 @@ def test_file_sync_policy_validation_uses_the_runtime_enum():
     assert RemoteFileSyncPolicy is FileSyncPolicy
     for input_policy in FileSyncPolicy:
         for output_policy in FileSyncPolicy:
-            mapping = FileMapping("/local", "/remote", input_policy, output_policy)
-            assert type(mapping.input_sync) is str
-            assert type(mapping.output_sync) is str
-            assert mapping.input_sync == input_policy.value
-            assert mapping.output_sync == output_policy.value
-            assert FileMapping(**asdict(mapping)) == mapping
+            files = FileManifest(
+                local_root="/local", remote_root="/remote",
+                input_sync=input_policy, output_sync=output_policy,
+            )
+            assert type(files.input_sync) is str
+            assert type(files.output_sync) is str
+            assert files.input_sync == input_policy.value
+            assert files.output_sync == output_policy.value
+            assert FileManifest(**asdict(files)) == files
 
     with pytest.raises(ValueError, match="synchronization policy"):
-        FileMapping("/local", "/remote", input_sync="unsupported")
+        FileManifest(local_root="/local", remote_root="/remote",
+                     input_sync="unsupported")
     with pytest.raises(ValueError, match="synchronization policy"):
-        FileMapping("/local", "/remote", output_sync="unsupported")
+        FileManifest(local_root="/local", remote_root="/remote",
+                     output_sync="unsupported")
 
 
 @pytest.mark.parametrize("name", ("input_sync", "output_sync"))
