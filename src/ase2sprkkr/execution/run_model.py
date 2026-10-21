@@ -82,6 +82,7 @@ class FileEntry:
     availability_message: Optional[str] = None
     source: Optional[str] = None
     pre_run_signature: Optional[tuple] = None
+    optional: bool = False
 
     def __post_init__(self):
         import os
@@ -92,6 +93,8 @@ class FileEntry:
             value = getattr(self, name)
             if value is not None:
                 object.__setattr__(self, name, os.fspath(value))
+        if type(self.optional) is not bool:
+            raise TypeError("FileEntry.optional must be a bool")
         if self.pre_run_signature is not None:
             object.__setattr__(self, "pre_run_signature", tuple(self.pre_run_signature))
         if self.local_path is None and self.remote_path is None:
@@ -269,39 +272,42 @@ class FileManifest:
 
         directory = os.path.abspath(os.fspath(spec.directory))
 
-        def paths(*values):
+        def entries(values):
             return tuple(
-                path for value in values
+                FileEntry(local_path=path, optional=getattr(value, "optional", False))
+                for value in values
                 if (path := file_path(value, directory)) is not None
             )
 
         primary = file_path(spec.input_file, directory)
-        inputs = []
-        for path in paths(primary, *spec.input_files):
-            if not any(_same_local_file(path, prior) for prior in inputs):
-                inputs.append(path)
+        # The primary input is a reference and may also occur in input_files.
+        # Independent repeated auxiliary declarations are not normalized away.
+        auxiliary = entries(spec.input_files)
+        inputs = (FileEntry(local_path=primary),) if primary is not None else ()
+        inputs += tuple(entry for entry in auxiliary
+                        if primary is None or not _same_local_file(primary, entry.local_path))
         stdin = file_path(getattr(spec, "stdin", None), directory)
         stdout = file_path(getattr(spec, "output_file", None), directory)
         stderr = file_path(getattr(spec, "error_file", None), directory)
-        outputs = paths(*getattr(spec, "output_files", ()))
-        caches = paths(*getattr(spec, "cache_files", ()))
+        outputs = entries(getattr(spec, "output_files", ()))
+        caches = entries(getattr(spec, "cache_files", ()))
 
         # Validate the user's declarations before primary_input becomes
         # another metadata reference to the matching inputs entry.
         _validate_file_declarations((
-            *(("input", FileEntry(local_path=x)) for x in inputs),
+            *(("input", x) for x in inputs),
             ("stdin", None if stdin is None else FileEntry(local_path=stdin)),
             ("stdout", None if stdout is None else FileEntry(local_path=stdout)),
             ("stderr", None if stderr is None else FileEntry(local_path=stderr)),
-            *(("output", FileEntry(local_path=x)) for x in outputs),
-            *(("cache", FileEntry(local_path=x)) for x in caches),
+            *(("output", x) for x in outputs),
+            *(("cache", x) for x in caches),
         ))
         return cls(
-            inputs=tuple(FileEntry(local_path=x) for x in inputs),
+            inputs=inputs,
             primary_input=None if primary is None else FileEntry(local_path=primary),
             stdin=None if stdin is None else FileEntry(local_path=stdin),
-            outputs=tuple(FileEntry(local_path=x) for x in outputs),
-            caches=tuple(FileEntry(local_path=x) for x in caches),
+            outputs=outputs,
+            caches=caches,
             stdout=None if stdout is None else FileEntry(local_path=stdout),
             stderr=None if stderr is None else FileEntry(local_path=stderr),
         ).initialize_availability()
