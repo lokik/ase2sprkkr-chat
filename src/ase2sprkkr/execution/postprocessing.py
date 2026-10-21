@@ -49,6 +49,11 @@ class CalculationRun:
         runner.callback = self._backend_completed
 
     @property
+    def cancellation_requested(self):
+        """Single source of truth for cancellation across project and processing."""
+        return self._cancel_requested.is_set()
+
+    @property
     def spec(self):
         """Expose the immutable launch specification before submission."""
         return self._runner.spec
