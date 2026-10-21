@@ -192,7 +192,7 @@ class RemoteRunner(ManagedRunner):
                 if status.get("materialization_error") else None
             )
             self._files, transfer_error = await self.file_handler.collect(
-                self._files.mapping, self._files, self.result,
+                self._files, self.result,
                 required=backend_state == RunState.FINISHED,
             )
             if freeze_error is not None:
@@ -242,12 +242,18 @@ class RemoteRunner(ManagedRunner):
 
     async def _prepare_async(self):
         try:
-            mapping = self._files.mapping if self._files is not None else None
-            if mapping is None:
-                mapping = await self.executor.resolve_mapping(self.spec.launch)
-            remote_directory = mapping.map_path(self.spec.directory)
+            manifest = self._files
+            if manifest is None:
+                manifest = FileManifest.from_spec(self.spec)
+            if manifest.remote_root is None:
+                context = await self.executor.resolve_mapping(self.spec.launch)
+                manifest = manifest.with_remote(
+                    local_root=context.local_root, remote_root=context.remote_root,
+                    input_sync=context.input_sync, output_sync=context.output_sync,
+                )
+            remote_directory = manifest.map_path(self.spec.directory)
             await self.executor.transport.run(("mkdir", "-p", "--", remote_directory))
-            manifest = await self.file_handler.prepare(mapping, self.spec, self._files)
+            manifest = await self.file_handler.prepare(manifest, self.spec)
             # The runner owns backend identity, command construction and the
             # submission protocol. FileHandler knows only file locations.
             mapped = {entry.local_path: entry.remote_path

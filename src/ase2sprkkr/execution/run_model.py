@@ -133,65 +133,6 @@ class FileSyncPolicy(str, Enum):
         return source_digest != destination_digest
 
 
-@dataclass(frozen=True)
-class FileMapping:
-    """Resolved mapping and transfer policy of this run's file manifest."""
-
-    local_root: str
-    remote_root: str
-    input_sync: str = FileSyncPolicy.CHANGED.value
-    output_sync: str = FileSyncPolicy.CHANGED.value
-
-    def __post_init__(self):
-        import os
-
-        object.__setattr__(self, "local_root", os.fspath(self.local_root))
-        object.__setattr__(self, "remote_root", os.fspath(self.remote_root))
-        try:
-            input_sync = FileSyncPolicy(self.input_sync)
-            output_sync = FileSyncPolicy(self.output_sync)
-        except ValueError as exc:
-            raise ValueError("Invalid file synchronization policy") from exc
-        object.__setattr__(self, "input_sync", input_sync.value)
-        object.__setattr__(self, "output_sync", output_sync.value)
-
-    def map_path(self, path):
-        """Map an existing local path without querying the target service."""
-        import os
-        import posixpath
-        from pathlib import Path
-        root = Path(self.local_root).expanduser().resolve()
-        local = Path(path).expanduser().resolve()
-        try:
-            relative = local.relative_to(root)
-        except ValueError as exc:
-            raise ValueError(f"Local path {local} is outside mapped root {root}") from exc
-        return posixpath.join(self.remote_root, *relative.parts)
-
-    def unmap_path(self, path):
-        """Map target path back, rejecting lexical and symlink escapes."""
-        import os
-        import posixpath
-        from pathlib import Path, PurePosixPath
-        remote = posixpath.normpath(os.fspath(path))
-        if not posixpath.isabs(remote):
-            raise ValueError(f"Remote path must be absolute: {remote}")
-        try:
-            inside = posixpath.commonpath((self.remote_root, remote)) == self.remote_root
-        except ValueError:
-            inside = False
-        if not inside:
-            raise ValueError(f"Remote path {remote} is outside mapped root {self.remote_root}")
-        relative = posixpath.relpath(remote, self.remote_root)
-        root = Path(self.local_root).expanduser().resolve()
-        local = root if relative == "." else root.joinpath(*PurePosixPath(relative).parts)
-        try:
-            local.resolve().relative_to(root)
-        except ValueError as exc:
-            raise ValueError(f"Local path {local} is outside mapped root {root}") from exc
-        return local
-
-
 def _same_local_file(first, second):
     """Treat lexical aliases, symlinks and existing hardlinks as one file."""
     import os
@@ -251,7 +192,12 @@ class FileManifest:
     caches: tuple[FileEntry, ...] = ()
     stdout: Optional[FileEntry] = None
     stderr: Optional[FileEntry] = None
-    mapping: Optional[FileMapping] = None
+    # One manifest owns path resolution and per-run transfer policy.
+    # Local runs leave both roots unset and contain only local FileEntry paths.
+    local_root: Optional[str] = None
+    remote_root: Optional[str] = None
+    input_sync: str = FileSyncPolicy.CHANGED.value
+    output_sync: str = FileSyncPolicy.CHANGED.value
     input_versions: tuple[FileVersion, ...] = ()
     output_versions: tuple[FileVersion, ...] = ()
     captured_at: Optional[str] = None
@@ -314,8 +260,19 @@ class FileManifest:
             item = getattr(self, name)
             if isinstance(item, dict):
                 object.__setattr__(self, name, FileEntry(**item))
-        if isinstance(self.mapping, dict):
-            object.__setattr__(self, "mapping", FileMapping(**self.mapping))
+        import os
+        for name in ("local_root", "remote_root"):
+            root = getattr(self, name)
+            if root is not None:
+                object.__setattr__(self, name, os.fspath(root))
+        for name in ("input_sync", "output_sync"):
+            try:
+                policy = FileSyncPolicy(getattr(self, name))
+            except ValueError as exc:
+                raise ValueError("Invalid file synchronization policy") from exc
+            object.__setattr__(self, name, policy.value)
+        if (self.local_root is None) != (self.remote_root is None):
+            raise ValueError("Remote manifest requires both local and remote roots")
         for name in ("input_versions", "output_versions"):
             object.__setattr__(
                 self, name,
@@ -332,6 +289,79 @@ class FileManifest:
             *(("output", entry) for entry in self.outputs),
             *(("cache", entry) for entry in self.caches),
         ))
+
+    def with_remote(self, *, local_root, remote_root,
+                    input_sync=FileSyncPolicy.CHANGED,
+                    output_sync=FileSyncPolicy.CHANGED):
+        """Resolve remote paths once, before reserving the run.
+
+        FileEntry paths are authoritative after this point; never reconstruct
+        or rewrite them from roots during collect or historical restore.
+        """
+        configured = replace(
+            self, local_root=local_root, remote_root=remote_root,
+            input_sync=input_sync, output_sync=output_sync,
+        )
+
+        def mapped(entry):
+            if entry is None or entry.local_path is None:
+                return entry
+            remote = configured.map_path(entry.local_path)
+            if entry.remote_path is not None and entry.remote_path != remote:
+                raise ValueError("Reserved remote file path differs from manifest")
+            return replace(entry, remote_path=remote)
+
+        return replace(
+            configured,
+            inputs=tuple(mapped(entry) for entry in self.inputs),
+            primary_input=mapped(self.primary_input),
+            stdin=mapped(self.stdin),
+            outputs=tuple(mapped(entry) for entry in self.outputs),
+            caches=tuple(mapped(entry) for entry in self.caches),
+            stdout=mapped(self.stdout),
+            stderr=mapped(self.stderr),
+        )
+
+    def map_path(self, path):
+        """Map a local path within this manifest's resolved remote workspace."""
+        if self.local_root is None or self.remote_root is None:
+            raise ValueError("Local manifest has no remote workspace")
+        import os
+        import posixpath
+        from pathlib import Path
+        root = Path(self.local_root).expanduser().resolve()
+        local = Path(path).expanduser().resolve()
+        try:
+            relative = local.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"Local path {local} is outside mapped root {root}") from exc
+        return posixpath.join(self.remote_root, *relative.parts)
+
+    def unmap_path(self, path):
+        """Validate a remote path against this manifest's workspace."""
+        if self.local_root is None or self.remote_root is None:
+            raise ValueError("Local manifest has no remote workspace")
+        import os
+        import posixpath
+        from pathlib import Path, PurePosixPath
+        remote = posixpath.normpath(os.fspath(path))
+        if not posixpath.isabs(remote):
+            raise ValueError(f"Remote path must be absolute: {remote}")
+        try:
+            inside = posixpath.commonpath((self.remote_root, remote)) == self.remote_root
+        except ValueError:
+            inside = False
+        if not inside:
+            raise ValueError(f"Remote path {remote} is outside mapped root {self.remote_root}")
+        relative = posixpath.relpath(remote, self.remote_root)
+        root = Path(self.local_root).expanduser().resolve()
+        local = root if relative == "." else root.joinpath(*PurePosixPath(relative).parts)
+        try:
+            local.resolve().relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"Local path {local} is outside mapped root {root}") from exc
+        return local
+
     @property
     def files(self):
         """Distinct file identities, preserving failures on shared paths.

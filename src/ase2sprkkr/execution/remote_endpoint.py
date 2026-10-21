@@ -19,7 +19,7 @@ from .remote import FileSyncPolicy, RemoteRunner, _run_sync
 from .remote_file_handler import RemoteFileHandler
 from .target_connection import SSHConnection
 from .supervisor_monitor import backend_status_from_facts
-from .run_model import FileMapping, WorkingDirectory
+from .run_model import FileManifest, WorkingDirectory
 from .endpoint import endpoint_for_executor
 
 
@@ -79,7 +79,7 @@ class RemoteEndpointExecutor(Executor):
             remote_root = posixpath.normpath(root)
         else:
             remote_root = posixpath.join(await self.connection.remote_home(), root)
-        return FileMapping(
+        return FileManifest(
             local_root=os.fspath(local_root),
             remote_root=posixpath.normpath(remote_root),
             input_sync=launch.input_sync,
@@ -93,25 +93,13 @@ class RemoteEndpointExecutor(Executor):
             raise ValueError("Remote run lacks backend identity or working directory")
 
     def reservation_context(self, spec, files):
-        """Resolve exactly the paths to be protected and later staged."""
-        mapping = _run_sync(self.resolve_mapping(spec.launch))
-
-        def mapped(entry):
-            if entry is None or entry.local_path is None:
-                return entry
-            return replace(entry, remote_path=mapping.map_path(entry.local_path))
-
-        return replace(
-            files,
-            inputs=tuple(mapped(entry) for entry in files.inputs),
-            primary_input=mapped(files.primary_input),
-            stdin=mapped(files.stdin),
-            outputs=tuple(mapped(entry) for entry in files.outputs),
-            caches=tuple(mapped(entry) for entry in files.caches),
-            stdout=mapped(files.stdout),
-            stderr=mapped(files.stderr),
-            mapping=mapping,
-        ), mapping.map_path(spec.directory)
+        """Resolve the remote targets into the one authoritative file manifest."""
+        context = _run_sync(self.resolve_mapping(spec.launch))
+        prepared = files.with_remote(
+            local_root=context.local_root, remote_root=context.remote_root,
+            input_sync=context.input_sync, output_sync=context.output_sync,
+        )
+        return prepared, prepared.map_path(spec.directory)
 
     def submission_directory(self, spec):
         launch = spec.launch
@@ -216,7 +204,7 @@ class RemoteEndpointExecutor(Executor):
     async def _attach(self, run, callback=None, output_listener=None, start=True):
         self._validate_run(run)
         execution = run.execution
-        if run.files.mapping is None:
+        if run.files.remote_root is None:
             raise ValueError("Remote run has no persisted file mapping")
         status = await self.connection.status(execution.backend_id, run.files)
         local_directory = Path(execution.directory.local)
@@ -241,10 +229,10 @@ class RemoteEndpointExecutor(Executor):
                 error_file=error_file,
                 directory=os.fspath(local_directory),
                 launch=LaunchSpec(
-                    local_root=run.files.mapping.local_root,
-                    remote_root=run.files.mapping.remote_root,
-                    input_sync=run.files.mapping.input_sync,
-                    output_sync=run.files.mapping.output_sync,
+                    local_root=run.files.local_root,
+                    remote_root=run.files.remote_root,
+                    input_sync=run.files.input_sync,
+                    output_sync=run.files.output_sync,
                 ),
             )
             runner = RemoteRunner(

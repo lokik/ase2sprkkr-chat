@@ -11,7 +11,7 @@ from dataclasses import replace
 
 from ..common.file_versions import file_digest
 from .base import file_path
-from .run_model import FileEntry, FileManifest, FileMapping, FileSyncPolicy
+from .run_model import FileEntry, FileManifest, FileSyncPolicy
 from .transport import expand_local_files, has_file_magic
 
 
@@ -130,33 +130,20 @@ class RemoteFileHandler:
             targets[local] = (remote, before)
         return targets, baselines
 
-    async def prepare(self, mapping, spec, manifest=None):
+    async def prepare(self, manifest, spec):
         """Stage the authoritative manifest; never re-declare files from spec."""
-        manifest = FileManifest.from_spec(spec) if manifest is None else manifest
-        if manifest.mapping is not None and manifest.mapping != mapping:
-            raise ValueError("Submission mapping differs from reserved mapping")
+        if manifest.remote_root is None:
+            raise ValueError("Remote file manifest has no resolved target")
+        # Per-file targets were frozen by with_remote at reservation.
+        # Neither staging nor restore may derive them a second time.
+        for entry in (
+            *manifest.inputs, manifest.primary_input, manifest.stdin,
+            *manifest.outputs, *manifest.caches, manifest.stdout, manifest.stderr,
+        ):
+            if entry is not None and entry.local_path is not None and entry.remote_path is None:
+                raise ValueError("Remote file manifest has unresolved path")
 
-        def mapped(entry):
-            if entry is None or entry.local_path is None:
-                return entry
-            remote = mapping.map_path(entry.local_path)
-            if entry.remote_path is not None and entry.remote_path != remote:
-                raise ValueError("Submission path differs from reserved path")
-            return replace(entry, remote_path=remote)
-
-        # Validate all reserved targets before a single input/cache is uploaded.
-        manifest = replace(
-            manifest,
-            inputs=tuple(mapped(entry) for entry in manifest.inputs),
-            primary_input=mapped(manifest.primary_input),
-            stdin=mapped(manifest.stdin),
-            outputs=tuple(mapped(entry) for entry in manifest.outputs),
-            caches=tuple(mapped(entry) for entry in manifest.caches),
-            stdout=mapped(manifest.stdout),
-            stderr=mapped(manifest.stderr),
-            mapping=mapping,
-        )
-
+        mapping = manifest
         used = {}
         primary = (None if manifest.primary_input is None
                    else manifest.primary_input.local_path)
@@ -277,10 +264,11 @@ class RemoteFileHandler:
                     f"Conflicting {kind} sources for destination: {target}"
                 )
 
-    async def collect(self, mapping, manifest, result, *, required=False):
+    async def collect(self, manifest, result, *, required=False):
         """Return partial manifest and failure; never silently lose successful files."""
         if manifest is None:
             return None, None
+        mapping = manifest
         self._validate_download_targets(manifest)
         primary = {p for p in (result.output_file, result.error_file) if p}
         baselines = {

@@ -17,7 +17,7 @@ from .base import (
 )
 from .run_model import (
     FileAvailabilityState, Execution, WorkingDirectory, FileEntry,
-    FileMapping, FileManifest,
+    FileManifest,
 )
 from .endpoint import ExecutorEndpoint
 from .local import LocalExecutor, LocalRunner
@@ -51,7 +51,6 @@ __all__ = [
     "Execution",
     "WorkingDirectory",
     "FileEntry",
-    "FileMapping",
     "FileManifest",
     "ExecutionOutcome",
     "ExecutionResources",

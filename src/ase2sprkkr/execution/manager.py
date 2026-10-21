@@ -164,7 +164,7 @@ def _manifest_accesses(record):
     reads = {path(entry) for entry in files.input_entries}
     reads.update(path(cache) for cache in files.caches)
     writes = {path(entry) for entry in (files.stdout, files.stderr, *files.outputs)}
-    if remote and (files.mapping is None or files.mapping.input_sync != "never"):
+    if remote and (files.remote_root is None or files.input_sync != "never"):
         writes.update(path(entry) for entry in files.input_entries)
     writes.update(path(cache) for cache in files.caches)
     return reads - {None}, writes - {None}
