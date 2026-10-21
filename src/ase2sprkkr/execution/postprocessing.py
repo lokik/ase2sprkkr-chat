@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 from threading import Event, Lock, Thread
 
-from .base import (FailurePhase, RunState, finish_monitor, wait_for_monitor)
+from .base import (FailurePhase, RunState, SubmissionNotStarted,
+                   finish_monitor, wait_for_monitor)
 
 
 class PostprocessingRunner:
@@ -16,11 +17,15 @@ class PostprocessingRunner:
     task-agnostic callable after successful raw execution.
     """
 
-    def __init__(self, runner, process_result, callback=None):
+    def __init__(self, runner, process_result, callback=None, *, resources=None):
         self._runner = runner
         self._process_result = process_result
         self.callback = callback
         self.result = None
+        self._resources = resources
+        self._cancel_requested = Event()
+        self._cancel_dispatched = False
+        self._submission_uncertain = False
 
         self._state = RunState.NEW
         self._failure_phase = None
@@ -157,7 +162,11 @@ class PostprocessingRunner:
         finally:
             # Make terminal status visible during the persistence callback.
             self._settled = True
-            finish_monitor(self)
+            finish_monitor(self, cleanup=self._close_resources)
+
+    def _close_resources(self):
+        if self._resources is not None:
+            self._resources.close(suppress_errors=True)
 
     def _start_completion(self):
         self._started = True
@@ -165,31 +174,78 @@ class PostprocessingRunner:
         self._thread.start()
 
     def prepare_submission(self):
-        """Delegate side-effect-free-of-process launch preparation to raw runner."""
-        prepare = getattr(self._runner, "prepare_submission", None)
-        if prepare is None:
-            return False
-        prepare()
-        return True
+        """Run preflight without allowing cancellation to close its inputs."""
+        with self._lock:
+            if self._cancel_requested.is_set() and self._resources is not None:
+                raise asyncio.CancelledError("Run was cancelled before submission")
+            if self._started or self._settled or self._submission_uncertain:
+                raise RuntimeError(f"Run is already {self.state.value}")
+            prepare = getattr(self._runner, "prepare_submission", None)
+            if prepare is None:
+                return False
+            try:
+                prepare()
+            except Exception as exc:
+                # No backend was contacted. Preserve the cause and classify
+                # this as a definite non-submission.
+                self._close_resources()
+                failure = (exc if isinstance(exc, SubmissionNotStarted)
+                           else SubmissionNotStarted(str(exc)))
+                self._exception = failure
+                self._failure_phase = FailurePhase.SUBMISSION
+                self._failure_message = str(exc)
+                self._state = RunState.FAILED
+                self._settled = True
+                if failure is exc:
+                    raise
+                raise failure from exc
+            return True
+
+    def _submit_raw(self, *, attached=False):
+        try:
+            if attached:
+                start = getattr(self._runner, "start", None)
+                if start is not None:
+                    start()
+            else:
+                self._runner.submit()
+        except SubmissionNotStarted as exc:
+            self._close_resources()
+            self._exception = exc
+            self._failure_phase = FailurePhase.SUBMISSION
+            self._failure_message = str(exc)
+            self._state = RunState.FAILED
+            self._settled = True
+            raise
+        except BaseException:
+            # The backend might have accepted the job even without owned
+            # prepared files. Never permit another submission on ambiguity.
+            self._submission_uncertain = True
+            raise
 
     def submit(self):
         with self._lock:
-            if self._started or self._runner.state != RunState.NEW:
+            if self._submission_uncertain:
+                raise RuntimeError("Submission outcome is uncertain; recover the run before retrying")
+            if self._cancel_requested.is_set() and self._resources is not None:
+                raise asyncio.CancelledError("Run was cancelled before submission")
+            if self._started or self._settled or self._runner.state != RunState.NEW:
                 raise RuntimeError(f"Run is already {self.state.value}")
-            self._runner.submit()
+            self._submit_raw()
             self._start_completion()
 
     def start(self):
         """Start a new run or monitoring of an attached raw runner."""
         with self._lock:
+            if self._submission_uncertain:
+                raise RuntimeError("Submission outcome is uncertain; recover the run before retrying")
+            if self._cancel_requested.is_set() and self._resources is not None:
+                raise asyncio.CancelledError("Run was cancelled before submission")
             if self._started:
                 return
-            if self._runner.state == RunState.NEW:
-                self._runner.submit()
-            else:
-                start = getattr(self._runner, "start", None)
-                if start is not None:
-                    start()
+            if self._settled:
+                raise RuntimeError(f"Run is already {self.state.value}")
+            self._submit_raw(attached=self._runner.state != RunState.NEW)
             self._start_completion()
 
     def wait(self):
@@ -197,15 +253,28 @@ class PostprocessingRunner:
             raise RuntimeError("Run has not been started")
         return wait_for_monitor(self)
 
+    def close(self):
+        """Release an unstarted calculation without launching a backend."""
+        with self._lock:
+            if self._resources is None or self._settled:
+                return
+            if self._started or self._submission_uncertain or self._runner.state != RunState.NEW:
+                raise RuntimeError("Cannot close resources of a submitted or uncertain run")
+            self._resources.close()
+            self._state = RunState.CANCELLED
+            self._settled = True
+            self._done.set()
+
     def run(self):
+        if self._submission_uncertain:
+            raise RuntimeError("Submission outcome is uncertain; recover the run before retrying")
         if not self._started:
             self.start()
         return self.wait()
 
     async def run_async(self):
-        if not self._started:
-            self.start()
-        return await asyncio.to_thread(self.wait)
+        # Submission can block on filesystem or scheduler I/O.
+        return await asyncio.to_thread(self.run)
 
     def stop_observation(self):
         """Stop this client's monitor; leave the backend calculation intact."""
@@ -217,4 +286,26 @@ class PostprocessingRunner:
         return stop()
 
     def cancel(self):
-        return self._runner.cancel()
+        self._cancel_requested.set()
+        with self._lock:
+            if self._settled or self._runner.state in (
+                RunState.FINISHED, RunState.FAILED, RunState.CANCELLED
+            ):
+                return None
+            if (self._resources is not None and not self._started
+                    and not self._submission_uncertain
+                    and self._runner.state == RunState.NEW):
+                self._state = RunState.CANCELLED
+                self._settled = True
+                self._close_resources()
+                self._done.set()
+                return None
+            if self._cancel_dispatched:
+                return None
+            self._cancel_dispatched = True
+        try:
+            return self._runner.cancel()
+        except BaseException:
+            with self._lock:
+                self._cancel_dispatched = False
+            raise
