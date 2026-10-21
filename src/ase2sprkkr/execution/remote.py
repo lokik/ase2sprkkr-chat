@@ -94,6 +94,14 @@ class RemoteRunner:
     def files(self):
         return self._files
 
+    def _apply_backend_facts(self, status):
+        """Apply backend outcome facts without modifying client lifecycle state."""
+        self._return_code = status.get("return_code")
+        self.result.return_code = self._return_code
+        phase = status.get("failure_phase")
+        self._failure_phase = None if phase is None else FailurePhase(phase)
+        self._failure_message = status.get("error")
+
     def _set_file_availability(
         self, local, state, message=None, *,
         remote=None, kind="output", source_pattern=None,
@@ -607,11 +615,7 @@ class RemoteRunner:
                     self._failure_message = str(stream_error or exc)
                     return self.result
             backend_state = RunState(status.get("state", "unknown"))
-            self._return_code = status.get("return_code")
-            self.result.return_code = self._return_code
-            phase = status.get("failure_phase")
-            self._failure_phase = None if phase is None else FailurePhase(phase)
-            self._failure_message = status.get("error")
+            self._apply_backend_facts(status)
 
             if stream_error is not None and not backend_state.is_terminal:
                 self._state = RunState.UNKNOWN
