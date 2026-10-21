@@ -81,7 +81,7 @@ class _TemporaryNamedFile:
     created with ``delete=False`` and this small owner removes it explicitly.
     ``close_file()`` closes only the descriptor while retaining the pathname;
     it is used after POTFIL serialization while the prepared calculation still
-    owns the temporary artifact.
+    owns the temporary file.
     """
 
     def __init__(self, *, directory, mode):
