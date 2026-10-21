@@ -337,3 +337,55 @@ def test_persistent_prepared_hook_runs_without_backend_preflight():
     backend.release.set()
     run.wait()
     assert events == ["reserved", "prepared", "submitted", "completed"]
+
+
+def test_synchronous_completion_waits_for_durable_backend_identity():
+    """Backend callbacks in submit() cannot commit completion before identity."""
+    from types import SimpleNamespace
+
+    class ImmediateBackend:
+        callback = None
+        state = RunState.NEW
+        backend_id = None
+        exception = None
+        failure_phase = None
+        failure_message = None
+
+        def __init__(self):
+            self.result = SimpleNamespace(return_code=0)
+
+        def submit(self):
+            self.backend_id = "job-1"
+            self.state = RunState.FINISHED
+            self.callback(self.result)
+
+        def wait(self):
+            return self.result
+
+    order = []
+
+    class Hooks:
+        def before_submit(self, run):
+            order.append("reserve")
+
+        def prepared(self, run):
+            order.append("prepared")
+
+        def submitted(self, run):
+            assert run.backend_id == "job-1"
+            order.append("identity")
+
+        def submission_failed(self, run, error, *, uncertain):
+            pytest.fail(f"Unexpected submission error: {error}")
+
+        def completed(self, run):
+            assert "identity" in order
+            order.append("complete")
+
+    run = CalculationRun(
+        ImmediateBackend(), lambda result: result,
+        hooks=Hooks(), callback=lambda result: order.append("callback"),
+    )
+    run.submit()
+    assert run.wait().return_code == 0
+    assert order == ["reserve", "prepared", "identity", "complete", "callback"]
