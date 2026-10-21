@@ -106,11 +106,13 @@ class RemoteFileHandler:
                 uploads, mapping.local_root, mapping.remote_root,
             )
 
-    async def _prepare_cache_files(self, mapping, spec, used):
-        """Return per-call cache plan; do not retain any of it on the handler."""
+    async def _prepare_cache_files(self, mapping, spec, used, cache_entries):
+        """Stage the manifest's cache declarations and capture target baselines."""
         targets, baselines = {}, {}
         root = mapping.remote_root
-        for local, is_pattern in _unique_declared_paths(spec, spec.cache_files):
+        declared = (entry.local_path for entry in cache_entries
+                    if entry.local_path is not None)
+        for local, is_pattern in _unique_declared_paths(spec, declared):
             if is_pattern:
                 remote_pattern = mapping.map_path(local)
                 await self._stage_input_pattern(
@@ -129,39 +131,75 @@ class RemoteFileHandler:
         return targets, baselines
 
     async def prepare(self, mapping, spec, manifest=None):
-        """Stage and augment the reserved manifest rather than remapping it."""
+        """Stage the authoritative manifest; never re-declare files from spec."""
         manifest = FileManifest.from_spec(spec) if manifest is None else manifest
         if manifest.mapping is not None and manifest.mapping != mapping:
             raise ValueError("Submission mapping differs from reserved mapping")
-        used = {}
-        for value in spec.input_files:
-            source = _local_path(spec, value)
-            if source is not None and has_file_magic(source):
-                await self._stage_input_pattern(mapping, spec, value, used)
-            else:
-                await self._stage_file(mapping, spec, value, used)
-        await self._stage_file(mapping, spec, spec.input_file, used)
-        if spec.stdin is not None:
-            await self._stage_file(mapping, spec, spec.stdin, used)
-        # Cache staging shares the collision map, not input file identity.
-        input_sources = tuple(dict.fromkeys(used.values()))
-        cache_targets, cache_before = (
-            await self._prepare_cache_files(mapping, spec, used)
-        )
-        async def mapped(entry):
-            if entry is None:
-                return None
+
+        # A reservation cannot be silently widened by a different execution
+        # specification. Check the local declarations before any remote I/O.
+        if manifest.mapping is not None:
+            declared = FileManifest.from_spec(spec)
+            for name in ("inputs", "outputs", "caches"):
+                if (tuple(entry.local_path for entry in getattr(manifest, name))
+                        != tuple(entry.local_path for entry in getattr(declared, name))):
+                    raise ValueError("Submission files differ from reserved manifest")
+            for name in ("primary_input", "stdin", "stdout", "stderr"):
+                reserved = getattr(manifest, name)
+                actual = getattr(declared, name)
+                if (None if reserved is None else reserved.local_path) != (
+                        None if actual is None else actual.local_path):
+                    raise ValueError("Submission files differ from reserved manifest")
+
+        def mapped(entry):
+            if entry is None or entry.local_path is None:
+                return entry
             remote = mapping.map_path(entry.local_path)
             if entry.remote_path is not None and entry.remote_path != remote:
                 raise ValueError("Submission path differs from reserved path")
             return replace(entry, remote_path=remote)
 
+        # Validate all reserved targets before a single input/cache is uploaded.
+        manifest = replace(
+            manifest,
+            inputs=tuple(mapped(entry) for entry in manifest.inputs),
+            primary_input=mapped(manifest.primary_input),
+            stdin=mapped(manifest.stdin),
+            outputs=tuple(mapped(entry) for entry in manifest.outputs),
+            caches=tuple(mapped(entry) for entry in manifest.caches),
+            stdout=mapped(manifest.stdout),
+            stderr=mapped(manifest.stderr),
+            mapping=mapping,
+        )
+
+        used = {}
+        primary = (None if manifest.primary_input is None
+                   else manifest.primary_input.local_path)
+        for entry in manifest.inputs:
+            source = entry.local_path
+            if source is None:
+                continue
+            if source != primary and has_file_magic(source):
+                await self._stage_input_pattern(mapping, spec, source, used)
+            else:
+                await self._stage_file(mapping, spec, source, used)
+        if primary is not None:
+            await self._stage_file(mapping, spec, primary, used)
+        if manifest.stdin is not None and manifest.stdin.local_path is not None:
+            await self._stage_file(mapping, spec, manifest.stdin.local_path, used)
+
+        # Cache staging shares the collision map, not input file identity.
+        input_sources = tuple(dict.fromkeys(used.values()))
+        cache_targets, cache_before = await self._prepare_cache_files(
+            mapping, spec, used, manifest.caches,
+        )
+
         caches = []
         for entry in manifest.caches:
-            mapped_entry = await mapped(entry)
             baseline = cache_targets.get(entry.local_path)
-            caches.append(replace(mapped_entry,
-                pre_run_signature=None if baseline is None else baseline[1]))
+            caches.append(replace(
+                entry, pre_run_signature=(None if baseline is None else baseline[1]),
+            ))
         for remote, before in cache_before.items():
             caches.append(FileEntry(remote_path=remote, pre_run_signature=before))
 
@@ -169,6 +207,8 @@ class RemoteFileHandler:
         inputs = []
         declared = tuple(entry.local_path for entry in manifest.inputs)
         for local in dict.fromkeys((*declared, *input_sources)):
+            if local is None:
+                continue
             if (manifest.stdin is not None and local == manifest.stdin.local_path
                     and local not in declared):
                 continue
@@ -179,13 +219,7 @@ class RemoteFileHandler:
         return replace(
             manifest,
             inputs=tuple(inputs),
-            primary_input=await mapped(manifest.primary_input),
-            stdin=await mapped(manifest.stdin),
-            outputs=tuple([await mapped(e) for e in manifest.outputs]),
             caches=tuple(caches),
-            stdout=None if manifest.stdout is None else await mapped(manifest.stdout),
-            stderr=None if manifest.stderr is None else await mapped(manifest.stderr),
-            mapping=mapping,
         )
 
     async def _sync_file(self, mapping, entry, *, is_cache, before=None, required=False):
