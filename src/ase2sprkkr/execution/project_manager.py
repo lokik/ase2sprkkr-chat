@@ -59,7 +59,7 @@ class ExecutionManager(_ExecutionManager):
     def create_run(
         self, executor, spec, *, process_result, task,
         input_definition=None, dataset=None, callback=None,
-        run_id=None, project=None,
+        run_id=None, project=None, resources=None,
     ):
         manager = self if project is None else self.for_project(project)
         if manager.project_id is None:
@@ -68,5 +68,5 @@ class ExecutionManager(_ExecutionManager):
             manager, executor, spec,
             process_result=process_result, task=task,
             input_definition=input_definition, dataset=dataset,
-            callback=callback, run_id=run_id,
+            callback=callback, run_id=run_id, resources=resources,
         )
