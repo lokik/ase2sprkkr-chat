@@ -28,6 +28,7 @@ from .base import (
 )
 from .endpoint import ExecutorEndpoint, endpoint_for_executor
 from .pool import default_executor_pool
+from .projects import _project_id
 from .postprocessing import PostprocessingRunner
 from .run_model import (
     ArtifactAvailabilityState, Execution, WorkingDirectory, FileManifest,
@@ -217,11 +218,30 @@ def submission_conflicts(left: RunRecord, right: RunRecord) -> bool:
 class RunStore:
     """Project run history stored as date-sharded durable JSON files."""
 
-    def __init__(self, directory):
-        """A run store belongs to exactly one project directory."""
+    def __init__(self, directory, *, projects_directory=None):
+        """Optionally coordinate run writes with a project repository."""
         self.directory = Path(directory).expanduser()
+        self.projects_directory = (
+            None if projects_directory is None else Path(projects_directory).expanduser()
+        )
         self._lock = RLock()
         self._warned_corrupt = set()
+
+    @contextmanager
+    def _project_guard(self, record):
+        """Exclude project deletion while writing its canonical run history."""
+        if self.projects_directory is None:
+            yield
+            return
+        if record.project_id is None:
+            raise ValueError("Project run history requires a canonical project ID")
+        project_id = _project_id(record.project_id)
+        if record.project_id != project_id:
+            raise ValueError("Project run history requires a canonical project ID")
+        with FileLock(self.projects_directory / f".runs-{project_id}.lock"):
+            if not (self.projects_directory / f"{project_id}.json").is_file():
+                raise KeyError(f"Project {project_id} no longer exists")
+            yield
 
     @staticmethod
     def _bucket(created_at):
@@ -234,6 +254,9 @@ class RunStore:
         return self.directory / self._bucket(record.created_at) / f"{record.id}.json"
 
     def _run_lock_path(self, record):
+        if self.projects_directory is not None:
+            # A run ID is global even when its records occupy different days.
+            return self.directory / f".{record.id}.lock"
         path = self._path(record)
         return path.with_name(f".{record.id}.lock")
 
@@ -294,18 +317,37 @@ class RunStore:
         with self._lock, FileLock(self.directory / ".submit.lock"):
             yield
 
+    def _check_persisted_project(self, record):
+        """Enforce one project per run ID, across every date shard.
+
+        Call under the global per-ID file lock for repository-owned stores.
+        Standalone stores retain their date-sharded write semantics.
+        """
+        if self.projects_directory is None:
+            return
+        filename = f"{record.id}.json"
+        for day in self._day_directories(newest=False):
+            path = day / filename
+            if path.is_file() and self._decode(path).project_id != record.project_id:
+                raise ValueError("Run write cannot change persistent project identity")
+
     def save(self, record: RunRecord):
-        with self._lock:
-            return self._write_unlocked(record)
+        with self._lock, FileLock(self._run_lock_path(record)):
+            self._check_persisted_project(record)
+            with self._project_guard(record):
+                return self._write_unlocked(record)
 
     def update(self, record: RunRecord, updater):
         with self._lock, FileLock(self._run_lock_path(record)):
-            path = self._path(record)
-            latest = self._decode(path) if path.is_file() else record
-            updated = updater(latest)
-            if updated.id != latest.id or updated.created_at != latest.created_at:
-                raise ValueError("Run update cannot change persistent identity")
-            return self._write_unlocked(updated)
+            self._check_persisted_project(record)
+            with self._project_guard(record):
+                path = self._path(record)
+                latest = self._decode(path) if path.is_file() else record
+                updated = updater(latest)
+                if (updated.id != latest.id or updated.created_at != latest.created_at
+                        or updated.project_id != latest.project_id):
+                    raise ValueError("Run update cannot change persistent identity")
+                return self._write_unlocked(updated)
 
     def get(self, run_id):
         return self._decode(self._path_for_id(run_id))

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .manager import ExecutionManager as _ExecutionManager, RunStore
+from .manager import ExecutionManager as _ExecutionManager
 from .projects import Project, ProjectRepository
 
 
@@ -25,8 +25,7 @@ class ExecutionManager(_ExecutionManager):
             current = self.projects.project(identity)
             self._project_id = current.id
             if store is None:
-                root = self.projects.directory.parent / "projects_runs"
-                store = RunStore(root)
+                store = self.projects.run_store
         super().__init__(
             store, executor_pool=executor_pool,
             submitting_grace=submitting_grace,
