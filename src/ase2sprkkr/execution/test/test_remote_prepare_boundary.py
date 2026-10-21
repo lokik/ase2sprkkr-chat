@@ -89,7 +89,7 @@ def test_remote_manifest_uses_same_declarations_as_local(tmp_path):
     executor = RemoteEndpointExecutor(LocalTransport())
     runner = executor.create_run(spec)
     manifest = asyncio.run(runner.file_handler.prepare(
-        runner.executor, runner.spec,
+        await executor.resolve_mapping(runner.spec.launch), runner.spec,
     ))
     assert tuple(e.local_path for e in manifest.inputs) == (
         str(directory / "main.inp"), str(directory / "extra.inp"),
@@ -135,7 +135,7 @@ def test_remote_file_preparation_deduplicates_paths_before_mapping(tmp_path):
     runner = executor.create_run(spec)
 
     manifest = asyncio.run(runner.file_handler.prepare(
-        runner.executor, runner.spec,
+        await executor.resolve_mapping(runner.spec.launch), runner.spec,
     ))
     assert [e.remote_path for e in manifest.outputs if "*" in e.remote_path] == [
         str(remote / "work" / "cut-*.dat")

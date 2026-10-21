@@ -69,8 +69,8 @@ def test_remote_handler_is_shared_without_run_state(tmp_path):
     assert a.files is None and b.files is None
 
     async def prepare():
-        first = await a.file_handler.prepare(a.executor, a.spec)
-        second = await b.file_handler.prepare(b.executor, b.spec)
+        first = await a.file_handler.prepare(await endpoint.resolve_mapping(a.spec.launch), a.spec)
+        second = await b.file_handler.prepare(await endpoint.resolve_mapping(b.spec.launch), b.spec)
         return first, second
 
     first, second = asyncio.run(prepare())
@@ -138,9 +138,9 @@ def test_collect_continues_after_one_output_download_fails(tmp_path):
         mapping=FileMapping(str(local), str(remote)),
     )
     endpoint = RemoteEndpointExecutor(LocalTransport())
-    context = endpoint._context(endpoint, LaunchSpec(
+    context = asyncio.run(endpoint.resolve_mapping(LaunchSpec(
         local_root=str(local), remote_root=str(remote),
-    ))
+    )))
     original = endpoint.file_handler._sync_file
 
     async def fail_first(*args, **kwargs):
@@ -185,9 +185,9 @@ def test_collect_keeps_later_outputs_and_caches_after_missing_required_file(tmp_
         ),
     )
     endpoint = RemoteEndpointExecutor(LocalTransport())
-    context = endpoint._context(endpoint, LaunchSpec(
+    context = asyncio.run(endpoint.resolve_mapping(LaunchSpec(
         local_root=str(local), remote_root=str(remote), output_sync="always",
-    ))
+    )))
     collected, error = asyncio.run(endpoint.file_handler.collect(
         context, manifest, ExecutionOutcome(), required=True,
     ))
@@ -221,8 +221,7 @@ def test_materialized_manifest_can_download_and_rehydrate(tmp_path):
     frozen, error = materialize_manifest(manifest, remote=True)
     assert error is None
     endpoint = RemoteEndpointExecutor(LocalTransport())
-    context = endpoint._context(
-        endpoint, LaunchSpec(local_root=str(local), remote_root=str(remote)),
+    context = asyncio.run(endpoint.resolve_mapping(LaunchSpec(local_root=str(local), remote_root=str(remote)),
     )
     completed, error = asyncio.run(
         endpoint.file_handler.collect(context, frozen, ExecutionOutcome())
@@ -255,9 +254,9 @@ def test_collect_rejects_materialized_cache_output_collision_before_download(tmp
     frozen, error = materialize_manifest(manifest, remote=True)
     assert error is None
     endpoint = RemoteEndpointExecutor(LocalTransport())
-    context = endpoint._context(endpoint, LaunchSpec(
+    context = asyncio.run(endpoint.resolve_mapping(LaunchSpec(
         local_root=str(local), remote_root=str(remote),
-    ))
+    )))
     with pytest.raises(ValueError, match="Conflicting output/cache file destination"):
         asyncio.run(endpoint.file_handler.collect(
             context, frozen, ExecutionOutcome(), required=True,
@@ -331,9 +330,9 @@ def test_collect_rejects_two_remote_cache_sources_with_one_destination(tmp_path)
         FileEntry(str(local), "/remote/cache-b.pot"),
     ))
     endpoint = RemoteEndpointExecutor(LocalTransport())
-    context = endpoint._context(endpoint, LaunchSpec(
+    context = asyncio.run(endpoint.resolve_mapping(LaunchSpec(
         local_root=str(tmp_path), remote_root="/remote",
-    ))
+    )))
     with pytest.raises(ValueError, match="Conflicting cache sources"):
         asyncio.run(endpoint.file_handler.collect(
             context, manifest, ExecutionOutcome(),

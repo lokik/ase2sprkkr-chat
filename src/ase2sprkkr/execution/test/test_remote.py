@@ -484,31 +484,29 @@ def test_remote_cache_output_never_skips_download(tmp_path):
 def test_remote_sync_policy_rejects_unknown_value(tmp_path):
     endpoint = _executor()
     with pytest.raises(ValueError):
-        endpoint._context(
-            endpoint,
+        asyncio.run(endpoint.resolve_mapping(
             _launch(tmp_path, tmp_path / "remote", input_files="sometimes"),
-        )
+        ))
 
 
 def test_remote_directory_mapping_defaults_to_home():
     endpoint = _executor()
-    context = endpoint._context(endpoint, LaunchSpec())
+    context = asyncio.run(endpoint.resolve_mapping(LaunchSpec()))
     local = Path.home() / "calculations" / "Fe"
 
-    mapped = asyncio.run(context.map_path(local))
+    mapped = context.map_path(local)
 
     assert mapped == (Path.home() / "calculations" / "Fe").as_posix()
 
 
 def test_remote_directory_mapping_can_replace_remote_root(tmp_path):
     endpoint = _executor()
-    context = endpoint._context(
-        endpoint,
+    context = asyncio.run(endpoint.resolve_mapping(
         LaunchSpec(remote_root="/scratch/tester"),
-    )
+    ))
     local = Path.home() / "calculations" / "Fe"
 
-    mapped = asyncio.run(context.map_path(local))
+    mapped = context.map_path(local)
 
     assert mapped == "/scratch/tester/calculations/Fe"
 
@@ -517,15 +515,14 @@ def test_remote_directory_mapping_can_replace_both_roots(tmp_path):
     local_root = tmp_path / "local"
     local = local_root / "project" / "Fe"
     endpoint = _executor()
-    context = endpoint._context(
-        endpoint,
+    context = asyncio.run(endpoint.resolve_mapping(
         LaunchSpec(
             local_root=local_root,
             remote_root="/scratch/tester/projects",
         ),
-    )
+    ))
 
-    mapped = asyncio.run(context.map_path(local))
+    mapped = context.map_path(local)
 
     assert mapped == "/scratch/tester/projects/project/Fe"
 
@@ -533,13 +530,12 @@ def test_remote_directory_mapping_can_replace_both_roots(tmp_path):
 def test_remote_directory_mapping_rejects_path_outside_local_root(tmp_path):
     local_root = tmp_path / "local"
     endpoint = _executor()
-    context = endpoint._context(
-        endpoint,
+    context = asyncio.run(endpoint.resolve_mapping(
         LaunchSpec(local_root=local_root, remote_root="/scratch/tester"),
-    )
+    ))
 
     with pytest.raises(ValueError, match="outside mapped root"):
-        asyncio.run(context.map_path(tmp_path / "elsewhere"))
+        context.map_path(tmp_path / "elsewhere")
 
 
 def test_remote_none_stream_files_are_live_only(tmp_path):
