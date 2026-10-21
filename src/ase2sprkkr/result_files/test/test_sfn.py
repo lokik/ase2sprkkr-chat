@@ -250,6 +250,7 @@ def test_sfn_shape_reconstruction_and_plot_dispatch(tmp_path, parsed_sfn):
     output.plot_slice(
         separate_plots=True,
         filename=tmp_path / "shape.png",
+        dpi=72,
         plane="xy",
         n=21,
         colorbar=False,
