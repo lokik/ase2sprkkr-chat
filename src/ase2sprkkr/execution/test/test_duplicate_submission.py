@@ -298,3 +298,39 @@ def test_local_submission_detects_symlinked_output_alias(tmp_path, alias_kind):
     manager.reserve(first)
     with pytest.raises(DuplicateSubmissionError):
         manager.reserve(second)
+
+
+def test_local_submission_detects_hardlinked_output_alias(tmp_path):
+    """Distinct local names sharing an inode cannot be written concurrently."""
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    original = tmp_path / "source.out"
+    alias = tmp_path / "alias.out"
+    original.write_text("existing output")
+    import os
+    os.link(original, alias)
+
+    first = manager.new_record(
+        task="DOS", directory=tmp_path, dataset="one",
+        files=FileManifest(stdout=FileEntry(local_path=str(original))),
+    )
+    second = manager.new_record(
+        task="BSF", directory=tmp_path, dataset="two",
+        files=FileManifest(outputs=(FileEntry(local_path=str(alias)),)),
+    )
+    manager.reserve(first)
+    with pytest.raises(DuplicateSubmissionError):
+        manager.reserve(second)
+
+
+def test_scf_submission_detects_symlinked_working_directory(tmp_path):
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    work = tmp_path / "work"
+    work.mkdir()
+    alias = tmp_path / "work-alias"
+    alias.symlink_to(work, target_is_directory=True)
+
+    first = manager.new_record(task="SCF", directory=work)
+    second = manager.new_record(task="DOS", directory=alias)
+    manager.reserve(first)
+    with pytest.raises(DuplicateSubmissionError):
+        manager.reserve(second)
