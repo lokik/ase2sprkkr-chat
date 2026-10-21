@@ -14,7 +14,7 @@ def test_capture_freezes_wildcard_membership_and_detects_changed_bytes(tmp_path)
     snapshot = capture_result_files(declared)
     assert snapshot.captured_at is not None
     assert len(snapshot.output_versions) == 1
-    assert snapshot.output_versions[0].path == str(first)
+    assert snapshot.output_versions[0].path == first
     assert capture_result_files(snapshot) is snapshot
     assert missing_result_files(snapshot) == ()
     assert file_is_current(snapshot, str(first), snapshot.output_versions)
