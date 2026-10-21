@@ -315,50 +315,28 @@ def test_materialization_keeps_failed_wildcard_declaration(tmp_path, monkeypatch
     assert frozen.has_wildcards()
 
 
-def test_collect_rejects_two_remote_cache_sources_with_one_destination(tmp_path):
-    from ase2sprkkr.execution.base import ExecutionOutcome
-
+def test_manifest_rejects_two_remote_cache_sources_with_one_destination(tmp_path):
     local = tmp_path / "restart.pot"
     local.write_text("preserve")
-    manifest = FileManifest(caches=(
-        FileEntry(str(local), "/remote/cache-a.pot"),
-        FileEntry(str(local), "/remote/cache-b.pot"),
-    ))
-    endpoint = RemoteEndpointExecutor(LocalTransport())
-    context = asyncio.run(endpoint.resolve_files(LaunchSpec(
-        local_root=str(tmp_path), remote_root="/remote",
-    )))
-    with pytest.raises(ValueError, match="Conflicting cache sources"):
-        asyncio.run(endpoint.file_handler.collect(
-            manifest, ExecutionOutcome(),
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest(caches=(
+            FileEntry(str(local), "/remote/cache-a.pot"),
+            FileEntry(str(local), "/remote/cache-b.pot"),
         ))
     assert local.read_text() == "preserve"
 
-def test_collect_downloads_shared_remote_source_to_both_local_destinations(tmp_path):
-    """Deduplicate transfers, not distinct destinations for one source."""
-    from ase2sprkkr.execution.base import ExecutionOutcome
 
+def test_manifest_rejects_shared_remote_source_with_distinct_local_destinations(tmp_path):
     local, remote = tmp_path / "local", tmp_path / "remote"
     local.mkdir()
     remote.mkdir()
     source = remote / "shared.out"
-    source.write_text("result")
-    targets = (local / "first.out", local / "second.out")
-    manifest = FileManifest(outputs=tuple(
-        FileEntry(str(target), str(source), availability_state="pending")
-        for target in targets
-    ))
-    handler = RemoteEndpointExecutor(LocalTransport()).file_handler
-    mapping = FileManifest(local_root=str(local), remote_root=str(remote))
-    collected, error = asyncio.run(
-        handler.collect(manifest, ExecutionOutcome())
-    )
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest(outputs=(
+            FileEntry(str(local / "first.out"), str(source)),
+            FileEntry(str(local / "second.out"), str(source)),
+        ))
 
-    assert error is None
-    assert all(target.read_text() == "result" for target in targets)
-    assert [entry.availability_state for entry in collected.outputs] == [
-        "available", "available",
-    ]
 
 def test_always_input_sync_uploads_without_unnecessary_digest_checks(tmp_path):
     """ALWAYS does not need hashes of either the local or remote input."""
@@ -519,9 +497,10 @@ def test_collect_retries_available_file_only_if_local_copy_is_missing(tmp_path):
     source = remote / "result.dat"
     source.write_text("restored")
     destination = local / "result.dat"
-    manifest = FileManifest(outputs=(
-        FileEntry(str(destination), str(source), availability_state="available"),
-    ))
+    manifest = FileManifest(
+        outputs=(FileEntry(str(destination), str(source), availability_state="available"),),
+        local_root=str(local), remote_root=str(remote), output_sync="always",
+    )
     handler = RemoteEndpointExecutor(LocalTransport()).file_handler
     received, error = asyncio.run(handler.collect(
         manifest, ExecutionOutcome(), required=True,
