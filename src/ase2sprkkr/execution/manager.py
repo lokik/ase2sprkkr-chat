@@ -979,7 +979,6 @@ class PersistentRun:
         self.executor = executor
         self._record = record
         self._completion_lock = Lock()
-        self._completion_persisted = False
         self._monitor_record_version = record.updated_at
 
     @property
@@ -1047,7 +1046,7 @@ class PersistentRun:
                 self.executor, self._record.execution.endpoint,
             )
             with self._completion_lock:
-                if not self._completion_persisted:
+                if not self._record.state.is_terminal:
                     observed = run.state
                     if observed == RunState.FINISHED:
                         observed = RunState.POSTPROCESSING
@@ -1084,7 +1083,7 @@ class PersistentRun:
                     )
             elif run.backend_id is not None:
                 with self._completion_lock:
-                    if not self._completion_persisted:
+                    if not self._record.state.is_terminal:
                         self._record = self.manager.transition(
                             self._record, state=run.state,
                             execution=self._execution_for(run, self._record),
@@ -1094,16 +1093,11 @@ class PersistentRun:
             with self._lifecycle_lock:
                 self._submission_in_progress = False
 
-    def completed(self, run: CalculationRun):
-        """Durably record an observed completion before user notifications."""
-        self._sync_completion(run)
-        return self._record.state
-
     def attached(self, run: CalculationRun):
         """Synchronize an attached observation without resubmitting its job."""
         with self._completion_lock:
             state = run.state
-            if (not self._completion_persisted and run.backend_id is not None
+            if (not self._record.state.is_terminal and run.backend_id is not None
                     and state != RunState.NEW):
                 self._record = self.manager.transition(
                     self._record, state=state,
@@ -1115,12 +1109,11 @@ class PersistentRun:
         """A durable terminal record cannot be cancelled by a stale observer."""
         return not self._record.state.is_terminal
 
-    def _sync_completion(self, run):
-        # Callback and wait() can reach this path concurrently. Only the
-        # first successful durable completion may publish and acknowledge it.
+    def completed(self, run: CalculationRun):
+        """Persist one observation, taking idempotence from the durable record."""
         with self._completion_lock:
-            if self._completion_persisted:
-                return
+            if self._record.state.is_terminal:
+                return self._record.state
             state = run.state
             phase = _failure_phase(run.failure_phase)
             message = run.failure_message
@@ -1128,15 +1121,17 @@ class PersistentRun:
             if message is None and error is not None:
                 message = str(error)
             if state == RunState.UNKNOWN:
-                # The observer ended, not necessarily the calculation.
-                # No final file publication or completion timestamp.
+                # Repeated UNKNOWN is not a new backend observation. A fresh
+                # reattachment has its own PersistentRun and can recover it.
+                if self._record.state == RunState.UNKNOWN:
+                    return self._record.state
+                # A stale observer cannot overwrite a newer refresh.
                 self._record = self.manager.transition(
                     self._record, state=state, execution=self._execution_for(run, self._record),
                     message=message,
                     expected_updated_at=self._monitor_record_version,
                 )
-                self._completion_persisted = True
-                return
+                return self._record.state
             if not state.is_terminal:
                 return
             if state == RunState.FAILED and phase is None:
@@ -1164,8 +1159,7 @@ class PersistentRun:
                     except (OSError, RuntimeError):
                         pass
 
-            if self._record.state.is_terminal:
-                self._completion_persisted = True
+            return self._record.state
 
     def refresh(self):
         with self._completion_lock:
