@@ -217,3 +217,23 @@ def test_guarded_run_store_rejects_noncanonical_project_identity(tmp_path):
     custom = RunStore(tmp_path / "custom-runs")
     custom.save(aliased)
     assert custom.get(aliased.id) == aliased
+
+
+def test_guarded_run_store_rejects_missing_or_foreign_project_id(tmp_path):
+    """Stale caller metadata must not bypass the persisted run's guard."""
+    projects = ProjectRepository(tmp_path / "projects")
+    project = projects.create("First")
+    another = projects.create("Second")
+    manager = ExecutionManager(project_repository=projects, project=project)
+    original = manager.new_record(task="DOS", directory=tmp_path / "work")
+    manager.store.save(original)
+
+    for bad_id in (None, another.id):
+        forged = replace(original, project_id=bad_id)
+        with pytest.raises(ValueError, match="project ID|project identity"):
+            manager.store.update(forged, lambda latest: latest)
+        assert manager.store.get(original.id) == original
+
+    with pytest.raises(ValueError, match="canonical project ID"):
+        manager.store.save(replace(original, project_id=None))
+    assert manager.store.get(original.id) == original

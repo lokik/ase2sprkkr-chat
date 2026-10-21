@@ -230,9 +230,11 @@ class RunStore:
     @contextmanager
     def _project_guard(self, record):
         """Exclude project deletion while writing its canonical run history."""
-        if self.projects_directory is None or record.project_id is None:
+        if self.projects_directory is None:
             yield
             return
+        if record.project_id is None:
+            raise ValueError("Project run history requires a canonical project ID")
         project_id = _project_id(record.project_id)
         if record.project_id != project_id:
             raise ValueError("Project run history requires a canonical project ID")
@@ -317,14 +319,24 @@ class RunStore:
             return self._write_unlocked(record)
 
     def update(self, record: RunRecord, updater):
-        with self._lock, self._project_guard(record), FileLock(self._run_lock_path(record)):
+        with self._lock:
             path = self._path(record)
-            latest = self._decode(path) if path.is_file() else record
-            updated = updater(latest)
-            if (updated.id != latest.id or updated.created_at != latest.created_at
-                    or updated.project_id != latest.project_id):
-                raise ValueError("Run update cannot change persistent identity")
-            return self._write_unlocked(updated)
+            if self.projects_directory is not None and path.is_file():
+                # Do not lock a caller-supplied project instead of the
+                # persisted run's actual project.
+                persisted = self._decode(path)
+                if persisted.project_id != record.project_id:
+                    raise ValueError("Run update cannot change persistent project identity")
+            with self._project_guard(record), FileLock(self._run_lock_path(record)):
+                latest = self._decode(path) if path.is_file() else record
+                if (self.projects_directory is not None
+                        and latest.project_id != record.project_id):
+                    raise ValueError("Run update cannot change persistent project identity")
+                updated = updater(latest)
+                if (updated.id != latest.id or updated.created_at != latest.created_at
+                        or updated.project_id != latest.project_id):
+                    raise ValueError("Run update cannot change persistent identity")
+                return self._write_unlocked(updated)
 
     def get(self, run_id):
         return self._decode(self._path_for_id(run_id))
