@@ -295,8 +295,41 @@ class CalculationRun:
             start = getattr(self._runner, "start", None)
             if start is not None:
                 start()
-        else:
+            return
+        if self.hooks is None:
             self._runner.submit()
+            return
+
+        # All persistent transaction barriers are sequenced by this one
+        # lifecycle owner. The project layer never submits the backend itself.
+        backend_attempted = False
+        try:
+            self.hooks.before_submit(self)
+            preflight = getattr(self._runner, "prepare_submission", None)
+            if preflight is not None:
+                try:
+                    preflight()
+                except Exception as exc:
+                    if isinstance(exc, SubmissionNotStarted):
+                        raise
+                    raise SubmissionNotStarted(str(exc)) from exc
+                self.hooks.prepared(self)
+            if self.cancellation_requested:
+                raise asyncio.CancelledError("Run was cancelled before backend submission")
+            backend_attempted = True
+            self._runner.submit()
+            self.hooks.submitted(self)
+        except BaseException as exc:
+            try:
+                self.hooks.submission_failed(
+                    self, exc, uncertain=backend_attempted,
+                )
+            except BaseException as hook_exc:
+                # A persistence failure must not erase the original
+                # submission error, especially after an uncertain launch.
+                if hasattr(exc, "add_note"):
+                    exc.add_note(f"Submission persistence also failed: {hook_exc!r}")
+            raise
 
     def _start_submission(self, *, attached=False):
         with self._lock:
