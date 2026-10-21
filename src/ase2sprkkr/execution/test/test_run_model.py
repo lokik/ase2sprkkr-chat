@@ -350,3 +350,22 @@ def test_launch_sync_policies_are_validated_and_serialized(name, policy):
 def test_launch_rejects_unknown_sync_policies(name):
     with pytest.raises(ValueError, match="synchronization policy"):
         LaunchSpec(**{name: "unsupported"})
+
+
+def test_manifest_accepts_output_that_is_also_stdout_or_stderr():
+    shared = FileEntry("/local/run.out", "/remote/run.out")
+    manifest = FileManifest(stdout=shared, outputs=(shared,))
+    assert manifest.stdout == manifest.outputs[0]
+    assert len(manifest.files) == 1
+
+    errors = FileEntry("/local/run.err", "/remote/run.err")
+    manifest = FileManifest(stderr=errors, outputs=(errors,))
+    assert manifest.stderr == manifest.outputs[0]
+
+
+def test_manifest_rejects_stream_output_remote_source_disagreement():
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest(
+            stdout=FileEntry("/local/run.out", "/remote/run.out"),
+            outputs=(FileEntry("/local/run.out", "/remote/another.out"),),
+        )
