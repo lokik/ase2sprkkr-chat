@@ -1039,12 +1039,6 @@ class PersistentRun:
             return self._record.state
         return self._record.state if self._record.state.is_terminal else state
 
-    def add_output_listener(self, callback):
-        return self._runner.add_output_listener(callback)
-
-    def add_output_error_listener(self, callback):
-        return self._runner.add_output_error_listener(callback)
-
     def before_submit(self, run: CalculationRun):
         """Reserve the run atomically before any backend file staging."""
         with self._lifecycle_lock:
@@ -1143,22 +1137,6 @@ class PersistentRun:
         """Compatibility entry point; CalculationRun owns submission."""
         return self._runner.submit()
 
-    def start(self):
-        self._runner.start()
-        with self._completion_lock:
-            # An attached PSI/J job can initially report NEW before the
-            # scheduler provides its actual state.
-            state = self._runner.state
-            if (not self._completion_persisted and self.backend_id is not None
-                    and state != RunState.NEW):
-                self._record = self.manager.transition(
-                    self._record,
-                    state=state,
-                    execution=self.execution,
-                    failure_phase=self.failure_phase,
-                )
-                self._monitor_record_version = self._record.updated_at
-
     def completed(self, run: CalculationRun):
         """Durably record an observed completion before user notifications."""
         self._sync_completion(run.result)
@@ -1243,35 +1221,10 @@ class PersistentRun:
                              and self._runner.persistence_error is not None)):
                 self._sync_completion(self.result)
 
-    def run(self):
-        if self._runner.state == RunState.CANCELLED and self._record.state == RunState.NEW:
-            raise RuntimeError("Run was cancelled before submission")
-        if self._record.state == RunState.NEW:
-            self.submit()
-        return self.wait()
-
-    def close(self):
-        """Release an unsubmitted project's prepared resources."""
-        with self._lifecycle_lock:
-            if self._submission_in_progress or self._record.state != RunState.NEW:
-                raise RuntimeError("Cannot close a submitted project run")
-            return self._runner.close()
-
-    async def run_async(self):
-        return await asyncio.to_thread(self.run)
-
     def refresh(self):
         with self._completion_lock:
             self._record = self.manager.refresh((self._record,))[0]
             return self._record
-
-    def stop_observation(self):
-        """Detach this client without cancelling its still-running job.
-
-        The completion callback persists a recoverable UNKNOWN observation.
-        Call wait() to ensure the monitor has finished and been detached.
-        """
-        return self._runner.stop_observation()
 
     def cancel(self):
         # The persisted terminal state is final. In particular, never request
