@@ -1,5 +1,6 @@
 """Shared file strategies have no mutable state belonging to individual runs."""
 import asyncio
+from dataclasses import replace
 
 import pytest
 
@@ -255,7 +256,7 @@ def test_collect_rejects_materialized_cache_output_collision_before_download(tmp
     )))
     with pytest.raises(ValueError, match="Conflicting output/cache file destination"):
         asyncio.run(endpoint.file_handler.collect(
-            context, frozen, ExecutionOutcome(), required=True,
+            frozen, ExecutionOutcome(), required=True,
         ))
     assert destination.read_text() == "original local value"
 
@@ -329,7 +330,7 @@ def test_collect_rejects_two_remote_cache_sources_with_one_destination(tmp_path)
     )))
     with pytest.raises(ValueError, match="Conflicting cache sources"):
         asyncio.run(endpoint.file_handler.collect(
-            context, manifest, ExecutionOutcome(),
+            manifest, ExecutionOutcome(),
         ))
     assert local.read_text() == "preserve"
 
@@ -412,8 +413,7 @@ def test_cheap_remote_sync_decisions_do_not_hash_files(tmp_path, monkeypatch):
         source.write_text("remote")
         if local_exists:
             target.write_text("local")
-        mapping = FileManifest(local_root=str(local), remote_root=str(remote), output_sync=policy)
-        manifest = FileManifest(outputs=(
+        manifest = FileManifest(local_root=str(local), remote_root=str(remote), output_sync=policy, outputs=(
             FileEntry(str(target), str(source), availability_state="pending"),
         ))
         result, error = asyncio.run(handler.collect(
@@ -448,7 +448,7 @@ def test_cache_missing_policy_uses_signature_and_local_existence(tmp_path, monke
         FileEntry(str(target), str(source), pre_run_signature=(0, 0)),
     ))
     handler = RemoteEndpointExecutor(NoDigestTransport()).file_handler
-    mapping = FileManifest(local_root=str(local), remote_root=str(remote), output_sync="missing")
+    manifest = replace(manifest, local_root=str(local), remote_root=str(remote), output_sync="missing")
 
     first, error = asyncio.run(handler.collect(manifest, ExecutionOutcome()))
     assert error is None
@@ -523,7 +523,6 @@ def test_collect_retries_available_file_only_if_local_copy_is_missing(tmp_path):
         FileEntry(str(destination), str(source), availability_state="available"),
     ))
     handler = RemoteEndpointExecutor(LocalTransport()).file_handler
-    mapping = FileManifest(local_root=str(local), remote_root=str(remote), output_sync="always")
     received, error = asyncio.run(handler.collect(
         manifest, ExecutionOutcome(), required=True,
     ))
