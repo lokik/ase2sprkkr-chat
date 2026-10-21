@@ -100,7 +100,6 @@ class RemoteFileHandler:
             raise FileNotFoundError(
                 f"Local input pattern did not match any files: {source}"
             )
-        uploads = []
         for match in matches:
             # Expand a declared wildcard relative to its frozen remote target,
             # rather than remapping the local workspace a second time.
@@ -117,12 +116,8 @@ class RemoteFileHandler:
             relative = os.path.relpath(match, root)
             remote = posixpath.join(remote_root, *PurePosixPath(relative).parts)
             await self._stage_file(
-                mapping, spec, match, used, uploads=uploads, required=required,
+                mapping, spec, match, used, required=required,
                 remote_path=remote,
-            )
-        if uploads:
-            await self.transport.put_files(
-                uploads, mapping.local_root, mapping.remote_root,
             )
 
     async def _prepare_cache_files(self, mapping, spec, used, cache_entries):

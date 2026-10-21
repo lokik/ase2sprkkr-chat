@@ -459,7 +459,7 @@ def test_remote_cache_never_policy_skips_only_requested_direction(tmp_path, dire
 def test_remote_sync_policy_rejects_unknown_value(tmp_path):
     endpoint = _executor()
     with pytest.raises(ValueError):
-        asyncio.run(endpoint.resolve_mapping(
+        asyncio.run(endpoint.resolve_files(
             _launch(tmp_path, tmp_path / "remote", input_files="sometimes"),
         ))
 
@@ -481,14 +481,14 @@ def test_remote_directory_mapping(tmp_path, root_mode, remote_root, expected):
     else:
         local = Path.home() / "calculations" / "Fe"
         launch = LaunchSpec() if remote_root is None else LaunchSpec(remote_root=remote_root)
-    context = asyncio.run(endpoint.resolve_mapping(launch))
+    context = asyncio.run(endpoint.resolve_files(launch))
     assert context.map_path(local) == expected
 
 
 def test_remote_directory_mapping_rejects_path_outside_local_root(tmp_path):
     local_root = tmp_path / "local"
     endpoint = _executor()
-    context = asyncio.run(endpoint.resolve_mapping(
+    context = asyncio.run(endpoint.resolve_files(
         LaunchSpec(local_root=local_root, remote_root="/scratch/tester"),
     ))
 

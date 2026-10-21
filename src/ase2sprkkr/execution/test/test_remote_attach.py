@@ -198,7 +198,7 @@ def test_remote_attach_preserves_existing_partial_stream(tmp_path, monkeypatch):
     local_output = local_root / "run.out"
     local_output.write_bytes(b"partial")
     endpoint = _executor()
-    mapping = asyncio.run(endpoint.resolve_mapping(_launch(local_root, remote_root)))
+    mapping = asyncio.run(endpoint.resolve_files(_launch(local_root, remote_root)))
     run = RunRecord(
         id="partial", task="SCF", state=RunState.RUNNING,
         created_at="2026-10-13T08:00:00+00:00",

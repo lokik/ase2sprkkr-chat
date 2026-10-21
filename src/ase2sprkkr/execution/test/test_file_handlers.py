@@ -136,7 +136,7 @@ def test_collect_continues_after_one_output_download_fails(tmp_path):
         local_root=str(local), remote_root=str(remote),
     )
     endpoint = RemoteEndpointExecutor(LocalTransport())
-    context = asyncio.run(endpoint.resolve_mapping(LaunchSpec(
+    context = asyncio.run(endpoint.resolve_files(LaunchSpec(
         local_root=str(local), remote_root=str(remote),
     )))
     original = endpoint.file_handler._sync_file
@@ -183,7 +183,7 @@ def test_collect_keeps_later_outputs_and_caches_after_missing_required_file(tmp_
         ),
     )
     endpoint = RemoteEndpointExecutor(LocalTransport())
-    context = asyncio.run(endpoint.resolve_mapping(LaunchSpec(
+    context = asyncio.run(endpoint.resolve_files(LaunchSpec(
         local_root=str(local), remote_root=str(remote), output_sync="always",
     )))
     collected, error = asyncio.run(endpoint.file_handler.collect(
@@ -218,7 +218,7 @@ def test_materialized_manifest_can_download_and_rehydrate(tmp_path):
     frozen, error = materialize_manifest(manifest, remote=True)
     assert error is None
     endpoint = RemoteEndpointExecutor(LocalTransport())
-    context = asyncio.run(endpoint.resolve_mapping(
+    context = asyncio.run(endpoint.resolve_files(
         LaunchSpec(local_root=str(local), remote_root=str(remote)),
     ))
     completed, error = asyncio.run(
@@ -251,7 +251,7 @@ def test_collect_rejects_materialized_cache_output_collision_before_download(tmp
     frozen, error = materialize_manifest(manifest, remote=True)
     assert error is None
     endpoint = RemoteEndpointExecutor(LocalTransport())
-    context = asyncio.run(endpoint.resolve_mapping(LaunchSpec(
+    context = asyncio.run(endpoint.resolve_files(LaunchSpec(
         local_root=str(local), remote_root=str(remote),
     )))
     with pytest.raises(ValueError, match="Conflicting output/cache file destination"):
@@ -325,7 +325,7 @@ def test_collect_rejects_two_remote_cache_sources_with_one_destination(tmp_path)
         FileEntry(str(local), "/remote/cache-b.pot"),
     ))
     endpoint = RemoteEndpointExecutor(LocalTransport())
-    context = asyncio.run(endpoint.resolve_mapping(LaunchSpec(
+    context = asyncio.run(endpoint.resolve_files(LaunchSpec(
         local_root=str(tmp_path), remote_root="/remote",
     )))
     with pytest.raises(ValueError, match="Conflicting cache sources"):

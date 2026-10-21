@@ -65,8 +65,8 @@ class RemoteEndpointExecutor(Executor):
             backend_options=self.backend_options,
         )
 
-    async def resolve_mapping(self, launch):
-        """Resolve a run's workspace once for transfer and persistence."""
+    async def resolve_files(self, launch, files=None):
+        """Resolve target paths once into the authoritative file manifest."""
         if not isinstance(launch, LaunchSpec):
             launch = LaunchSpec(**dict(launch))
         local_root = Path(launch.local_root or Path.home()).expanduser().resolve()
@@ -79,7 +79,7 @@ class RemoteEndpointExecutor(Executor):
             remote_root = posixpath.normpath(root)
         else:
             remote_root = posixpath.join(await self.connection.remote_home(), root)
-        return FileManifest(
+        return (files if files is not None else FileManifest()).with_remote(
             local_root=os.fspath(local_root),
             remote_root=posixpath.normpath(remote_root),
             input_sync=launch.input_sync,
@@ -93,13 +93,9 @@ class RemoteEndpointExecutor(Executor):
             raise ValueError("Remote run lacks backend identity or working directory")
 
     def reservation_context(self, spec, files):
-        """Resolve the remote targets into the one authoritative file manifest."""
-        context = _run_sync(self.resolve_mapping(spec.launch))
-        prepared = files.with_remote(
-            local_root=context.local_root, remote_root=context.remote_root,
-            input_sync=context.input_sync, output_sync=context.output_sync,
-        )
-        return prepared, prepared.map_path(spec.directory)
+        """Resolve all targets before persisting the submission."""
+        manifest = _run_sync(self.resolve_files(spec.launch, files))
+        return manifest, manifest.map_path(spec.directory)
 
     def submission_directory(self, spec):
         launch = spec.launch

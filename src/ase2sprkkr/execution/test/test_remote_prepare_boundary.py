@@ -92,7 +92,7 @@ def test_remote_manifest_uses_same_declarations_as_local(tmp_path):
     executor = RemoteEndpointExecutor(LocalTransport())
     runner = executor.create_run(spec)
     async def prepare_files():
-        context = await executor.resolve_mapping(runner.spec.launch)
+        context = await executor.resolve_files(runner.spec.launch)
         manifest = FileManifest.from_spec(runner.spec).with_remote(
             local_root=context.local_root, remote_root=context.remote_root,
             input_sync=context.input_sync, output_sync=context.output_sync,

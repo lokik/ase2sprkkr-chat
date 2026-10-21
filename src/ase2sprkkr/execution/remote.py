@@ -246,11 +246,7 @@ class RemoteRunner(ManagedRunner):
             if manifest is None:
                 manifest = FileManifest.from_spec(self.spec)
             if manifest.remote_root is None:
-                context = await self.executor.resolve_mapping(self.spec.launch)
-                manifest = manifest.with_remote(
-                    local_root=context.local_root, remote_root=context.remote_root,
-                    input_sync=context.input_sync, output_sync=context.output_sync,
-                )
+                manifest = await self.executor.resolve_files(self.spec.launch, manifest)
             remote_directory = manifest.map_path(self.spec.directory)
             await self.executor.transport.run(("mkdir", "-p", "--", remote_directory))
             manifest = await self.file_handler.prepare(manifest, self.spec)
