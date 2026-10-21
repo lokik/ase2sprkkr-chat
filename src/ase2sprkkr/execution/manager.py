@@ -254,6 +254,9 @@ class RunStore:
         return self.directory / self._bucket(record.created_at) / f"{record.id}.json"
 
     def _run_lock_path(self, record):
+        if self.projects_directory is not None:
+            # A run ID is global even when its records occupy different days.
+            return self.directory / f".{record.id}.lock"
         path = self._path(record)
         return path.with_name(f".{record.id}.lock")
 
@@ -314,30 +317,32 @@ class RunStore:
         with self._lock, FileLock(self.directory / ".submit.lock"):
             yield
 
-    def _check_persisted_project(self, record, path):
-        """A run ID may not be rewritten under a different project guard."""
-        if self.projects_directory is not None and path.is_file():
-            persisted = self._decode(path)
-            if persisted.project_id != record.project_id:
+    def _check_persisted_project(self, record):
+        """Enforce one project per run ID, across every date shard.
+
+        Call under the global per-ID file lock for repository-owned stores.
+        Standalone stores retain their date-sharded write semantics.
+        """
+        if self.projects_directory is None:
+            return
+        filename = f"{record.id}.json"
+        for day in self._day_directories(newest=False):
+            path = day / filename
+            if path.is_file() and self._decode(path).project_id != record.project_id:
                 raise ValueError("Run write cannot change persistent project identity")
 
     def save(self, record: RunRecord):
-        with self._lock:
-            path = self._path(record)
-            self._check_persisted_project(record, path)
-            with self._project_guard(record), FileLock(self._run_lock_path(record)):
-                self._check_persisted_project(record, path)
+        with self._lock, FileLock(self._run_lock_path(record)):
+            self._check_persisted_project(record)
+            with self._project_guard(record):
                 return self._write_unlocked(record)
 
     def update(self, record: RunRecord, updater):
-        with self._lock:
-            path = self._path(record)
-            self._check_persisted_project(record, path)
-            with self._project_guard(record), FileLock(self._run_lock_path(record)):
+        with self._lock, FileLock(self._run_lock_path(record)):
+            self._check_persisted_project(record)
+            with self._project_guard(record):
+                path = self._path(record)
                 latest = self._decode(path) if path.is_file() else record
-                if (self.projects_directory is not None
-                        and latest.project_id != record.project_id):
-                    raise ValueError("Run write cannot change persistent project identity")
                 updated = updater(latest)
                 if (updated.id != latest.id or updated.created_at != latest.created_at
                         or updated.project_id != latest.project_id):
