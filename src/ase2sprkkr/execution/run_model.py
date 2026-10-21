@@ -239,17 +239,13 @@ class FileManifest:
 
     def __post_init__(self):
         for name in ("inputs", "outputs", "caches"):
-            items = getattr(self, name)
-            def entry(value):
-                if isinstance(value, FileEntry):
-                    return value
-                # Previously persisted CacheEntry layout.
-                if name == "caches" and isinstance(value, dict) and "file" in value:
-                    return FileEntry(**dict(
-                        value["file"], pre_run_signature=value.get("before"),
-                    ))
-                return FileEntry(**value)
-            object.__setattr__(self, name, tuple(entry(item) for item in items))
+            object.__setattr__(
+                self, name,
+                tuple(
+                    item if isinstance(item, FileEntry) else FileEntry(**item)
+                    for item in getattr(self, name)
+                ),
+            )
         for name in ("stdout", "stderr"):
             item = getattr(self, name)
             if isinstance(item, dict):
