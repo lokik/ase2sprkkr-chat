@@ -112,10 +112,11 @@ def test_psij_profile_creates_configured_executor(monkeypatch):
     created = []
 
     class FakePsijExecutor:
-        def __init__(self, backend, *, url=None):
+        def __init__(self, backend, *, url=None, poll_interval=None):
             self.backend = backend
             self.url = url
-            created.append((backend, url))
+            self.poll_interval = poll_interval
+            created.append((backend, url, poll_interval))
 
     monkeypatch.setattr("ase2sprkkr.execution.psij.PsijExecutor", FakePsijExecutor)
     monkeypatch.setattr(
@@ -132,7 +133,7 @@ def test_psij_profile_creates_configured_executor(monkeypatch):
     )
 
     assert isinstance(executor, FakePsijExecutor)
-    assert created == [("slurm", "local://scheduler")]
+    assert created == [("slurm", "local://scheduler", None)]
 
 
 def test_unknown_runtime_executor_is_rejected():
