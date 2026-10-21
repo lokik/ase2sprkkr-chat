@@ -221,8 +221,9 @@ def test_materialized_manifest_can_download_and_rehydrate(tmp_path):
     frozen, error = materialize_manifest(manifest, remote=True)
     assert error is None
     endpoint = RemoteEndpointExecutor(LocalTransport())
-    context = asyncio.run(endpoint.resolve_mapping(LaunchSpec(local_root=str(local), remote_root=str(remote)),
-    )
+    context = asyncio.run(endpoint.resolve_mapping(
+        LaunchSpec(local_root=str(local), remote_root=str(remote)),
+    ))
     completed, error = asyncio.run(
         endpoint.file_handler.collect(context, frozen, ExecutionOutcome())
     )
