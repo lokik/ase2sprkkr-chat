@@ -1,4 +1,4 @@
-"""Regression tests: artifact availability belongs to a role and source."""
+"""One file has one declaration, except explicitly merged output streams."""
 
 from dataclasses import asdict
 
@@ -7,60 +7,51 @@ import pytest
 from ase2sprkkr.execution.run_model import FileEntry, FileManifest
 
 
-def test_output_and_cache_sharing_local_destination_have_independent_states():
+@pytest.mark.parametrize("roles", ["output-cache", "different-output-sources"])
+def test_distinct_artifacts_cannot_target_one_local_file(roles):
     path = "/local/shared.dat"
-    manifest = FileManifest(
-        outputs=(FileEntry(path, "/remote/result.dat", "pending"),),
-        caches=(FileEntry(path, "/remote/cache.dat", "pending"),),
-    )
-    assert len(manifest.artifacts) == 2
-
-    with pytest.raises(ValueError, match="Ambiguous artifact destination"):
-        manifest.with_file_availability(path, "available")
-
-    changed = manifest.with_file_availability(
-        path, "failed", "cache transfer failed", kind="cache",
-    )
-    assert changed.outputs[0].availability_state == "pending"
-    assert changed.caches[0].availability_state == "failed"
-    assert changed.failed_artifacts == (changed.caches[0],)
-    assert changed.availability_state == "failed"
-    assert changed.availability_message == "cache transfer failed"
-    assert FileManifest(**asdict(changed)) == changed
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        if roles == "output-cache":
+            FileManifest(
+                outputs=(FileEntry(path, "/remote/result.dat"),),
+                caches=(FileEntry(path, "/remote/cache.dat"),),
+            )
+        else:
+            FileManifest(outputs=(
+                FileEntry(path, "/remote/first.dat"),
+                FileEntry(path, "/remote/second.dat"),
+            ))
 
 
-def test_distinct_remote_sources_at_same_local_path_require_disambiguation():
-    path = "/local/shared.log"
-    files = FileManifest(
-        stdout=FileEntry(path, "/remote/stdout", "pending"),
-        stderr=FileEntry(path, "/remote/stderr", "pending"),
-    )
-    with pytest.raises(ValueError, match="Ambiguous artifact destination"):
-        files.with_file_availability(path, "available")
-
-    updated = files.with_file_availability(
-        path, "failed", "stdout mismatch",
-        kind="output", remote_path="/remote/stdout",
-    )
-    assert updated.stdout.availability_state == "failed"
-    assert updated.stderr.availability_state == "pending"
-    assert updated.failed_artifacts == (updated.stdout,)
-    assert updated.availability_state == "failed"
+def test_merged_streams_require_same_remote_destination():
+    with pytest.raises(ValueError, match="Merged stdout/stderr"):
+        FileManifest(
+            stdout=FileEntry("/local/merged", "/remote/out"),
+            stderr=FileEntry("/local/merged", "/remote/err"),
+        )
 
 
-def test_shared_stream_identity_and_duplicate_output_alias_remain_synchronized():
+def test_shared_stream_identity_remains_one_artifact():
     path = "/local/shared.log"
     files = FileManifest(
         stdout=FileEntry(path, "/remote/shared", "pending"),
         stderr=FileEntry(path, "/remote/shared", "pending"),
-        outputs=(FileEntry(path, "/remote/shared", "pending"),),
     )
     updated = files.with_file_availability(path, "available")
     assert len(updated.artifacts) == 1
     assert updated.stdout.availability_state == "available"
     assert updated.stderr.availability_state == "available"
-    assert updated.outputs[0].availability_state == "available"
     assert FileManifest(**asdict(updated)) == updated
+
+
+def test_output_alias_of_merged_stream_is_rejected():
+    path = "/local/shared.log"
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest(
+            stdout=FileEntry(path, "/remote/shared"),
+            stderr=FileEntry(path, "/remote/shared"),
+            outputs=(FileEntry(path, "/remote/shared"),),
+        )
 
 
 def test_cache_only_path_updates_without_explicit_kind():
@@ -74,22 +65,10 @@ def test_cache_only_path_updates_without_explicit_kind():
     assert updated.caches[0].availability_message == "download failed"
 
 
-def test_conflicting_duplicate_states_are_not_lost_in_summary():
-    path = "/local/shared"
-    files = FileManifest(
-        stdout=FileEntry(path, "/remote/shared", "failed", "verification failed"),
-        stderr=FileEntry(path, "/remote/shared", "available"),
-    )
-    assert files.availability_state == "failed"
-    assert files.failed_artifacts == (files.stdout,)
-    assert len(files.artifacts) == 2
-
-
-def test_distinct_artifact_status_can_be_added_to_existing_other_role():
+def test_adding_output_for_cache_destination_is_rejected():
     path = "/local/shared"
     files = FileManifest(caches=(FileEntry(path, "/remote/cache", "pending"),))
-    updated = files.with_file_availability(
-        path, "available", remote_path="/remote/result", kind="output",
-    )
-    assert updated.caches == files.caches
-    assert updated.outputs == (FileEntry(path, "/remote/result", "available"),)
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        files.with_file_availability(
+            path, "available", remote_path="/remote/result", kind="output",
+        )

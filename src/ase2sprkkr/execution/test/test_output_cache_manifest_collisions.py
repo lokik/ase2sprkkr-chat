@@ -49,21 +49,21 @@ def test_output_cache_overlap_rejected_before_first_download(
             availability_state="pending",
         )
 
-    manifest = FileManifest(
-        outputs=(entry(output_pattern),),
-        caches=(entry(cache_pattern),),
-        mapping=FileMapping(str(local), str(remote)),
-    )
-    frozen, error = materialize_manifest(manifest, remote=True)
-    assert error is None
-    assert len(frozen.outputs) == len(frozen.caches) == 1
-    assert frozen.outputs[0].local_path == frozen.caches[0].local_path == str(destination)
-
     transport = RecordingTransport()
     handler = RemoteFileHandler(transport)
-    with pytest.raises(ValueError, match="Conflicting output/cache file destination"):
-        asyncio.run(handler.collect(manifest.mapping, frozen, ExecutionOutcome(), required=True))
-
+    # Exact duplicates fail at declaration. Overlaps introduced by wildcard
+    # materialization fail at the freeze boundary, before any download.
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        manifest = FileManifest(
+            outputs=(entry(output_pattern),),
+            caches=(entry(cache_pattern),),
+            mapping=FileMapping(str(local), str(remote)),
+        )
+        frozen, error = materialize_manifest(manifest, remote=True)
+        assert error is None
+        asyncio.run(handler.collect(
+            manifest.mapping, frozen, ExecutionOutcome(), required=True,
+        ))
     assert transport.downloads == []
     assert destination.read_text() == "preserve me"
 

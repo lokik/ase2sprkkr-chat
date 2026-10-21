@@ -209,41 +209,61 @@ def test_submitted_uses_execution_backend_id_validation():
         bound.submitted("other")
 
 
-def test_manifest_from_spec_normalizes_stream_overlaps(tmp_path):
+def test_manifest_from_spec_preserves_distinct_roles(tmp_path):
     from types import SimpleNamespace
 
     spec = SimpleNamespace(
-        directory=str(tmp_path),
-        input_file="input.inp",
-        input_files=("input.inp", "other.inp", "other.inp", None, object(), 1),
-        output_file="stdout.out", error_file="stderr.err",
-        output_files=("stdout.out", "stderr.err", "result.dat", "result.dat", None, object()),
-        cache_files=("restart.pot", "restart.pot", None, object()),
+        directory=str(tmp_path), input_file="input.inp",
+        input_files=("other.inp",), output_file="stdout.out",
+        error_file="stderr.err", output_files=("result.dat",),
+        cache_files=("restart.pot",),
     )
     files = FileManifest.from_spec(spec)
-    assert files.input_files == (str(tmp_path / "input.inp"), str(tmp_path / "other.inp"))
-    assert files.stdout.local_path == str(tmp_path / "stdout.out")
-    assert files.stderr.local_path == str(tmp_path / "stderr.err")
-    assert tuple(x.local_path for x in files.outputs) == (str(tmp_path / "result.dat"),)
+    assert files.input_files == (
+        str(tmp_path / "input.inp"), str(tmp_path / "other.inp"),
+    )
     assert files.output_files == (
-        str(tmp_path / "stdout.out"),
-        str(tmp_path / "stderr.err"),
+        str(tmp_path / "stdout.out"), str(tmp_path / "stderr.err"),
         str(tmp_path / "result.dat"),
     )
-    assert len(files.caches) == 1
     assert FileManifest(**asdict(files)) == files
 
 
-def test_legacy_duplicate_stderr_declaration_is_updated_together():
-    path = "/local/stderr"
-    files = FileManifest(
-        stderr=FileEntry(path, availability_state="pending"),
-        outputs=(FileEntry(path, availability_state="pending"),),
+@pytest.mark.parametrize("role,overlap", [
+    ("input_files", ("input.inp",)),
+    ("input_files", ("other.inp", "./other.inp")),
+    ("output_files", ("stdout.out",)),
+    ("output_files", ("result.dat", "./result.dat")),
+    ("cache_files", ("cache.dat", "./cache.dat")),
+    ("cache_files", ("input.inp",)),
+    ("cache_files", ("result.dat",)),
+])
+def test_duplicate_file_declarations_are_errors(tmp_path, role, overlap):
+    from types import SimpleNamespace
+
+    spec = SimpleNamespace(
+        directory=str(tmp_path), input_file="input.inp",
+        input_files=("other.inp",), output_file="stdout.out",
+        error_file="stderr.err", output_files=("result.dat",),
+        cache_files=(),
     )
-    updated = files.with_file_availability(path, "available")
-    assert updated.stderr.availability_state == "available"
-    assert updated.outputs[0].availability_state == "available"
-    assert updated.output_files == (path,)
+    setattr(spec, role, overlap)
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest.from_spec(spec)
+
+
+def test_only_stdout_and_stderr_may_share_a_file():
+    files = FileManifest(
+        stdout=FileEntry("/local/shared", "/remote/shared"),
+        stderr=FileEntry("/local/shared", "/remote/shared"),
+    )
+    assert len(files.artifacts) == 1
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest(
+            outputs=(FileEntry("/local/shared", "/remote/shared"),),
+            stdout=FileEntry("/local/shared", "/remote/shared"),
+        )
+
 
 def test_availability_enum_is_shared_between_model_and_manager():
     from ase2sprkkr.execution import ArtifactAvailabilityState

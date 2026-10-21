@@ -80,10 +80,10 @@ def test_remote_manifest_uses_same_declarations_as_local(tmp_path):
     remote = tmp_path / "target"
     spec = ExecutionSpec(
         argv=("ignored",), directory=str(directory),
-        input_file="main.inp", input_files=("main.inp", "main.inp", "extra.inp", "extra.inp"),
+        input_file="main.inp", input_files=("extra.inp",),
         output_file="main.out", error_file="main.err",
-        output_files=("main.out", "main.err", "one.dat", "one.dat", "two.dat"),
-        cache_files=("restart.pot", "restart.pot"),
+        output_files=("one.dat", "two.dat"),
+        cache_files=("restart.pot",),
         launch=LaunchSpec(local_root=str(tmp_path), remote_root=str(remote)),
     )
     (directory / "main.inp").write_text("main")
@@ -116,42 +116,18 @@ def test_remote_manifest_uses_same_declarations_as_local(tmp_path):
     assert len(manifest.caches) == 1
 
 
-def test_remote_file_preparation_deduplicates_paths_before_mapping(tmp_path):
-    """Exact and wildcard declarations share the same normalization rules."""
-    import asyncio
-
+def test_remote_file_preparation_rejects_duplicate_paths_before_mapping(tmp_path):
     directory = tmp_path / "work"
     directory.mkdir()
-    remote = tmp_path / "remote"
-    executor = RemoteEndpointExecutor(LocalTransport())
     spec = ExecutionSpec(
         argv=("ignored",), directory=str(directory),
         input_file=None, output_file="stdout.out",
-        output_files=(
-            None, "stdout.out", "one.dat", "./one.dat",
-            "cut-*.dat", "./cut-*.dat",
-        ),
-        cache_files=(
-            None, "restart.dat", "./restart.dat",
-            "checkpoint-*.dat", "./checkpoint-*.dat",
-        ),
-        launch=LaunchSpec(local_root=str(tmp_path), remote_root=str(remote)),
+        output_files=("one.dat", "./one.dat"),
+        launch=LaunchSpec(local_root=str(tmp_path),
+                          remote_root=str(tmp_path / "remote")),
     )
-    runner = executor.create_run(spec)
-
-    async def prepare_files():
-        mapping = await executor.resolve_mapping(runner.spec.launch)
-        return await runner.file_handler.prepare(mapping, runner.spec)
-
-    manifest = asyncio.run(prepare_files())
-    assert [e.remote_path for e in manifest.outputs if "*" in e.remote_path] == [
-        str(remote / "work" / "cut-*.dat")
-    ]
-    assert [c.remote_path for c in manifest.caches
-            if c.local_path and "*" in c.remote_path] == [
-        str(remote / "work" / "checkpoint-*.dat")
-    ]
-    assert manifest.caches
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest.from_spec(spec)
 
 
 @pytest.mark.parametrize("method", ("submit", "start"))

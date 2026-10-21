@@ -192,6 +192,56 @@ class FileMapping:
         return local
 
 
+def _same_local_file(first, second):
+    """Treat lexical aliases, symlinks and existing hardlinks as one file."""
+    import os
+
+    if first is None or second is None:
+        return False
+    a, b = os.fspath(first), os.fspath(second)
+    if os.path.realpath(a) == os.path.realpath(b):
+        return True
+    return os.path.exists(a) and os.path.exists(b) and os.path.samefile(a, b)
+
+
+def _validate_file_declarations(entries):
+    """Reject duplicate file identities, except intentionally merged streams.
+
+    primary_input is a reference to an inputs entry, not an extra declaration.
+    Remote-only cache baselines are metadata, not file declarations.
+    """
+    import posixpath
+
+    declared = []
+    for role, entry in entries:
+        if entry is None:
+            continue
+        if role == "cache" and entry.local_path is None:
+            continue
+        for previous_role, previous in declared:
+            same_local = _same_local_file(entry.local_path, previous.local_path)
+            same_remote = (
+                entry.remote_path is not None and previous.remote_path is not None
+                and posixpath.normpath(entry.remote_path)
+                == posixpath.normpath(previous.remote_path)
+            )
+            if not same_local and not same_remote:
+                continue
+            if {role, previous_role} == {"stdout", "stderr"}:
+                if (entry.local_path is None or previous.local_path is None
+                        or not same_local
+                        or (entry.remote_path is not None
+                            and previous.remote_path is not None
+                            and not same_remote)):
+                    raise ValueError("Merged stdout/stderr must share one file")
+                continue
+            raise ValueError(
+                f"Duplicate file declaration: {previous_role} and {role} "
+                f"refer to the same file"
+            )
+        declared.append((role, entry))
+
+
 @dataclass(frozen=True)
 class FileManifest:
     """All paths and cache baselines required for transfer and reconnect."""
@@ -218,21 +268,29 @@ class FileManifest:
         directory = os.path.abspath(os.fspath(spec.directory))
 
         def paths(*values):
-            return tuple(dict.fromkeys(
+            return tuple(
                 path for value in values
                 if (path := file_path(value, directory)) is not None
-            ))
+            )
 
         primary = file_path(spec.input_file, directory)
         inputs = paths(primary, *spec.input_files)
         stdin = file_path(spec.stdin, directory)
         stdout = file_path(getattr(spec, "output_file", None), directory)
         stderr = file_path(getattr(spec, "error_file", None), directory)
-        streams = {stdout, stderr}
-        outputs = (
-            path for path in paths(*getattr(spec, "output_files", ())) if path not in streams
-        )
+        outputs = paths(*getattr(spec, "output_files", ()))
         caches = paths(*getattr(spec, "cache_files", ()))
+
+        # Validate the user's declarations before primary_input becomes
+        # another metadata reference to the matching inputs entry.
+        _validate_file_declarations((
+            *(("input", FileEntry(local_path=x)) for x in inputs),
+            ("stdin", None if stdin is None else FileEntry(local_path=stdin)),
+            ("stdout", None if stdout is None else FileEntry(local_path=stdout)),
+            ("stderr", None if stderr is None else FileEntry(local_path=stderr)),
+            *(("output", FileEntry(local_path=x)) for x in outputs),
+            *(("cache", FileEntry(local_path=x)) for x in caches),
+        ))
         return cls(
             inputs=tuple(FileEntry(local_path=x) for x in inputs),
             primary_input=None if primary is None else FileEntry(local_path=primary),
@@ -266,6 +324,14 @@ class FileManifest:
                     for version in getattr(self, name)
                 ),
             )
+        _validate_file_declarations((
+            *(("input", entry) for entry in self.inputs),
+            ("stdin", self.stdin),
+            ("stdout", self.stdout),
+            ("stderr", self.stderr),
+            *(("output", entry) for entry in self.outputs),
+            *(("cache", entry) for entry in self.caches),
+        ))
     @property
     def artifacts(self):
         """Distinct artifact identities, preserving failures on shared paths.

@@ -877,27 +877,20 @@ def _create_sprkkr_run(
                 mpi=executor.resolve_mpi(profile.mpi)
             )
 
+        # Primary input and streams already have their own declaration fields.
+        # Repeating them in auxiliary declarations is an error, not an alias.
         input_files = tuple(
-            file
-            for file in (
-                prepared.input_file,
+            file for file in (
                 prepared.potential_file,
                 *input_parameters.input_files(prepared.directory),
-            )
-            if file is not None
+            ) if file is not None
         )
         output_files = tuple(
-            file
-            for file in (
-                prepared.output_file,
-                opened_error if opened_error is not prepared.output_file else None,
-                *input_parameters.output_files(prepared.directory),
-            )
+            file for file in input_parameters.output_files(prepared.directory)
             if file is not None
         )
         cache_files = tuple(
-            file
-            for file in input_parameters.cache_files(prepared.directory)
+            file for file in input_parameters.cache_files(prepared.directory)
             if file is not None
         )
 
