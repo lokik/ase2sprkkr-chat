@@ -102,18 +102,18 @@ class CalculationRun:
 
     @property
     def failure_phase(self):
-        return self._failure_phase or getattr(self._runner, "failure_phase", None)
+        return self._failure_phase or self._runner.failure_phase
 
     @property
     def failure_message(self):
-        return self._failure_message or getattr(self._runner, "failure_message", None)
+        return self._failure_message or self._runner.failure_message
 
     @property
     def return_code(self):
         value = getattr(self.result, "return_code", None)
         if value is not None:
             return value
-        return getattr(self._runner, "return_code", None)
+        return self._runner.return_code
 
     @property
     def state(self):
@@ -164,7 +164,7 @@ class CalculationRun:
                 elif raw_state == RunState.FAILED:
                     self._state = RunState.FAILED
                     self._failure_phase = (
-                        getattr(self._runner, "failure_phase", None)
+                        self._runner.failure_phase
                         or FailurePhase.EXECUTION
                     )
                     self._failure_message = getattr(
@@ -199,11 +199,11 @@ class CalculationRun:
             except BaseException as exc:
                 self._exception = exc
                 self._failure_phase = (
-                    getattr(self._runner, "failure_phase", None)
+                    self._runner.failure_phase
                     or FailurePhase.EXECUTION
                 )
                 self._failure_message = (
-                    getattr(self._runner, "failure_message", None) or str(exc)
+                    self._runner.failure_message or str(exc)
                 )
                 try:
                     cancelled = self._runner.state == RunState.CANCELLED
@@ -467,7 +467,7 @@ class CalculationRun:
         except BaseException as exc:
             if not self._done.is_set():
                 self._complete_observation(
-                    getattr(self._runner, "result", None), error=exc,
+                    self._runner.result, error=exc,
                 )
         else:
             if not self._done.is_set():
