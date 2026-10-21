@@ -481,7 +481,7 @@ class PsijRunner(ManagedRunner):
             )
         if read_error is not None and observed_state == RunState.FINISHED:
             self._observed_state = RunState.FAILED
-            self._failure_phase = FailurePhase.ARTIFACTS
+            self._failure_phase = FailurePhase.FILES
             self._failure_message = str(read_error)
             return self.result
         if read_error is not None:
@@ -493,7 +493,7 @@ class PsijRunner(ManagedRunner):
         except OSError as exc:
             if observed_state == RunState.FINISHED:
                 self._observed_state = RunState.FAILED
-                self._failure_phase = FailurePhase.ARTIFACTS
+                self._failure_phase = FailurePhase.FILES
                 self._failure_message = str(exc)
         return self.result
 

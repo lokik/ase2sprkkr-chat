@@ -34,7 +34,7 @@ from .pool import default_executor_pool
 from .projects import _project_id
 from .postprocessing import CalculationRun
 from .run_model import (
-    ArtifactAvailabilityState, Execution, WorkingDirectory, FileManifest,
+    FileAvailabilityState, Execution, WorkingDirectory, FileManifest,
 )
 from .transport import has_file_magic
 
@@ -56,10 +56,10 @@ _STATE_RANK = {
     RunState.CANCELLED: 6,
 }
 _UNCHANGED = object()
-_NO_ARTIFACTS_FAILURES = {
+_NO_FILES_FAILURES = {
     FailurePhase.SUBMISSION,
     FailurePhase.LAUNCH,
-    FailurePhase.ARTIFACTS,
+    FailurePhase.FILES,
     FailurePhase.DOWNLOAD,
 }
 
@@ -507,7 +507,7 @@ class ExecutionManager:
             if (state is not None and RunState(state) == RunState.UNKNOWN
                     and merged_state != RunState.UNKNOWN):
                 # Ignore the entire stale observation, including its message
-                # and artifact metadata, not merely its proposed state.
+                # and file metadata, not merely its proposed state.
                 return latest
             changes = {"state": merged_state, "updated_at": now}
             if not latest.state.is_terminal and merged_state.is_terminal:
@@ -547,9 +547,9 @@ class ExecutionManager:
 
         return self.store.update(record, merge)
 
-    def update_artifact_availability(self, record, path, state, message=None):
-        """Persist availability of one artifact without changing the run outcome."""
-        state = ArtifactAvailabilityState(state)
+    def update_file_availability(self, record, path, state, message=None):
+        """Persist availability of one file without changing the run outcome."""
+        state = FileAvailabilityState(state)
 
         def update(latest):
             return replace(
@@ -666,7 +666,7 @@ class ExecutionManager:
         return_code=None,
         message=None,
         failure_phase=None,
-        artifacts_available=False,
+        files_available=False,
         files=None,
         expected_record=None,
     ):
@@ -674,8 +674,8 @@ class ExecutionManager:
         phase = _failure_phase(failure_phase)
         result_files = record.files if files is None else files
 
-        if result_files is not None and result_files.failed_artifacts:
-            artifacts_available = False
+        if result_files is not None and result_files.failed_files:
+            files_available = False
             if state == RunState.FINISHED:
                 # The successful backend does not excuse a required download
                 # failure; the failed file retains the specific diagnostics.
@@ -683,14 +683,14 @@ class ExecutionManager:
                 phase = FailurePhase.DOWNLOAD
                 message = result_files.availability_message or message
 
-        if artifacts_available and result_files is not None:
+        if files_available and result_files is not None:
             try:
                 result_files = capture_result_files(result_files)
             except OSError as exc:
                 state = RunState.FAILED
-                phase = FailurePhase.ARTIFACTS
+                phase = FailurePhase.FILES
                 message = str(exc)
-                result_files = result_files._map_artifacts(
+                result_files = result_files._map_files(
                     lambda item: replace(
                         item, availability_state="failed",
                         availability_message=message,
@@ -725,9 +725,9 @@ class ExecutionManager:
                     or latest.files is None
                     or latest.files.captured_at is not None):
                 raise ValueError("Only failed downloads of successful backend jobs can be retried")
-            # Keep already transferred artifacts and all bytes on disk.
+            # Keep already transferred files and all bytes on disk.
             # Only failed transfers become eligible for a fresh attempt.
-            files = latest.files._map_artifacts(
+            files = latest.files._map_files(
                 lambda item: replace(
                     item, availability_state="pending",
                     availability_message=None,
@@ -741,7 +741,7 @@ class ExecutionManager:
         return self.store.update(record, reopen)
 
     def retry_postprocessing(self, run, process_result):
-        """Retry parsing captured artifacts, never submitting/attaching a backend.
+        """Retry parsing captured files, never submitting/attaching a backend.
 
         The durable FAILED -> POSTPROCESSING transition is atomic, so competing
         callers cannot both claim the same retry.
@@ -758,16 +758,16 @@ class ExecutionManager:
                     or latest.execution.backend_id is None):
                 raise ValueError("Only postprocessing failures of successful backend runs can be retried")
             if files is None or files.captured_at is None or files.output_file is None:
-                raise ValueError("Postprocessing retry requires captured output artifacts")
-            if files.failed_artifacts:
-                raise ValueError("Postprocessing retry requires locally available artifacts")
+                raise ValueError("Postprocessing retry requires captured output files")
+            if files.failed_files:
+                raise ValueError("Postprocessing retry requires locally available files")
             # Captured output is authoritative; input may no longer be present.
             if (not files.output_versions
                     or any(version.state() is not FileState.CURRENT
                            for version in files.output_versions)
                     or not file_is_current(files, files.output_file,
                                                  files.output_versions)):
-                raise ValueError("Postprocessing retry requires unchanged historical artifacts")
+                raise ValueError("Postprocessing retry requires unchanged historical files")
             return replace(
                 latest, state=RunState.POSTPROCESSING, finished_at=None,
                 failure_phase=None, message=None, updated_at=_now(),
@@ -788,20 +788,20 @@ class ExecutionManager:
             # historical result, even if it happened while parsing.
             if any(version.state() is not FileState.CURRENT
                    for version in files.output_versions):
-                raise RuntimeError("Historical artifacts changed during postprocessing retry")
+                raise RuntimeError("Historical files changed during postprocessing retry")
         except BaseException as exc:
             self.complete(
                 reopened, state=RunState.FAILED,
                 return_code=reopened.return_code,
                 message=str(exc), failure_phase=FailurePhase.POSTPROCESSING,
-                artifacts_available=False,
+                files_available=False,
                 expected_record=reopened,
             )
             raise
         self.complete(
             reopened, state=RunState.FINISHED,
             return_code=reopened.return_code, files=files,
-            artifacts_available=False, expected_record=reopened,
+            files_available=False, expected_record=reopened,
         )
         return result
 
@@ -838,7 +838,7 @@ class ExecutionManager:
                     )
                     if not staged.is_file():
                         raise FileNotFoundError(
-                            f"Historical artifact was not retrieved: {path}"
+                            f"Historical file was not retrieved: {path}"
                         )
                     if file_digest(staged) != version.digest:
                         raise HistoricalFileMismatchError(
@@ -846,8 +846,8 @@ class ExecutionManager:
                         )
                     os.replace(staged, path)
             except OSError as exc:
-                self.update_artifact_availability(
-                    record, path, ArtifactAvailabilityState.FAILED, str(exc),
+                self.update_file_availability(
+                    record, path, FileAvailabilityState.FAILED, str(exc),
                 )
                 raise
             finally:
@@ -855,13 +855,13 @@ class ExecutionManager:
                     staged.unlink(missing_ok=True)
             refreshed = self.store.get(record.id)
             if path in missing_result_files(refreshed.files):
-                record = self.update_artifact_availability(
-                    refreshed, path, ArtifactAvailabilityState.FAILED,
-                    "Historical artifact is still missing",
+                record = self.update_file_availability(
+                    refreshed, path, FileAvailabilityState.FAILED,
+                    "Historical file is still missing",
                 )
             else:
-                record = self.update_artifact_availability(
-                    refreshed, path, ArtifactAvailabilityState.AVAILABLE,
+                record = self.update_file_availability(
+                    refreshed, path, FileAvailabilityState.AVAILABLE,
                 )
         return record
 
@@ -1109,7 +1109,7 @@ class ProjectRunner:
                     state=RunState.FAILED,
                     message=message,
                     failure_phase=phase,
-                    artifacts_available=False,
+                    files_available=False,
                 )
                 raise
             except asyncio.CancelledError:
@@ -1120,7 +1120,7 @@ class ProjectRunner:
                     if self._record.state != RunState.CANCELLED:
                         self._record = self.manager.complete(
                             self._record, state=RunState.CANCELLED,
-                            artifacts_available=False,
+                            files_available=False,
                         )
                 # After backend submit was attempted, acceptance is uncertain.
                 # Keep SUBMITTING for recovery rather than allowing a retry.
@@ -1138,7 +1138,7 @@ class ProjectRunner:
                         self._record = self.manager.complete(
                             self._record, state=RunState.FAILED,
                             message=str(exc), failure_phase=FailurePhase.SUBMISSION,
-                            artifacts_available=False,
+                            files_available=False,
                         )
                     except Exception:
                         # Storage itself may be unavailable. Preserve the
@@ -1214,7 +1214,7 @@ class ProjectRunner:
                 message = str(error)
             if state == RunState.UNKNOWN:
                 # The observer ended, not necessarily the calculation.
-                # No final artifact publication or completion timestamp.
+                # No final file publication or completion timestamp.
                 self._record = self.manager.transition(
                     self._record, state=state, execution=self.execution,
                     message=message,
@@ -1227,7 +1227,7 @@ class ProjectRunner:
             if state == RunState.FAILED and phase is None:
                 phase = FailurePhase.EXECUTION
 
-            artifacts_available = phase not in _NO_ARTIFACTS_FAILURES
+            files_available = phase not in _NO_FILES_FAILURES
             self._record = self.manager.complete(
                 self._record,
                 state=state,
@@ -1235,7 +1235,7 @@ class ProjectRunner:
                 return_code=self._runner.return_code,
                 message=message,
                 failure_phase=phase,
-                artifacts_available=artifacts_available,
+                files_available=files_available,
                 files=self.files,
             )
             # ACK is strictly after RunStore's crash-durable terminal transition.

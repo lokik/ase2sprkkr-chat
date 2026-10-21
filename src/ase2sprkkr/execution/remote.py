@@ -1,4 +1,4 @@
-"""Client-side remote execution staging, streaming and artifact synchronization."""
+"""Client-side remote execution staging, streaming and file synchronization."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class RemoteRunner(ManagedRunner):
     """Client-side raw execution identified by an opaque backend ID.
 
     The remote target owns only backend facts. This runner owns staging,
-    streaming and the explicit ``DOWNLOADING`` phase in which declared artifacts
+    streaming and the explicit ``DOWNLOADING`` phase in which declared files
     become locally available. It performs no task-specific parsing.
     """
 
@@ -67,7 +67,7 @@ class RemoteRunner(ManagedRunner):
     def state(self):
         # Once monitoring has started, only the client monitor may advance from
         # backend execution into DOWNLOADING. A direct backend query must never
-        # expose FINISHED before artifacts are locally available.
+        # expose FINISHED before files are locally available.
         if self._thread is not None:
             return self._state
         if (self._backend_id is None or self._state in (RunState.NEW, RunState.DOWNLOADING)
@@ -85,7 +85,7 @@ class RemoteRunner(ManagedRunner):
     def _mark_pending_files_failed(self, message):
         if self._files is None:
             return
-        for entry in self._files.artifacts:
+        for entry in self._files.files:
             if entry.availability_state in (None, "pending"):
                 self._files = self._files.with_file_availability(
                     entry.local_path, "failed", message,
@@ -172,7 +172,7 @@ class RemoteRunner(ManagedRunner):
                 received = FileManifest(**status["files"])
                 availability = {
                     (entry.local_path, entry.remote_path): entry
-                    for entry in self._files.artifacts
+                    for entry in self._files.files
                 } if self._files is not None else {}
 
                 def preserve(entry):
@@ -186,7 +186,7 @@ class RemoteRunner(ManagedRunner):
                         availability_message=prior.availability_message,
                     )
 
-                self._files = received._map_artifacts(preserve)
+                self._files = received._map_files(preserve)
             freeze_error = (
                 RuntimeError(status["materialization_error"])
                 if status.get("materialization_error") else None
@@ -212,7 +212,7 @@ class RemoteRunner(ManagedRunner):
             return
 
         if self._files is not None:
-            for entry in self._files.artifacts:
+            for entry in self._files.files:
                 if entry.availability_state == "pending":
                     self._files = self._files.with_file_availability(
                         entry.local_path, "available",

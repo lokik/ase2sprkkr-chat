@@ -1,6 +1,6 @@
 """Lifecycle of a reconnectable calculation, independent of its transport.
 
-Local project and SSH executions differ in staging, FOLLOW delivery, artifact
+Local project and SSH executions differ in staging, FOLLOW delivery, file
 synchronization and backend cancellation, not in client state ownership,
 observer/callback dispatch or cancellation coordination.
 Non-reconnectable LocalRunner intentionally does not inherit this class.
@@ -91,7 +91,7 @@ class ManagedRunner:
         """Backend-specific observation; subclasses choose the mechanism.
 
         The shared lifecycle deliberately knows nothing about supervisor
-        FOLLOW, PSI/J callbacks, or how artifacts become available.
+        FOLLOW, PSI/J callbacks, or how files become available.
         """
         raise NotImplementedError("Managed runner must implement observation")
 

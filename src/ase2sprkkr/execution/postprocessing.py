@@ -12,7 +12,7 @@ from .base import (FailurePhase, RunState, SubmissionNotStarted,
 class CalculationRun:
     """Convert a raw execution outcome into the caller-visible result.
 
-    The wrapped runner owns submission, execution and artifact availability.
+    The wrapped runner owns submission, execution and file availability.
     This layer owns only the ``POSTPROCESSING`` phase and invokes one supplied
     task-agnostic callable after successful raw execution.
     """
@@ -43,7 +43,7 @@ class CalculationRun:
         self._completion_lock = Lock()
 
         # The existing backend monitor owns observation and invokes this
-        # callback only after artifact delivery and stream finalization.
+        # callback only after file delivery and stream finalization.
         if getattr(runner, "callback", None) is not None:
             raise ValueError("Raw runner already has a completion callback")
         runner.callback = self._backend_completed
