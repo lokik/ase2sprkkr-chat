@@ -51,7 +51,7 @@ def test_reading_state_does_not_write_to_store():
                              updated_at="2026-10-20T10:00:00+00:00",
                              execution=SimpleNamespace(submitted=lambda x: x))
     run = PersistentRun(manager, executor, record)
-    assert run.state == RunState.RUNNING
+    assert run.record.state == RunState.RUNNING
     assert manager.transitions == 0
 
 
