@@ -768,7 +768,8 @@ def test_unknown_observation_closes_owned_streams_but_attach_can_recover(tmp_pat
         def attach(self, record, *, output_listener=None, start=False):
             assert record.state == RunState.UNKNOWN
             assert original.closed
-            return ObservedRunner(recovered=True)
+            self.attached_runner = ObservedRunner(recovered=True)
+            return self.attached_runner
 
     executor = ExecutorWithAttach()
     first = manager.create_run(
@@ -794,7 +795,7 @@ def test_unknown_observation_closes_owned_streams_but_attach_can_recover(tmp_pat
         assert callbacks == ["unknown", "finished"]
         assert submissions == ["submit"]
     finally:
-        recovered._runner._runner.output_stream.close()
+        executor.attached_runner.output_stream.close()
 
 def test_project_persistence_failure_can_be_retried_without_resubmitting(
     tmp_path, monkeypatch,
