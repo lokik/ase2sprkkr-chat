@@ -262,11 +262,20 @@ class RunStore:
 
     def _path_for_id(self, run_id):
         filename = f"{run_id}.json"
+        found = None
         for day in self._day_directories(newest=True):
             path = day / filename
-            if path.is_file():
-                return path
-        raise FileNotFoundError(run_id)
+            if not path.is_file():
+                continue
+            if found is not None:
+                raise ValueError(f"Duplicate run ID {run_id!r} across date shards")
+            found = path
+            if self.projects_directory is None:
+                # Standalone stores keep their existing date-sharded lookup.
+                return found
+        if found is None:
+            raise FileNotFoundError(run_id)
+        return found
 
     @staticmethod
     def _decode(path):
@@ -317,31 +326,35 @@ class RunStore:
         with self._lock, FileLock(self.directory / ".submit.lock"):
             yield
 
-    def _check_persisted_project(self, record):
-        """Enforce one project per run ID, across every date shard.
+    def _check_persisted_identity(self, record):
+        """Resolve the only persisted location of a project-bound run ID.
 
-        Call under the global per-ID file lock for repository-owned stores.
-        Standalone stores retain their date-sharded write semantics.
+        Caller holds the global per-ID lock and the project's deletion guard.
+        The date shard is storage layout, not part of a run's identity.
         """
         if self.projects_directory is None:
-            return
-        filename = f"{record.id}.json"
-        for day in self._day_directories(newest=False):
-            path = day / filename
-            if path.is_file() and self._decode(path).project_id != record.project_id:
-                raise ValueError("Run write cannot change persistent project identity")
+            return self._path(record)
+        try:
+            path = self._path_for_id(record.id)
+        except FileNotFoundError:
+            return self._path(record)
+        persisted = self._decode(path)
+        if persisted.project_id != record.project_id:
+            raise ValueError("Run write cannot change persistent project identity")
+        if persisted.created_at != record.created_at:
+            raise ValueError("Run write cannot change persistent creation time")
+        return path
 
     def save(self, record: RunRecord):
         with self._lock, FileLock(self._run_lock_path(record)):
-            self._check_persisted_project(record)
             with self._project_guard(record):
+                self._check_persisted_identity(record)
                 return self._write_unlocked(record)
 
     def update(self, record: RunRecord, updater):
         with self._lock, FileLock(self._run_lock_path(record)):
-            self._check_persisted_project(record)
             with self._project_guard(record):
-                path = self._path(record)
+                path = self._check_persisted_identity(record)
                 latest = self._decode(path) if path.is_file() else record
                 updated = updater(latest)
                 if (updated.id != latest.id or updated.created_at != latest.created_at
@@ -375,8 +388,13 @@ class RunStore:
 
         with self._lock:
             records = []
+            seen_ids = set() if self.projects_directory is not None else None
             for day in self._day_directories(newest=newest):
                 for record in self._records_in_directory(day, newest=newest):
+                    if seen_ids is not None:
+                        if record.id in seen_ids:
+                            raise ValueError(f"Duplicate run ID {record.id!r} across date shards")
+                        seen_ids.add(record.id)
                     if active is True and record.state.is_terminal:
                         continue
                     if active is False and not record.state.is_terminal:
