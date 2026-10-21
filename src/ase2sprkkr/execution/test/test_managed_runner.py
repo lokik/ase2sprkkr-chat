@@ -72,13 +72,13 @@ def test_managed_runner_flushes_partial_utf8_before_callback(tmp_path):
     runner.callback = lambda result: received.append(("callback", "done"))
 
     async def follow():
-        runner._output_observers.emit_bytes(b"\\xe2", "out")
+        runner._output_observers.emit_bytes(bytes((0xe2,)), "out")
         return {"state": "finished", "return_code": 0, "files": {"outputs": []}}
 
     runner._follow_once = follow
     runner._thread_main()
 
-    assert received == [("out", "\\ufffd"), ("callback", "done")]
+    assert received == [("out", "\ufffd"), ("callback", "done")]
     assert runner._state is RunState.FINISHED
     assert runner._done.is_set()
 
