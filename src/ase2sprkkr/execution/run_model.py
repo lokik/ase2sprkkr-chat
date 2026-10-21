@@ -205,6 +205,8 @@ class FileManifest:
     input_versions: tuple[FileVersion, ...] = ()
     output_versions: tuple[FileVersion, ...] = ()
     captured_at: Optional[str] = None
+    primary_input: Optional[FileEntry] = None
+    stdin: Optional[FileEntry] = None
 
     @classmethod
     def from_spec(cls, spec):
@@ -221,7 +223,9 @@ class FileManifest:
                 if (path := file_path(value, directory)) is not None
             ))
 
-        inputs = paths(getattr(spec, "input_file", None), *getattr(spec, "input_files", ()))
+        primary = file_path(spec.input_file, directory)
+        inputs = paths(primary, *spec.input_files)
+        stdin = file_path(spec.stdin, directory)
         stdout = file_path(getattr(spec, "output_file", None), directory)
         stderr = file_path(getattr(spec, "error_file", None), directory)
         streams = {stdout, stderr}
@@ -231,6 +235,8 @@ class FileManifest:
         caches = paths(*getattr(spec, "cache_files", ()))
         return cls(
             inputs=tuple(FileEntry(local_path=x) for x in inputs),
+            primary_input=None if primary is None else FileEntry(local_path=primary),
+            stdin=None if stdin is None else FileEntry(local_path=stdin),
             outputs=tuple(FileEntry(local_path=x) for x in outputs),
             caches=tuple(FileEntry(local_path=x) for x in caches),
             stdout=None if stdout is None else FileEntry(local_path=stdout),
@@ -246,7 +252,7 @@ class FileManifest:
                     for item in getattr(self, name)
                 ),
             )
-        for name in ("stdout", "stderr"):
+        for name in ("stdout", "stderr", "primary_input", "stdin"):
             item = getattr(self, name)
             if isinstance(item, dict):
                 object.__setattr__(self, name, FileEntry(**item))
@@ -365,7 +371,12 @@ class FileManifest:
 
     @property
     def input_file(self):
-        return self.inputs[0].local_path if self.inputs else None
+        return None if self.primary_input is None else self.primary_input.local_path
+
+    @property
+    def input_entries(self):
+        """All read inputs, including stdin without making it primary."""
+        return (*self.inputs, self.stdin) if self.stdin is not None else self.inputs
 
     @property
     def output_file(self):
@@ -373,7 +384,8 @@ class FileManifest:
 
     @property
     def input_files(self):
-        return tuple(entry.local_path for entry in self.inputs if entry.local_path is not None)
+        return tuple(dict.fromkeys(entry.local_path for entry in self.input_entries
+                                   if entry.local_path is not None))
 
     @property
     def output_files(self):

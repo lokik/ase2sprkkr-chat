@@ -128,8 +128,11 @@ class RemoteFileHandler:
             targets[local] = (remote, before)
         return targets, baselines
 
-    async def prepare(self, mapping, spec):
-        """Stage files and return their mapping and baseline without submission data."""
+    async def prepare(self, mapping, spec, manifest=None):
+        """Stage and augment the reserved manifest rather than remapping it."""
+        manifest = FileManifest.from_spec(spec) if manifest is None else manifest
+        if manifest.mapping is not None and manifest.mapping != mapping:
+            raise ValueError("Submission mapping differs from reserved mapping")
         used = {}
         for value in spec.input_files:
             source = _local_path(spec, value)
@@ -145,10 +148,13 @@ class RemoteFileHandler:
         cache_targets, cache_before = (
             await self._prepare_cache_files(mapping, spec, used)
         )
-        manifest = FileManifest.from_spec(spec)
-
         async def mapped(entry):
-            return replace(entry, remote_path=mapping.map_path(entry.local_path))
+            if entry is None:
+                return None
+            remote = mapping.map_path(entry.local_path)
+            if entry.remote_path is not None and entry.remote_path != remote:
+                raise ValueError("Submission path differs from reserved path")
+            return replace(entry, remote_path=remote)
 
         caches = []
         for entry in manifest.caches:
@@ -161,7 +167,8 @@ class RemoteFileHandler:
 
         # Wildcard inputs are concretized during staging, not at completion.
         inputs = []
-        for local in dict.fromkeys((*manifest.input_files, *input_sources)):
+        declared = tuple(entry.local_path for entry in manifest.inputs)
+        for local in dict.fromkeys((*declared, *input_sources)):
             if has_file_magic(local):
                 continue
             inputs.append(FileEntry(local_path=local, remote_path=mapping.map_path(local)))
@@ -169,6 +176,8 @@ class RemoteFileHandler:
         return replace(
             manifest,
             inputs=tuple(inputs),
+            primary_input=await mapped(manifest.primary_input),
+            stdin=await mapped(manifest.stdin),
             outputs=tuple([await mapped(e) for e in manifest.outputs]),
             caches=tuple(caches),
             stdout=None if manifest.stdout is None else await mapped(manifest.stdout),

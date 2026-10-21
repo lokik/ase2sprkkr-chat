@@ -228,16 +228,25 @@ class RemoteRunner(ManagedRunner):
                         )
                 raise
 
+    def set_manifest(self, files):
+        """Use the exact manifest already reserved by the project layer."""
+        if self._state != RunState.NEW or self._prepared is not None:
+            raise RuntimeError("Cannot replace prepared submission manifest")
+        self._files = files
+
     async def _prepare_async(self):
         try:
-            mapping = await self.executor.resolve_mapping(self.spec.launch)
+            mapping = self._files.mapping if self._files is not None else None
+            if mapping is None:
+                mapping = await self.executor.resolve_mapping(self.spec.launch)
             remote_directory = mapping.map_path(self.spec.directory)
             await self.executor.transport.run(("mkdir", "-p", "--", remote_directory))
-            manifest = await self.file_handler.prepare(mapping, self.spec)
+            manifest = await self.file_handler.prepare(mapping, self.spec, self._files)
             # The runner owns backend identity, command construction and the
             # submission protocol. FileHandler knows only file locations.
             mapped = {entry.local_path: entry.remote_path
-                      for entry in (*manifest.inputs, *manifest.caches)
+                      for entry in (*manifest.inputs, *manifest.caches, manifest.stdin)
+                      if entry is not None
                       if entry.local_path is not None}
             def argv(args):
                 return [mapped.get(file_path(os.fspath(arg), self.spec.directory),

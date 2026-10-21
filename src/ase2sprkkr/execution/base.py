@@ -656,6 +656,10 @@ class Executor:
             f"{type(self).__name__} cannot retrieve persistent result files"
         )
 
+    def reservation_context(self, spec: ExecutionSpec, files):
+        """Prepare canonical run paths before atomic submission reservation."""
+        return files, None
+
     def submission_directory(self, spec: ExecutionSpec) -> str:
         return os.path.abspath(os.fspath(spec.directory))
 

@@ -92,6 +92,27 @@ class RemoteEndpointExecutor(Executor):
         if not run.execution.backend_id or not run.execution.directory.remote:
             raise ValueError("Remote run lacks backend identity or working directory")
 
+    def reservation_context(self, spec, files):
+        """Resolve exactly the paths to be protected and later staged."""
+        mapping = _run_sync(self.resolve_mapping(spec.launch))
+
+        def mapped(entry):
+            if entry is None or entry.local_path is None:
+                return entry
+            return replace(entry, remote_path=mapping.map_path(entry.local_path))
+
+        return replace(
+            files,
+            inputs=tuple(mapped(entry) for entry in files.inputs),
+            primary_input=mapped(files.primary_input),
+            stdin=mapped(files.stdin),
+            outputs=tuple(mapped(entry) for entry in files.outputs),
+            caches=tuple(mapped(entry) for entry in files.caches),
+            stdout=mapped(files.stdout),
+            stderr=mapped(files.stderr),
+            mapping=mapping,
+        ), mapping.map_path(spec.directory)
+
     def submission_directory(self, spec):
         launch = spec.launch
         relative = _relative_local_path(
