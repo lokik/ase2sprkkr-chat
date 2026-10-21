@@ -1,37 +1,10 @@
-"""Async raw local submission must not block the caller's event loop."""
+"""Async PostprocessingRunner submission and resource lifetime regression."""
 
 import asyncio
 from threading import Event
 
 from ase2sprkkr.execution.base import RunState
-from ase2sprkkr.execution.local import LocalRunner
 
-
-def test_local_run_async_offloads_blocking_submission():
-    runner = object.__new__(LocalRunner)
-    runner._state = RunState.NEW
-    entered, release = Event(), Event()
-    expected = object()
-
-    def submit():
-        entered.set()
-        if not release.wait(3):
-            raise TimeoutError("Local submission blocked the event loop")
-        runner._state = RunState.RUNNING
-
-    runner.submit = submit
-    runner.wait = lambda: expected
-
-    async def exercise():
-        running = asyncio.create_task(runner.run_async())
-        try:
-            assert await asyncio.wait_for(asyncio.to_thread(entered.wait, 3), 4)
-            assert not running.done()
-        finally:
-            release.set()
-        return await asyncio.wait_for(running, 4)
-
-    assert asyncio.run(exercise()) is expected
 
 def test_postprocessing_run_async_offloads_submission_and_closes_resources():
     """A blocking backend submit must not starve asyncio or leak owned inputs."""

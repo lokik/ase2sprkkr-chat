@@ -493,8 +493,9 @@ class PsijRunner:
         return self.wait()
 
     async def run_async(self):
-        # Scheduler submission may block before observation starts.
-        return await asyncio.to_thread(self.run)
+        if self._thread is None:
+            self.start()
+        return await asyncio.to_thread(self.wait)
 
     def cancel(self):
         if self._thread is None and not self._attached:
