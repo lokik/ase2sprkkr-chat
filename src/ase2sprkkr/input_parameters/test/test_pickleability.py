@@ -211,7 +211,9 @@ class TestInputParametersPickle:
         with pytest.raises(DataValidityError):
             parameters.CONTROL.SECOND.set([1, 2])
 
-    def test_scf_input_parameters_pickle(self):
+    def test_scf_input_parameters_definition_pickle(self):
+        # The runtime InputParameters pickle round-trip is covered in
+        # test_task_registry.test_input_parameters_registry_snapshots_result_defaults.
         pickle.dumps(_schema_for("SCF"))
 
     def test_uninitialized_container_dunder_lookup_does_not_recurse(self):
