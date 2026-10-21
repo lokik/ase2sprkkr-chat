@@ -38,12 +38,21 @@ def test_save_input_without_output_has_stable_four_item_result(tmp_path):
 
 @pytest.fixture
 def lightweight_serialization(monkeypatch):
-    """Exercise real file setup without unrelated potential/input encoding."""
-    def save_stub(self, file, *args, **kwargs):
-        file.write("# output-file routing test only\n")
+    """Keep real file setup, but do not encode unrelated POT/IPD contents."""
+    calls = []
 
-    monkeypatch.setattr(Potential, "save_to_file", save_stub)
-    monkeypatch.setattr(InputParameters, "save_to_file", save_stub)
+    def save_potential(self, file, *args, **kwargs):
+        calls.append("potential")
+        file.write("# potential routing test\n")
+
+    def save_parameters(self, file, *args, **kwargs):
+        calls.append("input")
+        file.write("# input routing test\n")
+
+    monkeypatch.setattr(Potential, "save_to_file", save_potential)
+    monkeypatch.setattr(InputParameters, "save_to_file", save_parameters)
+    yield
+    assert sorted(calls) == ["input", "potential"]
 
 
 def test_create_run_preserves_explicitly_disabled_output(
