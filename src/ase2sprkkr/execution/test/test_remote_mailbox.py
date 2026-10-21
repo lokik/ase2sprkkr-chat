@@ -84,3 +84,20 @@ def test_publication_error_survives_cleanup_fsync_error(monkeypatch):
         remote_mailbox.publish_outcome(key, RunState.FINISHED, 0)
     monkeypatch.setattr(remote_mailbox, "fsync_directory", original_fsync)
     assert remote_mailbox.read_outcome(key) is None
+
+
+def test_successful_receipt_survives_temporary_cleanup_failure(monkeypatch):
+    key = uuid4().hex
+    original_fsync = remote_mailbox.fsync_directory
+    calls = []
+
+    def fail_second_fsync(directory):
+        calls.append(directory)
+        if len(calls) == 2:
+            raise OSError("temporary cleanup fsync failed")
+        return original_fsync(directory)
+
+    monkeypatch.setattr(remote_mailbox, "fsync_directory", fail_second_fsync)
+    assert remote_mailbox.publish_outcome(key, RunState.FINISHED, 0) is True
+    assert len(calls) == 2
+    assert remote_mailbox.read_outcome(key)["state"] == "finished"
