@@ -1434,3 +1434,36 @@ def test_submission_ack_retries_failed_unlink_barrier_via_service(
     assert remote_mailbox.read_submission(run_id) is None
     assert remote_service.acknowledge_submission(run_id) == {"acknowledged": False}
     assert calls == 2
+
+
+def test_submission_to_terminal_receipt_and_both_acks(tmp_path, monkeypatch):
+    """A temporary submit ticket and terminal receipt have independent ACKs."""
+    from uuid import uuid4
+    from ase2sprkkr.execution import remote_mailbox
+
+    monkeypatch.setenv("ASE2SPRKKR_REMOTE_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(remote_service, "_process_running", lambda _handle: False)
+    run_id = uuid4().hex
+    receipt_id = uuid4().hex
+    remote_id = remote_service._encode_handle({
+        "kind": "process", "pid": 123, "start_time": "456",
+        "receipt_id": receipt_id, "socket_path": "/tmp/unneeded-supervisor.sock",
+    })
+    remote_mailbox.publish_submission(run_id, {"remote_id": remote_id})
+    request = {"executor": "local", "directory": str(tmp_path)}
+
+    # Recover the submission before the process has produced a result.
+    recovered = remote_service.recover_remote(run_id, request)
+    assert recovered["remote_id"] == remote_id
+    assert recovered["state"] == RunState.UNKNOWN.value
+
+    assert remote_mailbox.publish_outcome(receipt_id, RunState.FINISHED, 0)
+    assert remote_service.recover_remote(run_id, request)["state"] == "finished"
+    assert remote_service.acknowledge_submission(run_id) == {"acknowledged": True}
+    assert remote_service.recover_remote(run_id, request) is None
+
+    # Submission ACK must not discard the independently retained result.
+    assert remote_service.status_remote(remote_id)["state"] == "finished"
+    assert remote_service.acknowledge_remote(remote_id) == {"acknowledged": True}
+    assert remote_service.acknowledge_remote(remote_id) == {"acknowledged": False}
+    assert remote_service.status_remote(remote_id)["state"] == "unknown"
