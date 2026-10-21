@@ -725,3 +725,76 @@ def test_cancel_after_persisted_completion_does_not_touch_backend_or_store(
     assert project.cancel() is None
     assert calls == []
     assert store.get(record.id).state == terminal
+
+
+def test_unknown_observation_closes_owned_streams_but_attach_can_recover(tmp_path):
+    """UNKNOWN ends an observer, not the backend; recovery opens fresh handles."""
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    original = (tmp_path / "output.txt").open("w+b")
+    original.write(b"recoverable result")
+    original.flush()
+    resources = ExecutionResources(original)
+    callbacks = []
+    submissions = []
+
+    class ObservedRunner(_RawRunner):
+        def __init__(self, *, recovered=False):
+            super().__init__()
+            self.recovered = recovered
+            self.state = RunState.FINISHED if recovered else RunState.NEW
+            self.backend_id = "existing-job" if recovered else None
+            self.result = ExecutionOutcome(
+                output_file=None, return_code=0 if recovered else None,
+            )
+            self.output_stream = None
+
+        def submit(self):
+            submissions.append("submit")
+            self.backend_id = "existing-job"
+            self.state = RunState.UNKNOWN
+
+        def start(self):
+            self.output_stream = (tmp_path / "output.txt").open("rb")
+            self.result.output_file = self.output_stream
+
+        def wait(self):
+            if self.recovered:
+                self.start()
+            return self.result
+
+    class ExecutorWithAttach(_Executor):
+        def create_project_run(self, spec, *, run_id, callback=None):
+            return ObservedRunner()
+
+        def attach(self, record, *, output_listener=None, start=False):
+            assert record.state == RunState.UNKNOWN
+            assert original.closed
+            return ObservedRunner(recovered=True)
+
+    executor = ExecutorWithAttach()
+    first = manager.create_run(
+        executor, SimpleNamespace(directory=str(tmp_path)),
+        task="DOS", process_result=lambda outcome: outcome,
+        callback=lambda _: callbacks.append("unknown"), resources=resources,
+    )
+    first.submit()
+    assert first.wait().return_code is None
+    assert original.closed
+    assert store.get(first.id).state == RunState.UNKNOWN
+    assert store.get(first.id).finished_at is None
+    assert callbacks == ["unknown"]
+
+    recovered = manager.attach(
+        first.id, executor=executor,
+        process_result=lambda outcome: outcome.output_file.read(),
+        callback=lambda _: callbacks.append("finished"),
+    )
+    try:
+        assert recovered.wait() == b"recoverable result"
+        assert store.get(first.id).state == RunState.FINISHED
+        assert callbacks == ["unknown", "finished"]
+        assert submissions == ["submit"]
+    finally:
+        if recovered.result is not None:
+            pass
