@@ -1,7 +1,7 @@
 """Contracts shared by local project and PSI/J artifact discovery."""
 
 from ..file_availability import discover_local_files
-from ..run_model import CacheEntry, FileEntry, FileManifest
+from ..run_model import FileEntry, FileManifest
 
 
 def test_discovers_outputs_and_caches_with_independent_pattern_children(tmp_path):
@@ -10,18 +10,18 @@ def test_discovers_outputs_and_caches_with_independent_pattern_children(tmp_path
     manifest = FileManifest(
         outputs=(FileEntry(local_path=str(tmp_path / "out-*.dat"),
                            availability_state="pending"),),
-        caches=(CacheEntry(FileEntry(
+        caches=(FileEntry(
             local_path=str(tmp_path / "cache-*.pot"),
             availability_state="pending",
-        )),),
+        ),),
     )
     found = discover_local_files(manifest)
     assert len(found.outputs) == 1
     assert found.outputs[0].availability_state == "available"
     assert found.outputs[0].source == str(tmp_path / "out-*.dat")
     assert len(found.caches) == 1
-    assert found.caches[0].file.availability_state == "available"
-    assert found.caches[0].file.source == str(tmp_path / "cache-*.pot")
+    assert found.caches[0].availability_state == "available"
+    assert found.caches[0].source == str(tmp_path / "cache-*.pot")
     assert discover_local_files(found) == found
 
 
