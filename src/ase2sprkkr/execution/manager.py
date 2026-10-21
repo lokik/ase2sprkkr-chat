@@ -198,10 +198,13 @@ def _paths_overlap(first, second, *, local=False):
                 return True
             # Symlink normalization cannot detect hardlinks to the same inode.
             # Only compare inode identity for local, non-globbed paths.
-            if (local and not has_file_magic(a) and not has_file_magic(b)
-                    and os.path.exists(a) and os.path.exists(b)
-                    and os.path.samefile(a, b)):
-                return True
+            if local and not has_file_magic(a) and not has_file_magic(b):
+                try:
+                    if os.path.samefile(a, b):
+                        return True
+                except (FileNotFoundError, NotADirectoryError):
+                    # A not-yet-created output has no inode to compare.
+                    pass
     return False
 
 
