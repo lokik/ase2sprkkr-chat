@@ -69,6 +69,28 @@ def test_adding_output_for_cache_destination_is_rejected():
     path = "/local/shared"
     files = FileManifest(caches=(FileEntry(path, "/remote/cache", "pending"),))
     with pytest.raises(ValueError, match="Duplicate file declaration"):
-        files.with_file_availability(
-            path, "available", remote_path="/remote/result", kind="output",
+        files.with_added_file(
+            FileEntry(path, "/remote/result", "available"), kind="output",
         )
+
+
+def test_availability_update_cannot_register_unknown_file():
+    files = FileManifest(outputs=(
+        FileEntry("/local/known", "/remote/known", "pending"),
+    ))
+    with pytest.raises(KeyError, match="not declared"):
+        files.with_file_availability("/local/new", "available", kind="output")
+    assert len(files.outputs) == 1
+
+
+def test_explicit_registration_shares_identity_update_logic():
+    files = FileManifest()
+    entry = FileEntry("/local/new", "/remote/new", "available",
+                      source="/local/*.dat")
+    registered = files.with_added_file(entry)
+    assert registered.outputs == (entry,)
+    updated = registered.with_file_availability(
+        entry.local_path, "failed", "download failed", remote_path=entry.remote_path,
+    )
+    assert updated.outputs[0].availability_state == "failed"
+    assert updated.outputs[0].source == entry.source

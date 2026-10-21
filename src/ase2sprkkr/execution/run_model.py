@@ -449,7 +449,32 @@ class FileManifest:
 
     def with_file_availability(
         self, local_path, state, message=None, *,
-        remote_path=None, kind=None, source=None,
+        remote_path=None, kind=None,
+    ):
+        """Update an existing file only; never change manifest membership."""
+        return self._with_file_availability(
+            local_path, state, message, remote_path=remote_path, kind=kind,
+        )
+
+    def with_added_file(self, entry: FileEntry, *, kind="output"):
+        """Explicitly register a new output/cache file.
+
+        Availability updates and registration share identity validation,
+        but only registration can extend the manifest.
+        """
+        if not isinstance(entry, FileEntry):
+            raise TypeError("entry must be a FileEntry")
+        if entry.local_path is None:
+            raise ValueError("A registered file requires a local path")
+        return self._with_file_availability(
+            entry.local_path, entry.availability_state,
+            entry.availability_message, remote_path=entry.remote_path,
+            kind=kind, source=entry.source, allow_new=True,
+        )
+
+    def _with_file_availability(
+        self, local_path, state, message=None, *,
+        remote_path=None, kind=None, source=None, allow_new=False,
     ):
         """Update one file identity, not every role sharing its local path.
 
@@ -498,6 +523,8 @@ class FileManifest:
                 caches=tuple(update(entry, "cache") for entry in self.caches),
             )
 
+        if not allow_new:
+            raise KeyError(f"File is not declared in manifest: {path}")
         file = FileEntry(
             local_path=path, remote_path=remote_path,
             availability_state=state, availability_message=message,
