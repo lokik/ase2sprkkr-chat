@@ -20,6 +20,7 @@ from ase2sprkkr.outputs.project_results import (
 
 class _RawRunner:
     def __init__(self):
+        self.callback = None
         self.state = RunState.NEW
         self.backend_id = None
         self.result = ExecutionOutcome(return_code=0)
@@ -34,6 +35,8 @@ class _RawRunner:
     def submit(self):
         self.backend_id = "job-1"
         self.state = RunState.FINISHED
+        if self.callback is not None:
+            self.callback(self.result)
 
     def wait(self):
         return self.result
