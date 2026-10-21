@@ -30,6 +30,26 @@ def test_emit_bytes_decodes_nonempty_chunks(data, expected):
     assert received == expected
 
 
+def test_incremental_utf8_decoder_keeps_streams_separate_and_flushes_partial_bytes():
+    received = []
+    observers = OutputObservers(lambda text, kind: received.append((kind, text)))
+
+    euro = "€".encode("utf8")
+    observers.emit_bytes(euro[:1], "out")
+    observers.emit_bytes(b"error", "err")
+    observers.emit_bytes(euro[1:], "out")
+    observers.emit_bytes(euro[:1], "err")
+    assert received == [("err", "error"), ("out", "€")]
+
+    observers.finish_bytes()
+    assert received == [("err", "error"), ("out", "€"), ("err", "\ufffd")]
+
+    # After finalization, a new observation starts with fresh decoders.
+    observers.emit_bytes("ž".encode("utf8"), "out")
+    observers.finish_bytes()
+    assert received[-1] == ("out", "ž")
+
+
 @pytest.mark.parametrize("kind", ("out", "err"))
 def test_local_forward_output_persists_and_observes_bytes(kind):
     received = []
