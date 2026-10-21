@@ -770,7 +770,6 @@ class ExecutionManager:
                     or latest.failure_phase != FailurePhase.DOWNLOAD
                     or latest.return_code != 0
                     or latest.execution.backend_id is None
-                    or latest.files is None
                     or latest.files.captured_at is not None):
                 raise ValueError("Only failed downloads of successful backend jobs can be retried")
             # Keep already transferred files and all bytes on disk.
@@ -805,7 +804,7 @@ class ExecutionManager:
                     or latest.return_code != 0
                     or latest.execution.backend_id is None):
                 raise ValueError("Only postprocessing failures of successful backend runs can be retried")
-            if files is None or files.captured_at is None or files.output_file is None:
+            if files.captured_at is None or files.output_file is None:
                 raise ValueError("Postprocessing retry requires captured output files")
             if files.failed_files:
                 raise ValueError("Postprocessing retry requires locally available files")
@@ -868,7 +867,7 @@ class ExecutionManager:
 
         versions = {
             os.path.abspath(os.fspath(version.path)): version
-            for version in (() if record.files is None else record.files.all_versions)
+            for version in record.files.all_versions
         }
         for path in missing:
             path = os.path.abspath(os.fspath(path))
