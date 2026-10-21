@@ -159,8 +159,8 @@ def test_direct_psij_profile_still_defaults_to_slurm(monkeypatch):
     captured = {}
 
     class FakePsijExecutor:
-        def __init__(self, backend, *, url=None):
-            captured.update(backend=backend, url=url)
+        def __init__(self, backend, *, url=None, poll_interval=None):
+            captured.update(backend=backend, url=url, poll_interval=poll_interval)
 
     monkeypatch.setattr("ase2sprkkr.execution.psij.PsijExecutor", FakePsijExecutor)
     monkeypatch.setattr(
@@ -171,4 +171,4 @@ def test_direct_psij_profile_still_defaults_to_slurm(monkeypatch):
     executor = executor_from_profile(SPRKKRProfile(executor="psij"))
 
     assert executor is not None
-    assert captured == {"backend": "slurm", "url": None}
+    assert captured == {"backend": "slurm", "url": None, "poll_interval": None}
