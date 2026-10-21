@@ -41,18 +41,18 @@ class RemoteFileHandler:
     def __init__(self, transport):
         self.transport = transport
 
-    async def _stage_file(self, context, spec, value, used, *,
+    async def _stage_file(self, mapping, spec, value, used, *,
                           uploads=None, required=True):
         source = _local_path(spec, value)
         if source is None:
             return None
-        target = context.map_path(source)
+        target = mapping.map_path(source)
         previous = used.get(target)
         if previous is not None and previous != source:
             raise ValueError(f"Remote input target collision: {target}")
         if previous is not None:
             return target
-        policy = FileSyncPolicy(context.input_sync)
+        policy = FileSyncPolicy(mapping.input_sync)
         if policy == FileSyncPolicy.NEVER:
             used[target] = source
             return target
@@ -73,10 +73,10 @@ class RemoteFileHandler:
         used[target] = source
         return target
 
-    async def _stage_input_pattern(self, context, spec, value, used, *,
+    async def _stage_input_pattern(self, mapping, spec, value, used, *,
                                    required=True):
         source = _local_path(spec, value)
-        matches = expand_local_files(source, context.local_root)
+        matches = expand_local_files(source, mapping.local_root)
         if not matches and required:
             raise FileNotFoundError(
                 f"Local input pattern did not match any files: {source}"
@@ -84,56 +84,56 @@ class RemoteFileHandler:
         uploads = []
         for match in matches:
             await self._stage_file(
-                context, spec, match, used, uploads=uploads, required=required,
+                mapping, spec, match, used, uploads=uploads, required=required,
             )
         if uploads:
             await self.transport.put_files(
-                uploads, context.local_root, context.remote_root,
+                uploads, mapping.local_root, mapping.remote_root,
             )
 
-    async def _prepare_cache_files(self, context, spec, used):
+    async def _prepare_cache_files(self, mapping, spec, used):
         """Return per-call cache plan; do not retain any of it on the handler."""
         targets, baselines = {}, {}
-        root = context.remote_root
+        root = mapping.remote_root
         for local, is_pattern in _unique_declared_paths(spec, spec.cache_files):
             if is_pattern:
-                remote_pattern = context.map_path(local)
+                remote_pattern = mapping.map_path(local)
                 await self._stage_input_pattern(
-                    context, spec, local, used, required=False,
+                    mapping, spec, local, used, required=False,
                 )
-                if FileSyncPolicy(context.output_sync) != FileSyncPolicy.NEVER:
+                if FileSyncPolicy(mapping.output_sync) != FileSyncPolicy.NEVER:
                     for remote in await self.transport.expand_files(remote_pattern, root):
                         baselines[remote] = await self.transport.file_signature(remote)
                 continue
             remote = await self._stage_file(
-                context, spec, local, used, required=False,
+                mapping, spec, local, used, required=False,
             )
-            before = (None if FileSyncPolicy(context.output_sync) == FileSyncPolicy.NEVER
+            before = (None if FileSyncPolicy(mapping.output_sync) == FileSyncPolicy.NEVER
                       else await self.transport.file_signature(remote))
             targets[local] = (remote, before)
         return targets, baselines
 
-    async def prepare(self, context, spec):
+    async def prepare(self, mapping, spec):
         """Stage files and return their mapping and baseline without submission data."""
         used = {}
         for value in spec.input_files:
             source = _local_path(spec, value)
             if source is not None and has_file_magic(source):
-                await self._stage_input_pattern(context, spec, value, used)
+                await self._stage_input_pattern(mapping, spec, value, used)
             else:
-                await self._stage_file(context, spec, value, used)
-        await self._stage_file(context, spec, spec.input_file, used)
+                await self._stage_file(mapping, spec, value, used)
+        await self._stage_file(mapping, spec, spec.input_file, used)
         if spec.stdin is not None:
-            await self._stage_file(context, spec, spec.stdin, used)
+            await self._stage_file(mapping, spec, spec.stdin, used)
         # Cache staging shares the collision map, not input file identity.
         input_sources = tuple(dict.fromkeys(used.values()))
         cache_targets, cache_before = (
-            await self._prepare_cache_files(context, spec, used)
+            await self._prepare_cache_files(mapping, spec, used)
         )
         manifest = FileManifest.from_spec(spec)
 
         async def mapped(entry):
-            return replace(entry, remote_path=context.map_path(entry.local_path))
+            return replace(entry, remote_path=mapping.map_path(entry.local_path))
 
         caches = []
         for entry in manifest.caches:
@@ -149,7 +149,7 @@ class RemoteFileHandler:
         for local in dict.fromkeys((*manifest.input_files, *input_sources)):
             if has_file_magic(local):
                 continue
-            inputs.append(FileEntry(local_path=local, remote_path=context.map_path(local)))
+            inputs.append(FileEntry(local_path=local, remote_path=mapping.map_path(local)))
 
         return replace(
             manifest,
@@ -158,16 +158,16 @@ class RemoteFileHandler:
             caches=tuple(caches),
             stdout=None if manifest.stdout is None else await mapped(manifest.stdout),
             stderr=None if manifest.stderr is None else await mapped(manifest.stderr),
-            mapping=context,
+            mapping=mapping,
         )
 
-    async def _sync_file(self, context, entry, *, is_cache, before=None, required=False):
+    async def _sync_file(self, mapping, entry, *, is_cache, before=None, required=False):
         """One transfer mechanism; cache and output policies differ only in decision."""
         remote, local = entry.remote_path, entry.local_path
         if is_cache:
             after = await self.transport.file_signature(remote)
             if (after is None or after == before
-                    or (FileSyncPolicy(context.output_sync) == FileSyncPolicy.MISSING
+                    or (FileSyncPolicy(mapping.output_sync) == FileSyncPolicy.MISSING
                         and file_digest(local, missing_ok=True) is not None)):
                 return "skipped"
         else:
@@ -176,7 +176,7 @@ class RemoteFileHandler:
                 if required:
                     raise FileNotFoundError(f"Declared remote output was not created: {remote}")
                 return "skipped"
-            if not FileSyncPolicy(context.output_sync).should_transfer(
+            if not FileSyncPolicy(mapping.output_sync).should_transfer(
                 digest, file_digest(local, missing_ok=True),
             ):
                 return "available"
@@ -221,7 +221,7 @@ class RemoteFileHandler:
                     f"Conflicting {kind} sources for destination: {target}"
                 )
 
-    async def collect(self, context, manifest, result, *, required=False):
+    async def collect(self, mapping, manifest, result, *, required=False):
         """Return partial manifest and failure; never silently lose successful files."""
         if manifest is None:
             return None, None
@@ -257,9 +257,9 @@ class RemoteFileHandler:
             if not is_cache and entry.local_path in primary:
                 continue
             try:
-                state = ("skipped" if FileSyncPolicy(context.output_sync) == FileSyncPolicy.NEVER
+                state = ("skipped" if FileSyncPolicy(mapping.output_sync) == FileSyncPolicy.NEVER
                          else await self._sync_file(
-                             context, entry, is_cache=is_cache,
+                             mapping, entry, is_cache=is_cache,
                              before=before, required=required,
                          ))
             except Exception as exc:

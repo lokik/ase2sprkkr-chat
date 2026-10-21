@@ -6,7 +6,7 @@ import pytest
 
 from ..base import RunState
 from ..manager import DuplicateSubmissionError, RunStore
-from ..project_manager import ExecutionManager
+from ..manager import ExecutionManager
 from ..projects import ProjectRepository, ProjectDeleteError
 
 
