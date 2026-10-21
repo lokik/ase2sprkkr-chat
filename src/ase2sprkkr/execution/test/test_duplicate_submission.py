@@ -268,3 +268,33 @@ def test_wildcard_output_collisions_follow_pattern_overlap(
         assert manager.reserve(second).state == RunState.SUBMITTING
 
 
+
+
+@pytest.mark.parametrize("alias_kind", ("directory", "file"))
+def test_local_submission_detects_symlinked_output_alias(tmp_path, alias_kind):
+    """Distinct names for one writable local file must conflict."""
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    original = tmp_path / "actual"
+    original.mkdir()
+    actual = original / "result.out"
+    if alias_kind == "directory":
+        alias_dir = tmp_path / "linked"
+        alias_dir.symlink_to(original, target_is_directory=True)
+        alias = alias_dir / "result.out"
+    else:
+        actual.write_text("pre-existing output")
+        alias = tmp_path / "result-link.out"
+        alias.symlink_to(actual)
+
+    first = manager.new_record(
+        task="DOS", directory=original, dataset="one",
+        files=FileManifest(stdout=FileEntry(local_path=str(actual))),
+    )
+    second = manager.new_record(
+        task="BSF", directory=tmp_path, dataset="two",
+        files=FileManifest(outputs=(FileEntry(local_path=str(alias)),)),
+    )
+
+    manager.reserve(first)
+    with pytest.raises(DuplicateSubmissionError):
+        manager.reserve(second)
