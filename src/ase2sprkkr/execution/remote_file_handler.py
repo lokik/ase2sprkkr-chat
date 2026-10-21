@@ -375,20 +375,26 @@ class RemoteFileHandler:
             os.utime(local, ns=(stat.st_atime_ns, signature[1]))
 
     async def restore(self, run, paths, *, destinations=None):
-        """Restore only persisted concrete files; caller checks digests."""
+        """Restore persisted concrete files, preflighting the entire request.
+
+        The manifest is the sole source of historical file membership and
+        target paths. Validation completes before any transfer takes place.
+        """
         destinations = {} if destinations is None else {
             os.path.abspath(os.fspath(p)): os.fspath(target)
             for p, target in destinations.items()
         }
+        manifest = run.files
+        mapping = manifest.mapping
+        if mapping is None:
+            raise ValueError("Historical remote files require a persisted mapping")
         entries = (
-            *run.files.inputs, *run.files.outputs,
-            *(cache for cache in run.files.caches),
-            run.files.stdout, run.files.stderr,
+            *manifest.inputs, *manifest.outputs, *manifest.caches,
+            manifest.stdout, manifest.stderr,
         )
+        planned = {}
         for value in paths:
             local = os.path.abspath(os.fspath(value))
-            # A wildcard request selects only already-materialized members.
-            # Never rediscover historical membership on the target.
             if has_file_magic(local):
                 selected = tuple(
                     entry for entry in entries if entry is not None
@@ -402,10 +408,29 @@ class RemoteFileHandler:
             if not selected:
                 raise ValueError(f"File has no persisted remote source: {local}")
             for entry in selected:
-                if entry.remote_path is None or has_file_magic(entry.remote_path):
+                if (entry.local_path is None or entry.remote_path is None
+                        or has_file_magic(entry.local_path)
+                        or has_file_magic(entry.remote_path)):
                     raise ValueError(
                         f"Cannot restore unresolved remote file: {entry.local_path}"
                     )
-                target = destinations.get(entry.local_path, entry.local_path)
-                if not os.path.isfile(target):
-                    await self.transport.get_file(entry.remote_path, target)
+                # Validate even if an alternate staging destination was
+                # requested. A symlink introduced after submission must not
+                # allow the historical canonical path to escape the root.
+                expected = mapping.map_path(entry.local_path)
+                if entry.remote_path != expected:
+                    raise ValueError(
+                        f"Persisted remote source differs from mapped path: {entry.local_path}"
+                    )
+                target = os.path.abspath(os.fspath(
+                    destinations.get(os.path.abspath(entry.local_path), entry.local_path)
+                ))
+                key = os.path.realpath(target)
+                previous = planned.get(key)
+                if previous is not None and previous[0] != entry.remote_path:
+                    raise ValueError(f"Conflicting restore sources for destination: {target}")
+                planned[key] = (entry.remote_path, target)
+
+        for remote, target in planned.values():
+            if not os.path.isfile(target):
+                await self.transport.get_file(remote, target)
