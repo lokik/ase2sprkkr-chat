@@ -11,7 +11,7 @@ from .base import FailurePhase, RunState, SubmissionNotStarted, file_path, start
 from ..common.async_utils import run_coro_sync as _run_sync
 from .remote_file_handler import FileSyncPolicy
 from .managed_runner import ManagedRunner
-from .supervisor_monitor import backend_status_from_facts
+from .supervisor_monitor import backend_status_from_facts, monitor_supervisor
 
 
 
@@ -130,6 +130,12 @@ class RemoteRunner(ManagedRunner):
         """Delivery policy is client-owned, not part of the SSH transport."""
         self._write_output(data, kind)
         self._output_observers.emit_bytes(data, kind)
+
+    async def _monitor(self):
+        return await monitor_supervisor(
+            self, self._follow_once, self._backend_status,
+            self._complete_terminal,
+        )
 
     async def _follow_once(self):
         offsets = {}

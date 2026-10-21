@@ -14,7 +14,7 @@ from .base import (
 )
 from .run_model import FileManifest
 from .managed_runner import ManagedRunner
-from .supervisor_monitor import backend_status_from_facts
+from .supervisor_monitor import backend_status_from_facts, monitor_supervisor
 from .remote_service import _decode_handle
 from .target_connection import LocalConnection
 from ..common.async_utils import run_coro_sync as _run_sync
@@ -123,6 +123,12 @@ class LocalProjectRunner(ManagedRunner):
     @property
     def state(self):
         return self._refresh() if self._backend_id is not None else self._state
+
+    async def _monitor(self):
+        return await monitor_supervisor(
+            self, self._follow_once, self._backend_status,
+            self._complete_terminal,
+        )
 
     async def _follow_once(self):
         return await self.executor.connection.follow(

@@ -9,12 +9,19 @@ from ase2sprkkr.execution.managed_runner import ManagedRunner
 from ase2sprkkr.execution.local_project import LocalProjectRunner
 from ase2sprkkr.execution.remote import RemoteRunner
 from ase2sprkkr.execution.psij import PsijRunner
+from ase2sprkkr.execution.supervisor_monitor import monitor_supervisor
 
 
 class _ManagedStub(ManagedRunner):
     def __init__(self, spec):
         super().__init__(SimpleNamespace(), spec, backend_id="job")
         self.cancel_calls = 0
+
+    async def _monitor(self):
+        return await monitor_supervisor(
+            self, self._follow_once, self._backend_status,
+            self._complete_terminal,
+        )
 
     async def _follow_once(self):
         return {"state": "finished", "return_code": 0, "files": {"outputs": []}}
@@ -33,11 +40,14 @@ class _ManagedStub(ManagedRunner):
 def test_both_reconnectable_modes_share_one_runner_lifecycle():
     assert issubclass(LocalProjectRunner, ManagedRunner)
     assert issubclass(RemoteRunner, ManagedRunner)
-    for name in ("_monitor", "_thread_main", "start", "wait", "run",
-                 "run_async", "cancel", "add_output_listener",
-                 "add_output_error_listener"):
+    for name in ("_thread_main", "start", "wait", "run", "run_async",
+                 "cancel", "add_output_listener", "add_output_error_listener"):
         assert getattr(LocalProjectRunner, name) is getattr(ManagedRunner, name)
         assert getattr(RemoteRunner, name) is getattr(ManagedRunner, name)
+
+    # Each concrete backend chooses observation while lifecycle stays shared.
+    assert LocalProjectRunner._monitor is not ManagedRunner._monitor
+    assert RemoteRunner._monitor is not ManagedRunner._monitor
 
 
 def test_psij_inherits_common_lifecycle_without_inheriting_supervisor_monitor():
@@ -92,3 +102,42 @@ def test_managed_runner_cancellation_is_dispatched_once(tmp_path):
     assert future is runner.cancel()
     assert future.result(timeout=5) is True
     assert runner.cancel_calls == 1
+
+
+def test_managed_runner_without_observation_strategy_fails_explicitly(tmp_path):
+    spec = ExecutionSpec(
+        argv=(), directory=str(tmp_path), input_file=None, output_file=None,
+    )
+    runner = ManagedRunner(SimpleNamespace(), spec, backend_id="job")
+    with pytest.raises(NotImplementedError, match="implement observation"):
+        asyncio.run(runner._monitor())
+
+
+@pytest.mark.parametrize(
+    "runner_class, module_name",
+    (
+        (LocalProjectRunner, "ase2sprkkr.execution.local_project"),
+        (RemoteRunner, "ase2sprkkr.execution.remote"),
+    ),
+)
+def test_supervisor_runner_delegates_to_shared_monitor(
+    monkeypatch, runner_class, module_name,
+):
+    observed = []
+
+    async def observe(runner, follow, status, complete):
+        observed.append((runner, follow, status, complete))
+        return "observed"
+
+    monkeypatch.setattr(f"{module_name}.monitor_supervisor", observe)
+    runner = object.__new__(runner_class)
+    runner._follow_once = lambda: None
+    runner._backend_status = lambda: None
+    runner._complete_terminal = lambda *_: None
+
+    assert asyncio.run(runner._monitor()) == "observed"
+    assert observed == [(
+        runner, runner._follow_once, runner._backend_status,
+        runner._complete_terminal,
+    )]
+

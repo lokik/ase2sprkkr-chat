@@ -2,7 +2,7 @@
 
 Local project and SSH executions differ in staging, FOLLOW delivery, artifact
 synchronization and backend cancellation, not in client state ownership,
-monitoring, observer/callback dispatch, or cancellation coordination.
+observer/callback dispatch or cancellation coordination.
 Non-reconnectable LocalRunner intentionally does not inherit this class.
 """
 from __future__ import annotations
@@ -14,7 +14,6 @@ from .base import (
     ExecutionOutcome, FailurePhase, OutputObservers, RunState,
     finish_monitor, request_cancellation, start_monitor, wait_for_monitor,
 )
-from .supervisor_monitor import monitor_supervisor
 
 
 class ManagedRunner:
@@ -89,10 +88,12 @@ class ManagedRunner:
         self._output_observers.add_error_listener(callback)
 
     async def _monitor(self):
-        return await monitor_supervisor(
-            self, self._follow_once, self._backend_status,
-            self._complete_terminal,
-        )
+        """Backend-specific observation; subclasses choose the mechanism.
+
+        The shared lifecycle deliberately knows nothing about supervisor
+        FOLLOW, PSI/J callbacks, or how artifacts become available.
+        """
+        raise NotImplementedError("Managed runner must implement observation")
 
     def _monitor_failure(self, exc):
         self._exception = exc
