@@ -1,8 +1,9 @@
 import asyncio
+from dataclasses import asdict
 
 import pytest
 
-from ase2sprkkr.execution import Executor, LaunchSpec
+from ase2sprkkr.execution import LaunchSpec
 from ase2sprkkr.execution.remote_endpoint import RemoteEndpointExecutor
 
 
@@ -13,19 +14,16 @@ class _Transport:
 
 def test_run_context_is_staging_policy_not_executor(tmp_path):
     endpoint = RemoteEndpointExecutor(_Transport())
-    context = endpoint._context(
-        endpoint,
+    context = asyncio.run(endpoint.resolve_mapping(
         LaunchSpec(
             local_root=tmp_path,
             remote_root="/scratch/a",
             input_sync="always",
             output_sync="missing",
-        ),
-    )
-
-    assert not isinstance(context, Executor)
-    assert context.endpoint is endpoint
-    assert context.endpoint.transport is endpoint.transport
+        )
+    ))
+    assert context.input_sync == "always"
+    assert context.output_sync == "missing"
     assert context.local_root == tmp_path.resolve()
     assert context.remote_root == "/scratch/a"
 
@@ -33,18 +31,14 @@ def test_run_context_is_staging_policy_not_executor(tmp_path):
 
 def test_different_run_staging_policies_share_one_endpoint(tmp_path):
     endpoint = RemoteEndpointExecutor(_Transport())
-    first = endpoint._context(
-        endpoint,
+    first = asyncio.run(endpoint.resolve_mapping(
         LaunchSpec(local_root=tmp_path, remote_root="/scratch/one"),
-    )
-    second = endpoint._context(
-        endpoint,
+    ))
+    second = asyncio.run(endpoint.resolve_mapping(
         LaunchSpec(local_root=tmp_path, remote_root="/scratch/two"),
-    )
+    ))
 
     assert first is not second
-    assert first.endpoint is endpoint
-    assert second.endpoint is endpoint
     assert first.remote_root == "/scratch/one"
     assert second.remote_root == "/scratch/two"
 
@@ -54,7 +48,7 @@ def test_attach_restores_typed_manifest_without_sync_dictionary(tmp_path, monkey
     from ase2sprkkr.execution.endpoint import endpoint_for_executor
     from ase2sprkkr.execution.manager import RunRecord
     from ase2sprkkr.execution.run_model import (
-        FileEntry, FileManifest, CacheEntry, Execution, WorkingDirectory,
+        FileEntry, FileManifest, Execution, WorkingDirectory,
     )
     from ase2sprkkr.execution.transport import LocalTransport
 
@@ -75,16 +69,19 @@ def test_attach_restores_typed_manifest_without_sync_dictionary(tmp_path, monkey
             FileEntry(str(local / "local-only.out")),
         ),
         caches=(
-            CacheEntry(entry("cache.dat"), (2, 3)),
-            CacheEntry(entry("restart-*.pot")),
-            CacheEntry(entry("restart-a.pot",
-                             source=str(local / "restart-*.pot"))),
-            CacheEntry(FileEntry(remote_path=str(remote / "remote-only.dat")), (5, 7)),
-            CacheEntry(FileEntry(str(local / "local-only-cache.dat"))),
+            entry("cache.dat", pre_run_signature=(2, 3)),
+            entry("restart-*.pot"),
+            entry("restart-a.pot", source=str(local / "restart-*.pot")),
+            FileEntry(remote_path=str(remote / "remote-only.dat"), pre_run_signature=(5, 7)),
+            FileEntry(str(local / "local-only-cache.dat")),
         ),
     )
     endpoint = RemoteEndpointExecutor(LocalTransport())
-    context = endpoint._context(endpoint, LaunchSpec(local_root=local, remote_root=remote))
+    context = asyncio.run(endpoint.resolve_mapping(
+        LaunchSpec(local_root=local, remote_root=str(remote)),
+    ))
+    files = FileManifest(**{**asdict(files),
+                            "mapping": asdict(context)})
     run = RunRecord(
         id="test-manifest", task="SCF", state=RunState.RUNNING,
         created_at="2026-10-13T08:00:00+00:00",
@@ -100,20 +97,19 @@ def test_attach_restores_typed_manifest_without_sync_dictionary(tmp_path, monkey
         return {"state": "running"}
 
     monkeypatch.setattr(endpoint.connection, "status", status)
-    runner = asyncio.run(context.attach(run, start=False))
+    runner = asyncio.run(endpoint._attach(run, start=False))
     try:
         assert runner.files is run.files
-        assert runner.files.caches[0].before == (2, 3)
+        assert runner.files.caches[0].pre_run_signature == (2, 3)
     finally:
         runner.spec.output_file.close()
 
 
 def test_absolute_remote_root_needs_no_remote_home_query(tmp_path, monkeypatch):
     endpoint = RemoteEndpointExecutor(_Transport())
-    context = endpoint._context(
-        endpoint,
+    context = asyncio.run(endpoint.resolve_mapping(
         LaunchSpec(local_root=tmp_path, remote_root="/scratch/../work"),
-    )
+    ))
     calls = []
 
     async def remote_home():
@@ -123,10 +119,10 @@ def test_absolute_remote_root_needs_no_remote_home_query(tmp_path, monkeypatch):
     monkeypatch.setattr(endpoint.connection, "remote_home", remote_home)
     directory = tmp_path / "calculation"
     directory.mkdir()
-    assert asyncio.run(context.map_path(directory)) == "/work/calculation"
-    assert asyncio.run(context.map_path(directory)) == "/work/calculation"
-    assert asyncio.run(context.unmap_path("/work/calculation")) == directory
-    assert asyncio.run(context._resolved_remote_root()) == "/work"
+    assert context.map_path(directory) == "/work/calculation"
+    assert context.map_path(directory) == "/work/calculation"
+    assert context.unmap_path("/work/calculation") == directory
+    assert context.remote_root == "/work"
     assert calls == []
 
 
@@ -143,9 +139,6 @@ def test_home_relative_remote_root_still_resolves_home_once(
     tmp_path, monkeypatch, root, expected,
 ):
     endpoint = RemoteEndpointExecutor(_Transport())
-    context = endpoint._context(
-        endpoint, LaunchSpec(local_root=tmp_path, remote_root=root),
-    )
     calls = []
 
     async def remote_home():
@@ -153,7 +146,10 @@ def test_home_relative_remote_root_still_resolves_home_once(
         return "/home/user"
 
     monkeypatch.setattr(endpoint.connection, "remote_home", remote_home)
-    assert asyncio.run(context._resolved_remote_root()) == expected
+    context = asyncio.run(endpoint.resolve_mapping(
+        LaunchSpec(local_root=tmp_path, remote_root=root),
+    ))
+    assert context.remote_root == expected
     assert calls == ["home"]
 
 
@@ -175,9 +171,9 @@ def test_attach_closes_stdout_if_opening_stderr_fails(tmp_path, monkeypatch):
     stdout = local / "stdout.txt"
     stderr = local / "stderr.txt"
     endpoint = RemoteEndpointExecutor(LocalTransport())
-    context = endpoint._context(endpoint, LaunchSpec(
-        local_root=local, remote_root=remote,
-    ))
+    context = asyncio.run(endpoint.resolve_mapping(LaunchSpec(
+        local_root=local, remote_root=str(remote),
+    )))
     run = RunRecord(
         id="stream-open-failure", task="SCF", state=RunState.RUNNING,
         created_at="2026-10-13T08:00:00+00:00",
@@ -189,6 +185,7 @@ def test_attach_closes_stdout_if_opening_stderr_fails(tmp_path, monkeypatch):
         files=FileManifest(
             stdout=FileEntry(str(stdout), str(remote / "stdout.txt")),
             stderr=FileEntry(str(stderr), str(remote / "stderr.txt")),
+            mapping=context,
         ),
     )
 
@@ -209,7 +206,7 @@ def test_attach_closes_stdout_if_opening_stderr_fails(tmp_path, monkeypatch):
 
     monkeypatch.setattr(remote_endpoint, "open", failing_open, raising=False)
     with pytest.raises(PermissionError, match="stderr not writable"):
-        asyncio.run(context.attach(run, start=False))
+        asyncio.run(endpoint._attach(run, start=False))
     assert len(opened) == 1
     assert opened[0].closed
 
@@ -221,9 +218,11 @@ def test_unmap_rejects_symlink_parent_outside_local_root(tmp_path):
     outside.mkdir()
     (root / "redirect").symlink_to(outside, target_is_directory=True)
     endpoint = RemoteEndpointExecutor(_Transport())
-    context = endpoint._context(endpoint, LaunchSpec(local_root=root, remote_root="/remote"))
+    context = asyncio.run(endpoint.resolve_mapping(
+        LaunchSpec(local_root=root, remote_root="/remote"),
+    ))
     with pytest.raises(ValueError, match="outside mapped root"):
-        asyncio.run(context.unmap_path("/remote/redirect/output.dat"))
+        context.unmap_path("/remote/redirect/output.dat")
 
 
 
@@ -233,8 +232,10 @@ def test_unmap_preserves_internal_symlink_spelling(tmp_path):
     actual.mkdir(parents=True)
     (root / "alias").symlink_to(actual, target_is_directory=True)
     endpoint = RemoteEndpointExecutor(_Transport())
-    context = endpoint._context(endpoint, LaunchSpec(local_root=root, remote_root="/remote"))
-    assert asyncio.run(context.unmap_path("/remote/alias/output.dat")) == (
+    context = asyncio.run(endpoint.resolve_mapping(
+        LaunchSpec(local_root=root, remote_root="/remote"),
+    ))
+    assert context.unmap_path("/remote/alias/output.dat") == (
         root / "alias" / "output.dat"
     )
 
