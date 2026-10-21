@@ -84,19 +84,14 @@ def publish_outcome(receipt_id, state, return_code, failure_phase=None, *,
         fsync_directory(path.parent)
         return True
     finally:
-        # Cleanup must not replace a failed durable write or publish with
-        # a secondary unlink/fsync error.
-        import sys
-        primary = sys.exc_info()[1]
+        # The receipt's link has its own fsync above. Removal of the
+        # temporary staging name is best-effort: failure here must neither
+        # mask a publication error nor turn a durable receipt into failure.
         try:
-            try:
-                temporary.unlink()
-            except FileNotFoundError:
-                pass
+            temporary.unlink(missing_ok=True)
             fsync_directory(path.parent)
-        except BaseException:
-            if primary is None:
-                raise
+        except OSError:
+            pass
 
 
 def read_outcome(receipt_id):
