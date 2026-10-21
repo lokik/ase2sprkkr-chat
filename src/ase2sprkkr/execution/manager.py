@@ -167,6 +167,11 @@ def _manifest_accesses(record):
     if remote and (files.mapping is None or files.mapping.input_sync != "never"):
         writes.update(path(entry) for entry in files.input_entries)
     writes.update(path(cache) for cache in files.caches)
+    # Resolve local symlink aliases before comparing read/write targets.
+    # Remote paths belong to a different host and remain lexical.
+    if not remote:
+        reads = {os.path.realpath(value) for value in reads if value is not None}
+        writes = {os.path.realpath(value) for value in writes if value is not None}
     return reads - {None}, writes - {None}
 
 
