@@ -93,6 +93,25 @@ def test_managed_runner_flushes_partial_utf8_before_callback(tmp_path):
     assert runner._done.is_set()
 
 
+def test_managed_runner_closes_decoders_exactly_once(tmp_path):
+    """Supervisor and lifecycle must not duplicate output finalization."""
+    spec = ExecutionSpec(
+        argv=(), directory=str(tmp_path), input_file=None, output_file=None,
+    )
+    runner = _ManagedStub(spec)
+    finalizations = []
+    finish = runner._output_observers.finish_bytes
+
+    def finish_once():
+        finalizations.append(True)
+        finish()
+
+    runner._output_observers.finish_bytes = finish_once
+    runner._thread_main()
+    assert runner._state is RunState.FINISHED
+    assert finalizations == [True]
+
+
 def test_managed_runner_cancellation_is_dispatched_once(tmp_path):
     spec = ExecutionSpec(
         argv=(), directory=str(tmp_path), input_file=None, output_file=None,

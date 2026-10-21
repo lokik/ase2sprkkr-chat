@@ -95,19 +95,13 @@ async def monitor_supervisor(runner, follow, status, complete):
             runner._state = RunState.FAILED
         raise
     finally:
-        # Each cleanup must run, and neither may mask the primary monitor
-        # failure. Report the first cleanup failure if monitoring succeeded.
+        # The shared ManagedRunner lifecycle finalizes output observers
+        # before callbacks. The supervisor only releases stream resources.
+        # A close failure must not mask a primary monitor exception.
         import sys
         primary = sys.exc_info()[1]
-        cleanup_error = None
-        for action in (
-            runner._output_observers.finish_bytes,
-            lambda: close_output_files(runner.spec.output_file, runner.spec.error_file),
-        ):
-            try:
-                action()
-            except BaseException as exc:
-                if cleanup_error is None:
-                    cleanup_error = exc
-        if primary is None and cleanup_error is not None:
-            raise cleanup_error
+        try:
+            close_output_files(runner.spec.output_file, runner.spec.error_file)
+        except BaseException:
+            if primary is None:
+                raise
