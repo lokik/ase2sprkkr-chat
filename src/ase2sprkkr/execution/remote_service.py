@@ -255,6 +255,7 @@ def _local_submit(request):
     env[_START_FD_ENV] = str(start_fd)
     process = None
     published = False
+    released = False
     try:
         try:
             process = subprocess.Popen(
@@ -291,21 +292,34 @@ def _local_submit(request):
             published = True
 
         os.write(release_fd, b"1")
+        released = True
         with os.fdopen(socket_read_fd, "rb", closefd=True) as ready:
             socket_read_fd = None
             observed_path = ready.readline().decode("utf8").rstrip("\n")
         if observed_path != socket_path:
             raise RuntimeError("Remote supervisor did not create its follow socket")
     except BaseException as exc:
+        stopped = process is None
         if not published and process is not None:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+            if not released:
+                # Before the start token, the worker cannot have launched
+                # its child. Wait for its exit before deleting its cwd.
+                try:
+                    process.wait(timeout=5)
+                    stopped = True
+                except subprocess.TimeoutExpired:
+                    pass
         if not published:
             shutil.rmtree(socket_dir, ignore_errors=True)
-            if process is None and validated_scratch is not None:
+            if not released and stopped and validated_scratch is not None:
                 shutil.rmtree(validated_scratch, ignore_errors=True)
+            # Once released, the worker may have spawned a process in a
+            # separate process group. Its own finally block owns scratch;
+            # removing it here would race with a still-running calculation.
         if isinstance(exc, OSError) and not published:
             raise SubmissionNotStarted(str(exc)) from exc
         raise
