@@ -1170,7 +1170,7 @@ class PersistentRun:
     def _acknowledge_terminal(self, run):
         """ACK only a durable terminal result; retry after a lost ACK reply."""
         if (self._terminal_acknowledged or not self._record.state.is_terminal
-                or (getattr(self._record.execution, "backend_id", None) is None
+                or (self._record.execution.backend_id is None
                     and run.backend_id is None)):
             return
         acknowledge = getattr(self.executor, "acknowledge", None)
