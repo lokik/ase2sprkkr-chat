@@ -392,3 +392,20 @@ def test_optional_taskfile_survives_manifest_and_roundtrip(tmp_path):
     assert FileManifest(**asdict(manifest)) == manifest
     with pytest.raises(TypeError, match="optional"):
         FileEntry(str(tmp_path / "wrong"), optional="true")
+
+
+def test_manifest_allows_one_remote_output_downloaded_to_distinct_local_paths():
+    shared_source = "/remote/result.out"
+    manifest = FileManifest(outputs=(
+        FileEntry("/local/a.out", shared_source),
+        FileEntry("/local/b.out", shared_source),
+    ))
+    assert len(manifest.outputs) == 2
+
+
+def test_manifest_rejects_two_remote_outputs_claiming_one_local_destination():
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest(outputs=(
+            FileEntry("/local/result.out", "/remote/first.out"),
+            FileEntry("/local/result.out", "/remote/second.out"),
+        ))
