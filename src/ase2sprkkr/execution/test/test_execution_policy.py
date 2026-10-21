@@ -14,7 +14,7 @@ from ase2sprkkr.execution.base import (
 from ase2sprkkr.execution.endpoint import endpoint_for_executor
 from ase2sprkkr.execution.local import LocalExecutor, LocalRunner
 from ase2sprkkr.execution.manager import (
-    ArtifactAvailabilityState,
+    FileAvailabilityState,
     ExecutionManager,
     ProjectRunner,
     RunStore,
@@ -181,7 +181,7 @@ def test_uncertain_submit_without_reference_stays_submitting(tmp_path):
     assert record.execution.backend_id is None
 
 
-def test_artifact_availability_failure_does_not_change_finished_state(tmp_path):
+def test_file_availability_failure_does_not_change_finished_state(tmp_path):
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
     record = manager.new_record(
         task="SCF",
@@ -191,14 +191,14 @@ def test_artifact_availability_failure_does_not_change_finished_state(tmp_path):
     record = manager.store.save(record)
     record = manager.transition(record, state=RunState.FINISHED)
 
-    record = manager.update_artifact_availability(
-        record, str(tmp_path / "out"), ArtifactAvailabilityState.FAILED, "ssh disconnected"
+    record = manager.update_file_availability(
+        record, str(tmp_path / "out"), FileAvailabilityState.FAILED, "ssh disconnected"
     )
 
     assert record.state == RunState.FINISHED
     assert (
         record.files.availability_state
-        == ArtifactAvailabilityState.FAILED
+        == FileAvailabilityState.FAILED
     )
     assert record.files.availability_message == "ssh disconnected"
 
