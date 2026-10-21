@@ -200,7 +200,7 @@ def test_attaching_failed_download_reopens_transfer_without_resubmitting(
     manager.complete(
         record, state=RunState.FAILED, return_code=0,
         failure_phase=FailurePhase.DOWNLOAD,
-        message="connection dropped", artifacts_available=False,
+        message="connection dropped", files_available=False,
     )
     import ase2sprkkr.outputs.project_results as project_results
 
@@ -239,7 +239,7 @@ def test_failed_download_reader_construction_does_not_reopen_run(tmp_path, monke
     )
     failed = manager.complete(
         record, state=RunState.FAILED, return_code=0,
-        failure_phase=FailurePhase.DOWNLOAD, artifacts_available=False,
+        failure_phase=FailurePhase.DOWNLOAD, files_available=False,
     )
 
     def broken_reader(*args):
@@ -273,7 +273,7 @@ def test_postprocessing_retry_uses_saved_files_without_backend(tmp_path):
     failed = manager.complete(
         record, state=RunState.FAILED, return_code=0,
         failure_phase=FailurePhase.POSTPROCESSING,
-        message="transient parse error", artifacts_available=True,
+        message="transient parse error", files_available=True,
     )
     assert failed.files.captured_at is not None
     calls = []
@@ -309,7 +309,7 @@ def test_postprocessing_retry_failure_is_retryable_and_does_not_resubmit(tmp_pat
     )
     failed = manager.complete(
         record, state=RunState.FAILED, return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING, artifacts_available=True,
+        failure_phase=FailurePhase.POSTPROCESSING, files_available=True,
     )
     def broken(_outcome):
         raise ValueError("parse failed again")
@@ -323,7 +323,7 @@ def test_postprocessing_retry_failure_is_retryable_and_does_not_resubmit(tmp_pat
     assert manager.store.get(failed.id).state == RunState.FINISHED
 
 
-def test_postprocessing_retry_refuses_modified_or_uncaptured_artifacts(tmp_path):
+def test_postprocessing_retry_refuses_modified_or_uncaptured_files(tmp_path):
     from ase2sprkkr.execution import FileEntry, FileManifest
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
     output = tmp_path / "run.out"
@@ -338,10 +338,10 @@ def test_postprocessing_retry_refuses_modified_or_uncaptured_artifacts(tmp_path)
     )
     failed = manager.complete(
         record, state=RunState.FAILED, return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING, artifacts_available=True,
+        failure_phase=FailurePhase.POSTPROCESSING, files_available=True,
     )
     output.write_text("overwritten")
-    with pytest.raises(ValueError, match="unchanged historical artifacts"):
+    with pytest.raises(ValueError, match="unchanged historical files"):
         manager.retry_postprocessing(failed.id, lambda outcome: outcome)
     assert manager.store.get(failed.id).state == RunState.FAILED
 
@@ -362,7 +362,7 @@ def test_postprocessing_retry_reader_constructor_error_does_not_reopen(tmp_path,
     )
     failed = manager.complete(
         record, state=RunState.FAILED, return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING, artifacts_available=True,
+        failure_phase=FailurePhase.POSTPROCESSING, files_available=True,
     )
     monkeypatch.setattr(
         project_output, "_result_processor_for_record",
@@ -390,7 +390,7 @@ def test_project_retry_attaches_run_provenance(tmp_path, monkeypatch):
     )
     failed = manager.complete(
         record, state=RunState.FAILED, return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING, artifacts_available=True,
+        failure_phase=FailurePhase.POSTPROCESSING, files_available=True,
     )
     from ase2sprkkr.outputs.task_result import TaskResult
     monkeypatch.setattr(
@@ -420,7 +420,7 @@ def test_postprocessing_retry_only_one_caller_can_claim_run(tmp_path):
     )
     failed = manager.complete(
         record, state=RunState.FAILED, return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING, artifacts_available=True,
+        failure_phase=FailurePhase.POSTPROCESSING, files_available=True,
     )
 
     processing = Event()
@@ -469,7 +469,7 @@ def test_retry_accepts_plain_processing_result(tmp_path):
     )
     failed = manager.complete(
         record, state=RunState.FAILED, return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING, artifacts_available=True,
+        failure_phase=FailurePhase.POSTPROCESSING, files_available=True,
     )
     assert manager.retry_postprocessing(failed.id, lambda _: 42) == 42
     assert manager.store.get(failed.id).state == RunState.FINISHED
@@ -493,7 +493,7 @@ def test_project_retry_accepts_immutable_results(tmp_path, monkeypatch, parsed):
     )
     failed = manager.complete(
         record, state=RunState.FAILED, return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING, artifacts_available=True,
+        failure_phase=FailurePhase.POSTPROCESSING, files_available=True,
     )
     monkeypatch.setattr(
         project_output, "_result_processor_for_record",
@@ -520,7 +520,7 @@ def test_retry_does_not_overwrite_concurrent_record_update(tmp_path, during_retr
     )
     failed = manager.complete(
         record, state=RunState.FAILED, return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING, artifacts_available=True,
+        failure_phase=FailurePhase.POSTPROCESSING, files_available=True,
     )
 
     def concurrent_change(outcome):
@@ -565,7 +565,7 @@ def test_retry_exception_does_not_overwrite_concurrent_completion(tmp_path):
     )
     failed = manager.complete(
         record, state=RunState.FAILED, return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING, artifacts_available=True,
+        failure_phase=FailurePhase.POSTPROCESSING, files_available=True,
     )
 
     def interrupted(outcome):
@@ -607,7 +607,7 @@ def test_postprocessing_retry_accepts_unchanged_output_with_stale_input(
     failed = manager.complete(
         prepared, state=RunState.FAILED, return_code=0,
         failure_phase=FailurePhase.POSTPROCESSING,
-        artifacts_available=True,
+        files_available=True,
     )
     assert failed.files.output_versions
     assert failed.files.input_versions
