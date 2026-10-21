@@ -389,3 +389,60 @@ def test_synchronous_completion_waits_for_durable_backend_identity():
     run.submit()
     assert run.wait().return_code == 0
     assert order == ["reserve", "prepared", "identity", "complete", "callback"]
+
+
+def test_fast_completion_does_not_publish_if_identity_persistence_fails():
+    """A failed identity commit must not unlock terminal persistence or ACK."""
+    from types import SimpleNamespace
+    from ase2sprkkr.execution.run_hooks import PersistenceError
+
+    class ImmediateBackend:
+        callback = None
+        state = RunState.NEW
+        backend_id = None
+        exception = None
+        failure_phase = None
+        failure_message = None
+
+        def __init__(self):
+            self.result = SimpleNamespace(return_code=0)
+
+        def submit(self):
+            self.backend_id = "job-1"
+            self.state = RunState.FINISHED
+            self.callback(self.result)
+
+        def wait(self):
+            return self.result
+
+    events = []
+
+    class Hooks:
+        def before_submit(self, run):
+            pass
+
+        def prepared(self, run):
+            pass
+
+        def submitted(self, run):
+            events.append("identity-attempted")
+            raise OSError("store is unavailable")
+
+        def submission_failed(self, run, error, *, uncertain):
+            assert uncertain is True
+            events.append("submission-failed")
+
+        def completed(self, run):
+            events.append("terminal-persisted")
+
+    run = CalculationRun(
+        ImmediateBackend(), lambda outcome: outcome,
+        hooks=Hooks(), callback=lambda outcome: events.append("callback"),
+    )
+    with pytest.raises(OSError, match="store is unavailable"):
+        run.submit()
+    assert run.state is RunState.FINISHED
+    assert isinstance(run.persistence_error, PersistenceError)
+    with pytest.raises(PersistenceError):
+        run.wait()
+    assert events == ["identity-attempted", "submission-failed"]
