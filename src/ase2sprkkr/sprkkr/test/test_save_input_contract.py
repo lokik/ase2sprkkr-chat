@@ -3,6 +3,8 @@ from pathlib import Path
 from ase.build import bulk
 import pytest
 
+from ...input_parameters.input_parameters import InputParameters
+from ...potentials.potentials import Potential
 from ..calculation import PreparedCalculation
 from ..calculator import SPRKKR
 
@@ -34,7 +36,19 @@ def test_save_input_without_output_has_stable_four_item_result(tmp_path):
     assert not (tmp_path / "default.out").exists()
 
 
-def test_create_run_preserves_explicitly_disabled_output(tmp_path, monkeypatch):
+@pytest.fixture
+def lightweight_serialization(monkeypatch):
+    """Exercise real file setup without unrelated potential/input encoding."""
+    def save_stub(self, file, *args, **kwargs):
+        file.write("# output-file routing test only\n")
+
+    monkeypatch.setattr(Potential, "save_to_file", save_stub)
+    monkeypatch.setattr(InputParameters, "save_to_file", save_stub)
+
+
+def test_create_run_preserves_explicitly_disabled_output(
+    tmp_path, monkeypatch, lightweight_serialization
+):
     calculator = _calculator(tmp_path)
     captured = {}
     runner = object()
@@ -52,7 +66,9 @@ def test_create_run_preserves_explicitly_disabled_output(tmp_path, monkeypatch):
     assert not (tmp_path / "default.out").exists()
 
 
-def test_create_run_respects_calculator_level_disabled_output(tmp_path, monkeypatch):
+def test_create_run_respects_calculator_level_disabled_output(
+    tmp_path, monkeypatch, lightweight_serialization
+):
     calculator = _calculator(tmp_path, output_file=False)
     captured = {}
     runner = object()
