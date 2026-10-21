@@ -408,24 +408,57 @@ def status_remote(remote_id):
     raise ValueError("Unsupported remote execution id")
 
 
+def _unique_json_keys(pairs):
+    """Refuse ambiguous duplicate keys in supervisor control replies."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
 def cancel_remote(remote_id, timeout=1.0):
     handle = _decode_handle(remote_id)
     if handle["kind"] == "process":
-        outcome = _process_outcome(handle["receipt_id"])
-        if outcome is not None:
-            return status_remote(remote_id)
+        # Terminal receipts are immutable. Check once before signalling and
+        # avoid contacting a supervisor whose job has already finished.
+        status = status_remote(remote_id)
+        if RunState(status["state"]).is_terminal:
+            return status
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
                 conn.settimeout(timeout)
                 conn.connect(handle["socket_path"])
                 conn.sendall(b'{"command":"cancel"}\n')
-                reply = conn.recv(256)
-                if b'"accepted":true' not in reply:
+                with conn.makefile("rb") as stream:
+                    reply = stream.readline(256)
+                if not reply.endswith(b"\n"):
+                    # The supervisor may finish after receiving cancel but
+                    # before delivering its acknowledgement.
+                    status = status_remote(remote_id)
+                    if RunState(status["state"]).is_terminal:
+                        return status
+                    raise RuntimeError("Incomplete supervisor cancellation reply")
+                try:
+                    response = json.loads(reply, object_pairs_hook=_unique_json_keys)
+                except ValueError as exc:
+                    raise RuntimeError("Invalid supervisor cancellation reply") from exc
+                if not isinstance(response, dict) or response.get("accepted") is not True:
                     raise RuntimeError("Supervisor rejected cancellation")
-        except (FileNotFoundError, ConnectionRefusedError):
-            return status_remote(remote_id)
-        # The request is not a terminal fact. Only the supervisor waits for and
-        # publishes the final child outcome.
+        except (
+            FileNotFoundError, ConnectionRefusedError,
+            BrokenPipeError, ConnectionResetError, ConnectionAbortedError,
+            TimeoutError,
+        ):
+            # A missing/refusing socket does not mean the cancellation reached
+            # the supervisor. Only a confirmed terminal backend outcome makes
+            # this connection failure safe to ignore.
+            status = status_remote(remote_id)
+            if RunState(status["state"]).is_terminal:
+                return status
+            raise
+        # Accepting cancel is not a terminal fact: observe the backend again.
         return status_remote(remote_id)
 
     if handle["kind"] == "psij":
