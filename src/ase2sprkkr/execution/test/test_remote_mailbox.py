@@ -108,14 +108,14 @@ def test_retry_after_first_publication_fsync_failure(monkeypatch):
     original_fsync = remote_mailbox.fsync_directory
     calls = 0
 
-    def fail_first_directory_sync(directory):
+    def fail_link_directory_sync(directory):
         nonlocal calls
         calls += 1
-        if calls == 1:
+        if calls == 2:
             raise OSError("receipt link was not confirmed durable")
         return original_fsync(directory)
 
-    monkeypatch.setattr(remote_mailbox, "fsync_directory", fail_first_directory_sync)
+    monkeypatch.setattr(remote_mailbox, "fsync_directory", fail_link_directory_sync)
     with pytest.raises(OSError, match="not confirmed durable"):
         remote_mailbox.publish_outcome(key, RunState.FINISHED, 0)
 
@@ -123,5 +123,5 @@ def test_retry_after_first_publication_fsync_failure(monkeypatch):
     # that existing name before reporting first-writer-wins.
     assert remote_mailbox.read_outcome(key)["state"] == "finished"
     assert remote_mailbox.publish_outcome(key, RunState.CANCELLED, None) is False
-    assert calls >= 3
+    assert calls >= 4
     assert remote_mailbox.read_outcome(key)["state"] == "finished"
