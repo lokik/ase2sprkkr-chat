@@ -106,15 +106,19 @@ def request_cancellation(runner, action):
         return runner._cancel_future
 
 
-def finish_monitor(runner):
-    """Deliver the callback and unblock waiters after backend-specific cleanup."""
+def finish_monitor(runner, *, cleanup=None):
+    """Persist callback state and release owned resources before unblocking waiters."""
     try:
         if runner.callback is not None:
             runner.callback(runner.result)
     except BaseException as exc:
         runner._callback_exception = exc
     finally:
-        runner._done.set()
+        try:
+            if cleanup is not None:
+                cleanup()
+        finally:
+            runner._done.set()
 
 
 def wait_for_monitor(runner):
@@ -300,127 +304,6 @@ class ExecutionResources:
             self._resources = ()
 
         _close_distinct(resources, suppress_errors=suppress_errors)
-
-class ResourceOwnedRunner:
-    """Runner proxy owning resources and the public submit/cancel boundary."""
-
-    def __init__(self, runner, resources: ExecutionResources):
-        self._runner = runner
-        self._resources = resources
-        self._submission_lock = Lock()
-        self._cancel_requested = Event()
-        self._submitted = runner.state != RunState.NEW
-        self._cancel_dispatched = False
-
-    def __getattr__(self, name):
-        return getattr(self._runner, name)
-
-    @property
-    def result(self):
-        return self._runner.result
-
-    @property
-    def state(self):
-        if self._cancel_requested.is_set():
-            with self._submission_lock:
-                if not self._submitted:
-                    return RunState.CANCELLED
-        return self._runner.state
-
-    @property
-    def backend_id(self):
-        return self._runner.backend_id
-
-    @property
-    def exception(self):
-        return self._runner.exception
-
-    def _release_after_failure(self):
-        self._resources.close(suppress_errors=True)
-
-    def _raise_if_cancelled_before_submit(self):
-        if not self._cancel_requested.is_set():
-            return
-        with self._submission_lock:
-            if not self._submitted:
-                raise asyncio.CancelledError("Run was cancelled before submission")
-
-    def submit(self):
-        with self._submission_lock:
-            if self._cancel_requested.is_set():
-                self._resources.close()
-                raise asyncio.CancelledError("Run was cancelled before submission")
-            try:
-                result = self._runner.submit()
-            except BaseException:
-                self._release_after_failure()
-                raise
-            self._submitted = True
-            cancel_after_submit = self._cancel_requested.is_set()
-        if cancel_after_submit:
-            self.cancel()
-        return result
-
-    def wait(self):
-        self._raise_if_cancelled_before_submit()
-        try:
-            result = self._runner.wait()
-        except BaseException:
-            self._release_after_failure()
-            raise
-        self._resources.close()
-        return result
-
-    def run(self):
-        self._raise_if_cancelled_before_submit()
-        if self.state == RunState.NEW:
-            self.submit()
-        return self.wait()
-
-    async def run_async(self):
-        self._raise_if_cancelled_before_submit()
-        if self.state == RunState.NEW:
-            self.submit()
-        try:
-            run_async = getattr(self._runner, "run_async", None)
-            if run_async is not None:
-                result = await run_async()
-            else:
-                result = await asyncio.to_thread(self._runner.wait)
-        except BaseException:
-            self._release_after_failure()
-            raise
-        self._resources.close()
-        return result
-
-    def cancel(self):
-        self._cancel_requested.set()
-        with self._submission_lock:
-            if not self._submitted:
-                self._resources.close()
-                return None
-            if self._cancel_dispatched:
-                return None
-            result = self._runner.cancel()
-            self._cancel_dispatched = True
-            return result
-
-    def close(self):
-        if self._resources.closed:
-            return
-        state = self.state
-        if state != RunState.NEW:
-            raise RuntimeError(
-                f"Cannot close execution resources while run is {state.value}"
-            )
-        self._resources.close()
-
-    def add_output_listener(self, callback):
-        return self._runner.add_output_listener(callback)
-
-    def add_output_error_listener(self, callback):
-        return self._runner.add_output_error_listener(callback)
-
 
 @dataclass(frozen=True)
 class RunStatus:
