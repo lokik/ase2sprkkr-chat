@@ -10,6 +10,7 @@ from dataclasses import asdict, replace
 from .base import FailurePhase, RunState, SubmissionNotStarted, file_path, start_monitor
 from ..common.async_utils import run_coro_sync as _run_sync
 from .remote_file_handler import FileSyncPolicy
+from .run_model import FileManifest
 from .managed_runner import ManagedRunner
 from .supervisor_monitor import backend_status_from_facts, monitor_supervisor
 
