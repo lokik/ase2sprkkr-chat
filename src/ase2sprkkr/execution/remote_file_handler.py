@@ -56,16 +56,22 @@ class RemoteFileHandler:
         if policy == FileSyncPolicy.NEVER:
             used[target] = source
             return target
-        local_digest = file_digest(source, missing_ok=True)
-        remote_digest = await self.transport.file_digest(target)
-        if required and local_digest is None:
-            if policy == FileSyncPolicy.ALWAYS:
+        if policy == FileSyncPolicy.ALWAYS:
+            # Content hashes cannot change this decision. Avoid hashing large
+            # inputs locally and on the remote host before uploading them.
+            exists = os.path.isfile(source)
+            if required and not exists:
                 raise FileNotFoundError(f"Local input file does not exist: {source}")
-            if remote_digest is None:
+            should_upload = exists
+        else:
+            local_digest = file_digest(source, missing_ok=True)
+            remote_digest = await self.transport.file_digest(target)
+            if required and local_digest is None and remote_digest is None:
                 raise FileNotFoundError(
                     f"Input file exists neither locally nor remotely: {source}"
                 )
-        if policy.should_transfer(local_digest, remote_digest):
+            should_upload = policy.should_transfer(local_digest, remote_digest)
+        if should_upload:
             if uploads is None:
                 await self.transport.put_file(source, target)
             else:

@@ -280,6 +280,6 @@ def test_overlapping_exact_and_wildcard_caches_are_transferred_once(tmp_path):
     remote_b = remote_root / "calculation" / "restart-b.dat"
     assert sum(src == remote_a for src, _ in transport.get_files) == 1
     assert sum(src == remote_b for src, _ in transport.get_files) == 1
-    entries = {item.file.local_path: item.file for item in runner.files.caches}
+    entries = {item.local_path: item for item in runner.files.caches}
     assert entries[str(exact)].availability_state == "available"
     assert exact.read_text() == "new"

@@ -367,3 +367,27 @@ def test_collect_downloads_shared_remote_source_to_both_local_destinations(tmp_p
         "available", "available",
     ]
 
+def test_always_input_sync_uploads_without_unnecessary_digest_checks(tmp_path):
+    """ALWAYS does not need hashes of either the local or remote input."""
+    from ase2sprkkr.execution import FileMapping
+
+    local, remote = tmp_path / "local", tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    source = local / "input.dat"
+    source.write_text("input")
+
+    class NoDigestTransport(LocalTransport):
+        async def file_digest(self, path):
+            pytest.fail(f"ALWAYS must not hash input files: {path}")
+
+    handler = RemoteEndpointExecutor(NoDigestTransport()).file_handler
+    mapping = FileMapping(str(local), str(remote), input_sync="always")
+    spec = ExecutionSpec(
+        argv=("true",), directory=str(local), input_file=str(source),
+    )
+    manifest = asyncio.run(handler.prepare(mapping, spec))
+
+    assert (remote / source.name).read_text() == "input"
+    assert manifest.inputs[0].remote_path == str(remote / source.name)
+
