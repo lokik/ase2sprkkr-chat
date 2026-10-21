@@ -277,3 +277,35 @@ def test_callback_wakes_silent_file_follower_without_poll_timeout(tmp_path):
         assert seen == []
 
     asyncio.run(check())
+
+
+def test_event_only_mode_waits_for_notification_without_timeout(tmp_path):
+    async def check():
+        async with GrowingFileTail(
+            {"out": tmp_path / "out"}, poll_interval=None,
+        ) as tail:
+            waiter = asyncio.create_task(tail.wait_for_change())
+            await asyncio.sleep(0)
+            assert not waiter.done()
+            tail._changed.set()
+            await asyncio.wait_for(waiter, 1)
+    asyncio.run(check())
+
+
+def test_event_only_mode_terminal_future_wakes_without_file_change(tmp_path):
+    async def check():
+        completed = asyncio.get_running_loop().create_future()
+        started = asyncio.Event()
+
+        async def terminal():
+            started.set()
+            return "finished" if completed.done() else None
+
+        task = asyncio.create_task(follow_growing_files(
+            {"out": tmp_path / "silent"}, lambda *_: None,
+            terminal, poll_interval=None, wakeup=completed,
+        ))
+        await asyncio.wait_for(started.wait(), 1)
+        completed.set_result(True)
+        assert await asyncio.wait_for(task, 1) == "finished"
+    asyncio.run(check())
