@@ -30,7 +30,7 @@ from .file_history import (
     capture_result_files, file_is_current, missing_result_files, sync_result_files,
 )
 from .endpoint import ExecutorEndpoint, endpoint_for_executor
-from .pool import default_executor_pool
+from .pool import Executors
 from .projects import _project_id
 from .postprocessing import CalculationRun
 from .run_model import (
@@ -444,18 +444,19 @@ class ExecutionManager:
                 raise ValueError("Project-bound execution requires the repository run store")
             store = canonical_store
         self.store = store
-        self.executor_pool = (
-            executor_pool if executor_pool is not None else default_executor_pool()
-        )
+        self.executors = Executors(executor_pool)
         self.submitting_grace = float(submitting_grace)
 
+    @property
+    def executor_pool(self):
+        """Compatibility view; executor ownership belongs to Executors."""
+        return self.executors.pool
+
     def register_executor(self, executor: Executor, endpoint=None):
-        endpoint = endpoint or endpoint_for_executor(executor)
-        self.executor_pool.get(endpoint, lambda: executor)
-        return endpoint
+        return self.executors.register(executor, endpoint)
 
     def executor_for(self, record):
-        return self.executor_pool.for_endpoint(record.execution.endpoint)
+        return self.executors.for_record(record)
 
     def input_file_is_current(self, run):
         record = self.store.get(run) if isinstance(run, str) else self.store.get(run.id)

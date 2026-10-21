@@ -66,3 +66,23 @@ _DEFAULT_EXECUTOR_POOL = ExecutorPool()
 def default_executor_pool():
     """Return the process-wide pool used by ordinary calculations."""
     return _DEFAULT_EXECUTOR_POOL
+
+
+class Executors:
+    """Own executor registration and endpoint-scoped lookup for a manager."""
+
+    def __init__(self, pool=None):
+        self.pool = pool if pool is not None else default_executor_pool()
+
+    def register(self, executor, endpoint=None):
+        from .endpoint import endpoint_for_executor
+
+        endpoint = endpoint or endpoint_for_executor(executor)
+        self.pool.get(endpoint, lambda: executor)
+        return endpoint
+
+    def for_endpoint(self, endpoint):
+        return self.pool.for_endpoint(endpoint)
+
+    def for_record(self, record):
+        return self.for_endpoint(record.execution.endpoint)

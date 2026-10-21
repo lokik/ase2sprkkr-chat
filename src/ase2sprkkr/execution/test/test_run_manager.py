@@ -235,3 +235,16 @@ def test_project_manager_returns_one_public_calculation_runner(tmp_path):
     run.submit()
     assert run.record.state is RunState.QUEUED
     assert run.backend_id == "native-1"
+
+
+def test_executors_are_owned_by_manager_and_keyed_by_endpoint(tmp_path):
+    from ase2sprkkr.execution.pool import Executors
+
+    manager = _manager(tmp_path)
+    assert isinstance(manager.executors, Executors)
+    assert manager.executor_pool is manager.executors.pool
+    executor = _Executor()
+    endpoint = manager.executors.register(executor)
+    record = manager.new_record(task="DOS", directory=tmp_path, endpoint=endpoint)
+    assert manager.executors.for_record(record) is executor
+    assert manager.executor_for(record) is executor
