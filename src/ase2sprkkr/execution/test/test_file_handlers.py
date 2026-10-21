@@ -160,8 +160,7 @@ def test_collect_continues_after_one_output_download_fails(tmp_path):
 
 def test_collect_keeps_later_outputs_and_caches_after_missing_required_file(tmp_path):
     """A missing mandatory output fails the run, not subsequent transfers."""
-    from ase2sprkkr.execution import CacheEntry
-    from ase2sprkkr.execution.base import ExecutionOutcome
+        from ase2sprkkr.execution.base import ExecutionOutcome
 
     local, remote = tmp_path / "local", tmp_path / "remote"
     local.mkdir()
@@ -179,10 +178,10 @@ def test_collect_keeps_later_outputs_and_caches_after_missing_required_file(tmp_
             for name in ("first.out", "missing.out", "last.out")
         ),
         caches=(
-            CacheEntry(FileEntry(
+            FileEntry(
                 str(local / "restart.pot"), str(remote / "restart.pot"),
                 availability_state="pending",
-            )),
+            ),
         ),
     )
     endpoint = RemoteEndpointExecutor(LocalTransport())
@@ -197,7 +196,7 @@ def test_collect_keeps_later_outputs_and_caches_after_missing_required_file(tmp_
     assert [entry.availability_state for entry in collected.outputs] == [
         "available", "failed", "available",
     ]
-    assert collected.caches[0].file.availability_state == "available"
+    assert collected.caches[0].availability_state == "available"
     assert (local / "first.out").read_text() == "first"
     assert (local / "last.out").read_text() == "last"
     assert (local / "restart.pot").read_text() == "restart"
@@ -236,7 +235,7 @@ def test_materialized_manifest_can_download_and_rehydrate(tmp_path):
 
 
 def test_collect_rejects_materialized_cache_output_collision_before_download(tmp_path):
-    from ase2sprkkr.execution import CacheEntry, FileMapping
+    from ase2sprkkr.execution import FileMapping
     from ase2sprkkr.execution.base import ExecutionOutcome
     from ase2sprkkr.execution.file_availability import materialize_manifest
 
@@ -249,8 +248,8 @@ def test_collect_rejects_materialized_cache_output_collision_before_download(tmp
     manifest = FileManifest(
         outputs=(FileEntry(str(local / "*.dat"), str(remote / "*.dat"),
                            availability_state="pending"),),
-        caches=(CacheEntry(FileEntry(str(destination), str(remote / "result.dat"),
-                                     availability_state="pending")),),
+        caches=(FileEntry(str(destination), str(remote / "result.dat"),
+                                     availability_state="pending"),),
         mapping=FileMapping(str(local), str(remote)),
     )
     frozen, error = materialize_manifest(manifest, remote=True)
@@ -267,7 +266,7 @@ def test_collect_rejects_materialized_cache_output_collision_before_download(tmp
 
 
 def test_materialization_assigns_cache_baselines_to_concrete_members(tmp_path):
-    from ase2sprkkr.execution import CacheEntry, FileMapping
+    from ase2sprkkr.execution import FileMapping
     from ase2sprkkr.execution.file_availability import materialize_manifest
 
     local, remote = tmp_path / "local", tmp_path / "remote"
@@ -278,19 +277,19 @@ def test_materialization_assigns_cache_baselines_to_concrete_members(tmp_path):
     previous = str(remote / "restart-1.pot")
     manifest = FileManifest(
         caches=(
-            CacheEntry(FileEntry(str(local / "restart-*.pot"),
+            FileEntry(str(local / "restart-*.pot"),
                                  str(remote / "restart-*.pot"),
-                                 availability_state="pending")),
-            CacheEntry(FileEntry(remote_path=previous), (3, 17)),
+                                 availability_state="pending"),
+            FileEntry(remote_path=previous), (3, 17)),
         ),
         mapping=FileMapping(str(local), str(remote)),
     )
     frozen, error = materialize_manifest(manifest, remote=True)
     assert error is None
-    assert {c.file.local_path for c in frozen.caches} == {
+    assert {c.local_path for c in frozen.caches} == {
         str(local / "restart-1.pot"), str(local / "restart-2.pot"),
     }
-    assert {c.file.remote_path: c.before for c in frozen.caches} == {
+    assert {c.remote_path: c.pre_run_signature for c in frozen.caches} == {
         previous: (3, 17), str(remote / "restart-2.pot"): None,
     }
 
@@ -323,14 +322,13 @@ def test_materialization_keeps_failed_wildcard_declaration(tmp_path, monkeypatch
 
 
 def test_collect_rejects_two_remote_cache_sources_with_one_destination(tmp_path):
-    from ase2sprkkr.execution import CacheEntry
-    from ase2sprkkr.execution.base import ExecutionOutcome
+        from ase2sprkkr.execution.base import ExecutionOutcome
 
     local = tmp_path / "restart.pot"
     local.write_text("preserve")
     manifest = FileManifest(caches=(
-        CacheEntry(FileEntry(str(local), "/remote/cache-a.pot")),
-        CacheEntry(FileEntry(str(local), "/remote/cache-b.pot")),
+        FileEntry(str(local), "/remote/cache-a.pot"),
+        FileEntry(str(local), "/remote/cache-b.pot"),
     ))
     endpoint = RemoteEndpointExecutor(LocalTransport())
     context = endpoint._context(endpoint, LaunchSpec(

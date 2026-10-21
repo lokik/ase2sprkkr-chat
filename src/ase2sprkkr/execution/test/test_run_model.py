@@ -5,7 +5,7 @@ import pytest
 from ase2sprkkr.execution.base import LaunchSpec
 from ase2sprkkr.execution.endpoint import ExecutorEndpoint
 from ase2sprkkr.execution.run_model import (
-    ArtifactAvailabilityState, CacheEntry, Execution, FileEntry, FileManifest,
+    ArtifactAvailabilityState, Execution, FileEntry, FileManifest,
     FileMapping, FileSyncPolicy, WorkingDirectory,
 )
 
@@ -30,13 +30,13 @@ def test_manifest_roundtrip_includes_streams_and_cache_baseline():
     original = FileManifest(
         inputs=(FileEntry("/local/input", "/remote/input"),),
         outputs=(FileEntry("/local/result", "/remote/result"),),
-        caches=(CacheEntry(FileEntry("/local/cache", "/remote/cache"), (100, 123)),),
+        caches=(FileEntry("/local/cache", "/remote/cache", pre_run_signature=(100, 123)),),
         stdout=FileEntry("/local/out", "/remote/out"),
         stderr=FileEntry("/local/err", "/remote/err"),
     )
     restored = FileManifest(**asdict(original))
     assert restored == original
-    assert restored.caches[0].before == (100, 123)
+    assert restored.caches[0].pre_run_signature == (100, 123)
 
 
 def test_empty_backend_identity_and_pathless_file_are_invalid():
@@ -71,7 +71,7 @@ def test_each_artifact_tracks_its_own_transfer_outcome():
             FileEntry("/local/one", "/remote/one", "pending"),
             FileEntry("/local/two", "/remote/two", "pending"),
         ),
-        caches=(CacheEntry(FileEntry("/local/cache", "/remote/cache", "pending")),),
+        caches=(FileEntry("/local/cache", "/remote/cache", "pending"),),
     )
     manifest = manifest.with_file_availability("/local/one", "available")
     manifest = manifest.with_file_availability(
@@ -144,7 +144,7 @@ def test_recovered_stream_paths_update_only_declared_stream_locations():
     manifest = FileManifest(
         inputs=(FileEntry("/local/input", "/remote/input"),),
         outputs=(FileEntry("/local/artifact", "/remote/artifact"),),
-        caches=(CacheEntry(FileEntry("/local/cache", "/remote/cache"), (12, 34)),),
+        caches=(FileEntry("/local/cache", "/remote/cache", pre_run_signature=(12, 34)),),
         stdout=FileEntry(
             "/local/stdout", "/previous/stdout",
             availability_state="pending",
