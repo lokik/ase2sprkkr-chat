@@ -245,10 +245,6 @@ def test_project_cancellation_during_prelaunch_is_durable_and_nonblocking(phase)
     entered, release = Event(), Event()
 
     class Backend(_BackendRunner):
-        def __init__(self):
-            super().__init__()
-            self.backend_id = "job-1"
-
         def prepare_submission(self):
             if phase == "preparation":
                 entered.set()
@@ -320,4 +316,5 @@ def test_project_cancellation_during_prelaunch_is_durable_and_nonblocking(phase)
     assert len(manager.completions) == 1
     assert resource.closed
     assert backend.submitted == 0
+    assert backend.backend_id is None
     assert backend.cancelled == 0
