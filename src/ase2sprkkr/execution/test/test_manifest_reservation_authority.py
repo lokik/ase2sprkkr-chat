@@ -114,8 +114,8 @@ def test_staging_rejects_changed_reserved_target(tmp_path):
         ))
 
 
-def test_staging_rejects_changed_spec_before_transfer(tmp_path):
-    """A reserved manifest, not a later spec, determines what may be staged."""
+def test_staging_uses_reserved_manifest_not_spec_declarations(tmp_path):
+    """Stage reserved paths; changed spec declarations cannot expand the transfer."""
     from dataclasses import replace
 
     executor = RemoteEndpointExecutor(LocalTransport())
@@ -133,12 +133,17 @@ def test_staging_rejects_changed_spec_before_transfer(tmp_path):
     reserved, _ = executor.reservation_context(
         spec, FileManifest.from_spec(spec),
     )
-    changed = replace(spec, input_files=("extra.in",))
-    with pytest.raises(ValueError, match="differs from reserved manifest"):
-        asyncio.run(executor.file_handler.prepare(
-            reserved.mapping, changed, reserved,
-        ))
-    assert not (tmp_path / "remote" / "work" / "first.in").exists()
+    changed = replace(
+        spec, input_files=("extra.in",),
+        output_files=("extra.out",), cache_files=("extra.cache",),
+    )
+    prepared = asyncio.run(executor.file_handler.prepare(
+        reserved.mapping, changed, reserved,
+    ))
+    assert prepared.inputs == reserved.inputs
+    assert prepared.outputs == reserved.outputs
+    assert prepared.caches == reserved.caches
+    assert (tmp_path / "remote" / "work" / "first.in").read_text() == "first"
     assert not (tmp_path / "remote" / "work" / "extra.in").exists()
 
 

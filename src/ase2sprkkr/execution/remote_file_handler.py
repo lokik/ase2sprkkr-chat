@@ -136,21 +136,6 @@ class RemoteFileHandler:
         if manifest.mapping is not None and manifest.mapping != mapping:
             raise ValueError("Submission mapping differs from reserved mapping")
 
-        # A reservation cannot be silently widened by a different execution
-        # specification. Check the local declarations before any remote I/O.
-        if manifest.mapping is not None:
-            declared = FileManifest.from_spec(spec)
-            for name in ("inputs", "outputs", "caches"):
-                if (tuple(entry.local_path for entry in getattr(manifest, name))
-                        != tuple(entry.local_path for entry in getattr(declared, name))):
-                    raise ValueError("Submission files differ from reserved manifest")
-            for name in ("primary_input", "stdin", "stdout", "stderr"):
-                reserved = getattr(manifest, name)
-                actual = getattr(declared, name)
-                if (None if reserved is None else reserved.local_path) != (
-                        None if actual is None else actual.local_path):
-                    raise ValueError("Submission files differ from reserved manifest")
-
         def mapped(entry):
             if entry is None or entry.local_path is None:
                 return entry
