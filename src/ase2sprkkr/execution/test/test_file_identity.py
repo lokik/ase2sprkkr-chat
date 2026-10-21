@@ -8,7 +8,7 @@ from ase2sprkkr.execution.run_model import FileEntry, FileManifest
 
 
 @pytest.mark.parametrize("roles", ["output-cache", "different-output-sources"])
-def test_distinct_artifacts_cannot_target_one_local_file(roles):
+def test_distinct_files_cannot_target_one_local_file(roles):
     path = "/local/shared.dat"
     with pytest.raises(ValueError, match="Duplicate file declaration"):
         if roles == "output-cache":
@@ -31,14 +31,14 @@ def test_merged_streams_require_same_remote_destination():
         )
 
 
-def test_shared_stream_identity_remains_one_artifact():
+def test_shared_stream_identity_remains_one_file():
     path = "/local/shared.log"
     files = FileManifest(
         stdout=FileEntry(path, "/remote/shared", "pending"),
         stderr=FileEntry(path, "/remote/shared", "pending"),
     )
     updated = files.with_file_availability(path, "available")
-    assert len(updated.artifacts) == 1
+    assert len(updated.files) == 1
     assert updated.stdout.availability_state == "available"
     assert updated.stderr.availability_state == "available"
     assert FileManifest(**asdict(updated)) == updated
