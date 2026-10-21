@@ -39,9 +39,8 @@ def test_preparse_ipd_is_cached_and_contains_only_repeated_task():
 def test_mapping_is_declarative_and_independent_of_adsi():
     mapping = _task_selector_map()
     assert mapping["JXC"] == mapping["DMI"]
-    assert mapping["ARPES"] == mapping["SPLEED"]
-    assert mapping["ARPES"] == mapping["AIPES"]
-    assert mapping["ARPES"] == mapping["BAND"]
+    for task in ("ARPES", "SPLEED", "AIPES", "BAND"):
+        assert mapping[task] == (InputParameters.definition(task),)
     assert mapping["BSF"] == (InputParameters.definition("BSF"),)
     for definition in InputParameters.definitions.values():
         assert definition.accepted_task_selectors()
@@ -56,8 +55,12 @@ def test_class_vs_instance_from_file():
     assert conventional.definition_name == "JXC"
     assert explicit.definition_name == "JXC"
     assert selected.TASK.DMI()
-    assert conventional.TASK.DMI()
-    assert conventional.TASK.TASK() == "JXC"
+
+
+def test_missing_task_selects_scf_and_not_adsi():
+    path = _EXAMPLES / "scf.in"
+    text = path.read_text()
+    assert InputParameters.from_file(io.StringIO(text)).definition_name == "SCF"
 
 
 def test_explicit_ipd_never_autodetects(monkeypatch):

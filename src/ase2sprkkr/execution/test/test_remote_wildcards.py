@@ -1,3 +1,5 @@
+import pytest
+from ase2sprkkr.input_parameters.task_definition import TaskFile
 import asyncio
 
 from ..base import SubmissionNotStarted
@@ -286,3 +288,130 @@ def test_overlapping_exact_and_wildcard_caches_are_transferred_once(tmp_path):
     assert entries[str(exact)].availability_state == "available"
     assert entries[str(pattern)].availability_state == "available"
     assert exact.read_text() == "new"
+
+
+def test_remote_executor_allows_missing_optional_outputs(tmp_path):
+    workdir = tmp_path / "local" / "calculation"
+    executor, spec, _, _ = _text_run(
+        tmp_path,
+        declared_output_files=(
+            TaskFile(workdir / "missing-*.dat", optional=True),
+            TaskFile(workdir / "not-created.dat", optional=True),
+        ),
+        code="print('done')",
+    )
+    result = _processed_run(executor, spec).run()
+    assert result.return_code == 0
+    assert not (workdir / "not-created.dat").exists()
+
+
+def test_remote_executor_allows_missing_optional_input_pattern(tmp_path):
+    workdir = tmp_path / "local" / "calculation"
+    executor, spec, _, _ = _text_run(
+        tmp_path,
+        declared_input_files=(TaskFile(workdir / "missing-*.pot", optional=True),),
+        code="print('done')",
+    )
+    result = _processed_run(executor, spec).run()
+    assert result.return_code == 0
+
+
+def test_optional_output_declaration_survives_manifest_roundtrip(tmp_path):
+    import dataclasses
+    from ..base import ExecutionSpec
+    from ..run_model import FileManifest
+
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    optional = TaskFile(workdir / "maybe-*.dat", optional=True)
+    required = TaskFile(workdir / "required.dat")
+    spec = ExecutionSpec(
+        argv=("true",),
+        input_file=workdir / "input.inp",
+        output_file=workdir / "stdout.out",
+        directory=str(workdir),
+        output_files=(optional, required),
+        input_files=(TaskFile(workdir / "maybe.inp", optional=True),),
+    )
+    manifest = FileManifest.from_spec(spec)
+    assert [(entry.local_path, entry.optional) for entry in manifest.outputs] == [
+        (str(optional), True), (str(required), False),
+    ]
+    assert any(entry.local_path == str(workdir / "maybe.inp") and entry.optional
+               for entry in manifest.inputs)
+    restored = FileManifest(**dataclasses.asdict(manifest))
+    assert restored.outputs == manifest.outputs
+
+
+def test_optional_outputs_with_absent_required_output_still_fail(tmp_path):
+    """Optional files may be absent, but required files remain mandatory."""
+    workdir = tmp_path / "local" / "calculation"
+    executor, spec, _, _ = _text_run(
+        tmp_path,
+        declared_output_files=(
+            TaskFile(workdir / "optional-*.dat", optional=True),
+            TaskFile(workdir / "must-exist.dat"),
+        ),
+        code="print('done')",
+    )
+    result_runner = _processed_run(executor, spec)
+    with pytest.raises(FileNotFoundError, match="must-exist.dat"):
+        result_runner.run()
+
+
+@pytest.mark.parametrize("optional_first", [True, False])
+def test_conflicting_output_declarations_are_required(tmp_path, optional_first):
+    """A required declaration takes precedence regardless of declaration order."""
+    from ..base import FailurePhase, RunState
+    workdir = tmp_path / "local" / "calculation"
+    maybe = TaskFile(workdir / "missing.dat", optional=True)
+    mandatory = str(workdir / "missing.dat")
+    declared = (maybe, mandatory) if optional_first else (mandatory, maybe)
+    executor, spec, _, _ = _text_run(
+        tmp_path, declared_output_files=declared, code="print('done')",
+    )
+    runner = _processed_run(executor, spec)
+    with pytest.raises(FileNotFoundError, match="missing.dat"):
+        runner.run()
+    assert runner.state == RunState.FAILED
+    assert runner.failure_phase == FailurePhase.DOWNLOAD
+
+
+@pytest.mark.parametrize("optional_first", [True, False])
+def test_conflicting_input_declarations_are_required(tmp_path, optional_first):
+    """Missing mandatory inputs cannot be hidden behind optional declarations."""
+    workdir = tmp_path / "local" / "calculation"
+    maybe = TaskFile(workdir / "missing.pot", optional=True)
+    mandatory = str(workdir / "missing.pot")
+    declared = (maybe, mandatory) if optional_first else (mandatory, maybe)
+    executor, spec, _, _ = _text_run(
+        tmp_path, declared_input_files=declared,
+    )
+    with pytest.raises(SubmissionNotStarted, match="neither locally nor remotely"):
+        _processed_run(executor, spec).run()
+
+
+@pytest.mark.parametrize("optional_first", [True, False])
+def test_manifest_deduplicates_normalized_paths_and_merges_requirements(
+    tmp_path, optional_first,
+):
+    from ..base import ExecutionSpec
+    from ..run_model import FileManifest
+
+    filename = tmp_path / "example.dat"
+    optional = TaskFile(filename, optional=True)
+    mandatory = str(filename)
+    declarations = (optional, mandatory) if optional_first else (mandatory, optional)
+    spec = ExecutionSpec(
+        argv=("true",), input_file=tmp_path / "primary.inp",
+        output_file=tmp_path / "stdout.out", directory=str(tmp_path),
+        input_files=(TaskFile(tmp_path / "primary.inp", optional=True), *declarations),
+        output_files=(*declarations, filename),
+    )
+    manifest = FileManifest.from_spec(spec)
+    assert [(entry.local_path, entry.optional) for entry in manifest.inputs] == [
+        (str(tmp_path / "primary.inp"), False), (str(filename), False),
+    ]
+    assert [(entry.local_path, entry.optional) for entry in manifest.outputs] == [
+        (str(filename), False),
+    ]

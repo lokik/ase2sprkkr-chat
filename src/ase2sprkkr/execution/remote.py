@@ -15,6 +15,7 @@ from .base import (
     OutputObservers,
     close_output_files,
     file_path,
+    declared_file_paths,
     finish_monitor,
     wait_for_monitor,
     RunState,
@@ -77,6 +78,15 @@ class RemoteRunner:
         self._output_patterns = tuple(output_patterns or ())
         self._cache_patterns = tuple(cache_patterns or ())
         self._cache_before = dict(cache_before or {})
+        self._optional_outputs = {
+            entry.local_path for entry in (() if files is None else files.outputs)
+            if getattr(entry, "optional", False) and entry.source_pattern is None
+        }
+        self._optional_output_patterns = {
+            entry.remote_path for entry in (() if files is None else files.outputs)
+            if getattr(entry, "optional", False) and entry.remote_path is not None
+            and has_file_magic(entry.remote_path)
+        }
         self.result = ExecutionOutcome(
             output_file=self._local_path(spec.output_file),
             input_file=self._local_path(spec.input_file),
@@ -280,12 +290,10 @@ class RemoteRunner:
 
     def _unique_declared_paths(self, values, *, excluded=()):
         """Yield normalized file declarations once, preserving their order."""
-        seen = set(excluded)
-        for value in values:
-            local = self._local_path(value)
-            if local is not None and local not in seen:
-                seen.add(local)
-                yield local, has_file_magic(local)
+        for local, required in declared_file_paths(
+            values, self.spec.directory, excluded=excluded, flush=True,
+        ):
+            yield local, has_file_magic(local), required
 
     async def _prepare_cache_files(self, used):
         targets = {}
@@ -294,7 +302,7 @@ class RemoteRunner:
         output_policy = self.executor.output_files
         remote_root = await self.executor._resolved_remote_root()
 
-        for local, pattern in self._unique_declared_paths(self.spec.cache_files):
+        for local, pattern, _required in self._unique_declared_paths(self.spec.cache_files):
             if pattern:
                 remote_pattern = await self.executor.map_path(local)
                 patterns.append(remote_pattern)
@@ -332,14 +340,20 @@ class RemoteRunner:
         targets = {}
         patterns = []
 
-        for local, pattern in self._unique_declared_paths(
+        self._optional_outputs = set()
+        self._optional_output_patterns = set()
+        for local, pattern, required in self._unique_declared_paths(
             self.spec.output_files, excluded=primary,
         ):
             remote = await self.executor.map_path(local)
             if pattern:
                 patterns.append(remote)
+                if not required:
+                    self._optional_output_patterns.add(remote)
             else:
                 targets[local] = remote
+                if not required:
+                    self._optional_outputs.add(local)
         # Cleanup belongs to the target-side submit operation, where input
         # and cache wildcard protections are resolved together. Never delete
         # remote files during client-side staging.
@@ -417,20 +431,22 @@ class RemoteRunner:
             return
 
         for local, remote in self._output_targets.items():
-            await self._sync_output_entry(local, remote, required)
+            await self._sync_output_entry(
+                local, remote, required and local not in self._optional_outputs
+            )
 
         if self._output_patterns:
             primary = {
                 path for path in (self.result.output_file, self.result.error_file)
                 if path is not None
             }
-            await self._sync_patterns(
-                self._output_patterns,
-                kind="output",
-                required=required,
-                excluded_remote=self._output_targets.values(),
-                excluded_local=primary,
-            )
+            for pattern in self._output_patterns:
+                await self._sync_patterns(
+                    (pattern,), kind="output",
+                    required=required and pattern not in self._optional_output_patterns,
+                    excluded_remote=self._output_targets.values(),
+                    excluded_local=primary,
+                )
 
     async def _sync_one_output(self, local, remote, required):
         policy = self.executor.output_files
@@ -497,14 +513,21 @@ class RemoteRunner:
 
     async def _prepare_request(self, run_id, remote_directory):
         used = {}
-        for value in self.spec.input_files:
-            source = self._local_path(value)
-            if source is not None and has_file_magic(source):
-                await self._stage_input_pattern(value, used)
+        # Include primary input and stdin in requirement resolution: neither
+        # may silently become optional through a duplicate auxiliary entry.
+        staged_files = (*self.spec.input_files, self.spec.input_file, self.spec.stdin)
+        for source, pattern, required in self._unique_declared_paths(staged_files):
+            if pattern:
+                await self._stage_input_pattern(source, used, required=required)
             else:
-                await self._stage_file(value, used)
-        input_target = await self._stage_file(self.spec.input_file, used)
-        stdin_target = await self._stage_file(self.spec.stdin, used)
+                await self._stage_file(source, used, required=required)
+        staged = {source: target for target, source in used.items()}
+
+        input_target = staged.get(self.result.input_file)
+        stdin_target = (
+            staged.get(self._local_path(self.spec.stdin))
+            if self.spec.stdin is not None else None
+        )
 
         await self._prepare_cache_files(used)
         staged = {source: target for target, source in used.items()}
