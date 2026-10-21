@@ -126,6 +126,8 @@ class TestSPRKKRAtoms:
 
     def test_symmetry(self):
         atoms = bulk("LiCl", "rocksalt", a=5.64) * (2, 1, 1)
+        # The second promotion scenario must start from pristine ASE atoms.
+        unpromoted = atoms.copy()
         SPRKKRAtoms.promote_ase_atoms(atoms)
         assert atoms.sites[1].site_type == atoms.sites[3].site_type
         assert atoms.sites[1] is not atoms.sites[3]
@@ -160,7 +162,7 @@ class TestSPRKKRAtoms:
         assert atoms.sites[1].site_type != atoms.sites[3].site_type
         assert atoms.sites[1] is not atoms.sites[3]
 
-        atoms = bulk("LiCl", "rocksalt", a=5.64) * (2, 1, 1)
+        atoms = unpromoted
         SPRKKRAtoms.promote_ase_atoms(atoms, symmetry=False)
         assert atoms.sites[1].site_type != atoms.sites[3].site_type
 
@@ -172,6 +174,7 @@ class TestSPRKKRAtoms:
 
     def test_occupancy(self):
         atoms = bulk("LiCl", "rocksalt", a=5.64) * (2, 1, 1)
+        unpromoted = atoms.copy()
         atoms.info["occupancy"] = {
             0: {"Li": 1},
             1: {"Cl": 1},
@@ -182,7 +185,7 @@ class TestSPRKKRAtoms:
         SPRKKRAtoms.promote_ase_atoms(atoms)
         assert atoms.sites[1].site_type == atoms.sites[3].site_type
 
-        atoms = bulk("LiCl", "rocksalt", a=5.64) * (2, 1, 1)
+        atoms = unpromoted
         atoms.info["occupancy"] = {
             0: {"Li": 1},
             1: {"Cl": 0.5, "I": 0.5},
