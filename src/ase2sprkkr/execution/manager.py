@@ -1133,10 +1133,6 @@ class PersistentRun:
             with self._lifecycle_lock:
                 self._submission_in_progress = False
 
-    def submit(self):
-        """Compatibility entry point; CalculationRun owns submission."""
-        return self._runner.submit()
-
     def completed(self, run: CalculationRun):
         """Durably record an observed completion before user notifications."""
         self._sync_completion(run.result)
@@ -1210,51 +1206,7 @@ class PersistentRun:
             if self._record.state.is_terminal:
                 self._completion_persisted = True
 
-    def wait(self):
-        try:
-            return self._runner.wait()
-        finally:
-            # A failed durable completion must be retried explicitly, not
-            # silently during wait() while the caller is handling the error.
-            if (self._record.state != RunState.NEW
-                    and not (isinstance(self._runner, CalculationRun)
-                             and self._runner.persistence_error is not None)):
-                self._sync_completion(self.result)
-
     def refresh(self):
         with self._completion_lock:
             self._record = self.manager.refresh((self._record,))[0]
             return self._record
-
-    def cancel(self):
-        # The persisted terminal state is final. In particular, never request
-        # backend cancellation merely because a stale observer still runs.
-        if self._record.state.is_terminal:
-            return None
-        # CalculationRun owns the cancellation latch. This must happen before
-        # acquiring any lock so a blocking reservation cannot delay cancel.
-        self._runner.request_cancel()
-        with self._lifecycle_lock:
-            if self._submission_in_progress:
-                # Project reservation/staging owns the prepared inputs until
-                # submit() settles the request or dispatches backend cancel.
-                return None
-        with self._completion_lock:
-            if self._record.state.is_terminal:
-                return None
-        try:
-            return self._runner.cancel()
-        finally:
-            with self._completion_lock:
-                if self._record.state != RunState.NEW and not self._completion_persisted:
-                    self._record = self.manager.transition(
-                        self._record, state=self._runner.state,
-                        execution=self.execution, failure_phase=self.failure_phase,
-                    )
-                    self._monitor_record_version = self._record.updated_at
-
-
-
-# Existing tests still exercise the previous project facade directly. It is
-# not constructed by ExecutionManager; callers receive CalculationRun.
-ProjectRunner = PersistentRun
