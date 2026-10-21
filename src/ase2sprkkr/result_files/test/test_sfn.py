@@ -53,14 +53,16 @@ ACOEF_FM
   0.00000000000000000E+00  0.00000000000000000E+00  1.00000000000000000E+00 -1.00000000000000000E+00"""
 
 
+@pytest.fixture(scope="module")
 def synthetic_potential():
+    """Shared Fe structure; its consumers only inspect it."""
     return Potential.from_atoms(bulk("Fe", "bcc", a=2.0))
 
 
 @pytest.fixture(scope="module")
-def parsed_sfn():
+def parsed_sfn(synthetic_potential):
     """Read-only SFN model shared by grammar and plotting checks."""
-    return definition.read_from_string(SFN, potential=synthetic_potential())
+    return definition.read_from_string(SFN, potential=synthetic_potential)
 
 
 def test_sfn_grammar_and_generated_mesh_view(parsed_sfn):
@@ -175,8 +177,8 @@ def test_sfn_is_registered(tmp_path):
         output.plot_cell(mesh=0, show=False)
 
 
-def test_output_file_read_from_file_accepts_potential():
-    potential = synthetic_potential()
+def test_output_file_read_from_file_accepts_potential(synthetic_potential):
+    potential = synthetic_potential
     output = SFNResultFile(definition=definition)
 
     output.read_from_file(StringIO(SFN), potential=potential)
