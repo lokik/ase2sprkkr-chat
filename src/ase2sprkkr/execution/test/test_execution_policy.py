@@ -139,6 +139,14 @@ class _NotStartedRunner:
         pass
 
 
+class _PreflightNotStartedRunner(_NotStartedRunner):
+    def prepare_submission(self):
+        raise SubmissionNotStarted("input staging failed")
+
+    def submit(self):
+        pytest.fail("Rejected preflight must not reach backend submission")
+
+
 class _UncertainRunner(_NotStartedRunner):
     def submit(self):
         raise OSError("connection lost during submit")
@@ -158,8 +166,9 @@ def _project_wrapper(tmp_path, runner):
     return manager, processed
 
 
-def test_definite_pre_submit_failure_becomes_submission_failure(tmp_path):
-    manager, runner = _project_wrapper(tmp_path, _NotStartedRunner())
+@pytest.mark.parametrize("runner_type", (_PreflightNotStartedRunner, _NotStartedRunner))
+def test_definite_pre_submit_failure_becomes_submission_failure(tmp_path, runner_type):
+    manager, runner = _project_wrapper(tmp_path, runner_type())
 
     with pytest.raises(SubmissionNotStarted, match="input staging failed"):
         runner.submit()
