@@ -7,6 +7,15 @@ h5py = pytest.importorskip("h5py")
 from ase2sprkkr.result_files.nexus import write_arpes_nexus
 
 
+@pytest.fixture(scope="module")
+def wse2_spc():
+    """Read-only native spectrum reused by independent NeXus/units checks."""
+    from ase2sprkkr.result_files import ResultFile
+
+    source = Path(__file__).resolve().parents[1] / "examples" / "WSe2_ARPES.spc"
+    return ResultFile.from_file(str(source), try_only="spc")
+
+
 class SPC:
     def __init__(self, mode="energy", np_=1):
         self.mode, self.np_ = mode, np_
@@ -165,10 +174,8 @@ def test_atomic_output_on_failure(tmp_path):
     assert list(tmp_path.iterdir())==[target]
 
 
-def test_real_wse2_spectrum(tmp_path):
-    from ase2sprkkr.result_files import ResultFile
-    source=Path(__file__).resolve().parents[1]/"examples"/"WSe2_ARPES.spc"
-    spc=ResultFile.from_file(str(source),try_only="spc")
+def test_real_wse2_spectrum(tmp_path, wse2_spc):
+    spc = wse2_spc
     out=tmp_path/"real.nxs"
     with pytest.warns(UserWarning,match="No SPR-KKR input"):
         spc.to_nexus(out)
@@ -460,10 +467,8 @@ def test_three_dimensional_physical_coordinates_are_default(tmp_path):
         np.testing.assert_array_equal(data["theta"], spc.THETA())
 
 
-def test_native_k_parallel_is_inverse_angstrom(tmp_path):
-    from ase2sprkkr.result_files import ResultFile
-    source = Path(__file__).resolve().parents[1] / "examples" / "WSe2_ARPES.spc"
-    spc = ResultFile.from_file(str(source), try_only="spc")
+def test_native_k_parallel_is_inverse_angstrom(tmp_path, wse2_spc):
+    spc = wse2_spc
     with pytest.warns(UserWarning, match="No SPR-KKR input"):
         spc.to_nexus(tmp_path / "units.nxs")
     with h5py.File(tmp_path / "units.nxs") as f:
@@ -501,16 +506,14 @@ def test_extended_scan_provenance(tmp_path):
         assert not bool(original["SPEC_STR/TRANSP_BAR"][()])
 
 
-def test_native_wse2_k_parallel_physical_units_from_energy_dispersion():
+def test_native_wse2_k_parallel_physical_units_from_energy_dispersion(wse2_spc):
     """Energy spacing independently establishes 1/angstrom, not pi/angstrom.
 
     At fixed theta, the free-electron relation yields
     dE = (hbar^2 / 2m) * d(k_parallel^2) / sin(theta)^2.
     This does not require knowing the photon energy or work function.
     """
-    from ase2sprkkr.result_files import ResultFile
-    source = Path(__file__).resolve().parents[1] / "examples" / "WSe2_ARPES.spc"
-    spc = ResultFile.from_file(str(source), try_only="spc")
+    spc = wse2_spc
     assert spc.NP() == 1
     # The NT points at each energy have the same polar angles.
     last_angle_per_energy = spc.RAW_DATA()[spc.NT() - 1::spc.NT()]
