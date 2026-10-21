@@ -237,7 +237,12 @@ class CalculationRun:
         try:
             outcome = self._runner.wait()
         except BaseException as exc:
-            self._finish_observation(getattr(self._runner, "result", None), error=exc)
+            # A completed callback may already own the canonical outcome.
+            # Never replace it with an error from raw.wait().
+            if not self._done.is_set():
+                self._finish_observation(
+                    getattr(self._runner, "result", None), error=exc,
+                )
         else:
             self._finish_observation(outcome)
         self._done.wait()
