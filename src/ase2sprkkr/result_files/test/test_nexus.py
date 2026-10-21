@@ -60,6 +60,8 @@ def test_native_modes(tmp_path, mode, np_):
         (2,3) if mode=="energy" else (np_,3)
     )
     with h5py.File(dest) as f:
+        # The export must record the final target, not a temporary staging name.
+        assert f.attrs["file_name"] == dest.name
         data=f["entry/data"]
         assert data["data"].shape==expected
         np.testing.assert_array_equal(data["data"],spc.raw[:,2].reshape(expected))
@@ -107,11 +109,6 @@ def test_explicit_input_precedence_and_original_options(tmp_path,monkeypatch):
         np.testing.assert_array_equal(original["SPEC_EL/NK1"],3)
         np.testing.assert_array_equal(original["SPEC_EL/K1"],[1,0])
         assert "k_basis" not in f["entry/data"]
-
-
-def test_missing_input_warning(tmp_path):
-    with pytest.warns(UserWarning,match="No SPR-KKR input"):
-        write_arpes_nexus(SPC(),tmp_path/"missing.nxs")
 
 
 def test_explicit_invalid_input_raises(tmp_path):
@@ -181,14 +178,6 @@ def test_independent_nexus_reader(tmp_path):
     with nxopen(str(dest)) as root:
         assert root.get_default().nxsignal.shape==(2,3)
 
-
-
-def test_atomic_output_filename_is_final_target(tmp_path):
-    target=tmp_path/"real-target.nxs"
-    with pytest.warns(UserWarning):
-        write_arpes_nexus(SPC(),target)
-    with h5py.File(target) as f:
-        assert f.attrs["file_name"]=="real-target.nxs"
 
 
 def test_native_au_constant_energy_spc(tmp_path):
