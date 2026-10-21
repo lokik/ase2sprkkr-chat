@@ -446,3 +446,22 @@ def test_fast_completion_does_not_publish_if_identity_persistence_fails():
     with pytest.raises(PersistenceError):
         run.wait()
     assert events == ["identity-attempted", "submission-failed"]
+
+
+def test_untracked_preflight_runs_once_before_backend_submit():
+    events = []
+
+    class PreparedBackend(Backend):
+        def prepare_submission(self):
+            events.append("prepare")
+
+        def submit(self):
+            events.append("submit")
+            super().submit()
+
+    backend = PreparedBackend()
+    run = CalculationRun(backend, lambda result: result)
+    run.submit()
+    backend.release.set()
+    run.wait()
+    assert events == ["prepare", "submit"]

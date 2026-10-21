@@ -33,8 +33,6 @@ class CalculationRun:
         self._backend_submit_attempted = False
         self._submitting = False
         self._completion_deferred = False
-        self._preparing = False
-        self._cancel_after_prepare = False
 
         self._state = RunState.NEW
         self._failure_phase = None
@@ -294,82 +292,55 @@ class CalculationRun:
         """
         self._cancel_requested.set()
 
-    def prepare_submission(self):
-        """Run preflight without holding the lifecycle lock across I/O."""
-        with self._lock:
-            if self._cancel_requested.is_set():
-                raise asyncio.CancelledError("Run was cancelled before submission")
-            if self._preparing or self._submitting or self._started or self._settled or self._submission_uncertain:
-                raise RuntimeError(f"Run is already {self.state.value}")
-            prepare = getattr(self._runner, "prepare_submission", None)
-            if prepare is None:
-                return False
-            self._preparing = True
-        try:
-            try:
-                prepare()
-            except Exception as exc:
-                failure = (exc if isinstance(exc, SubmissionNotStarted)
-                           else SubmissionNotStarted(str(exc)))
-                with self._lock:
-                    self._exception = failure
-                    self._failure_phase = FailurePhase.SUBMISSION
-                    self._failure_message = str(exc)
-                    self._state = RunState.FAILED
-                    self._settled = True
-                self._close_resources()
-                if failure is exc:
-                    raise
-                raise failure from exc
-            return True
-        finally:
-            with self._lock:
-                self._preparing = False
-                cancel_after = self._cancel_after_prepare
-            if cancel_after:
-                self.cancel()
-
     def _submit_raw(self, *, attached=False):
         if attached:
             start = getattr(self._runner, "start", None)
             if start is not None:
                 start()
             return
-        if self.hooks is None:
-            self._runner.submit()
-            return
 
-        # All persistent transaction barriers are sequenced by this one
-        # lifecycle owner. The project layer never submits the backend itself.
+        # There is one preflight, submission and error boundary for both
+        # project-backed and untracked calculations. A project additionally
+        # reserves the run before staging and persists the staged manifest
+        # before any backend can start.
         self._backend_submit_attempted = False
         try:
-            self.hooks.before_submit(self)
-            preflight = getattr(self._runner, "prepare_submission", None)
-            if preflight is not None:
+            if self.hooks is not None:
+                self.hooks.before_submit(self)
+
+            prepare = getattr(self._runner, "prepare_submission", None)
+            if prepare is not None:
                 try:
-                    preflight()
+                    prepare()
                 except Exception as exc:
                     if isinstance(exc, SubmissionNotStarted):
                         raise
                     raise SubmissionNotStarted(str(exc)) from exc
-            # Persist the final manifest even for backends with no explicit
-            # preparation phase. The submit barrier applies to every backend.
-            self.hooks.prepared(self)
+
+            if self.hooks is not None:
+                self.hooks.prepared(self)
             if self.cancellation_requested:
-                raise asyncio.CancelledError("Run was cancelled before backend submission")
+                raise asyncio.CancelledError(
+                    "Run was cancelled before backend submission"
+                )
+
             self._backend_submit_attempted = True
             self._runner.submit()
-            self.hooks.submitted(self)
+            if self.hooks is not None:
+                self.hooks.submitted(self)
         except BaseException as exc:
-            try:
-                self.hooks.submission_failed(
-                    self, exc, uncertain=self._backend_submit_attempted,
-                )
-            except BaseException as hook_exc:
-                # A persistence failure must not erase the original
-                # submission error, especially after an uncertain launch.
-                if hasattr(exc, "add_note"):
-                    exc.add_note(f"Submission persistence also failed: {hook_exc!r}")
+            if self.hooks is not None:
+                try:
+                    self.hooks.submission_failed(
+                        self, exc, uncertain=self._backend_submit_attempted,
+                    )
+                except BaseException as hook_exc:
+                    # Do not hide the original submission failure, especially
+                    # when the backend may already have accepted the job.
+                    if hasattr(exc, "add_note"):
+                        exc.add_note(
+                            f"Submission persistence also failed: {hook_exc!r}"
+                        )
             raise
 
     def _start_submission(self, *, attached=False):
@@ -383,7 +354,7 @@ class CalculationRun:
                 cancelled = True
             else:
                 cancelled = False
-                if self._preparing or self._submitting or self._settled or self._started:
+                if self._submitting or self._settled or self._started:
                     raise RuntimeError(f"Run is already {self.state.value}")
                 if not attached and self._runner.state != RunState.NEW:
                     raise RuntimeError(f"Run is already {self.state.value}")
@@ -408,7 +379,7 @@ class CalculationRun:
         except BaseException as exc:
             # Only backend I/O can make submission ambiguous. Reservation,
             # staging and pre-submit cancellation are definitely non-launches.
-            uncertain = (self.hooks is None or self._backend_submit_attempted)
+            uncertain = self._backend_submit_attempted
             with self._lock:
                 self._submission_uncertain = uncertain
                 self._submitting = False
@@ -516,7 +487,7 @@ class CalculationRun:
         with self._lock:
             if self._settled:
                 return
-            if (self._preparing or self._submitting or self._started
+            if (self._submitting or self._started
                     or self._submission_uncertain or self._runner.state != RunState.NEW):
                 raise RuntimeError("Cannot close resources of a submitted or uncertain run")
             if self._resources is not None:
@@ -553,9 +524,6 @@ class CalculationRun:
             if self._settled or self._runner.state in (
                 RunState.FINISHED, RunState.FAILED, RunState.CANCELLED
             ):
-                return None
-            if self._preparing:
-                self._cancel_after_prepare = True
                 return None
             if self._submitting:
                 # Submission owns the hand-off. It will dispatch cancellation

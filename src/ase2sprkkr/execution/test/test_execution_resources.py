@@ -301,7 +301,7 @@ def test_preparation_error_releases_resources_before_submission():
         FailedPreflight(), lambda outcome: outcome, resources=resources,
     )
     with pytest.raises(SubmissionNotStarted, match="staging failed") as error:
-        runner.prepare_submission()
+        runner.submit()
     assert isinstance(error.value.__cause__, OSError)
     assert resources.closed
     assert not submitted
@@ -532,7 +532,7 @@ def test_cancel_during_preflight_does_not_close_inputs_until_preflight_ends():
 
     def prepare():
         try:
-            runner.prepare_submission()
+            runner.submit()
         except BaseException as exc:
             failures.append(exc)
 
@@ -552,7 +552,8 @@ def test_cancel_during_preflight_does_not_close_inputs_until_preflight_ends():
             cancelling.join(5)
     assert not preparing.is_alive()
     assert cancelling is not None and not cancelling.is_alive()
-    assert not failures
+    assert len(failures) == 1
+    assert isinstance(failures[0], asyncio.CancelledError)
     assert resources.closed
     assert runner.state is RunState.CANCELLED
 
