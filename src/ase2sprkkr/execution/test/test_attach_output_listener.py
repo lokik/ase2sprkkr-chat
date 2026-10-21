@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from ase2sprkkr.execution.base import RunState
 from ase2sprkkr.execution.manager import RunRecord
 from ase2sprkkr.execution.run_model import Execution, WorkingDirectory, FileManifest, FileEntry, FileMapping
-from ase2sprkkr.execution.endpoint import ExecutorEndpoint
+from ase2sprkkr.execution.endpoint import ExecutorEndpoint, endpoint_for_executor
 from ase2sprkkr.execution.local import LocalExecutor
 from ase2sprkkr.execution.manager import ExecutionManager, RunStore
 from ase2sprkkr.execution.psij import PsijExecutor, PsijRunner
@@ -90,7 +90,7 @@ def _remote_endpoint_and_run(tmp_path):
         created_at="2026-10-13T08:00:00+00:00",
         updated_at="2026-10-13T08:00:00+00:00",
         execution=Execution(
-            ExecutorEndpoint(executor="ssh", host="host"),
+            endpoint_for_executor(endpoint),
             WorkingDirectory(str(tmp_path / "work"), "/remote/work"), "run",
         ),
         files=FileManifest(
@@ -190,7 +190,7 @@ def _psij_run(tmp_path):
         created_at="2026-10-13T08:00:00+00:00",
         updated_at="2026-10-13T08:00:00+00:00",
         execution=Execution(
-            ExecutorEndpoint(executor="psij", psij_backend="slurm"),
+            ExecutorEndpoint(executor="psij", psij_backend="slurm", psij_poll_interval=0.01),
             WorkingDirectory(str(tmp_path)), "42",
         ),
         files=FileManifest(
