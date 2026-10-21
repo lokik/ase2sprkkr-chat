@@ -503,12 +503,15 @@ def test_scheduler_request_protects_remote_cache_wildcards(tmp_path):
         "directory": str(tmp_path),
         "argv": ["program"],
         "input_file": "case.inp",
-        "input_files": ["case.inp"],
         "output_file": "case.out",
-        "output_files": ["*.pot", "case.out"],
         "files": {
+            "inputs": [
+                {"remote_path": "case.inp"},
+                {"local_path": "local-only.inp"},
+            ],
             "outputs": [
                 {"remote_path": "*.pot"}, {"remote_path": "case.out"},
+                {"local_path": "local-only.out"},
             ],
             "caches": [
                 {"remote_path": "known-restart.pot"},
@@ -518,10 +521,11 @@ def test_scheduler_request_protects_remote_cache_wildcards(tmp_path):
         },
     }
     spec = remote_service._request_spec(request)
-    assert "restart-*.pot" in spec.cache_files
-    assert "external-cache.pot" in spec.cache_files
-    assert "*.pot" in spec.output_files
-    assert "case.inp" in spec.input_files
+    assert spec.input_files == ("case.inp",)
+    assert spec.output_files == ("*.pot", "case.out")
+    assert spec.cache_files == (
+        "known-restart.pot", "restart-*.pot", "external-cache.pot",
+    )
 
 
 
