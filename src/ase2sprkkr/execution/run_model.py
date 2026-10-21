@@ -155,6 +155,42 @@ class FileMapping:
         object.__setattr__(self, "input_sync", input_sync.value)
         object.__setattr__(self, "output_sync", output_sync.value)
 
+    def map_path(self, path):
+        """Map an existing local path without querying the target service."""
+        import os
+        import posixpath
+        from pathlib import Path
+        root = Path(self.local_root).expanduser().resolve()
+        local = Path(path).expanduser().resolve()
+        try:
+            relative = local.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"Local path {local} is outside mapped root {root}") from exc
+        return posixpath.join(self.remote_root, *relative.parts)
+
+    def unmap_path(self, path):
+        """Map target path back, rejecting lexical and symlink escapes."""
+        import os
+        import posixpath
+        from pathlib import Path, PurePosixPath
+        remote = posixpath.normpath(os.fspath(path))
+        if not posixpath.isabs(remote):
+            raise ValueError(f"Remote path must be absolute: {remote}")
+        try:
+            inside = posixpath.commonpath((self.remote_root, remote)) == self.remote_root
+        except ValueError:
+            inside = False
+        if not inside:
+            raise ValueError(f"Remote path {remote} is outside mapped root {self.remote_root}")
+        relative = posixpath.relpath(remote, self.remote_root)
+        root = Path(self.local_root).expanduser().resolve()
+        local = root if relative == "." else root.joinpath(*PurePosixPath(relative).parts)
+        try:
+            local.resolve().relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"Local path {local} is outside mapped root {root}") from exc
+        return local
+
 
 @dataclass(frozen=True)
 class FileManifest:
