@@ -123,6 +123,7 @@ class LocalRunner:
         targets = (("out", self.spec.output_file),
                    ("err", self.spec.error_file))
         by_inode = {}
+        by_path = {}
 
         # Reuse pre-opened file objects before opening any named target:
         # opening a second alias with "wb" would truncate their contents.
@@ -138,7 +139,9 @@ class LocalRunner:
                 continue
             path = file_path(value, self.spec.directory)
             inode = self._stream_inode(path)
-            if inode is not None and inode in by_inode:
+            if path in by_path:
+                handle = by_path[path]
+            elif inode is not None and inode in by_inode:
                 handle = by_inode[inode]
             else:
                 os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -147,6 +150,7 @@ class LocalRunner:
                 inode = self._stream_inode(handle)
                 if inode is not None:
                     by_inode[inode] = handle
+            by_path[path] = handle
             self._stream_handles[kind] = handle
 
         stdin = self.spec.stdin

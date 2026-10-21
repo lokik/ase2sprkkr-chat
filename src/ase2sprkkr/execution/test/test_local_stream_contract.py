@@ -112,6 +112,30 @@ def test_local_accepts_stream_paths_and_named_stdin(tmp_path):
     assert runner.state is RunState.FINISHED
     assert (tmp_path / "stdout.dat").read_bytes() == stdin.read_bytes()
     assert (tmp_path / "stderr.dat").read_bytes() == b"warning"
+    assert runner._owned_stdin.closed
+    assert all(stream.closed for stream in runner._owned_streams)
+
+
+def test_local_same_path_is_shared_even_without_inode_info(tmp_path, monkeypatch):
+    """Reuse identical paths even when their file type cannot be identified."""
+    from ..base import close_output_files
+
+    shared = tmp_path / "shared.dat"
+    runner = LocalExecutor().create_run(ExecutionSpec(
+        argv=(sys.executable, "-c", "pass"),
+        directory=str(tmp_path), input_file=None,
+        output_file=shared, error_file=str(shared),
+    ))
+    monkeypatch.setattr(runner, "_stream_inode", lambda value: None)
+    try:
+        runner._open_streams()
+        assert runner._stream_handles["out"] is runner._stream_handles["err"]
+        assert len(runner._owned_streams) == 1
+        runner._forward_output(b"stdout\\n", "out")
+        runner._forward_output(b"stderr\\n", "err")
+    finally:
+        close_output_files(*runner._owned_streams)
+    assert shared.read_bytes() == b"stdout\\nstderr\\n"
 
 
 def test_local_pathlike_stdout_creates_parent(tmp_path):
