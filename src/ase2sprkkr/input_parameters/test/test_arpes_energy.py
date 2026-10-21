@@ -14,7 +14,7 @@ def parameters():
     return result
 
 
-def test_relative_defaults():
+def test_relative_defaults_and_absolute_bounds_roundtrip():
     ip = parameters()
     assert ip.ENERGY.EMIN() is None
     assert ip.ENERGY.EMAX() is None
@@ -22,9 +22,6 @@ def test_relative_defaults():
     assert ip.ENERGY.EMAXEV() == 5.
     ip.validate("save")
 
-
-def test_absolute_bounds_suppress_relative_defaults_and_roundtrip():
-    ip = parameters()
     ip.ENERGY.set({"EMIN": .2, "EMAX": .8})
     assert ip.ENERGY.EMINEV() is None
     assert ip.ENERGY.EMAXEV() is None
