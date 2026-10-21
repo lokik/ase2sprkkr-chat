@@ -734,3 +734,30 @@ def test_remote_submit_handoff_failure_respects_supervisor_ownership(
     assert ("reap" in events) is not released
     assert scratch.exists() is released
     assert ("revoke" in events) is (detached and not released)
+
+
+def test_ephemeral_supervisor_cleans_scratch_if_stream_start_fails(tmp_path, monkeypatch):
+    import asyncio
+    from ase2sprkkr.execution.remote_supervisor_stream import SupervisorStreams
+
+    scratch = tmp_path / "ase2sprkkr-Test1234"
+    scratch.mkdir()
+    output = scratch / "stdout.txt"
+    original_start = SupervisorStreams.start
+
+    async def partial_start(self):
+        await original_start(self)
+        raise OSError("supervisor initialization failed")
+
+    monkeypatch.setattr(SupervisorStreams, "start", partial_start)
+    spec = {
+        "argv": ["true"], "directory": str(scratch), "stdin": None,
+        "output_file": str(output), "error_file": None,
+        "socket_dir": str(tmp_path / "follow"),
+        "socket_fd": -1, "detached": True,
+        "temporary_directory": True,
+    }
+    with pytest.raises(OSError, match="supervisor initialization failed"):
+        asyncio.run(remote_process_worker._run(spec))
+    assert not scratch.exists()
+    assert not (tmp_path / "follow" / "socket").exists()
