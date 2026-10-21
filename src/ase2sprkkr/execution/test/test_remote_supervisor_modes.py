@@ -4,6 +4,8 @@ import asyncio
 import os
 import sys
 
+import pytest
+
 from .. import remote_process_worker
 from ..remote_supervisor_stream import follow_socket
 

@@ -1,3 +1,5 @@
+import pytest
+
 from ase2sprkkr.common.file_versions import FileState, FileVersion
 from ase2sprkkr.execution import (
     LocalTransport, RemoteExecutor, RunRecord, RunState, Execution,

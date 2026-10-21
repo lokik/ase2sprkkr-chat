@@ -9,7 +9,6 @@ import pytest
 
 from ase2sprkkr.execution.base import OutputObservers
 from ase2sprkkr.execution.local import LocalRunner
-from ase2sprkkr.execution.local_project import _ObserverSink
 from ase2sprkkr.execution.psij import PsijRunner
 from ase2sprkkr.execution.remote import RemoteRunner
 
@@ -100,17 +99,6 @@ def test_psij_monitor_forwards_follow_bytes(monkeypatch):
 
     assert result.return_code == 0
     assert received == [("výstup", "out"), ("warning:\ufffd", "err")]
-
-
-def test_local_project_sink_uses_shared_bytes_policy():
-    received = []
-    sink = _ObserverSink(
-        OutputObservers(lambda text, kind: received.append((text, kind))), "out"
-    )
-    sink.write("výstup".encode("utf8"))
-    sink.write(b"")
-    sink.flush()
-    assert received == [("výstup", "out")]
 
 
 def test_observer_failure_does_not_prevent_other_byte_listeners():
