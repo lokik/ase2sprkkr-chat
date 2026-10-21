@@ -11,6 +11,8 @@ import sys
 from .remote_mailbox import publish_outcome
 from .base import FailurePhase, RunState
 from .local_process import pump_stream, stop_local_process
+from .file_availability import materialize_manifest
+from dataclasses import asdict
 from .remote_supervisor_stream import SupervisorStreams
 
 _SPEC_ENV = "ASE2SPRKKR_REMOTE_PROCESS_SPEC"
@@ -158,12 +160,26 @@ async def _run(spec):
             except OSError as exc:
                 state, phase = RunState.FAILED, FailurePhase.ARTIFACTS
                 message = f"Failed to sync process output: {exc}"
+        frozen_files = None
+        materialization_error = None
+        if spec.get("files") is not None:
+            try:
+                # Local projects have local-only manifests; SSH targets carry
+                # a FileMapping. Both freeze at the supervisor's terminal point.
+                remote = spec["files"].get("mapping") is not None
+                frozen, problem = materialize_manifest(spec["files"], remote=remote)
+                frozen_files = asdict(frozen)
+                materialization_error = None if problem is None else str(problem)
+            except Exception as exc:
+                materialization_error = str(exc)
         outcome = {"state": state.value, "return_code": return_code,
                    "failure_phase": None if phase is None else phase.value,
-                   "error": message}
+                   "error": message, "files": frozen_files,
+                   "materialization_error": materialization_error}
         try:
             publish_outcome(
                 spec["receipt_id"], state, return_code, phase, error=message,
+                files=frozen_files, materialization_error=materialization_error,
             )
         except OSError as exc:
             # No durable terminal receipt exists. The client must preserve its
