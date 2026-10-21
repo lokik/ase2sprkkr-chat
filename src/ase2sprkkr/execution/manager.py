@@ -878,14 +878,6 @@ class ExecutionManager:
                 # The receipt remains recoverable until a subsequent refresh.
                 pass
 
-    @staticmethod
-    def _complete(project_run, result, callback):
-        project_run._sync_completion(result)
-        if callback is not None:
-            # Completion of observation, including UNKNOWN, is notification.
-            # It is not proof that the backend calculation finished.
-            callback(result)
-
     def create_run(
         self,
         executor,
