@@ -11,7 +11,7 @@ from dataclasses import replace
 
 from ..common.file_versions import file_digest
 from .base import file_path
-from .run_model import CacheEntry, FileEntry, FileManifest, FileMapping, FileSyncPolicy
+from .run_model import FileEntry, FileManifest, FileMapping, FileSyncPolicy
 from .transport import expand_local_files, has_file_magic
 
 
@@ -137,11 +137,12 @@ class RemoteFileHandler:
 
         caches = []
         for entry in manifest.caches:
-            mapped_entry = await mapped(entry.file)
-            baseline = cache_targets.get(entry.file.local_path)
-            caches.append(CacheEntry(mapped_entry, None if baseline is None else baseline[1]))
+            mapped_entry = await mapped(entry)
+            baseline = cache_targets.get(entry.local_path)
+            caches.append(replace(mapped_entry,
+                pre_run_signature=None if baseline is None else baseline[1]))
         for remote, before in cache_before.items():
-            caches.append(CacheEntry(FileEntry(remote_path=remote), before))
+            caches.append(FileEntry(remote_path=remote, pre_run_signature=before))
 
         # Wildcard inputs are concretized during staging, not at completion.
         inputs = []
@@ -201,7 +202,7 @@ class RemoteFileHandler:
             *(("input", entry) for entry in manifest.inputs),
             *(("output", entry) for entry in
               (manifest.stdout, manifest.stderr, *manifest.outputs)),
-            *(("cache", cache.file) for cache in manifest.caches),
+            *(("cache", cache) for cache in manifest.caches),
         )
         for kind, entry in entries:
             if entry is None or entry.local_path is None:
@@ -232,12 +233,12 @@ class RemoteFileHandler:
         self._validate_download_targets(manifest)
         primary = {p for p in (result.output_file, result.error_file) if p}
         baselines = {
-            c.file.remote_path: c.before for c in manifest.caches
-            if c.file.local_path is None
+            c.remote_path: c.pre_run_signature for c in manifest.caches
+            if c.local_path is None
         }
         candidates = (
             *((False, entry, None) for entry in manifest.outputs),
-            *((True, cache.file, baselines.get(cache.file.remote_path, cache.before))
+            *((True, cache, baselines.get(cache.remote_path, cache.pre_run_signature))
               for cache in manifest.caches),
         )
         seen = set()
@@ -317,7 +318,7 @@ class RemoteFileHandler:
         }
         entries = (
             *run.files.inputs, *run.files.outputs,
-            *(cache.file for cache in run.files.caches),
+            *(cache for cache in run.files.caches),
             run.files.stdout, run.files.stderr,
         )
         for value in paths:

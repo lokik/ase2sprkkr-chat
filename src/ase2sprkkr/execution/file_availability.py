@@ -117,15 +117,16 @@ def materialize_manifest(manifest, *, remote=False, include_streams=True):
     # Apply those baselines to the frozen concrete entries and drop the
     # placeholders once membership is known.
     baselines = {
-        cache.file.remote_path: cache.before
-        for cache in manifest.caches if cache.file.local_path is None
+        cache.remote_path: cache.pre_run_signature
+        for cache in manifest.caches if cache.local_path is None
     } if remote else {}
     caches = tuple(
-        replace(cache, file=concrete,
-                before=baselines.get(concrete.remote_path, cache.before))
+        replace(concrete,
+                pre_run_signature=baselines.get(
+                    concrete.remote_path, cache.pre_run_signature))
         for cache in manifest.caches
-        if not remote or cache.file.local_path is not None
-        for concrete in resolve(cache.file)
+        if not remote or cache.local_path is not None
+        for concrete in resolve(cache)
     )
     stdout, stderr = manifest.stdout, manifest.stderr
     if not remote and include_streams:

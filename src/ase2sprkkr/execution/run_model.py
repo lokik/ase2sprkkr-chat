@@ -81,6 +81,7 @@ class FileEntry:
     availability_state: Optional[str] = None
     availability_message: Optional[str] = None
     source: Optional[str] = None
+    pre_run_signature: Optional[tuple] = None
 
     def __post_init__(self):
         import os
@@ -91,6 +92,8 @@ class FileEntry:
             value = getattr(self, name)
             if value is not None:
                 object.__setattr__(self, name, os.fspath(value))
+        if self.pre_run_signature is not None:
+            object.__setattr__(self, "pre_run_signature", tuple(self.pre_run_signature))
         if self.local_path is None and self.remote_path is None:
             raise ValueError("A file entry must have at least one location")
         if self.availability_state is not None:
@@ -105,20 +108,6 @@ class FileEntry:
             and self.availability_state != ArtifactAvailabilityState.FAILED
         ):
             raise ValueError("An availability error belongs to a failed file")
-
-
-@dataclass(frozen=True)
-class CacheEntry:
-    """Cache identity and its pre-execution remote signature."""
-
-    file: FileEntry
-    before: Optional[tuple] = None
-
-    def __post_init__(self):
-        if isinstance(self.file, dict):
-            object.__setattr__(self, "file", FileEntry(**self.file))
-        if self.before is not None:
-            object.__setattr__(self, "before", tuple(self.before))
 
 
 class FileSyncPolicy(str, Enum):
@@ -173,7 +162,7 @@ class FileManifest:
 
     inputs: tuple[FileEntry, ...] = ()
     outputs: tuple[FileEntry, ...] = ()
-    caches: tuple[CacheEntry, ...] = ()
+    caches: tuple[FileEntry, ...] = ()
     stdout: Optional[FileEntry] = None
     stderr: Optional[FileEntry] = None
     mapping: Optional[FileMapping] = None
@@ -207,18 +196,24 @@ class FileManifest:
         return cls(
             inputs=tuple(FileEntry(local_path=x) for x in inputs),
             outputs=tuple(FileEntry(local_path=x) for x in outputs),
-            caches=tuple(CacheEntry(FileEntry(local_path=x)) for x in caches),
+            caches=tuple(FileEntry(local_path=x) for x in caches),
             stdout=None if stdout is None else FileEntry(local_path=stdout),
             stderr=None if stderr is None else FileEntry(local_path=stderr),
         ).initialize_availability()
 
     def __post_init__(self):
-        for name, cls in (("inputs", FileEntry), ("outputs", FileEntry), ("caches", CacheEntry)):
+        for name in ("inputs", "outputs", "caches"):
             items = getattr(self, name)
-            object.__setattr__(
-                self, name,
-                tuple(item if isinstance(item, cls) else cls(**item) for item in items),
-            )
+            def entry(value):
+                if isinstance(value, FileEntry):
+                    return value
+                # Previously persisted CacheEntry layout.
+                if name == "caches" and isinstance(value, dict) and "file" in value:
+                    return FileEntry(**dict(
+                        value["file"], pre_run_signature=value.get("before"),
+                    ))
+                return FileEntry(**value)
+            object.__setattr__(self, name, tuple(entry(item) for item in items))
         for name in ("stdout", "stderr"):
             item = getattr(self, name)
             if isinstance(item, dict):
@@ -236,7 +231,7 @@ class FileManifest:
     @property
     def artifacts(self):
         """Output streams, declared outputs and caches (one status per local file)."""
-        entries = (self.stdout, self.stderr, *self.outputs, *(x.file for x in self.caches))
+        entries = (self.stdout, self.stderr, *self.outputs, *self.caches)
         unique = {}
         for entry in entries:
             if entry is not None and entry.local_path is not None:
@@ -292,7 +287,7 @@ class FileManifest:
             stdout=None if self.stdout is None else transform(self.stdout),
             stderr=None if self.stderr is None else transform(self.stderr),
             outputs=tuple(transform(x) for x in self.outputs),
-            caches=tuple(replace(x, file=transform(x.file)) for x in self.caches),
+            caches=tuple(transform(x) for x in self.caches),
         )
 
     def with_file_availability(
@@ -323,7 +318,7 @@ class FileManifest:
         if kind == "output":
             return replace(self, outputs=(*self.outputs, file))
         if kind == "cache":
-            return replace(self, caches=(*self.caches, CacheEntry(file)))
+            return replace(self, caches=(*self.caches, file))
         raise ValueError(f"Unknown artifact kind: {kind!r}")
 
     def has_wildcards(self):
@@ -332,7 +327,7 @@ class FileManifest:
         return any(
             entry is not None and
             has_file_magic(entry.remote_path or entry.local_path)
-            for entry in (*self.outputs, *(cache.file for cache in self.caches))
+            for entry in (*self.outputs, *self.caches)
             if entry.local_path is not None
         )
 

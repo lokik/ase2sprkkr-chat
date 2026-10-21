@@ -162,9 +162,9 @@ def _manifest_accesses(record):
         )
 
     reads = {path(entry) for entry in files.inputs}
-    reads.update(path(cache.file) for cache in files.caches)
+    reads.update(path(cache) for cache in files.caches)
     writes = {path(entry) for entry in (files.stdout, files.stderr, *files.outputs)}
-    writes.update(path(cache.file) for cache in files.caches)
+    writes.update(path(cache) for cache in files.caches)
     return reads - {None}, writes - {None}
 
 

@@ -18,7 +18,7 @@ from .base import (
 )
 from .run_model import (
     ArtifactAvailabilityState, Execution, WorkingDirectory, FileEntry,
-    CacheEntry, FileMapping, FileManifest,
+    FileMapping, FileManifest,
 )
 from .endpoint import ExecutorEndpoint
 from .local import LocalExecutor, LocalRunner
@@ -52,7 +52,6 @@ __all__ = [
     "Execution",
     "WorkingDirectory",
     "FileEntry",
-    "CacheEntry",
     "FileMapping",
     "FileManifest",
     "ExecutionOutcome",
