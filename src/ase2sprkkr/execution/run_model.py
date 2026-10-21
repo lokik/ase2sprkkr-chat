@@ -227,6 +227,8 @@ def _validate_file_declarations(entries):
             )
             if not same_local and not same_remote:
                 continue
+            if {role, previous_role} == {"input", "stdin"}:
+                continue
             if {role, previous_role} == {"stdout", "stderr"}:
                 if (entry.local_path is None or previous.local_path is None
                         or not same_local
@@ -274,7 +276,10 @@ class FileManifest:
             )
 
         primary = file_path(spec.input_file, directory)
-        inputs = paths(primary, *spec.input_files)
+        inputs = []
+        for path in paths(primary, *spec.input_files):
+            if not any(_same_local_file(path, prior) for prior in inputs):
+                inputs.append(path)
         stdin = file_path(spec.stdin, directory)
         stdout = file_path(getattr(spec, "output_file", None), directory)
         stderr = file_path(getattr(spec, "error_file", None), directory)

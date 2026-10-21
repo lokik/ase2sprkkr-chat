@@ -230,8 +230,6 @@ def test_manifest_from_spec_preserves_distinct_roles(tmp_path):
 
 
 @pytest.mark.parametrize("role,overlap", [
-    ("input_files", ("input.inp",)),
-    ("input_files", ("other.inp", "./other.inp")),
     ("output_files", ("stdout.out",)),
     ("output_files", ("result.dat", "./result.dat")),
     ("cache_files", ("cache.dat", "./cache.dat")),
@@ -250,6 +248,30 @@ def test_duplicate_file_declarations_are_errors(tmp_path, role, overlap):
     setattr(spec, role, overlap)
     with pytest.raises(ValueError, match="Duplicate file declaration"):
         FileManifest.from_spec(spec)
+
+
+@pytest.mark.parametrize("extras,stdin,expected", [
+    (("input.inp",), None, ("input.inp",)),
+    (("other.inp", "./other.inp"), None, ("input.inp", "other.inp")),
+    (("input.inp", "other.inp"), "input.inp", ("input.inp", "other.inp")),
+    (("other.inp",), "other.inp", ("input.inp", "other.inp")),
+])
+def test_duplicate_input_roles_share_one_staged_file(tmp_path, extras, stdin, expected):
+    from types import SimpleNamespace
+    spec = SimpleNamespace(
+        directory=str(tmp_path), input_file="input.inp", input_files=extras,
+        stdin=stdin, output_file=None, error_file=None,
+        output_files=(), cache_files=(),
+    )
+    files = FileManifest.from_spec(spec)
+    assert tuple(x.local_path for x in files.inputs) == tuple(
+        str(tmp_path / name) for name in expected
+    )
+    assert files.primary_input.local_path == str(tmp_path / "input.inp")
+    assert (None if files.stdin is None else files.stdin.local_path) == (
+        None if stdin is None else str(tmp_path / stdin)
+    )
+    assert FileManifest(**asdict(files)) == files
 
 
 def test_only_stdout_and_stderr_may_share_a_file():
