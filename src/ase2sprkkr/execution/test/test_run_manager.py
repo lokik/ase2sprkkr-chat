@@ -15,6 +15,7 @@ from ase2sprkkr.execution import (
 )
 
 from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.pool import Executors
 
 
 class _RawRunner:
@@ -98,7 +99,7 @@ def _spec(tmp_path, *, dataset="case"):
 
 def _manager(tmp_path):
     return ExecutionManager(
-        RunStore(tmp_path / "runs"), executor_pool=ExecutorPool()
+        RunStore(tmp_path / "runs"), executors=Executors(ExecutorPool())
     )
 
 
@@ -242,7 +243,7 @@ def test_executors_are_owned_by_manager_and_keyed_by_endpoint(tmp_path):
 
     manager = _manager(tmp_path)
     assert isinstance(manager.executors, Executors)
-    assert manager.executor_pool is manager.executors.pool
+    assert isinstance(manager.executors.pool, ExecutorPool)
     executor = _Executor()
     endpoint = manager.executors.register(executor)
     record = manager.new_record(task="DOS", directory=tmp_path, endpoint=endpoint)

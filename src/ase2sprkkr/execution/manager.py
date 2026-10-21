@@ -428,7 +428,7 @@ class RunStore:
 class ExecutionManager:
     """Persist public run lifecycle without task-specific knowledge."""
 
-    def __init__(self, store=None, *, executor_pool=None, submitting_grace=60.0,
+    def __init__(self, store=None, *, executors=None, submitting_grace=60.0,
                  project_repository=None):
         if submitting_grace < 0:
             raise ValueError("submitting_grace must be non-negative")
@@ -439,13 +439,8 @@ class ExecutionManager:
                 raise ValueError("Project-bound execution requires the repository run store")
             store = canonical_store
         self.store = store
-        self.executors = Executors(executor_pool)
+        self.executors = executors if executors is not None else Executors()
         self.submitting_grace = float(submitting_grace)
-
-    @property
-    def executor_pool(self):
-        """Compatibility view; executor ownership belongs to Executors."""
-        return self.executors.pool
 
     def register_executor(self, executor: Executor, endpoint=None):
         return self.executors.register(executor, endpoint)

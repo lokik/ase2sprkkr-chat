@@ -12,6 +12,7 @@ from ase2sprkkr.execution import (
 )
 
 from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.pool import Executors
 from ase2sprkkr.execution.endpoint import endpoint_for_executor
 from ase2sprkkr.sprkkr.profile import SPRKKRProfile
 
@@ -40,7 +41,7 @@ def test_profile_uses_execution_endpoint_value():
 
 def test_run_store_roundtrips_endpoint(tmp_path):
     store = RunStore(tmp_path / "runs")
-    manager = ExecutionManager(store, executor_pool=ExecutorPool())
+    manager = ExecutionManager(store, executors=Executors(ExecutorPool()))
     endpoint = ExecutorEndpoint(
         executor="ssh", host="cluster", ssh_options=("-v",), ssh_zstd=True,
     )
@@ -61,7 +62,7 @@ def test_run_store_roundtrips_endpoint(tmp_path):
 def test_manager_reconstructs_local_executor_after_restart(tmp_path):
     store = RunStore(tmp_path / "runs")
     endpoint = ExecutorEndpoint()
-    first = ExecutionManager(store, executor_pool=ExecutorPool())
+    first = ExecutionManager(store, executors=Executors(ExecutorPool()))
     record = first.new_record(
         task="DOS",
         directory=tmp_path,
@@ -69,7 +70,7 @@ def test_manager_reconstructs_local_executor_after_restart(tmp_path):
     )
     store.save(record)
 
-    restarted = ExecutionManager(store, executor_pool=ExecutorPool())
+    restarted = ExecutionManager(store, executors=Executors(ExecutorPool()))
     executor = restarted.executor_for(store.get(record.id))
 
     assert isinstance(executor, LocalExecutor)
@@ -131,7 +132,7 @@ def test_attach_reconstructs_persisted_endpoint_without_task_reader(tmp_path):
 
     store = RunStore(tmp_path / "runs")
     endpoint = ExecutorEndpoint(executor="ssh", host="cluster")
-    first = ExecutionManager(store, executor_pool=ExecutorPool())
+    first = ExecutionManager(store, executors=Executors(ExecutorPool()))
     record = first.new_record(
         task="DOS",
         directory=tmp_path,
@@ -142,7 +143,7 @@ def test_attach_reconstructs_persisted_endpoint_without_task_reader(tmp_path):
 
     executor = ReconstructedExecutor()
     pool = RecordingPool(executor)
-    restarted = ExecutionManager(store, executor_pool=pool)
+    restarted = ExecutionManager(store, executors=Executors(pool))
 
     attached = restarted.attach(
         record.id,
