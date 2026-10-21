@@ -199,3 +199,44 @@ def test_unknown_is_observation_not_terminal_state():
     recovered.completed(raw)
     assert manager.completions == 1
     assert executor.acknowledgements == 1
+
+
+def test_restart_retries_ack_without_repeating_terminal_commit():
+    manager, raw, executor = _Manager(), _Runner(), _Executor()
+    record = SimpleNamespace(
+        id="run", state=RunState.FINISHED,
+        updated_at="2026-10-20T10:00:00+00:00",
+        execution=SimpleNamespace(submitted=lambda value: value),
+    )
+    recovered = PersistentRun(manager, executor, record)
+    raw.state = RunState.FINISHED
+    assert recovered.completed(raw) is RunState.FINISHED
+    assert recovered.completed(raw) is RunState.FINISHED
+    assert manager.completions == 0
+    assert executor.acknowledgements == 1
+
+
+def test_failed_ack_is_retryable_without_rewriting_completion():
+    manager, raw = _Manager(), _Runner()
+    record = SimpleNamespace(
+        id="run", state=RunState.FINISHED,
+        updated_at="2026-10-20T10:00:00+00:00",
+        execution=SimpleNamespace(submitted=lambda value: value),
+    )
+
+    class FlakyExecutor:
+        def __init__(self):
+            self.attempts = 0
+
+        def acknowledge(self, record):
+            self.attempts += 1
+            if self.attempts == 1:
+                raise OSError("lost reply")
+
+    executor = FlakyExecutor()
+    recovered = PersistentRun(manager, executor, record)
+    recovered.completed(raw)
+    recovered.completed(raw)
+    recovered.completed(raw)
+    assert executor.attempts == 2
+    assert manager.completions == 0
