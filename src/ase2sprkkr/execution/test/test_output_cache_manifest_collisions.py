@@ -98,7 +98,7 @@ def test_disjoint_output_cache_members_are_downloaded(
     assert error is None
     handler = RemoteFileHandler(LocalTransport())
     collected, error = asyncio.run(
-        handler.collect(manifest.mapping, frozen, ExecutionOutcome(), required=True),
+        handler.collect(frozen, ExecutionOutcome(), required=True),
     )
     assert error is None
     assert (local / "output.dat").read_text() == "out"
