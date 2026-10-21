@@ -198,7 +198,7 @@ def test_exact_and_wildcard_caches_keep_individual_sync_states(tmp_path):
     runner = _processed_run(executor, spec)
     runner.run()
 
-    entries = {entry.file.local_path: entry.file for entry in runner.files.caches}
+    entries = {entry.local_path: entry for entry in runner.files.caches}
     assert exact.read_text() == "before"
     assert unchanged.read_text() == "unchanged"
     assert (workdir / "generated-new.dat").read_text() == "new"
