@@ -145,7 +145,7 @@ def test_output_spool_write_failure_is_reported_without_losing_diagnosis(tmp_pat
     assert "Failed to write process output: disk full during output" in kwargs["error"]
 
 
-def test_failed_final_output_sync_is_reported_as_artifact_failure(tmp_path, monkeypatch):
+def test_failed_final_output_sync_is_reported_as_file_failure(tmp_path, monkeypatch):
     from ..base import FailurePhase, RunState
     from ..remote_supervisor_stream import SupervisorStreams
 
@@ -174,7 +174,7 @@ def test_failed_final_output_sync_is_reported_as_artifact_failure(tmp_path, monk
     args, kwargs = reported[0]
     assert args[1] == RunState.FAILED
     assert args[2] == 0
-    assert args[3] == FailurePhase.ARTIFACTS
+    assert args[3] == FailurePhase.FILES
     assert kwargs["error"] == "Failed to sync process output: cannot fsync output"
 
 
@@ -255,7 +255,7 @@ def test_supervisor_pumps_both_binary_channels_to_separate_files(tmp_path, monke
             id="spool-write",
         ),
         pytest.param(
-            "sync", "artifacts",
+            "sync", "files",
             "Failed to sync process output: cannot fsync output",
             id="final-sync",
         ),

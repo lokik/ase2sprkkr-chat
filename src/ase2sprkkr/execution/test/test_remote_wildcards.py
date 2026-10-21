@@ -91,24 +91,24 @@ def test_remote_executor_downloads_output_wildcards_and_discards_stale_matches(t
     workdir = tmp_path / "local" / "calculation"
     remote_workdir = tmp_path / "remote" / "calculation"
     remote_workdir.mkdir(parents=True)
-    (remote_workdir / "artifact-stale.dat").write_text("stale")
+    (remote_workdir / "file-stale.dat").write_text("stale")
 
     executor, spec, _, _ = _text_run(
         tmp_path,
-        declared_output_files=(workdir / "artifact-*.dat",),
+        declared_output_files=(workdir / "file-*.dat",),
         code=(
             "import pathlib; "
-            "pathlib.Path('artifact-a.dat').write_text('a'); "
-            "pathlib.Path('artifact-b.dat').write_text('b'); print('done')"
+            "pathlib.Path('file-a.dat').write_text('a'); "
+            "pathlib.Path('file-b.dat').write_text('b'); print('done')"
         ),
     )
     result = _processed_run(executor, spec).run()
 
     assert result.return_code == 0
-    assert (workdir / "artifact-a.dat").read_text() == "a"
-    assert (workdir / "artifact-b.dat").read_text() == "b"
-    assert not (workdir / "artifact-stale.dat").exists()
-    assert not (remote_workdir / "artifact-stale.dat").exists()
+    assert (workdir / "file-a.dat").read_text() == "a"
+    assert (workdir / "file-b.dat").read_text() == "b"
+    assert not (workdir / "file-stale.dat").exists()
+    assert not (remote_workdir / "file-stale.dat").exists()
 
 
 def test_remote_executor_syncs_cache_wildcards_in_both_directions(tmp_path):
