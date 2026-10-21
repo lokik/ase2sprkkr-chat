@@ -5,6 +5,7 @@ import pytest
 
 from ase2sprkkr.execution import (
     DuplicateSubmissionError,
+    ExecutionSpec,
     Executor,
     FileEntry,
     FileManifest,
@@ -66,7 +67,10 @@ class _Executor(Executor):
 def _run(manager, executor, directory, *, task="DOS", dataset="case"):
     return manager.create_run(
         executor,
-        spec=SimpleNamespace(directory=str(directory)),
+        spec=ExecutionSpec(
+            argv=(), input_file=None, output_file=None,
+            directory=str(directory),
+        ),
         process_result=lambda outcome: outcome,
         task=task,
         dataset=dataset,
