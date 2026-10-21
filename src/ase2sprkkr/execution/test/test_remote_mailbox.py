@@ -66,3 +66,21 @@ def test_submission_ticket_roundtrip(tmp_path, monkeypatch):
     assert remote_mailbox.read_submission(key) == {"remote_id": "native"}
     assert remote_mailbox.drop_submission(key)
     assert not remote_mailbox.drop_submission(key)
+
+
+def test_publication_error_survives_cleanup_fsync_error(monkeypatch):
+    key = uuid4().hex
+    original_fsync = remote_mailbox.fsync_directory
+
+    def failed_write(*args, **kwargs):
+        raise OSError("primary publication failure")
+
+    def failed_cleanup(*args, **kwargs):
+        raise OSError("secondary directory fsync failure")
+
+    monkeypatch.setattr(remote_mailbox, "durable_write_json", failed_write)
+    monkeypatch.setattr(remote_mailbox, "fsync_directory", failed_cleanup)
+    with pytest.raises(OSError, match="primary publication failure"):
+        remote_mailbox.publish_outcome(key, RunState.FINISHED, 0)
+    monkeypatch.setattr(remote_mailbox, "fsync_directory", original_fsync)
+    assert remote_mailbox.read_outcome(key) is None

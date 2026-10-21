@@ -84,11 +84,19 @@ def publish_outcome(receipt_id, state, return_code, failure_phase=None, *,
         fsync_directory(path.parent)
         return True
     finally:
+        # Cleanup must not replace a failed durable write or publish with
+        # a secondary unlink/fsync error.
+        import sys
+        primary = sys.exc_info()[1]
         try:
-            temporary.unlink()
-        except FileNotFoundError:
-            pass
-        fsync_directory(path.parent)
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+            fsync_directory(path.parent)
+        except BaseException:
+            if primary is None:
+                raise
 
 
 def read_outcome(receipt_id):
