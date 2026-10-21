@@ -76,3 +76,51 @@ def test_output_cache_collision_is_rejected(tmp_path):
 def test_optional_flag_must_be_bool():
     with pytest.raises(TypeError, match="optional"):
         FileEntry("/tmp/optional.dat", optional="yes")
+
+
+def test_optional_missing_input_does_not_block_stage(tmp_path):
+    import asyncio
+
+    from ase2sprkkr.execution.remote_file_handler import RemoteFileHandler
+    from ase2sprkkr.execution.run_model import FileMapping
+    from ase2sprkkr.execution.transport import LocalTransport
+
+    source = tmp_path / "absent.inp"
+    mapping = FileMapping(str(tmp_path), str(tmp_path / "remote"))
+    spec_obj = spec(tmp_path)
+    handler = RemoteFileHandler(LocalTransport())
+    staged = asyncio.run(handler._stage_file(
+        mapping, spec_obj, source, {}, required=False,
+    ))
+    assert staged == mapping.map_path(source)
+
+
+def test_optional_and_required_output_transfer_are_independent(tmp_path):
+    import asyncio
+    from types import SimpleNamespace
+
+    from ase2sprkkr.execution.remote_file_handler import RemoteFileHandler
+    from ase2sprkkr.execution.run_model import FileMapping
+    from ase2sprkkr.execution.transport import LocalTransport
+
+    mapping = FileMapping(str(tmp_path), str(tmp_path / "remote"))
+    files = FileManifest(
+        outputs=(
+            FileEntry(str(tmp_path / "maybe.dat"),
+                      str(tmp_path / "remote/maybe.dat"), optional=True,
+                      availability_state="pending"),
+            FileEntry(str(tmp_path / "mandatory.dat"),
+                      str(tmp_path / "remote/mandatory.dat"),
+                      availability_state="pending"),
+        ),
+        mapping=mapping,
+    )
+    result = SimpleNamespace(output_file=None, error_file=None)
+    completed, error = asyncio.run(RemoteFileHandler(LocalTransport()).collect(
+        mapping, files, result, required=True,
+    ))
+    assert isinstance(error, FileNotFoundError)
+    assert [entry.availability_state for entry in completed.outputs] == [
+        "skipped", "failed",
+    ]
+    assert completed.availability_state == "failed"
