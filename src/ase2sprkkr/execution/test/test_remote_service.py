@@ -671,8 +671,9 @@ def test_ephemeral_target_preflight_error_removes_unlaunched_scratch(tmp_path, m
 
 
 @pytest.mark.parametrize("released", (False, True))
+@pytest.mark.parametrize("detached", (False, True))
 def test_remote_submit_handoff_failure_respects_supervisor_ownership(
-    tmp_path, monkeypatch, released,
+    tmp_path, monkeypatch, released, detached,
 ):
     import os
     import subprocess
@@ -708,7 +709,10 @@ def test_remote_submit_handoff_failure_respects_supervisor_ownership(
     monkeypatch.setattr(os, "killpg", killpg)
     monkeypatch.setattr(os, "write", write)
     monkeypatch.setattr(remote_service, "_process_info", lambda pid: ("123", "R"))
-    monkeypatch.setattr(remote_service, "_publish_submission", lambda *args: None)
+    monkeypatch.setattr(remote_service, "_publish_submission",
+                        lambda *args: events.append("ticket"))
+    monkeypatch.setattr(remote_service, "acknowledge_submission",
+                        lambda *args: events.append("revoke"))
 
     # Avoid blocking on the worker readiness pipe after the release token.
     original_fdopen = os.fdopen
@@ -721,7 +725,7 @@ def test_remote_submit_handoff_failure_respects_supervisor_ownership(
 
     request = {
         "executor": "local", "argv": ["true"], "directory": str(scratch),
-        "temporary_directory": True, "detached": False,
+        "temporary_directory": True, "detached": detached,
     }
     with pytest.raises(OSError, match="release failed|ready reply lost"):
         remote_service.submit_remote(request)
@@ -729,3 +733,4 @@ def test_remote_submit_handoff_failure_respects_supervisor_ownership(
     assert ("kill" in events) is not released
     assert ("reap" in events) is not released
     assert scratch.exists() is released
+    assert ("revoke" in events) is (detached and not released)
