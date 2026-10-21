@@ -49,6 +49,7 @@ def test_empty_backend_identity_and_pathless_file_are_invalid():
 def test_manifest_versions_and_availability_roundtrip():
     manifest = FileManifest(
         inputs=(FileEntry("/local/in", "/remote/in"),),
+        primary_input=FileEntry("/local/in", "/remote/in"),
         outputs=(FileEntry("/local/data", "/remote/data"),),
         stdout=FileEntry("/local/stdout", "/remote/stdout"),
         stderr=FileEntry("/local/stderr", "/remote/stderr"),
