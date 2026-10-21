@@ -18,7 +18,13 @@ class _Manager:
 
     def transition(self, record, **kwargs):
         self.transitions += 1
-        return record
+        # Model the committed state. Returning the untouched record would
+        # make repeated UNKNOWN observations look like new transitions.
+        changes = {
+            name: value for name, value in kwargs.items()
+            if name in ("state", "message") and value is not None
+        }
+        return SimpleNamespace(**{**vars(record), **changes})
 
 
 class _Runner:
