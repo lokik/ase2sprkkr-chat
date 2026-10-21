@@ -3,6 +3,8 @@ from pathlib import Path
 from ase.build import bulk
 import pytest
 
+from ...input_parameters.input_parameters import InputParameters
+from ...potentials.potentials import Potential
 from ..calculation import PreparedCalculation
 from ..calculator import SPRKKR
 
@@ -41,7 +43,28 @@ def test_save_input_without_output_has_stable_four_item_result(tmp_path, li_bulk
     assert not (tmp_path / "default.out").exists()
 
 
-def test_create_run_preserves_explicitly_disabled_output(tmp_path, monkeypatch, li_bulk):
+@pytest.fixture
+def lightweight_serialization(monkeypatch):
+    """Preserve real file setup, avoiding unrelated POT/IPD serialization."""
+    calls = []
+
+    def save_potential(self, file, *args, **kwargs):
+        calls.append("potential")
+        file.write("# potential routing test\n")
+
+    def save_parameters(self, file, *args, **kwargs):
+        calls.append("input")
+        file.write("# input routing test\n")
+
+    monkeypatch.setattr(Potential, "save_to_file", save_potential)
+    monkeypatch.setattr(InputParameters, "save_to_file", save_parameters)
+    yield
+    assert sorted(calls) == ["input", "potential"]
+
+
+def test_create_run_preserves_explicitly_disabled_output(
+    tmp_path, monkeypatch, li_bulk, lightweight_serialization
+):
     calculator = _calculator(tmp_path, li_bulk)
     captured = {}
     runner = object()
@@ -59,7 +82,9 @@ def test_create_run_preserves_explicitly_disabled_output(tmp_path, monkeypatch, 
     assert not (tmp_path / "default.out").exists()
 
 
-def test_create_run_respects_calculator_level_disabled_output(tmp_path, monkeypatch, li_bulk):
+def test_create_run_respects_calculator_level_disabled_output(
+    tmp_path, monkeypatch, li_bulk, lightweight_serialization
+):
     calculator = _calculator(tmp_path, li_bulk, output_file=False)
     captured = {}
     runner = object()
