@@ -20,7 +20,7 @@ from ..ase.symbols import filename_from_symbols
 from ..bindings.empty_spheres import add_empty_spheres
 from ..common.file_utils import Directory
 from ..common.temporary import temporary_option_value
-from ..execution.base import ExecutionResources, ResourceOwnedRunner
+from ..execution.base import ExecutionResources
 from ..execution.persistence import resolve_project_manager
 from ..execution.postprocessing import PostprocessingRunner
 from ..input_parameters.input_parameters import InputParameters
@@ -923,7 +923,6 @@ def _create_sprkkr_run(
             )
 
         def finalized(out):
-            resources.close(suppress_errors=True)
             if callback:
                 callback(out)
 
@@ -933,6 +932,7 @@ def _create_sprkkr_run(
                 raw_runner,
                 process_result,
                 callback=finalized,
+                resources=resources,
             )
         else:
             manager, project_id = project_context
@@ -945,11 +945,11 @@ def _create_sprkkr_run(
                 dataset=input_parameters.CONTROL.DATASET.result,
                 callback=finalized,
                 project_id=project_id,
+                resources=resources,
             )
         if read_callback:
             runner.add_output_listener(read_callback)
 
-        runner = ResourceOwnedRunner(runner, resources)
         handed_off = True
         return runner
     finally:
