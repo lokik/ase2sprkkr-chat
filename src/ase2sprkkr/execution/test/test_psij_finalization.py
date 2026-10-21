@@ -98,7 +98,7 @@ def test_psij_terminal_callback_wakes_file_follower(monkeypatch, tmp_path):
             asyncio.get_running_loop().call_soon(callback, terminal_status)
             return lambda: None
 
-        runner.executor = SimpleNamespace(_observe_job=observe)
+        runner.executor = SimpleNamespace(_observe_job=observe, poll_interval=None)
 
         async def follow(paths, on_chunk, terminal, *, wakeup=None, **kwargs):
             assert wakeup is not None
