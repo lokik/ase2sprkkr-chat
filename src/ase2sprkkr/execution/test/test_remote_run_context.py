@@ -26,7 +26,7 @@ def test_run_context_is_staging_policy_not_executor(tmp_path):
     assert context.output_sync == "missing"
     assert context.local_root == str(tmp_path.resolve())
     assert context.remote_root == "/scratch/a"
-    # Mapping owns only file paths and policy, never backend operations.
+    # The manifest owns file paths and policy, never backend operations.
     assert not any(
         hasattr(context, name)
         for name in ("_submit", "_status", "_cancel", "_follow")
@@ -86,7 +86,10 @@ def test_attach_restores_typed_manifest_without_sync_dictionary(tmp_path, monkey
         LaunchSpec(local_root=local, remote_root=str(remote)),
     ))
     files = FileManifest(**{**asdict(files),
-                            "mapping": asdict(context)})
+                            "local_root": context.local_root,
+                            "remote_root": context.remote_root,
+                            "input_sync": context.input_sync,
+                            "output_sync": context.output_sync})
     run = RunRecord(
         id="test-manifest", task="SCF", state=RunState.RUNNING,
         created_at="2026-10-13T08:00:00+00:00",
@@ -190,7 +193,8 @@ def test_attach_closes_stdout_if_opening_stderr_fails(tmp_path, monkeypatch):
         files=FileManifest(
             stdout=FileEntry(str(stdout), str(remote / "stdout.txt")),
             stderr=FileEntry(str(stderr), str(remote / "stderr.txt")),
-            mapping=context,
+            local_root=context.local_root,
+            remote_root=context.remote_root,
         ),
     )
 
