@@ -56,17 +56,26 @@ def test_real_single_angle_spectrum_is_not_blank(single_angle_spc):
         plt.close("all")
 
 
+def _sample_spc_energy_rows(count=8):
+    """Keep representative energies without replicating all 300 rows."""
+    header, payload = _EXAMPLE.read_text().split("#######################", 1)
+    rows = [line for line in payload.splitlines() if line.strip()]
+    assert len(rows) == 300
+    assert "NE               300" in header
+    header = header.replace("NE               300", f"NE               {count}")
+    # Include both energy endpoints and several points in between.
+    sample = [rows[index] for index in np.linspace(0, len(rows) - 1, count, dtype=int)]
+    return header, sample
+
+
 def _multi_azimuth_file(tmp_path):
-    """Turn a small real NP=1 SPC fixture into an NP=3 native SPC input."""
-    text = _EXAMPLE.read_text()
-    header, payload = text.split("#######################", 1)
+    """Turn sampled real NP=1 data into an NP=3 native SPC input."""
+    header, rows = _sample_spc_energy_rows()
     header = header.replace("NP                 1", "NP                 3")
     assert "NP                 3" in header
     output = tmp_path / "synthetic_np3.spc"
     lines = []
-    for line in payload.splitlines():
-        if not line.strip():
-            continue
+    for line in rows:
         values = np.fromstring(line, sep=" ")
         assert len(values) == 8
         for ip in range(3):
@@ -118,13 +127,11 @@ def test_multi_azimuth_static_slice_count(multi_azimuth_spc):
 
 def test_controls_switch_np_nt_on_real_parser_grid(tmp_path):
     """A parsed NP x NT spectrum changes slice direction and slider limits."""
-    header, payload = _EXAMPLE.read_text().split("#######################", 1)
+    header, rows = _sample_spc_energy_rows()
     header = header.replace("NT                 1", "NT                 3")
     header = header.replace("NP                 1", "NP                 4")
     lines = []
-    for line in payload.splitlines():
-        if not line.strip():
-            continue
+    for line in rows:
         values = np.fromstring(line, sep=" ")
         for ip in range(4):
             for it in range(3):
