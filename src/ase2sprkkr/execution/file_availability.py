@@ -54,9 +54,10 @@ def _pattern_root(pattern):
 def materialize_manifest(manifest, *, remote=False, include_streams=True):
     """Resolve local filesystem declarations and return (manifest, first_error).
 
-    This is the only wildcard evaluator for job outputs. An unmatched pattern
-    is simply empty. Exceptional filesystem errors do not discard successful
-    matches of other patterns. The caller owns lifecycle and persistence.
+    This is the only wildcard evaluator for job outputs. Missing mandatory
+    remote output patterns are failures; optional output/cache patterns are
+    skipped. Exceptional errors preserve successful matches of other patterns.
+    The caller owns lifecycle and persistence.
     """
     from dataclasses import replace
     from .run_model import FileManifest
@@ -65,7 +66,7 @@ def materialize_manifest(manifest, *, remote=False, include_streams=True):
         manifest = FileManifest(**manifest)
     first_error = None
 
-    def resolve(entry):
+    def resolve(entry, *, mandatory=False):
         nonlocal first_error
         if entry is None:
             return ()
@@ -92,6 +93,18 @@ def materialize_manifest(manifest, *, remote=False, include_streams=True):
             # the unresolved declaration in the frozen receipt so the client
             # can distinguish it from a genuinely unmatched optional output.
             return (entry,)
+        if remote and not matches:
+            if not mandatory:
+                return (replace(entry, availability_state="skipped"),)
+            exc = FileNotFoundError(
+                f"Declared remote output pattern matched no files: {pattern}"
+            )
+            if first_error is None:
+                first_error = exc
+            return (replace(
+                entry, availability_state="failed",
+                availability_message=str(exc),
+            ),)
         found = []
         for path in matches:
             if remote:
@@ -112,7 +125,8 @@ def materialize_manifest(manifest, *, remote=False, include_streams=True):
                 ))
         return tuple(found)
 
-    outputs = tuple(concrete for entry in manifest.outputs for concrete in resolve(entry))
+    outputs = tuple(concrete for entry in manifest.outputs
+                    for concrete in resolve(entry, mandatory=remote and not entry.optional))
     # Remote-only cache entries carry pre-run signatures, not files.
     # Apply those baselines to the frozen concrete entries and drop the
     # placeholders once membership is known.
