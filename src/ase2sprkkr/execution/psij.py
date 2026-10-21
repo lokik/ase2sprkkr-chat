@@ -441,6 +441,7 @@ class PsijRunner(ManagedRunner):
                 status = await follow_growing_files(
                     paths, lambda kind, data: self._output_observers.emit_bytes(data, kind),
                     terminal_status, poll_interval=max(self.executor.poll_interval, 1.0),
+                    wakeup=terminal,
                 )
         except OSError as exc:
             read_error = exc
