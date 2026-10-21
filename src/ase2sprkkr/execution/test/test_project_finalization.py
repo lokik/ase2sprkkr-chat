@@ -720,7 +720,7 @@ def test_cancel_after_persisted_completion_does_not_touch_backend_or_store(
             raise AssertionError("terminal backend cancellation")
 
     run = CalculationRun(Raw(), lambda result: result)
-    run.hooks = PersistentRun(manager, None, run, record)
+    run.hooks = PersistentRun(manager, None, record)
     monkeypatch.setattr(manager, "transition", lambda *a, **k: calls.append("store"))
     assert run.cancel() is None
     assert run.cancel() is None
