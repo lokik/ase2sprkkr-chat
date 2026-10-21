@@ -117,8 +117,9 @@ def test_direct_schema_objects_are_detached():
     assert parameters.requested_task_name is None
     with pytest.raises(RuntimeError, match="not associated with an SPR-KKR task"):
         parameters.task_definition_required()
-    assert parameters.copy().task_name is None
-    assert parameters.copy().requested_task_name is None
+    copied = parameters.copy()
+    assert copied.task_name is None
+    assert copied.requested_task_name is None
 
 
 def test_canonical_schema_identity_does_not_imply_requested_task():
