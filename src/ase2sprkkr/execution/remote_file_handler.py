@@ -169,6 +169,9 @@ class RemoteFileHandler:
         inputs = []
         declared = tuple(entry.local_path for entry in manifest.inputs)
         for local in dict.fromkeys((*declared, *input_sources)):
+            if (manifest.stdin is not None and local == manifest.stdin.local_path
+                    and local not in declared):
+                continue
             if has_file_magic(local):
                 continue
             inputs.append(FileEntry(local_path=local, remote_path=mapping.map_path(local)))
