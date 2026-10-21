@@ -1,11 +1,12 @@
 import pytest
 
-from ase2sprkkr.execution import ExecutorPool
-from ase2sprkkr.sprkkr.profile import SPRKKRProfile, executor_from_profile
+from ase2sprkkr.execution import Executors
+from ase2sprkkr.execution.pool import _ExecutorPool
+from ase2sprkkr.sprkkr.profile import SPRKKRProfile
 
 
-def test_executor_pool_reuses_backend_by_endpoint():
-    pool = ExecutorPool()
+def test_executors_reuse_backend_by_endpoint():
+    pool = Executors()
     first_profile = SPRKKRProfile(executor="local", mpi=8)
     second_profile = SPRKKRProfile(executor="local", mpi=64)
 
@@ -16,7 +17,7 @@ def test_executor_pool_reuses_backend_by_endpoint():
 
 
 def test_ssh_profiles_with_different_staging_share_endpoint_executor():
-    pool = ExecutorPool()
+    pool = Executors()
     first_profile = SPRKKRProfile(
         executor="ssh",
         host="cluster",
@@ -37,18 +38,21 @@ def test_ssh_profiles_with_different_staging_share_endpoint_executor():
     assert pool.for_profile(first_profile) is pool.for_profile(second_profile)
 
 
-def test_executor_from_profile_uses_process_default_pool():
+def test_separate_executors_own_separate_pools():
     profile = SPRKKRProfile(executor="local", mpi=8)
 
-    assert executor_from_profile(profile) is executor_from_profile(profile)
+    first = Executors()
+    second = Executors()
+    assert first.for_profile(profile) is first.for_profile(profile)
+    assert first.for_profile(profile) is not second.for_profile(profile)
 
 
-def test_executor_pool_can_restart_discarded_backend():
-    pool = ExecutorPool()
+def test_executors_can_restart_discarded_backend():
+    pool = Executors()
     profile = SPRKKRProfile(executor="local")
 
     first = pool.for_profile(profile)
-    assert pool.discard_profile(profile) is first
+    assert pool.discard(profile.endpoint) is first
     second = pool.for_profile(profile)
 
     assert second is not first
@@ -56,7 +60,7 @@ def test_executor_pool_can_restart_discarded_backend():
 
 def test_executor_pool_close_attempts_all_after_failure():
     """One failing backend must not prevent cleanup of the remaining backends."""
-    pool = ExecutorPool()
+    pool = _ExecutorPool()
     closed = []
     backends = {}
 
@@ -93,7 +97,7 @@ def test_executor_pool_close_attempts_all_after_failure():
 
 
 def test_executor_pool_close_accepts_backends_without_close():
-    pool = ExecutorPool()
+    pool = _ExecutorPool()
     executor = object()
     pool.get("no-close", lambda: executor)
 
@@ -104,7 +108,7 @@ def test_executor_pool_close_accepts_backends_without_close():
 
 def test_executor_pool_closes_shared_backend_only_once():
     """A backend may be cached under several keys but is one owned object."""
-    pool = ExecutorPool()
+    pool = _ExecutorPool()
     calls = []
 
     class Shared:
