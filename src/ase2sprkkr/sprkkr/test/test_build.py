@@ -23,23 +23,21 @@ class TestBuild:
         np.testing.assert_allclose(si.positions, (atoms * (1, 1, 11)).positions)
 
     @pytest.mark.parametrize("orientation_arg", ("hkl", "hkl2"))
-    def test_deprecated_orientation_warns_without_building(
+    def test_deprecated_orientation_builds_and_warns(
         self, monkeypatch, cu_sc, orientation_arg,
     ):
-        # Deprecation warnings precede rotation. Stop there instead of
-        # constructing and resolving symmetry for a semi-infinite system.
+        # Keep the original end-to-end regression: the deprecated arguments
+        # must still build a system, not just dispatch to rotate().
         from .. import build as build_module
 
-        class StopAfterWarning(Exception):
-            pass
-
+        real_rotate = build_module.rotate
         rotations = []
 
-        def stop_at_rotate(atoms, direction):
+        def record_rotate(atoms, direction):
             rotations.append((atoms, direction))
-            raise StopAfterWarning
+            return real_rotate(atoms, direction)
 
-        monkeypatch.setattr(build_module, "rotate", stop_at_rotate)
+        monkeypatch.setattr(build_module, "rotate", record_rotate)
         atoms = cu_sc.copy()
         options = {orientation_arg: (0, 0, 1)}
         if orientation_arg == "hkl2":
@@ -48,9 +46,9 @@ class TestBuild:
         with pytest.warns(
             DeprecationWarning, match=rf"{orientation_arg} parameter",
         ):
-            with pytest.raises(StopAfterWarning):
-                semiinfinite_system(atoms, 1, **options)
+            system = semiinfinite_system(atoms, 1, **options)
 
+        assert len(system) > 0
         assert len(rotations) == 1
         assert rotations[0][0] is options.get("atoms2", atoms)
         assert rotations[0][1] == (0, 0, 1)
