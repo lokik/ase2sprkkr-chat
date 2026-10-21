@@ -9,7 +9,7 @@ import pytest
 from ..base import ExecutionOutcome
 from ..file_availability import materialize_manifest
 from ..remote_file_handler import RemoteFileHandler
-from ..run_model import FileEntry, FileManifest, FileMapping
+from ..run_model import FileEntry, FileManifest
 from ..transport import LocalTransport
 
 
@@ -57,12 +57,12 @@ def test_output_cache_overlap_rejected_before_first_download(
         manifest = FileManifest(
             outputs=(entry(output_pattern),),
             caches=(entry(cache_pattern),),
-            mapping=FileMapping(str(local), str(remote)),
+            local_root=str(local), remote_root=str(remote),
         )
         frozen, error = materialize_manifest(manifest, remote=True)
         assert error is None
         asyncio.run(handler.collect(
-            manifest.mapping, frozen, ExecutionOutcome(), required=True,
+            frozen, ExecutionOutcome(), required=True,
         ))
     assert transport.downloads == []
     assert destination.read_text() == "preserve me"
@@ -92,7 +92,7 @@ def test_disjoint_output_cache_members_are_downloaded(
     manifest = FileManifest(
         outputs=(entry("output", output_pattern),),
         caches=(entry("cache", cache_pattern),),
-        mapping=FileMapping(str(local), str(remote)),
+        local_root=str(local), remote_root=str(remote),
     )
     frozen, error = materialize_manifest(manifest, remote=True)
     assert error is None

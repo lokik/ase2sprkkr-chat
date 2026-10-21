@@ -5,7 +5,7 @@ import pytest
 
 from ase2sprkkr.execution.remote import RemoteRunner
 from ase2sprkkr.execution import (
-    ExecutionSpec, FileEntry, FileManifest, FileMapping,
+    ExecutionSpec, FileEntry, FileManifest,
     LaunchSpec, RemoteEndpointExecutor, RunState, RunStore, LocalTransport,
 )
 
@@ -33,7 +33,7 @@ def test_prepared_manifest_is_durable_before_remote_backend_submit(tmp_path, mon
     )
     expected = FileManifest(
         stdout=FileEntry(str(output), "/target/prepared/run.out", availability_state="pending"),
-        mapping=FileMapping(str(tmp_path), "/target/prepared"),
+        local_root=str(tmp_path), remote_root="/target/prepared",
     )
 
     async def prepare(_runner):
@@ -92,8 +92,12 @@ def test_remote_manifest_uses_same_declarations_as_local(tmp_path):
     executor = RemoteEndpointExecutor(LocalTransport())
     runner = executor.create_run(spec)
     async def prepare_files():
-        mapping = await executor.resolve_mapping(runner.spec.launch)
-        return await runner.file_handler.prepare(mapping, runner.spec)
+        context = await executor.resolve_mapping(runner.spec.launch)
+        manifest = FileManifest.from_spec(runner.spec).with_remote(
+            local_root=context.local_root, remote_root=context.remote_root,
+            input_sync=context.input_sync, output_sync=context.output_sync,
+        )
+        return await runner.file_handler.prepare(manifest, runner.spec)
 
     manifest = asyncio.run(prepare_files())
     assert tuple(e.local_path for e in manifest.inputs) == (

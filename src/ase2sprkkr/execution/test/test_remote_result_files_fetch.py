@@ -5,7 +5,6 @@ from ase2sprkkr.execution import (
     LocalTransport, RemoteExecutor, RunRecord, RunState, Execution,
     WorkingDirectory, FileManifest, FileEntry,
 )
-from ase2sprkkr.execution.run_model import FileMapping
 from ase2sprkkr.execution.endpoint import endpoint_for_executor
 
 
@@ -45,7 +44,7 @@ def test_remote_executor_fetches_only_requested_historical_files(tmp_path):
             "opaque-historical-handle",
         ),
         files=FileManifest(
-            mapping=FileMapping(str(local_root), str(remote_root)),
+            local_root=str(local_root), remote_root=str(remote_root),
             inputs=(
                 FileEntry(str(local_directory / "run.inp"), str(remote_input)),
                 FileEntry(str(local_directory / "start.pot"), str(remote_potential)),
@@ -122,7 +121,7 @@ def test_remote_fetch_uses_transport_expansion_for_exact_and_wildcard(tmp_path):
             "opaque-handle",
         ),
         files=FileManifest(
-            mapping=FileMapping(str(local_root), str(remote_root)),
+            local_root=str(local_root), remote_root=str(remote_root),
             outputs=(
                 FileEntry(str(local_root / "calc" / "exact.dat"),
                           str(remote_dir / "exact.dat")),
@@ -176,7 +175,7 @@ def test_remote_staged_result_keeps_canonical_file_absent(tmp_path):
             "backend-id",
         ),
         files=FileManifest(
-            mapping=FileMapping(str(local_root), str(remote_root)),
+            local_root=str(local_root), remote_root=str(remote_root),
             stdout=FileEntry(str(local), str(remote_dir / "run.out")),
             output_versions=(captured,),
             captured_at="2026-10-13T08:00:00+00:00",
@@ -221,7 +220,7 @@ def test_fetch_rejects_local_symlink_escape(tmp_path, wildcard):
         ),
         files=FileManifest(
             outputs=(FileEntry(str(local_path), str(remote_path)),),
-            mapping=FileMapping(str(local_root), str(remote_root)),
+            local_root=str(local_root), remote_root=str(remote_root),
         ),
     )
     with pytest.raises(ValueError, match="outside mapped root"):
@@ -256,7 +255,7 @@ def test_fetch_validates_canonical_path_before_explicit_staging(tmp_path):
         ),
         files=FileManifest(
             outputs=(FileEntry(str(canonical), str(remote / "bad" / "output.dat")),),
-            mapping=FileMapping(str(local), str(remote)),
+            local_root=str(local), remote_root=str(remote),
         ),
     )
     with pytest.raises(ValueError, match="outside mapped root"):

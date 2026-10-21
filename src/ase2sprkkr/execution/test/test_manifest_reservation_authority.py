@@ -85,9 +85,9 @@ def test_reserved_tilde_root_is_used_by_staging(tmp_path, monkeypatch):
     assert manifest.primary_input.remote_path == directory + "/primary.in"
     assert manifest.stdin.remote_path == directory + "/stdin.in"
     prepared = asyncio.run(
-        executor.file_handler.prepare(manifest.mapping, spec, manifest),
+        executor.file_handler.prepare(manifest, spec),
     )
-    assert prepared.mapping == manifest.mapping
+    assert (prepared.local_root, prepared.remote_root) == (manifest.local_root, manifest.remote_root)
     assert prepared.primary_input == manifest.primary_input
     assert prepared.stdin == manifest.stdin
     assert prepared.inputs[0].remote_path == manifest.inputs[0].remote_path
@@ -110,7 +110,7 @@ def test_staging_rejects_changed_reserved_target(tmp_path):
     ))
     with pytest.raises(ValueError, match="differs from reserved path"):
         asyncio.run(executor.file_handler.prepare(
-            mismatched.mapping, spec, mismatched,
+            mismatched, spec,
         ))
 
 
@@ -138,7 +138,7 @@ def test_staging_uses_reserved_manifest_not_spec_declarations(tmp_path):
         output_files=("extra.out",), cache_files=("extra.cache",),
     )
     prepared = asyncio.run(executor.file_handler.prepare(
-        reserved.mapping, changed, reserved,
+        reserved, changed,
     ))
     assert prepared.inputs == reserved.inputs
     assert prepared.outputs == reserved.outputs
@@ -170,6 +170,6 @@ def test_staging_validates_all_reserved_paths_before_transfer(tmp_path):
     ))
     with pytest.raises(ValueError, match="differs from reserved path"):
         asyncio.run(executor.file_handler.prepare(
-            invalid.mapping, spec, invalid,
+            invalid, spec,
         ))
     assert not (tmp_path / "remote" / "work" / "first.in").exists()
