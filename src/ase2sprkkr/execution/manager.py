@@ -362,14 +362,20 @@ class RunStore:
         rename does not by itself imply that the directory is durable.
         """
         with self._lock, FileLock(self._run_lock_path(record)):
-            path = self._path(record)
-            if not path.is_file():
-                return None
-            latest = self._decode(path)
-            if not latest.state.is_terminal:
-                return None
-            sync_file(path)
-            return latest
+            self._check_persisted_project(record)
+            with self._project_guard(record):
+                path = self._path(record)
+                if not path.is_file():
+                    return None
+                latest = self._decode(path)
+                if (latest.id != record.id
+                        or latest.created_at != record.created_at
+                        or latest.project_id != record.project_id):
+                    raise ValueError("Terminal lookup cannot change persistent identity")
+                if not latest.state.is_terminal:
+                    return None
+                sync_file(path)
+                return latest
 
     def get(self, run_id):
         return self._decode(self._path_for_id(run_id))

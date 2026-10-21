@@ -291,3 +291,52 @@ def test_terminal_retry_after_lost_fsync_confirmation(tmp_path, monkeypatch):
     assert confirmed == manager.store.get(record.id)
     assert confirmed.state is RunState.FINISHED
     assert calls == ["write"]
+
+
+def test_terminal_completion_preserves_first_file_snapshot(tmp_path):
+    from dataclasses import replace
+    from ase2sprkkr.execution import FileEntry, FileManifest
+
+    output = tmp_path / "output.out"
+    output.write_text("durable output")
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    original = manager.new_record(
+        task="DOS", directory=tmp_path,
+        files=FileManifest(stdout=FileEntry(local_path=str(output))),
+    )
+    running = manager.transition(original, state=RunState.RUNNING)
+    first = manager.complete(
+        running, state=RunState.FINISHED, return_code=0,
+        files_available=True,
+    )
+    assert first.files.captured_at is not None
+    assert first.files.output_versions
+
+    # An observer with an older manifest and failed transfer diagnostics
+    # must not invalidate the first durably committed result.
+    stale = replace(
+        running, files=FileManifest(stdout=FileEntry(
+            local_path=str(output), availability_state="failed",
+            availability_message="observer disconnected",
+        )),
+    )
+    second = manager.complete(
+        stale, state=RunState.FAILED, return_code=1, files_available=False,
+        files=stale.files,
+    )
+    assert second == first == manager.store.get(original.id)
+    assert second.files.output_versions == first.files.output_versions
+
+
+def test_terminal_lookup_rejects_foreign_project_identity(tmp_path):
+    from dataclasses import replace
+
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    original = _record(manager, tmp_path)
+    final = manager.complete(original, state=RunState.FINISHED)
+    with pytest.raises(ValueError, match="persistent identity"):
+        manager.complete(
+            replace(original, project_id="different-project"),
+            state=RunState.FINISHED,
+        )
+    assert manager.store.get(original.id) == final
