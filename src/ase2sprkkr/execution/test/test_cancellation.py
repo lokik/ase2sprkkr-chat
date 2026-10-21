@@ -227,46 +227,84 @@ def test_project_cancel_returns_while_backend_submission_is_blocked():
     assert backend.cancelled == 1
 
 
-def test_preflight_cancellation_settles_project_record():
-    """An interrupted preflight cannot strand a reserved SUBMITTING record."""
+@pytest.mark.parametrize("phase", ("reservation", "preparation"))
+def test_project_cancellation_during_prelaunch_is_durable_and_nonblocking(phase):
+    """One runtime cancel latch settles a project even before backend submit."""
     from types import SimpleNamespace
     from ase2sprkkr.execution.manager import ProjectRunner
 
-    class Backend(_BackendRunner):
-        def __init__(self):
-            super().__init__()
-            self.release_submit.set()
+    entered, release = Event(), Event()
 
+    class Backend(_BackendRunner):
         def prepare_submission(self):
-            project.cancel()
-            raise asyncio.CancelledError("cancelled while preparing")
+            if phase == "preparation":
+                entered.set()
+                if not release.wait(5):
+                    raise TimeoutError("preparation was not released")
 
     class Manager:
         def __init__(self):
-            self.completed = []
+            self.completions = []
+
+        @staticmethod
+        def changed(record, **changes):
+            return SimpleNamespace(**{
+                **vars(record), **changes, "updated_at": "later",
+            })
 
         def reserve(self, record):
-            return SimpleNamespace(**{**vars(record), "state": RunState.SUBMITTING})
+            if phase == "reservation":
+                entered.set()
+                if not release.wait(5):
+                    raise TimeoutError("reservation was not released")
+            return self.changed(record, state=RunState.SUBMITTING)
+
+        def transition(self, record, **changes):
+            return self.changed(record, **changes)
 
         def complete(self, record, **changes):
-            self.completed.append(changes)
-            return SimpleNamespace(**{**vars(record), **changes})
+            self.completions.append(changes)
+            return self.changed(record, **changes)
 
     backend = Backend()
     resource = _Resource()
-    runner = PostprocessingRunner(
-        backend, lambda x: x, resources=ExecutionResources(resource),
+    processed = PostprocessingRunner(
+        backend, lambda result: result, resources=ExecutionResources(resource),
     )
     manager = Manager()
     project = ProjectRunner(
-        manager, object(), runner,
-        SimpleNamespace(state=RunState.NEW, id="run", updated_at="new"),
+        manager, object(), processed,
+        SimpleNamespace(
+            state=RunState.NEW, id="run", updated_at="new",
+            execution=SimpleNamespace(), files=None,
+        ),
     )
-    with pytest.raises(asyncio.CancelledError):
-        project.submit()
+    errors = []
 
+    def submit():
+        try:
+            project.submit()
+        except BaseException as exc:
+            errors.append(exc)
+
+    submitting = Thread(target=submit)
+    submitting.start()
+    try:
+        assert entered.wait(5)
+        cancelling = Thread(target=project.cancel)
+        cancelling.start()
+        cancelling.join(1)
+        assert not cancelling.is_alive(), "cancel blocked on prelaunch I/O"
+        assert backend.submitted == 0
+    finally:
+        release.set()
+        submitting.join(5)
+
+    assert not submitting.is_alive()
+    assert len(errors) == 1 and isinstance(errors[0], asyncio.CancelledError)
     assert project.record.state == RunState.CANCELLED
-    assert len(manager.completed) == 1
-    assert manager.completed[0]["artifacts_available"] is False
+    assert processed.state == RunState.CANCELLED
+    assert len(manager.completions) == 1
     assert resource.closed
     assert backend.submitted == 0
+    assert backend.cancelled == 0

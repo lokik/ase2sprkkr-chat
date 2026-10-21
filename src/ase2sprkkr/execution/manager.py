@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Event, Lock, RLock
+from threading import Lock, RLock
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -1011,7 +1011,6 @@ class ProjectRunner:
         self._spec = spec
         self._lifecycle_lock = Lock()
         self._submission_in_progress = False
-        self._cancel_requested = Event()
         self.manager = manager
         self.executor = executor
         self._runner = runner
@@ -1077,7 +1076,7 @@ class ProjectRunner:
     def submit(self):
         # Claim exactly once, but never serialize cancellation behind backend I/O.
         with self._lifecycle_lock:
-            if self._cancel_requested.is_set() or self._runner.state == RunState.CANCELLED:
+            if self._runner.cancellation_requested or self._runner.state == RunState.CANCELLED:
                 raise RuntimeError("Run was cancelled before submission")
             if self._submission_in_progress or self._record.state != RunState.NEW:
                 raise RuntimeError(f"Run is already {self._record.state.value}")
@@ -1124,14 +1123,9 @@ class ProjectRunner:
                         files=self.files if self.files is not None else _UNCHANGED,
                     )
                     self._monitor_record_version = self._record.updated_at
-                if self._cancel_requested.is_set():
-                    # Cancellation arrived during preflight. No backend job
-                    # exists, so release the prepared inputs without submit.
-                    self._runner.cancel()
-                    self._record = self.manager.complete(
-                        self._record, state=RunState.CANCELLED,
-                        artifacts_available=False,
-                    )
+                if self._runner.cancellation_requested:
+                    # This is still a definite pre-submit cancellation;
+                    # settle the durable record in the exception handler.
                     raise asyncio.CancelledError("Run was cancelled before submission")
                 backend_submit_attempted = True
                 result = self._runner.submit()
@@ -1213,7 +1207,7 @@ class ProjectRunner:
         finally:
             with self._lifecycle_lock:
                 self._submission_in_progress = False
-                dispatch = submitted and self._cancel_requested.is_set()
+                dispatch = submitted and self._runner.cancellation_requested
             if dispatch:
                 # Project cancellation was accepted while the backend was
                 # submitting. The raw runner is now allowed to dispatch it.
@@ -1325,13 +1319,13 @@ class ProjectRunner:
         return self._runner.stop_observation()
 
     def cancel(self):
-        self._cancel_requested.set()
+        # CalculationRun owns the cancellation latch. This must happen before
+        # acquiring any lock so a blocking reservation cannot delay cancel.
+        self._runner.request_cancel()
         with self._lifecycle_lock:
             if self._submission_in_progress:
-                # Reservation, preflight or submit owns the prepared inputs.
-                # Latch only: it will either abort before backend launch or
-                # dispatch once a backend identity becomes available.
-                self._runner.request_cancel()
+                # Project reservation/staging owns the prepared inputs until
+                # submit() settles the request or dispatches backend cancel.
                 return None
         with self._completion_lock:
             if self._record.state.is_terminal:
