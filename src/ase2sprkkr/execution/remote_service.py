@@ -208,7 +208,8 @@ def _local_submit(request):
             if path is not None:
                 Path(path).parent.mkdir(parents=True, exist_ok=True)
         _clean_request_outputs(original_spec, directory, output_path, error_path)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
+        # Pre-launch validation and filesystem failures are known non-submissions.
         raise SubmissionNotStarted(str(exc)) from exc
 
     run_id = str(request.get("id") or uuid4().hex)
