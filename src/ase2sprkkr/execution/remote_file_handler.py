@@ -161,8 +161,12 @@ class RemoteFileHandler:
             *manifest.inputs, manifest.primary_input, manifest.stdin,
             *manifest.outputs, *manifest.caches, manifest.stdout, manifest.stderr,
         ):
-            if entry is not None and entry.local_path is not None and entry.remote_path is None:
-                raise ValueError("Remote file manifest has unresolved path")
+            if entry is not None and entry.local_path is not None:
+                if entry.remote_path is None:
+                    raise ValueError("Remote file manifest has unresolved path")
+                # Validate the declared target's safety, not a second copy of
+                # its destination identity.
+                manifest.unmap_path(entry.remote_path)
 
         mapping = manifest
         used = {}

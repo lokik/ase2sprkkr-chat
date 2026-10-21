@@ -108,7 +108,7 @@ def test_staging_rejects_changed_reserved_target(tmp_path):
     mismatched = replace(manifest, stdout=replace(
         manifest.stdout, remote_path="/unexpected/path",
     ))
-    with pytest.raises(ValueError, match="differs from reserved path"):
+    with pytest.raises(ValueError, match="outside mapped root"):
         asyncio.run(executor.file_handler.prepare(
             mismatched, spec,
         ))
@@ -168,7 +168,7 @@ def test_staging_validates_all_reserved_paths_before_transfer(tmp_path):
     invalid = replace(reserved, stdout=replace(
         reserved.stdout, remote_path="/unexpected/path",
     ))
-    with pytest.raises(ValueError, match="differs from reserved path"):
+    with pytest.raises(ValueError, match="outside mapped root"):
         asyncio.run(executor.file_handler.prepare(
             invalid, spec,
         ))
