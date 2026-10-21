@@ -180,3 +180,23 @@ def test_file_publication_syncs_outputs_before_terminal_record(tmp_path, monkeyp
     assert len(finalized.files.output_versions) == 1
 
 
+
+
+def test_durable_write_preserves_write_error_over_temp_cleanup_error(
+    tmp_path, monkeypatch,
+):
+    original_unlink = Path.unlink
+
+    def fail_write(*args, **kwargs):
+        raise OSError("original write failure")
+
+    def fail_unlink(self, *args, **kwargs):
+        if self.name.endswith(".tmp"):
+            raise OSError("secondary cleanup failure")
+        return original_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(durability.os, "fsync", fail_write)
+    monkeypatch.setattr(Path, "unlink", fail_unlink)
+
+    with pytest.raises(OSError, match="original write failure"):
+        durability.durable_write_text(tmp_path / "state.json", "new")
