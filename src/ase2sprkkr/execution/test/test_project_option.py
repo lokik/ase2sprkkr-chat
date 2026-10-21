@@ -103,7 +103,7 @@ def _parameters(monkeypatch, task="DOS"):
 def _manager(tmp_path):
     projects = ProjectRepository(tmp_path / "projects")
     project = projects.create("Calculation project")
-    return ExecutionManager(project_repository=projects).for_project(project)
+    return ExecutionManager(project_repository=projects), project.id
 
 
 def _runner(parameters, tmp_path, manager, executor=None):
@@ -124,7 +124,7 @@ def _project_record(parameters, tmp_path):
     runner = _runner(parameters, tmp_path, manager)
     assert runner.id
     runner.run()
-    return manager.store.get(runner.id)
+    return manager[0].store.get(runner.id)
 
 
 def test_explicit_manager_persists_task_and_dataset(tmp_path, monkeypatch):
@@ -165,15 +165,16 @@ def test_persistence_keeps_ase2sprkkr_task_distinct_from_sprkkr_task_value(
     assert record.input_definition == "BSF"
 
 
-def test_project_bound_manager_is_preserved_by_execution_adapter(tmp_path, monkeypatch):
+def test_explicit_project_identity_is_preserved_by_execution_adapter(tmp_path, monkeypatch):
     parameters = _parameters(monkeypatch)
     manager = _manager(tmp_path)
-    project = manager.projects.project(manager.project_id)
+    executor_manager, project_id = manager
+    project = executor_manager.projects.project(project_id)
     runner = _runner(parameters, tmp_path, manager)
 
     runner.submit()
 
-    assert manager.store.get(runner.id).id == runner.id
+    assert executor_manager.store.get(runner.id).id == runner.id
     runner.cancel()
 
 

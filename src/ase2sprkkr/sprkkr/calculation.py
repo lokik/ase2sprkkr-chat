@@ -869,7 +869,7 @@ def _create_sprkkr_run(
         )
         if executor is None:
             executor = executor_from_profile(profile)
-        manager = resolve_project_manager(project)
+        project_context = resolve_project_manager(project)
 
         execution_profile = profile
         if task.mpi:
@@ -929,7 +929,7 @@ def _create_sprkkr_run(
             if callback:
                 callback(out)
 
-        if manager is None:
+        if project_context is None:
             raw_runner = executor.create_run(spec)
             runner = PostprocessingRunner(
                 raw_runner,
@@ -937,6 +937,7 @@ def _create_sprkkr_run(
                 callback=finalized,
             )
         else:
+            manager, project_id = project_context
             runner = manager.create_run(
                 executor,
                 spec,
@@ -945,6 +946,7 @@ def _create_sprkkr_run(
                 input_definition=input_parameters.definition_name,
                 dataset=input_parameters.CONTROL.DATASET.result,
                 callback=finalized,
+                project_id=project_id,
             )
         if read_callback:
             runner.add_output_listener(read_callback)
