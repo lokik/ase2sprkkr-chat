@@ -115,6 +115,9 @@ class RemoteFileHandler:
                 root = local_root
             relative = os.path.relpath(match, root)
             remote = posixpath.join(remote_root, *PurePosixPath(relative).parts)
+            # Individual transfers no longer use put_files(), which used to
+            # create the destination directory tree implicitly.
+            await self.transport.run(("mkdir", "-p", "--", posixpath.dirname(remote)))
             await self._stage_file(
                 mapping, spec, match, used, required=required,
                 remote_path=remote,
