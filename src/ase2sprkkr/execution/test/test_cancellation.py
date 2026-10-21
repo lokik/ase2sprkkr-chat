@@ -54,6 +54,10 @@ class _BackendRunner:
         self.cancelled += 1
         self.state = RunState.CANCELLED
         self.completed.set()
+        # Real monitored backends publish their terminal observation before
+        # CalculationRun's waiters are released. This double must do so too.
+        if self.callback is not None:
+            self.callback(self.result)
 
     def add_output_listener(self, _callback):
         pass
