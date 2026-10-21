@@ -1,6 +1,6 @@
 import pytest
 
-import ase2sprkkr.execution.manager as manager_module
+import ase2sprkkr.execution.file_history as file_history_module
 from ase2sprkkr.execution.manager import ExecutionManager
 from ase2sprkkr.execution import (
     FileAvailabilityState,
@@ -29,7 +29,7 @@ def test_result_snapshot_sync_failure_is_file_failure(tmp_path, monkeypatch):
     def fail_sync(_path):
         raise OSError("cannot synchronize result snapshot")
 
-    monkeypatch.setattr(manager_module, "sync_file", fail_sync)
+    monkeypatch.setattr(file_history_module, "sync_file", fail_sync)
 
     failed = manager.complete(
         record,
