@@ -1,7 +1,7 @@
 """Transient single-socket streaming owned by the direct process supervisor.
 
 Files are spooled only when explicitly requested. A missing stream file means
-LIVE-only observation, not an implicit stdout/stderr artifact. The target owns
+LIVE-only observation, not an implicit stdout/stderr file. The target owns
 no run history; terminal facts are sent on this socket and via a short-lived
 acknowledgeable receipt.
 """

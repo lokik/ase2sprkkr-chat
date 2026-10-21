@@ -1,7 +1,7 @@
 """Shared client-side supervisor observation for local and SSH.
 
 FOLLOW is only observational. Backend status and the frozen manifest are
-authoritative; artifact delivery is supplied by each runner.
+authoritative; file delivery is supplied by each runner.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ def backend_status_from_facts(facts, backend_id, *, needs_delivery=False,
     """Interpret raw backend facts once for local and SSH clients.
 
     The backend cannot declare a remote calculation FINISHED to the client
-    until its artifacts have been delivered. A local project's results are
+    until its files have been delivered. A local project's results are
     already on its filesystem, so it never enters DOWNLOADING.
     """
     state = RunState(facts.get("state", RunState.UNKNOWN.value))
@@ -58,7 +58,7 @@ async def observe_supervisor(follow, status):
 
 
 async def monitor_supervisor(runner, follow, status, complete):
-    """Shared FOLLOW -> facts -> terminal artifact completion state machine."""
+    """Shared FOLLOW -> facts -> terminal file completion state machine."""
     try:
         facts, follow_error, status_error = await observe_supervisor(follow, status)
         if facts is None:

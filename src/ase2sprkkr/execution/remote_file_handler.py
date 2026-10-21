@@ -242,7 +242,7 @@ class RemoteFileHandler:
 
     @staticmethod
     def _validate_download_targets(manifest):
-        """Preflight destination collisions before transferring any artifact.
+        """Preflight destination collisions before transferring any file.
 
         Output/cache declarations that only overlap after wildcard expansion
         must not be allowed to overwrite each other. Exact duplicates of one
@@ -297,7 +297,7 @@ class RemoteFileHandler:
         for is_cache, entry, before in candidates:
             if entry.local_path is None or entry.remote_path is None:
                 continue
-            # Terminal receipts describe a frozen artifact set. An already
+            # Terminal receipts describe a frozen file set. An already
             # delivered local file (or an intentionally skipped declaration)
             # must not be re-evaluated on attach. Retry only incomplete
             # deliveries, including available files subsequently removed.

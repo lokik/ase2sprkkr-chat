@@ -63,8 +63,8 @@ class Execution:
 
 
 
-class ArtifactAvailabilityState(str, Enum):
-    """Availability of a declared local artifact."""
+class FileAvailabilityState(str, Enum):
+    """Availability of a declared local file."""
 
     PENDING = "pending"
     AVAILABLE = "available"
@@ -98,14 +98,14 @@ class FileEntry:
             raise ValueError("A file entry must have at least one location")
         if self.availability_state is not None:
             try:
-                availability = ArtifactAvailabilityState(self.availability_state)
+                availability = FileAvailabilityState(self.availability_state)
             except ValueError as exc:
                 raise ValueError("Invalid per-file availability state") from exc
             # Persist JSON-compatible strings, not implementation-specific enums.
             object.__setattr__(self, "availability_state", availability.value)
         if (
             self.availability_message is not None
-            and self.availability_state != ArtifactAvailabilityState.FAILED
+            and self.availability_state != FileAvailabilityState.FAILED
         ):
             raise ValueError("An availability error belongs to a failed file")
 
@@ -333,8 +333,8 @@ class FileManifest:
             *(("cache", entry) for entry in self.caches),
         ))
     @property
-    def artifacts(self):
-        """Distinct artifact identities, preserving failures on shared paths.
+    def files(self):
+        """Distinct file identities, preserving failures on shared paths.
 
         stdout/stderr aliases of one physical remote file count only once,
         but an output and a cache at the same local path are different roles.
@@ -357,13 +357,13 @@ class FileManifest:
         return tuple(unique.values())
 
     @property
-    def failed_artifacts(self):
-        return tuple(x for x in self.artifacts if x.availability_state == "failed")
+    def failed_files(self):
+        return tuple(x for x in self.files if x.availability_state == "failed")
 
     @property
     def availability_state(self):
         """Derived summary for callers; never stored independently."""
-        statuses = tuple(x.availability_state for x in self.artifacts)
+        statuses = tuple(x.availability_state for x in self.files)
         if "failed" in statuses:
             return "failed"
         if not statuses or None in statuses or "pending" in statuses:
@@ -374,13 +374,13 @@ class FileManifest:
 
     @property
     def availability_message(self):
-        failures = self.failed_artifacts
+        failures = self.failed_files
         if failures:
             return failures[0].availability_message
         return None
 
     def with_remote_stream_paths(self, *, stdout=None, stderr=None):
-        """Update recovered stream locations without changing artifact identity.
+        """Update recovered stream locations without changing file identity.
 
         Missing or empty recovered paths do not replace persisted locations.
         A stream that was not recorded remains absent.
@@ -394,12 +394,12 @@ class FileManifest:
 
     def initialize_availability(self):
         """Mark declared downloadable files pending without marking inputs."""
-        return self._map_artifacts(
+        return self._map_files(
             lambda item: replace(item, availability_state="pending")
             if item.availability_state is None else item
         )
 
-    def _map_artifacts(self, transform):
+    def _map_files(self, transform):
         return replace(
             self,
             stdout=None if self.stdout is None else transform(self.stdout),
@@ -412,7 +412,7 @@ class FileManifest:
         self, local_path, state, message=None, *,
         remote_path=None, kind=None, source=None,
     ):
-        """Update one artifact identity, not every role sharing its local path.
+        """Update one file identity, not every role sharing its local path.
 
         A shared stdout/stderr destination is one output identity when both
         entries name the same remote file. Ambiguous output/cache destinations
@@ -421,7 +421,7 @@ class FileManifest:
         import os
 
         if kind not in (None, "output", "cache"):
-            raise ValueError(f"Unknown artifact kind: {kind!r}")
+            raise ValueError(f"Unknown file kind: {kind!r}")
         path = os.fspath(local_path)
         groups = (
             ("output", (self.stdout, self.stderr, *self.outputs)),
@@ -436,7 +436,7 @@ class FileManifest:
         }
         if len(identities) > 1:
             raise ValueError(
-                f"Ambiguous artifact destination {path}: specify kind or remote_path"
+                f"Ambiguous file destination {path}: specify kind or remote_path"
             )
         if identities:
             selected_kind, selected_remote = next(iter(identities))

@@ -158,7 +158,7 @@ async def _run(spec):
             try:
                 streams.sync()
             except OSError as exc:
-                state, phase = RunState.FAILED, FailurePhase.ARTIFACTS
+                state, phase = RunState.FAILED, FailurePhase.FILES
                 message = f"Failed to sync process output: {exc}"
         frozen_files = None
         materialization_error = None
