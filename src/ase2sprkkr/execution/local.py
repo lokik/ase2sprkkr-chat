@@ -13,7 +13,6 @@ from .base import (
     FailurePhase,
     OutputObservers,
     close_output_files,
-    file_path,
     finish_monitor,
     wait_for_monitor,
     RunState,
@@ -38,11 +37,7 @@ class LocalRunner:
     def __init__(self, spec: ExecutionSpec, callback=None):
         self.spec = spec
         self.callback = callback
-        self.result = ExecutionOutcome(
-            output_file=file_path(spec.output_file, spec.directory),
-            input_file=file_path(spec.input_file, spec.directory),
-            error_file=file_path(spec.error_file, spec.directory),
-        )
+        self.result = ExecutionOutcome.from_spec(spec)
 
         self._state = RunState.NEW
         self._output_observers = OutputObservers()

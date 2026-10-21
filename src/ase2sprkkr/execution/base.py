@@ -256,6 +256,27 @@ class ExecutionOutcome:
     error_file: Any = None
     return_code: Optional[int] = None
 
+    @classmethod
+    def from_spec(cls, spec: "ExecutionSpec", *, flush=False, strict_paths=False):
+        """Snapshot named local paths before the specification's streams close.
+
+        The specification may contain open file objects needed by the executor.
+        The outcome holds their normalized paths for readers and persistence,
+        not another mutable copy of the original stream objects.
+        """
+        def normalized(name):
+            value = getattr(spec, name)
+            return file_path(
+                value, spec.directory, flush=flush,
+                required=strict_paths and value is not None,
+            )
+
+        return cls(
+            output_file=normalized("output_file"),
+            input_file=normalized("input_file"),
+            error_file=normalized("error_file"),
+        )
+
 
 class ExecutionResources:
     """Closable resources whose ownership is transferred to a calculation run."""

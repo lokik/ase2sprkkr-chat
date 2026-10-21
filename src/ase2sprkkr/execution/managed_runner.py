@@ -11,7 +11,7 @@ import asyncio
 from threading import Event, Lock
 
 from .base import (
-    ExecutionOutcome, FailurePhase, OutputObservers, RunState, file_path,
+    ExecutionOutcome, FailurePhase, OutputObservers, RunState,
     finish_monitor, request_cancellation, start_monitor, wait_for_monitor,
 )
 from .supervisor_monitor import monitor_supervisor
@@ -42,19 +42,8 @@ class ManagedRunner:
         self._exception = None
         self._callback_exception = None
         self._cancel_future = None
-        self.result = ExecutionOutcome(
-            output_file=file_path(
-                spec.output_file, spec.directory, flush=True,
-                required=strict_paths and spec.output_file is not None,
-            ),
-            input_file=file_path(
-                spec.input_file, spec.directory, flush=True,
-                required=strict_paths and spec.input_file is not None,
-            ),
-            error_file=file_path(
-                spec.error_file, spec.directory, flush=True,
-                required=strict_paths and spec.error_file is not None,
-            ),
+        self.result = ExecutionOutcome.from_spec(
+            spec, flush=True, strict_paths=strict_paths,
         )
 
     @property
