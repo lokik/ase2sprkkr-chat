@@ -82,6 +82,7 @@ class FileEntry:
     availability_message: Optional[str] = None
     source: Optional[str] = None
     pre_run_signature: Optional[tuple] = None
+    optional: bool = False
 
     def __post_init__(self):
         import os
@@ -94,6 +95,8 @@ class FileEntry:
                 object.__setattr__(self, name, os.fspath(value))
         if self.pre_run_signature is not None:
             object.__setattr__(self, "pre_run_signature", tuple(self.pre_run_signature))
+        if type(self.optional) is not bool:
+            raise TypeError("FileEntry.optional must be a bool")
         if self.local_path is None and self.remote_path is None:
             raise ValueError("A file entry must have at least one location")
         if self.availability_state is not None:
@@ -277,11 +280,15 @@ class FileManifest:
 
         directory = os.path.abspath(os.fspath(spec.directory))
 
-        def paths(*values):
+        def entries(*values):
             return tuple(
-                path for value in values
+                FileEntry(local_path=path, optional=getattr(value, "optional", False))
+                for value in values
                 if (path := file_path(value, directory)) is not None
             )
+
+        def paths(*values):
+            return tuple(entry.local_path for entry in entries(*values))
 
         primary = file_path(spec.input_file, directory)
         inputs = []
@@ -291,8 +298,8 @@ class FileManifest:
         stdin = file_path(getattr(spec, "stdin", None), directory)
         stdout = file_path(getattr(spec, "output_file", None), directory)
         stderr = file_path(getattr(spec, "error_file", None), directory)
-        outputs = paths(*getattr(spec, "output_files", ()))
-        caches = paths(*getattr(spec, "cache_files", ()))
+        outputs = entries(*getattr(spec, "output_files", ()))
+        caches = entries(*getattr(spec, "cache_files", ()))
 
         # Validate the user's declarations before primary_input becomes
         # another metadata reference to the matching inputs entry.
@@ -301,15 +308,15 @@ class FileManifest:
             ("stdin", None if stdin is None else FileEntry(local_path=stdin)),
             ("stdout", None if stdout is None else FileEntry(local_path=stdout)),
             ("stderr", None if stderr is None else FileEntry(local_path=stderr)),
-            *(("output", FileEntry(local_path=x)) for x in outputs),
-            *(("cache", FileEntry(local_path=x)) for x in caches),
+            *(("output", entry) for entry in outputs),
+            *(("cache", entry) for entry in caches),
         ))
         return cls(
             inputs=tuple(FileEntry(local_path=x) for x in inputs),
             primary_input=None if primary is None else FileEntry(local_path=primary),
             stdin=None if stdin is None else FileEntry(local_path=stdin),
-            outputs=tuple(FileEntry(local_path=x) for x in outputs),
-            caches=tuple(FileEntry(local_path=x) for x in caches),
+            outputs=outputs,
+            caches=caches,
             stdout=None if stdout is None else FileEntry(local_path=stdout),
             stderr=None if stderr is None else FileEntry(local_path=stderr),
         ).initialize_availability()
