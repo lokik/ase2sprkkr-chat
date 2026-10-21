@@ -428,7 +428,8 @@ class RemoteFileHandler:
             try:
                 if entry.remote_path is None:
                     raise ValueError(f"No remote path for {name}")
-                single = replace(manifest, stdout=None, stderr=None, **{name: entry})
+                single = replace(manifest, stdout=entry if name == "stdout" else None,
+                                 stderr=entry if name == "stderr" else None)
                 await self.verify_streams(single, spec)
             except Exception as exc:
                 manifest = manifest.with_file_availability(
