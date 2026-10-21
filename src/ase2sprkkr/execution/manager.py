@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Lock, RLock
+from threading import Event, Lock, RLock
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -924,6 +924,7 @@ class ExecutionManager:
         callback=None,
         run_id=None,
         project_id=None,
+        resources=None,
     ):
         """Create a project run from raw execution plus generic processing."""
         endpoint = endpoint_for_executor(executor)
@@ -945,7 +946,7 @@ class ExecutionManager:
         set_manifest = getattr(raw, "set_manifest", None)
         if set_manifest is not None:
             set_manifest(record.files)
-        processed = PostprocessingRunner(raw, process_result)
+        processed = PostprocessingRunner(raw, process_result, resources=resources)
         project_run = ProjectRunner(self, executor, processed, record, spec=spec)
         processed.callback = lambda result: self._complete(
             project_run, result, callback
@@ -1008,6 +1009,9 @@ class ProjectRunner:
 
     def __init__(self, manager, executor, runner, record, *, spec=None):
         self._spec = spec
+        self._lifecycle_lock = Lock()
+        self._submission_in_progress = False
+        self._cancel_requested = Event()
         self.manager = manager
         self.executor = executor
         self._runner = runner
@@ -1071,74 +1075,146 @@ class ProjectRunner:
         return self._runner.add_output_error_listener(callback)
 
     def submit(self):
-        if self._record.state != RunState.NEW:
-            raise RuntimeError(f"Run is already {self._record.state.value}")
-        files, remote_directory = self.executor.reservation_context(self._spec, self._record.files)
-        execution = self._record.execution
-        if remote_directory is not None:
-            execution = replace(execution, directory=replace(execution.directory, remote=remote_directory))
-        self._record = replace(self._record, files=files, execution=execution)
-        self._record = self.manager.reserve(self._record)
-        set_manifest = getattr(self._runner, "set_manifest", None)
-        if set_manifest is not None:
-            set_manifest(self._record.files)
-        self._monitor_record_version = self._record.updated_at
+        # Claim exactly once, but never serialize cancellation behind backend I/O.
+        with self._lifecycle_lock:
+            if self._cancel_requested.is_set() or self._runner.state == RunState.CANCELLED:
+                raise RuntimeError("Run was cancelled before submission")
+            if self._submission_in_progress or self._record.state != RunState.NEW:
+                raise RuntimeError(f"Run is already {self._record.state.value}")
+            self._submission_in_progress = True
+        submitted = False
         try:
-            prepare = getattr(self._runner, "prepare_submission", None)
-            if prepare is not None and prepare():
-                # Persist the exact staged file map and target directory before
-                # calling the backend. A lost submit reply can then be recovered
-                # without depending on live runner state.
-                self._record = self.manager.transition(
-                    self._record,
-                    execution=self.execution,
-                    files=self.files if self.files is not None else _UNCHANGED,
-                )
+            try:
+                # Keep canonical manifest and directory resolution from #93;
+                # potentially blocking target I/O stays outside lifecycle locks.
+                if self._spec is not None:
+                    files, remote_directory = self.executor.reservation_context(
+                        self._spec, self._record.files,
+                    )
+                    execution = self._record.execution
+                    if remote_directory is not None:
+                        execution = replace(
+                            execution,
+                            directory=replace(execution.directory, remote=remote_directory),
+                        )
+                    self._record = replace(self._record, files=files, execution=execution)
+                self._record = self.manager.reserve(self._record)
+                set_manifest = getattr(self._runner, "set_manifest", None)
+                if set_manifest is not None:
+                    set_manifest(self._record.files)
                 self._monitor_record_version = self._record.updated_at
-            result = self._runner.submit()
-        except SubmissionNotStarted as exc:
-            phase = self.failure_phase or FailurePhase.SUBMISSION
-            message = getattr(self._runner, "failure_message", None) or str(exc)
-            self._record = self.manager.complete(
-                self._record,
-                state=RunState.FAILED,
-                message=message,
-                failure_phase=phase,
-                artifacts_available=False,
-            )
-            raise
-        except BaseException:
-            # No backend ID means submission may be uncertain. Keep SUBMITTING so
-            # recover_submitting() can resolve it instead of inventing failure.
+            except BaseException:
+                # Reservation failed before backend submission. Cleanup must
+                # not hide the original store error.
+                try:
+                    self._runner.close()
+                except BaseException:
+                    pass
+                raise
+            backend_submit_attempted = False
+            try:
+                prepare = getattr(self._runner, "prepare_submission", None)
+                if prepare is not None and prepare():
+                    # Persist the exact staged file map and target directory before
+                    # calling the backend. A lost submit reply can then be recovered
+                    # without depending on live runner state.
+                    self._record = self.manager.transition(
+                        self._record,
+                        execution=self.execution,
+                        files=self.files if self.files is not None else _UNCHANGED,
+                    )
+                    self._monitor_record_version = self._record.updated_at
+                if self._cancel_requested.is_set():
+                    # Cancellation arrived during preflight. No backend job
+                    # exists, so release the prepared inputs without submit.
+                    self._runner.cancel()
+                    self._record = self.manager.complete(
+                        self._record, state=RunState.CANCELLED,
+                        artifacts_available=False,
+                    )
+                    raise asyncio.CancelledError("Run was cancelled before submission")
+                backend_submit_attempted = True
+                result = self._runner.submit()
+                submitted = True
+            except SubmissionNotStarted as exc:
+                phase = self.failure_phase or FailurePhase.SUBMISSION
+                message = getattr(self._runner, "failure_message", None) or str(exc)
+                self._record = self.manager.complete(
+                    self._record,
+                    state=RunState.FAILED,
+                    message=message,
+                    failure_phase=phase,
+                    artifacts_available=False,
+                )
+                raise
+            except asyncio.CancelledError:
+                # A cancellation may win between the project's preflight check
+                # and the raw submission claim. It is a definite non-submit.
+                if (self._runner.state == RunState.CANCELLED
+                        and self._record.state != RunState.CANCELLED):
+                    self._record = self.manager.complete(
+                        self._record, state=RunState.CANCELLED,
+                        artifacts_available=False,
+                    )
+                raise
+            except BaseException as exc:
+                if not backend_submit_attempted:
+                    # The manifest could not be persisted, so no backend submit
+                    # was made. This is a definite submission failure, not an
+                    # unknown job requiring recover_submitting().
+                    try:
+                        self._runner.close()
+                    except BaseException:
+                        pass
+                    try:
+                        self._record = self.manager.complete(
+                            self._record, state=RunState.FAILED,
+                            message=str(exc), failure_phase=FailurePhase.SUBMISSION,
+                            artifacts_available=False,
+                        )
+                    except Exception:
+                        # Storage itself may be unavailable. Preserve the
+                        # originating failure rather than masking it.
+                        pass
+                    raise
+                # A backend may have accepted the job despite a lost reply.
+                # Preserve SUBMITTING for recover_submitting().
+                backend_id = self.backend_id
+                if backend_id is not None:
+                    self._record = self.manager.transition(
+                        self._record,
+                        state=self._runner.state,
+                        execution=self.execution,
+                        failure_phase=self.failure_phase,
+                    )
+                raise
             backend_id = self.backend_id
-            if backend_id is not None:
-                self._record = self.manager.transition(
-                    self._record,
-                    state=self._runner.state,
-                    execution=self.execution,
-                    failure_phase=self.failure_phase,
-                )
-            raise
-
-        backend_id = self.backend_id
-        if backend_id is None:
-            raise RuntimeError("Executor submit returned without a backend ID")
-        self.manager.register_executor(self.executor, self._record.execution.endpoint)
-        with self._completion_lock:
-            # A fast monitor may have already persisted an UNKNOWN or
-            # terminal result. Do not overwrite that result with an older
-            # status observed during submission.
-            if not self._completion_persisted:
-                self._record = self.manager.transition(
-                    self._record,
-                    state=self._runner.state,
-                    execution=self.execution,
-                    failure_phase=self.failure_phase,
-                    files=self.files if self.files is not None else _UNCHANGED,
-                )
-                self._monitor_record_version = self._record.updated_at
-        self.manager._acknowledge_submission(self.executor, self._record)
-        return result
+            if backend_id is None:
+                raise RuntimeError("Executor submit returned without a backend ID")
+            self.manager.register_executor(self.executor, self._record.execution.endpoint)
+            # A fast backend may already have finished, but only the
+            # postprocessing callback may publish a terminal RunRecord.
+            with self._completion_lock:
+                if not self._completion_persisted:
+                    observed_state = self._runner.state
+                    if observed_state == RunState.FINISHED:
+                        observed_state = RunState.POSTPROCESSING
+                    self._record = self.manager.transition(
+                        self._record, state=observed_state,
+                        execution=self.execution, failure_phase=self.failure_phase,
+                        files=self.files if self.files is not None else _UNCHANGED,
+                    )
+                    self._monitor_record_version = self._record.updated_at
+            self.manager._acknowledge_submission(self.executor, self._record)
+            return result
+        finally:
+            with self._lifecycle_lock:
+                self._submission_in_progress = False
+                dispatch = submitted and self._cancel_requested.is_set()
+            if dispatch:
+                # Project cancellation was accepted while the backend was
+                # submitting. The raw runner is now allowed to dispatch it.
+                self._runner.cancel()
 
     def start(self):
         self._runner.start()
@@ -1216,9 +1292,18 @@ class ProjectRunner:
                 self._sync_completion(self.result)
 
     def run(self):
+        if self._runner.state == RunState.CANCELLED and self._record.state == RunState.NEW:
+            raise RuntimeError("Run was cancelled before submission")
         if self._record.state == RunState.NEW:
             self.submit()
         return self.wait()
+
+    def close(self):
+        """Release an unsubmitted project's prepared resources."""
+        with self._lifecycle_lock:
+            if self._submission_in_progress or self._record.state != RunState.NEW:
+                raise RuntimeError("Cannot close a submitted project run")
+            return self._runner.close()
 
     async def run_async(self):
         return await asyncio.to_thread(self.run)
@@ -1237,14 +1322,25 @@ class ProjectRunner:
         return self._runner.stop_observation()
 
     def cancel(self):
+        self._cancel_requested.set()
+        with self._lifecycle_lock:
+            if self._submission_in_progress:
+                # Reservation, preflight or submit owns the prepared inputs.
+                # Latch only: it will either abort before backend launch or
+                # dispatch once a backend identity becomes available.
+                self._runner.request_cancel()
+                return None
+        with self._completion_lock:
+            if self._record.state.is_terminal:
+                return None
         try:
             return self._runner.cancel()
         finally:
             with self._completion_lock:
                 if self._record.state != RunState.NEW and not self._completion_persisted:
                     self._record = self.manager.transition(
-                        self._record,
-                        state=self._runner.state,
-                        execution=self.execution,
-                        failure_phase=self.failure_phase,
+                        self._record, state=self._runner.state,
+                        execution=self.execution, failure_phase=self.failure_phase,
                     )
+                    self._monitor_record_version = self._record.updated_at
+
