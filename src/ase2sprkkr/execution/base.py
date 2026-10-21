@@ -441,7 +441,11 @@ class LaunchSpec:
 
 
 def _pathlike(value):
+    # TaskFile-like declarations carry required/optional metadata. Do not
+    # flatten them to plain paths before the manifest can inspect that policy.
     if isinstance(value, os.PathLike):
+        if hasattr(value, "optional"):
+            return value
         return os.fspath(value)
     return value
 
