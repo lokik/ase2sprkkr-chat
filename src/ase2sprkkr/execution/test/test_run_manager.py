@@ -7,7 +7,6 @@ from ase2sprkkr.execution import (
     DuplicateSubmissionError,
     ExecutionOutcome,
     Executor,
-    ExecutorPool,
     FailurePhase,
     RunState,
     RunStatus,
@@ -99,7 +98,7 @@ def _spec(tmp_path, *, dataset="case"):
 
 def _manager(tmp_path):
     return ExecutionManager(
-        RunStore(tmp_path / "runs"), executors=Executors(ExecutorPool())
+        RunStore(tmp_path / "runs"), executors=Executors()
     )
 
 
@@ -241,7 +240,7 @@ def test_project_manager_returns_one_public_calculation_runner(tmp_path):
 def test_executors_are_owned_by_manager_and_keyed_by_endpoint(tmp_path):
     manager = _manager(tmp_path)
     assert isinstance(manager.executors, Executors)
-    assert isinstance(manager.executors.pool, ExecutorPool)
+    assert not hasattr(manager.executors, 'pool')
     executor = _Executor()
     endpoint = manager.executors.register(executor)
     record = manager.new_record(task="DOS", directory=tmp_path, endpoint=endpoint)

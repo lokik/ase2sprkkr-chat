@@ -279,10 +279,11 @@ def create_executor_from_profile(profile: SPRKKRProfile):
     return create_executor_from_endpoint(profile.endpoint)
 
 
-def executor_from_profile(profile: SPRKKRProfile):
-    from ..execution.pool import default_executor_pool
+def executor_from_profile(profile: SPRKKRProfile, *, executors=None):
+    from ..execution.pool import Executors
 
-    return default_executor_pool().for_profile(profile)
+    registry = executors if executors is not None else Executors()
+    return registry.for_profile(profile)
 
 
 def resolve_sprkkr_profile(profile=None, *, configuration=None):

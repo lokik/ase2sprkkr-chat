@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from ase2sprkkr.configuration import definition
-from ase2sprkkr.execution import ExecutorPool, LocalExecutor, RunState, SshTransport
+from ase2sprkkr.execution import LocalExecutor, RunState, SshTransport
 from ase2sprkkr.execution.remote_endpoint import RemoteEndpointExecutor
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from ase2sprkkr.input_parameters.task_definition import TaskDefinition
@@ -119,10 +119,6 @@ def test_psij_profile_creates_configured_executor(monkeypatch):
             created.append((backend, url, poll_interval))
 
     monkeypatch.setattr("ase2sprkkr.execution.psij.PsijExecutor", FakePsijExecutor)
-    monkeypatch.setattr(
-        "ase2sprkkr.execution.pool.default_executor_pool",
-        lambda: ExecutorPool(),
-    )
 
     executor = executor_from_profile(
         SPRKKRProfile(

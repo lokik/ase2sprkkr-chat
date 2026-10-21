@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 from ase2sprkkr.configuration import definition
-from ase2sprkkr.execution import ExecutorPool, RemoteExecutor
+from ase2sprkkr.execution import RemoteExecutor
 from ase2sprkkr.profiles import ProfilesConfigurationContainer
 from ase2sprkkr.sprkkr import profile as profile_module
 from ase2sprkkr.sprkkr.calculator import SPRKKR
@@ -163,10 +163,6 @@ def test_direct_psij_profile_still_defaults_to_slurm(monkeypatch):
             captured.update(backend=backend, url=url, poll_interval=poll_interval)
 
     monkeypatch.setattr("ase2sprkkr.execution.psij.PsijExecutor", FakePsijExecutor)
-    monkeypatch.setattr(
-        "ase2sprkkr.execution.pool.default_executor_pool",
-        lambda: ExecutorPool(),
-    )
 
     executor = executor_from_profile(SPRKKRProfile(executor="psij"))
 

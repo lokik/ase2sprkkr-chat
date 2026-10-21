@@ -14,7 +14,7 @@ class ExecutorEndpoint:
     staging policy deliberately live elsewhere so one executor can be shared
     by profiles that differ only in how individual calculations are launched.
     The value is serializable and hashable, so it can also be persisted with a
-    run and used as an :class:`ExecutorPool` key after process restart.
+    run and used as an :class:`Executors` key after process restart.
     """
 
     executor: str = "local"

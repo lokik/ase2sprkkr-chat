@@ -7,7 +7,7 @@ from threading import RLock
 from .base import _close_distinct
 
 
-class ExecutorPool:
+class _ExecutorPool:
     """Process-local cache of reusable execution backends."""
 
     def __init__(self):
@@ -60,29 +60,30 @@ class ExecutorPool:
         _close_distinct(executors)
 
 
-_DEFAULT_EXECUTOR_POOL = ExecutorPool()
-
-
-def default_executor_pool():
-    """Return the process-wide pool used by ordinary calculations."""
-    return _DEFAULT_EXECUTOR_POOL
-
-
 class Executors:
     """Own executor registration and endpoint-scoped lookup for a manager."""
 
-    def __init__(self, pool=None):
-        self.pool = pool if pool is not None else default_executor_pool()
+    def __init__(self):
+        self._pool = _ExecutorPool()
 
     def register(self, executor, endpoint=None):
         from .endpoint import endpoint_for_executor
 
         endpoint = endpoint or endpoint_for_executor(executor)
-        self.pool.get(endpoint, lambda: executor)
+        self._pool.get(endpoint, lambda: executor)
         return endpoint
 
     def for_endpoint(self, endpoint):
-        return self.pool.for_endpoint(endpoint)
+        return self._pool.for_endpoint(endpoint)
 
     def for_record(self, record):
         return self.for_endpoint(record.execution.endpoint)
+
+    def for_profile(self, profile):
+        return self.for_endpoint(profile.endpoint)
+
+    def discard(self, endpoint):
+        return self._pool.discard(endpoint)
+
+    def close(self):
+        self._pool.close()
