@@ -14,11 +14,6 @@ class _ExecutorPool:
         self._executors = {}
         self._lock = RLock()
 
-    @staticmethod
-    def key_for_profile(profile):
-        """Return the endpoint identity used for executor reuse."""
-        return profile.endpoint
-
     def get(self, key, factory):
         with self._lock:
             executor = self._executors.get(key)
@@ -35,10 +30,6 @@ class _ExecutorPool:
             endpoint = ExecutorEndpoint(**endpoint)
         return self.get(endpoint, lambda: create_executor_from_endpoint(endpoint))
 
-    def for_profile(self, profile):
-        """Return the shared backend suitable for *profile*."""
-        return self.for_endpoint(self.key_for_profile(profile))
-
     def discard(self, key):
         """Forget one pooled backend and close it when supported."""
         with self._lock:
@@ -48,9 +39,6 @@ class _ExecutorPool:
             if close is not None:
                 close()
         return executor
-
-    def discard_profile(self, profile):
-        return self.discard(self.key_for_profile(profile))
 
     def close(self):
         """Close every pooled executor, propagating the first close failure."""
