@@ -18,7 +18,6 @@ from ..execution import (
     ExecutorEndpoint,
     LaunchSpec,
 )
-from ..execution.endpoint import create_executor_from_endpoint
 from ..profiles import ase_command_profile_values
 
 
@@ -272,11 +271,6 @@ def _configured_profile(profile, configuration):
         psij_poll_interval=_profile_value(profile, "psij_poll_interval"),
         mpi_warning=mpi_warning,
     )
-
-
-def create_executor_from_profile(profile: SPRKKRProfile):
-    """Construct a new execution backend from endpoint identity only."""
-    return create_executor_from_endpoint(profile.endpoint)
 
 
 def resolve_sprkkr_profile(profile=None, *, configuration=None):
