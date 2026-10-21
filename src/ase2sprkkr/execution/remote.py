@@ -47,7 +47,7 @@ class RemoteRunner(ManagedRunner):
         self._prepared = None
         self._remote_directory = remote_directory
         self._stream_positions = {}
-        self.file_handler = executor.endpoint.file_handler
+        self.file_handler = executor.file_handler
         if start:
             self.start()
 
@@ -58,7 +58,7 @@ class RemoteRunner(ManagedRunner):
         from .endpoint import endpoint_for_executor
         from .run_model import Execution, WorkingDirectory
         return Execution(
-            endpoint_for_executor(self.executor.endpoint),
+            endpoint_for_executor(self.executor),
             WorkingDirectory(os.path.abspath(self.spec.directory), self._remote_directory),
             backend_id=self._backend_id,
         )
@@ -74,7 +74,7 @@ class RemoteRunner(ManagedRunner):
                 or self._state.is_terminal):
             return self._state
         status = _run_sync(
-            self.executor.endpoint.connection.status(self._backend_id, self._files)
+            self.executor.connection.status(self._backend_id, self._files)
         )
         return self._apply_status(
             backend_status_from_facts(
@@ -144,13 +144,13 @@ class RemoteRunner(ManagedRunner):
                 target.flush()
                 offsets[kind] = os.path.getsize(self._local_path(target))
         self._stream_positions = dict(offsets)
-        return await self.executor.endpoint.connection.follow(
+        return await self.executor.connection.follow(
             self._backend_id, self._files, offsets=offsets,
             on_chunk=self._on_follow_chunk,
         )
 
     async def _backend_status(self):
-        return await self.executor.endpoint.connection.status(
+        return await self.executor.connection.status(
             self._backend_id, self._files,
         )
 
@@ -188,7 +188,7 @@ class RemoteRunner(ManagedRunner):
                 if status.get("materialization_error") else None
             )
             self._files, transfer_error = await self.file_handler.collect(
-                self.executor, self._files, self.result,
+                self._files.mapping, self._files, self.result,
                 required=backend_state == RunState.FINISHED,
             )
             if freeze_error is not None:
@@ -232,23 +232,22 @@ class RemoteRunner(ManagedRunner):
 
     async def _prepare_async(self):
         try:
-            remote_directory = await self.executor.map_path(self.spec.directory)
-            await self.executor.endpoint.transport.run(("mkdir", "-p", "--", remote_directory))
-            manifest = await self.file_handler.prepare(
-                self.executor, self.spec,
-            )
+            mapping = await self.executor.resolve_mapping(self.spec.launch)
+            remote_directory = mapping.map_path(self.spec.directory)
+            await self.executor.transport.run(("mkdir", "-p", "--", remote_directory))
+            manifest = await self.file_handler.prepare(mapping, self.spec)
             # The runner owns backend identity, command construction and the
             # submission protocol. FileHandler knows only file locations.
             mapped = {entry.local_path: entry.remote_path
-                      for entry in (*manifest.inputs, *(cache.file for cache in manifest.caches))
+                      for entry in (*manifest.inputs, *manifest.caches)
                       if entry.local_path is not None}
             def argv(args):
                 return [mapped.get(file_path(os.fspath(arg), self.spec.directory),
                                    os.fspath(arg)) for arg in args]
             request = {
                 "id": self._run_id,
-                "executor": self.executor.endpoint.backend,
-                "executor_options": self.executor.endpoint.backend_options,
+                "executor": self.executor.backend,
+                "executor_options": self.executor.backend_options,
                 "directory": remote_directory,
                 **self.spec.command_request(argv),
                 "input_file": None if self.spec.input_file is None else
@@ -288,7 +287,7 @@ class RemoteRunner(ManagedRunner):
             request, manifest = self._prepared
 
         request["detached"] = self._run_id is not None
-        status = await self.executor.endpoint.connection.submit(request)
+        status = await self.executor.connection.submit(request)
         remote_id = status.get("remote_id")
         if not remote_id:
             raise RuntimeError("Remote submit returned no remote_id")
@@ -315,5 +314,5 @@ class RemoteRunner(ManagedRunner):
 
     def _cancel_backend(self):
         return _run_sync(
-            self.executor.endpoint.connection.cancel(self._backend_id)
+            self.executor.connection.cancel(self._backend_id)
         )

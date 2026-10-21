@@ -46,13 +46,13 @@ class RemoteFileHandler:
         source = _local_path(spec, value)
         if source is None:
             return None
-        target = await context.map_path(source)
+        target = context.map_path(source)
         previous = used.get(target)
         if previous is not None and previous != source:
             raise ValueError(f"Remote input target collision: {target}")
         if previous is not None:
             return target
-        policy = context.input_files
+        policy = FileSyncPolicy(context.input_sync)
         if policy == FileSyncPolicy.NEVER:
             used[target] = source
             return target
@@ -88,27 +88,27 @@ class RemoteFileHandler:
             )
         if uploads:
             await self.transport.put_files(
-                uploads, context.local_root, await context._resolved_remote_root(),
+                uploads, context.local_root, context.remote_root,
             )
 
     async def _prepare_cache_files(self, context, spec, used):
         """Return per-call cache plan; do not retain any of it on the handler."""
         targets, baselines = {}, {}
-        root = await context._resolved_remote_root()
+        root = context.remote_root
         for local, is_pattern in _unique_declared_paths(spec, spec.cache_files):
             if is_pattern:
-                remote_pattern = await context.map_path(local)
+                remote_pattern = context.map_path(local)
                 await self._stage_input_pattern(
                     context, spec, local, used, required=False,
                 )
-                if context.output_files != FileSyncPolicy.NEVER:
+                if FileSyncPolicy(context.output_sync) != FileSyncPolicy.NEVER:
                     for remote in await self.transport.expand_files(remote_pattern, root):
                         baselines[remote] = await self.transport.file_signature(remote)
                 continue
             remote = await self._stage_file(
                 context, spec, local, used, required=False,
             )
-            before = (None if context.output_files == FileSyncPolicy.NEVER
+            before = (None if FileSyncPolicy(context.output_sync) == FileSyncPolicy.NEVER
                       else await self.transport.file_signature(remote))
             targets[local] = (remote, before)
         return targets, baselines
@@ -133,7 +133,7 @@ class RemoteFileHandler:
         manifest = FileManifest.from_spec(spec)
 
         async def mapped(entry):
-            return replace(entry, remote_path=await context.map_path(entry.local_path))
+            return replace(entry, remote_path=context.map_path(entry.local_path))
 
         caches = []
         for entry in manifest.caches:
@@ -149,7 +149,7 @@ class RemoteFileHandler:
         for local in dict.fromkeys((*manifest.input_files, *input_sources)):
             if has_file_magic(local):
                 continue
-            inputs.append(FileEntry(local_path=local, remote_path=await context.map_path(local)))
+            inputs.append(FileEntry(local_path=local, remote_path=context.map_path(local)))
 
         return replace(
             manifest,
@@ -158,12 +158,7 @@ class RemoteFileHandler:
             caches=tuple(caches),
             stdout=None if manifest.stdout is None else await mapped(manifest.stdout),
             stderr=None if manifest.stderr is None else await mapped(manifest.stderr),
-            mapping=FileMapping(
-                local_root=os.fspath(context.local_root),
-                remote_root=await context._resolved_remote_root(),
-                input_sync=context.input_files.value,
-                output_sync=context.output_files.value,
-            ),
+            mapping=context,
         )
 
     async def _sync_file(self, context, entry, *, is_cache, before=None, required=False):
@@ -172,7 +167,7 @@ class RemoteFileHandler:
         if is_cache:
             after = await self.transport.file_signature(remote)
             if (after is None or after == before
-                    or (context.output_files == FileSyncPolicy.MISSING
+                    or (FileSyncPolicy(context.output_sync) == FileSyncPolicy.MISSING
                         and file_digest(local, missing_ok=True) is not None)):
                 return "skipped"
         else:
@@ -181,7 +176,7 @@ class RemoteFileHandler:
                 if required:
                     raise FileNotFoundError(f"Declared remote output was not created: {remote}")
                 return "skipped"
-            if not context.output_files.should_transfer(
+            if not FileSyncPolicy(context.output_sync).should_transfer(
                 digest, file_digest(local, missing_ok=True),
             ):
                 return "available"
@@ -262,7 +257,7 @@ class RemoteFileHandler:
             if not is_cache and entry.local_path in primary:
                 continue
             try:
-                state = ("skipped" if context.output_files == FileSyncPolicy.NEVER
+                state = ("skipped" if FileSyncPolicy(context.output_sync) == FileSyncPolicy.NEVER
                          else await self._sync_file(
                              context, entry, is_cache=is_cache,
                              before=before, required=required,
@@ -310,7 +305,7 @@ class RemoteFileHandler:
                 raise RuntimeError(f"Remote {kind} output changed during verification")
             os.utime(local, ns=(stat.st_atime_ns, signature[1]))
 
-    async def restore(self, run, paths, context, *, destinations=None):
+    async def restore(self, run, paths, *, destinations=None):
         """Restore only persisted concrete files; caller checks digests."""
         destinations = {} if destinations is None else {
             os.path.abspath(os.fspath(p)): os.fspath(target)
