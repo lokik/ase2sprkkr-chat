@@ -14,7 +14,7 @@ class _Manager:
 
     def complete(self, record, **kwargs):
         self.completions += 1
-        return SimpleNamespace(id=record.id, state=kwargs["state"])
+        return SimpleNamespace(**{**vars(record), "state": kwargs["state"]})
 
     def transition(self, record, **kwargs):
         self.transitions += 1
