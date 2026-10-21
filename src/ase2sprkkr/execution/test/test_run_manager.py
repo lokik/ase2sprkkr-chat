@@ -246,3 +246,32 @@ def test_executors_are_owned_by_manager_and_keyed_by_endpoint(tmp_path):
     record = manager.new_record(task="DOS", directory=tmp_path, endpoint=endpoint)
     assert manager.executors.for_record(record) is executor
     assert manager.executor_for(record) is executor
+
+
+def test_executor_registries_have_independent_lifetimes():
+    from ase2sprkkr.execution import ExecutorEndpoint
+
+    class ClosableExecutor:
+        def __init__(self):
+            self.closed = 0
+
+        def close(self):
+            self.closed += 1
+
+    first, second = Executors(), Executors()
+    local = ExecutorEndpoint()
+    remote = ExecutorEndpoint(executor="ssh", host="example.org")
+    one, two, other = ClosableExecutor(), ClosableExecutor(), ClosableExecutor()
+
+    first.register(one, local)
+    first.register(two, remote)
+    second.register(other, local)
+    assert first.for_endpoint(local) is one
+    assert first.for_endpoint(remote) is two
+    assert second.for_endpoint(local) is other
+
+    first.close()
+    assert (one.closed, two.closed, other.closed) == (1, 1, 0)
+    assert second.for_endpoint(local) is other
+    second.close()
+    assert other.closed == 1
