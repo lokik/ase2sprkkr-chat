@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from threading import Event, Lock, Thread
+from threading import Event, Lock
 
 from .base import (FailurePhase, RunState, SubmissionNotStarted,
-                   finish_monitor, wait_for_monitor)
+                   finish_monitor)
 
 
-class PostprocessingRunner:
+class CalculationRun:
     """Convert a raw execution outcome into the caller-visible result.
 
     The wrapped runner owns submission, execution and artifact availability.
@@ -40,7 +40,13 @@ class PostprocessingRunner:
         self._settled = False
         self._done = Event()
         self._lock = Lock()
-        self._thread = None
+        self._completion_lock = Lock()
+
+        # The existing backend monitor owns observation and invokes this
+        # callback only after artifact delivery and stream finalization.
+        if getattr(runner, "callback", None) is not None:
+            raise ValueError("Raw runner already has a completion callback")
+        runner.callback = self._backend_completed
 
     @property
     def spec(self):
@@ -90,7 +96,7 @@ class PostprocessingRunner:
         if self._processing:
             return RunState.POSTPROCESSING
         state = self._runner.state
-        if state == RunState.FINISHED and self._started:
+        if state == RunState.FINISHED and (self._started or self._submitting):
             # Raw execution is complete, but the public lifecycle is not.
             return RunState.POSTPROCESSING
         return state
@@ -106,80 +112,84 @@ class PostprocessingRunner:
     def add_output_error_listener(self, callback):
         return self._runner.add_output_error_listener(callback)
 
-    def _finish(self):
-        try:
-            outcome = self._runner.wait()
-            raw_state = self._runner.state
-            if raw_state == RunState.CANCELLED:
-                self.result = outcome
-                self._state = RunState.CANCELLED
+    def _backend_completed(self, outcome):
+        """Called on the backend monitor thread, before its waiters wake up."""
+        self._complete_observation(outcome)
+
+    def _complete_observation(self, outcome, error=None):
+        """Publish one observation, including durable callback and cleanup.
+
+        The backend may notify before submit() returns, and a caller's wait()
+        can race the callback. Neither parsing nor persistence may run twice.
+        """
+        with self._completion_lock:
+            if self._settled:
                 return
-            if raw_state == RunState.FAILED:
+            try:
+                if error is not None:
+                    raise error
+                raw_state = self._runner.state
                 self.result = outcome
-                self._state = RunState.FAILED
+                if raw_state == RunState.CANCELLED:
+                    self._state = RunState.CANCELLED
+                elif raw_state == RunState.FAILED:
+                    self._state = RunState.FAILED
+                    self._failure_phase = (
+                        getattr(self._runner, "failure_phase", None)
+                        or FailurePhase.EXECUTION
+                    )
+                    self._failure_message = getattr(
+                        self._runner, "failure_message", None
+                    )
+                    self._exception = self._runner.exception
+                elif raw_state == RunState.UNKNOWN:
+                    # An observation ended, not the job. Project persistence
+                    # must not create a terminal timestamp or acknowledge it.
+                    self._state = RunState.UNKNOWN
+                    self._failure_message = getattr(
+                        self._runner, "failure_message", None
+                    )
+                elif raw_state == RunState.FINISHED:
+                    self._processing = True
+                    try:
+                        self.result = self._process_result(outcome)
+                    except BaseException as exc:
+                        self._exception = exc
+                        self._failure_phase = FailurePhase.POSTPROCESSING
+                        self._failure_message = str(exc)
+                        self._state = RunState.FAILED
+                    else:
+                        self._state = RunState.FINISHED
+                    finally:
+                        self._processing = False
+                else:
+                    raise RuntimeError(
+                        "Backend observation ended in unexpected state "
+                        f"{raw_state.value}"
+                    )
+            except BaseException as exc:
+                self._exception = exc
                 self._failure_phase = (
                     getattr(self._runner, "failure_phase", None)
                     or FailurePhase.EXECUTION
                 )
-                self._failure_message = getattr(
-                    self._runner, "failure_message", None
+                self._failure_message = (
+                    getattr(self._runner, "failure_message", None) or str(exc)
                 )
-                return
-            if raw_state == RunState.UNKNOWN:
-                self.result = outcome
-                self._state = RunState.UNKNOWN
-                # An unresolved backend may still be executing. It is
-                # recoverable and must not finalize as a failed project run.
-                self._failure_message = getattr(
-                    self._runner, "failure_message", None
-                )
-                return
-            if raw_state != RunState.FINISHED:
-                raise RuntimeError(
-                    f"Raw runner completed wait() in unexpected state {raw_state.value}"
-                )
-
-            self._processing = True
-            try:
-                self.result = self._process_result(outcome)
-            except BaseException as exc:
-                self._exception = exc
-                self._failure_phase = FailurePhase.POSTPROCESSING
-                self._failure_message = str(exc)
-                self._state = RunState.FAILED
-                return
+                try:
+                    cancelled = self._runner.state == RunState.CANCELLED
+                except Exception:
+                    cancelled = False
+                self._state = RunState.CANCELLED if cancelled else RunState.FAILED
             finally:
-                self._processing = False
-            self._state = RunState.FINISHED
-        except BaseException as exc:
-            self._exception = exc
-            self._failure_phase = (
-                getattr(self._runner, "failure_phase", None)
-                or FailurePhase.EXECUTION
-            )
-            self._failure_message = (
-                getattr(self._runner, "failure_message", None) or str(exc)
-            )
-            # A failed wait() can itself mean that the backend is unreachable.
-            # Never replace the original error by a second status-query error.
-            try:
-                cancelled = self._runner.state == RunState.CANCELLED
-            except Exception:
-                cancelled = False
-            self._state = RunState.CANCELLED if cancelled else RunState.FAILED
-        finally:
-            # Make terminal status visible during the persistence callback.
-            self._settled = True
-            finish_monitor(self, cleanup=self._close_resources)
+                # Persist before releasing resources or waking public waiters.
+                # A callback failure must not alter a completed backend state.
+                self._settled = True
+                finish_monitor(self, cleanup=self._close_resources)
 
     def _close_resources(self):
         if self._resources is not None:
             self._resources.close(suppress_errors=True)
-
-    def _start_completion(self):
-        self._started = True
-        self._thread = Thread(target=self._finish, daemon=True)
-        self._thread.start()
 
     def request_cancel(self):
         """Latch cancellation without touching resources or blocking the submitter.
@@ -274,7 +284,7 @@ class PostprocessingRunner:
             raise
 
         with self._lock:
-            self._start_completion()
+            self._started = True
             self._submitting = False
             dispatch = (self._cancel_requested.is_set()
                         and not self._settled
@@ -306,9 +316,24 @@ class PostprocessingRunner:
             raise
 
     def wait(self):
-        if not self._started:
+        if not self._started and not self._settled:
             raise RuntimeError("Run has not been started")
-        return wait_for_monitor(self)
+        # Production runners call back before raw.wait() returns; support
+        # lightweight external runners that only report from wait(), too.
+        try:
+            outcome = self._runner.wait()
+        except BaseException as exc:
+            self._complete_observation(
+                getattr(self._runner, "result", None), error=exc,
+            )
+        else:
+            self._complete_observation(outcome)
+        self._done.wait()
+        if self._exception is not None:
+            raise self._exception
+        if self._callback_exception is not None:
+            raise self._callback_exception
+        return self.result
 
     def close(self):
         """Release an unstarted calculation without launching a backend."""
@@ -375,3 +400,7 @@ class PostprocessingRunner:
             self._close_resources()
             return None
         return self._dispatch_cancel()
+
+
+# Keep the published import while consolidating the lifecycle.
+PostprocessingRunner = CalculationRun
