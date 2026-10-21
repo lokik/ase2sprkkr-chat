@@ -285,6 +285,76 @@ class RemoteFileHandler:
                     f"Conflicting {kind} sources for destination: {target}"
                 )
 
+    @staticmethod
+    def merge_terminal_files(previous, received):
+        """Preserve completed local deliveries in frozen terminal facts."""
+        if previous is None:
+            return received
+        delivered = {
+            (entry.local_path, entry.remote_path): entry
+            for entry in previous.files
+        }
+
+        def preserve(entry):
+            if entry is None or entry.availability_state in ("failed", "skipped"):
+                return entry
+            prior = delivered.get((entry.local_path, entry.remote_path))
+            if prior is None or prior.availability_state not in ("available", "skipped"):
+                return entry
+            if (prior.availability_state == "available"
+                    and (entry.local_path is None
+                         or not os.path.isfile(entry.local_path))):
+                return entry
+            return replace(
+                entry, availability_state=prior.availability_state,
+                availability_message=prior.availability_message,
+            )
+
+        return received._map_files(preserve)
+
+    @staticmethod
+    def _mark_entries(manifest, entries, state, message=None):
+        """Change existing file identities without registering new files."""
+        if manifest is None:
+            return None
+        for entry in entries:
+            if entry is not None and entry.local_path is not None:
+                manifest = manifest.with_file_availability(
+                    entry.local_path, state, message,
+                    remote_path=entry.remote_path,
+                )
+        return manifest
+
+    @classmethod
+    def mark_pending_failed(cls, manifest, message):
+        if manifest is None:
+            return None
+        return cls._mark_entries(
+            manifest,
+            (entry for entry in manifest.files
+             if entry.availability_state in (None, "pending")),
+            "failed", message,
+        )
+
+    @classmethod
+    def mark_pending_available(cls, manifest):
+        if manifest is None:
+            return None
+        return cls._mark_entries(
+            manifest,
+            (entry for entry in manifest.files
+             if entry.availability_state == "pending"),
+            "available",
+        )
+
+    @classmethod
+    def mark_streams_failed(cls, manifest, message):
+        if manifest is None:
+            return None
+        return cls._mark_entries(
+            manifest, (manifest.stdout, manifest.stderr), "failed", message,
+        )
+
     async def collect(self, mapping, manifest, result, *, required=False):
         """Return partial manifest and failure; never silently lose successful files."""
         if manifest is None:

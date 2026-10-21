@@ -576,3 +576,36 @@ def test_collect_does_not_recheck_skipped_terminal_files(tmp_path):
     ))
     assert error is None
     assert result == manifest
+
+
+def test_remote_file_handler_reconciles_terminal_delivery(tmp_path):
+    from ase2sprkkr.execution.remote_file_handler import RemoteFileHandler
+    from ase2sprkkr.execution.run_model import FileManifest, FileEntry
+
+    path = tmp_path / "result.dat"
+    path.write_text("downloaded")
+    available = FileEntry(str(path), "/remote/result.dat", "available")
+    pending = FileEntry(str(path), "/remote/result.dat", "pending")
+    old = FileManifest(outputs=(available,))
+    frozen = FileManifest(outputs=(pending,))
+
+    result = RemoteFileHandler.merge_terminal_files(old, frozen)
+    assert result.outputs[0].availability_state == "available"
+    assert RemoteFileHandler.mark_pending_failed(frozen, "transfer error").failed_files
+    assert RemoteFileHandler.mark_pending_available(frozen).outputs[0].availability_state == "available"
+    assert old.outputs == (available,)
+
+    path.unlink()
+    assert RemoteFileHandler.merge_terminal_files(old, frozen).outputs == (pending,)
+
+
+def test_remote_file_handler_does_not_add_files_on_availability_change(tmp_path):
+    from ase2sprkkr.execution.remote_file_handler import RemoteFileHandler
+    from ase2sprkkr.execution.run_model import FileManifest, FileEntry
+
+    declared = FileEntry(str(tmp_path / "known"), "/remote/known", "pending")
+    original = FileManifest(outputs=(declared,))
+    updated = RemoteFileHandler.mark_pending_failed(original, "missing")
+    assert len(updated.outputs) == 1
+    assert updated.outputs[0].availability_state == "failed"
+    assert original.outputs == (declared,)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import fcntl
 import os
-from dataclasses import asdict, replace
+from dataclasses import asdict
 
 from .base import FailurePhase, RunState, SubmissionNotStarted, file_path, start_monitor
 from ..common.async_utils import run_coro_sync as _run_sync
@@ -81,15 +81,6 @@ class RemoteRunner(ManagedRunner):
                 status, self._backend_id, needs_delivery=True,
             )
         )
-
-    def _mark_pending_files_failed(self, message):
-        if self._files is None:
-            return
-        for entry in self._files.files:
-            if entry.availability_state in (None, "pending"):
-                self._files = self._files.with_file_availability(
-                    entry.local_path, "failed", message,
-                )
 
     def _local_path(self, value):
         return file_path(value, self.spec.directory, flush=True, required=value is not None)
@@ -169,36 +160,9 @@ class RemoteRunner(ManagedRunner):
         try:
             from .run_model import FileManifest
             if status.get("files") is not None:
-                received = FileManifest(**status["files"])
-                availability = {
-                    (entry.local_path, entry.remote_path): entry
-                    for entry in self._files.files
-                } if self._files is not None else {}
-
-                def preserve(entry):
-                    if entry is None:
-                        return None
-                    prior = availability.get((entry.local_path, entry.remote_path))
-                    # The supervisor's frozen terminal facts are
-                    # authoritative. Only an already completed local delivery
-                    # can replace a still-pending terminal receipt; never
-                    # revert a frozen FAILED/SKIPPED outcome to PENDING.
-                    if entry.availability_state in ("failed", "skipped"):
-                        return entry
-                    if prior is None or prior.availability_state not in (
-                        "available", "skipped",
-                    ):
-                        return entry
-                    if (prior.availability_state == "available"
-                            and (entry.local_path is None
-                                 or not os.path.isfile(entry.local_path))):
-                        return entry
-                    return replace(
-                        entry, availability_state=prior.availability_state,
-                        availability_message=prior.availability_message,
-                    )
-
-                self._files = received._map_files(preserve)
+                self._files = self.file_handler.merge_terminal_files(
+                    self._files, FileManifest(**status["files"]),
+                )
             freeze_error = (
                 RuntimeError(status["materialization_error"])
                 if status.get("materialization_error") else None
@@ -212,7 +176,7 @@ class RemoteRunner(ManagedRunner):
             if transfer_error is not None:
                 raise transfer_error
         except Exception as exc:
-            self._mark_pending_files_failed(str(exc))
+            self._files = self.file_handler.mark_pending_failed(self._files, str(exc))
             if backend_state == RunState.FINISHED:
                 self._state = RunState.FAILED
                 self._failure_phase = FailurePhase.DOWNLOAD
@@ -223,12 +187,7 @@ class RemoteRunner(ManagedRunner):
                 self._failure_phase = FailurePhase.EXECUTION
             return
 
-        if self._files is not None:
-            for entry in self._files.files:
-                if entry.availability_state == "pending":
-                    self._files = self._files.with_file_availability(
-                        entry.local_path, "available",
-                    )
+        self._files = self.file_handler.mark_pending_available(self._files)
         self._state = backend_state
         if self._state == RunState.FAILED and self._failure_phase is None:
             self._failure_phase = FailurePhase.EXECUTION
@@ -239,11 +198,9 @@ class RemoteRunner(ManagedRunner):
                 self._state = RunState.FAILED
                 self._failure_phase = FailurePhase.DOWNLOAD
                 self._failure_message = str(exc)
-                for entry in (self._files.stdout, self._files.stderr):
-                    if entry is not None and entry.local_path is not None:
-                        self._files = self._files.with_file_availability(
-                            entry.local_path, "failed", str(exc),
-                        )
+                self._files = self.file_handler.mark_streams_failed(
+                    self._files, str(exc),
+                )
                 raise
 
     def set_manifest(self, files):
