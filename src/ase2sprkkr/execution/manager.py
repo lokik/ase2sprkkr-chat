@@ -18,7 +18,7 @@ from uuid import uuid4
 
 from ..common.file_locks import FileLock
 from ..common.file_versions import FileState, file_digest
-from ._durability import durable_mkdir, durable_write_json
+from ._durability import durable_mkdir, durable_write_json, sync_file
 from .base import (
     Executor,
     FailurePhase,
@@ -341,7 +341,30 @@ class RunStore:
                 if (updated.id != latest.id or updated.created_at != latest.created_at
                         or updated.project_id != latest.project_id):
                     raise ValueError("Run update cannot change persistent identity")
+                if updated is latest:
+                    # A previous atomic rename may have succeeded just before
+                    # fsync failed. Reaffirm durability without rewriting the
+                    # terminal record or changing its update timestamp.
+                    if latest.state.is_terminal and path.is_file():
+                        sync_file(path)
+                    return latest
                 return self._write_unlocked(updated)
+
+    def terminal_record(self, record):
+        """Return a crash-durable terminal record, if one already exists.
+
+        Take the same per-run lock as writers: visibility after an atomic
+        rename does not by itself imply that the directory is durable.
+        """
+        with self._lock, FileLock(self._run_lock_path(record)):
+            path = self._path(record)
+            if not path.is_file():
+                return None
+            latest = self._decode(path)
+            if not latest.state.is_terminal:
+                return None
+            sync_file(path)
+            return latest
 
     def get(self, run_id):
         return self._decode(self._path_for_id(run_id))
@@ -493,10 +516,13 @@ class ExecutionManager:
         files=_UNCHANGED,
         expected_updated_at=_UNCHANGED,
         expected_record=None,
+        skip_if_terminal=False,
     ):
         def merge(latest):
             if expected_record is not None and latest != expected_record:
                 raise RuntimeError("Run changed during postprocessing retry")
+            if skip_if_terminal and latest.state.is_terminal:
+                return latest
             if (expected_updated_at is not _UNCHANGED
                     and latest.updated_at != expected_updated_at):
                 # An independent refresh has superseded this observation.
@@ -670,6 +696,14 @@ class ExecutionManager:
         files=None,
         expected_record=None,
     ):
+        # Another observer (or our own interrupted durable write) may have
+        # committed completion already. In that case no file re-capture is
+        # needed and the existing terminal snapshot is authoritative.
+        confirmed = self.store.terminal_record(record)
+        if confirmed is not None:
+            if expected_record is not None and confirmed != expected_record:
+                raise RuntimeError("Run changed during postprocessing retry")
+            return confirmed
         state = RunState(state)
         phase = _failure_phase(failure_phase)
         result_files = record.files if files is None else files
@@ -706,6 +740,7 @@ class ExecutionManager:
             failure_phase=phase,
             files=result_files,
             expected_record=expected_record,
+            skip_if_terminal=True,
         )
 
     def resume_download(self, run):
