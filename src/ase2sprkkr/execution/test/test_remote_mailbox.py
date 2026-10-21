@@ -154,3 +154,37 @@ def test_rejects_non_object_terminal_receipt():
     remote_mailbox._path(key).write_text("[]")
     with pytest.raises(ValueError, match="Invalid terminal receipt"):
         remote_mailbox.read_outcome(key)
+
+
+@pytest.mark.parametrize("kind", ("outcome", "submission"))
+def test_ack_retries_directory_barrier_after_unlink_fsync_failure(
+    monkeypatch, kind,
+):
+    key = uuid4().hex
+    if kind == "outcome":
+        assert remote_mailbox.publish_outcome(key, RunState.FINISHED, 0)
+        acknowledge = remote_mailbox.acknowledge_outcome
+        path = remote_mailbox._path(key)
+    else:
+        remote_mailbox.publish_submission(key, {"remote_id": "native"})
+        acknowledge = remote_mailbox.drop_submission
+        path = remote_mailbox._validated_path(key, "remote-submissions")
+
+    original_sync = remote_mailbox.fsync_directory
+    syncs = []
+
+    def fail_once(directory):
+        syncs.append(directory)
+        if len(syncs) == 1:
+            raise OSError("unlink barrier interrupted")
+        return original_sync(directory)
+
+    monkeypatch.setattr(remote_mailbox, "fsync_directory", fail_once)
+    with pytest.raises(OSError, match="unlink barrier interrupted"):
+        acknowledge(key)
+    assert not path.exists()
+
+    # Retry confirms durability of the absent directory entry before
+    # reporting that the receipt/ticket had already been acknowledged.
+    assert acknowledge(key) is False
+    assert syncs == [path.parent, path.parent]
