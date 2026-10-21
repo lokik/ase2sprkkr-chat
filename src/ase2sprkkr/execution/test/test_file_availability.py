@@ -212,3 +212,57 @@ def test_collision_expands_protected_wildcard_once_for_multiple_outputs(
     assert expanded == [os.path.abspath(pattern)]
     assert protected_file.read_bytes() == b"restart"
 
+
+
+
+def test_remote_missing_wildcards_distinguish_required_and_optional(tmp_path):
+    from dataclasses import asdict
+    from ..file_availability import materialize_manifest
+    from ..run_model import FileMapping
+
+    local, remote = tmp_path / "local", tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    files = FileManifest(
+        outputs=(
+            FileEntry(str(local / "optional-*.dat"),
+                      str(remote / "optional-*.dat"), optional=True,
+                      availability_state="pending"),
+            FileEntry(str(local / "required-*.dat"),
+                      str(remote / "required-*.dat"),
+                      availability_state="pending"),
+        ),
+        mapping=FileMapping(str(local), str(remote)),
+    )
+    frozen, error = materialize_manifest(files, remote=True)
+    assert isinstance(error, FileNotFoundError)
+    assert [entry.availability_state for entry in frozen.outputs] == [
+        "skipped", "failed",
+    ]
+    assert "required-*.dat" in frozen.outputs[1].availability_message
+    assert FileManifest(**asdict(frozen)) == frozen
+
+
+def test_remote_optional_glob_does_not_hide_successful_required_result(tmp_path):
+    from ..file_availability import materialize_manifest
+    from ..run_model import FileMapping
+
+    local, remote = tmp_path / "local", tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    (remote / "result-a.dat").write_text("result")
+    files = FileManifest(
+        outputs=(
+            FileEntry(str(local / "optional-*.dat"),
+                      str(remote / "optional-*.dat"), optional=True),
+            FileEntry(str(local / "result-*.dat"),
+                      str(remote / "result-*.dat")),
+        ),
+        mapping=FileMapping(str(local), str(remote)),
+    )
+    frozen, error = materialize_manifest(files, remote=True)
+    assert error is None
+    assert frozen.outputs[0].availability_state == "skipped"
+    assert frozen.outputs[1].local_path == str(local / "result-a.dat")
+    assert frozen.outputs[1].source == str(local / "result-*.dat")
+    assert frozen.outputs[1].optional is False
