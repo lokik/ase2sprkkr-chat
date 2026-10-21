@@ -226,6 +226,7 @@ def test_project_manager_returns_one_public_calculation_runner(tmp_path):
 
     assert type(run) is CalculationRun
     assert isinstance(run.hooks, PersistentRun)
+    assert not hasattr(run.hooks, "_runner")
     assert run.record is run.hooks.record
     assert run.id == run.record.id
     assert run.record.state is RunState.NEW
