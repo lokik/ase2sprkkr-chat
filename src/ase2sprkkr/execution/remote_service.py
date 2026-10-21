@@ -486,9 +486,7 @@ async def _follow_scheduler_async(remote_id, streams, paths, offsets, poll_inter
     from .psij import _psij_state
 
     handle = _decode_handle(remote_id)
-    executor = _psij_executor(
-        {"backend": handle["backend"], "url": handle.get("url")}
-    )
+    executor = _psij_executor(handle)
     job = executor.attach_native_job(handle["native_id"])
 
     def emit(kind, data):
