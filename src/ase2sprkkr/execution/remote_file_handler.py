@@ -165,9 +165,9 @@ class RemoteFileHandler:
             if source is None:
                 continue
             if source != primary and has_file_magic(source):
-                await self._stage_input_pattern(mapping, spec, source, used)
+                await self._stage_input_pattern(mapping, spec, source, used, required=not entry.optional)
             else:
-                await self._stage_file(mapping, spec, source, used)
+                await self._stage_file(mapping, spec, source, used, required=not entry.optional)
         if primary is not None:
             await self._stage_file(mapping, spec, primary, used)
         if manifest.stdin is not None and manifest.stdin.local_path is not None:
@@ -199,7 +199,9 @@ class RemoteFileHandler:
                 continue
             if has_file_magic(local):
                 continue
-            inputs.append(FileEntry(local_path=local, remote_path=mapping.map_path(local)))
+            original = next((item for item in manifest.inputs if item.local_path == local), None)
+            inputs.append(FileEntry(local_path=local, remote_path=mapping.map_path(local),
+                                    optional=False if original is None else original.optional))
 
         return replace(
             manifest,
@@ -327,7 +329,7 @@ class RemoteFileHandler:
                 state = ("skipped" if FileSyncPolicy(mapping.output_sync) == FileSyncPolicy.NEVER
                          else await self._sync_file(
                              mapping, entry, is_cache=is_cache,
-                             before=before, required=required,
+                             before=before, required=required and not entry.optional,
                          ))
             except Exception as exc:
                 manifest = manifest.with_file_availability(
