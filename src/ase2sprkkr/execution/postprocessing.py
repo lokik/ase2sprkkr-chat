@@ -341,7 +341,9 @@ class CalculationRun:
                     if isinstance(exc, SubmissionNotStarted):
                         raise
                     raise SubmissionNotStarted(str(exc)) from exc
-                self.hooks.prepared(self)
+            # Persist the final manifest even for backends with no explicit
+            # preparation phase. The submit barrier applies to every backend.
+            self.hooks.prepared(self)
             if self.cancellation_requested:
                 raise asyncio.CancelledError("Run was cancelled before backend submission")
             backend_attempted = True

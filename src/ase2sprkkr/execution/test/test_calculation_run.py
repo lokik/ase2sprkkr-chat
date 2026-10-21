@@ -310,3 +310,30 @@ def test_persistent_cancel_after_preflight_does_not_launch():
     assert run.state is RunState.CANCELLED
     assert not run._submission_uncertain
     assert backend.thread is None
+
+
+def test_persistent_prepared_hook_runs_without_backend_preflight():
+    backend = Backend()
+    events = []
+
+    class Hooks:
+        def before_submit(self, run):
+            events.append("reserved")
+
+        def prepared(self, run):
+            events.append("prepared")
+
+        def submitted(self, run):
+            events.append("submitted")
+
+        def submission_failed(self, run, error, *, uncertain):
+            pytest.fail(f"Unexpected submission failure: {error}")
+
+        def completed(self, run):
+            events.append("completed")
+
+    run = CalculationRun(backend, lambda outcome: outcome, hooks=Hooks())
+    run.submit()
+    backend.release.set()
+    run.wait()
+    assert events == ["reserved", "prepared", "submitted", "completed"]
