@@ -55,3 +55,47 @@ def test_compact_arpes_parses_consistent_native_grid(
     assert result.RAW_DATA().shape == (np_points * nt_points * ne_points, columns)
     assert np.isfinite(result.TOTAL()).all()
     assert np.isfinite(result.POLARIZATION()).all()
+
+
+@pytest.mark.parametrize(
+    ("name", "mode"),
+    (
+        ("SnTe_BLOCHSF_small.bsf", "BSF"),
+        ("SnTe_BLOCHSF_spol_small.bsf", "BSF-SPOL"),
+    ),
+)
+def test_compactor_round_trip_bsf(tmp_path, name, mode):
+    from .compact_spectral_data import compact_bsf
+
+    reduced = compact_bsf((DATA / name).read_text(), max_e=3, max_k=3)
+    path = tmp_path / name
+    path.write_text(reduced)
+    result = ResultFile.from_file(path, unknown=False)
+    assert result.KEYWORD() == mode
+    assert result.NE() == 3
+    assert result.NK() == 3
+    assert result.INDKDIR()[-1] == 3
+    assert result.I().shape == (4, 3, 3)
+
+
+@pytest.mark.parametrize(
+    ("name", "mode"),
+    (
+        ("Mo2Se4_ARPES_small.spc", "energy"),
+        ("Mo2Se4_ARPES_kx_ky_small.spc", "kx_ky"),
+    ),
+)
+def test_compactor_round_trip_spc(tmp_path, name, mode):
+    from .compact_spectral_data import compact_spc
+
+    reduced = compact_spc((DATA / name).read_text(), max_e=4, max_k=3)
+    path = tmp_path / name
+    path.write_text(reduced)
+    result = ResultFile.from_file(path, unknown=False)
+    assert result.MODE() == mode
+    assert np.isfinite(result.TOTAL()).all()
+    if mode == "energy":
+        assert result.NE() == 4
+    else:
+        assert result.NP() == 3
+        assert result.NT() == 3
