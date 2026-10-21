@@ -816,7 +816,8 @@ def test_psij_follow_receives_late_status_from_another_thread(tmp_path, monkeypa
     from types import SimpleNamespace
 
     _, remote_id = _psij_handle(tmp_path)
-    pending = SimpleNamespace(state=SimpleNamespace(name="ACTIVE"), exit_code=None)
+    # PSI/J attach initially reports NEW before any actual scheduler observation.
+    pending = SimpleNamespace(state=SimpleNamespace(name="NEW"), exit_code=None)
     finished = SimpleNamespace(state=SimpleNamespace(name="COMPLETED"), exit_code=0,
                                message=None)
     subscribed = threading.Event()

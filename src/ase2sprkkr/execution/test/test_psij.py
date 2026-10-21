@@ -1191,6 +1191,47 @@ def test_psij_subscriptions_share_job_and_detach_independently(monkeypatch):
 
 
 
+@pytest.mark.parametrize("native_name, expected", [
+    ("COMPLETED", RunState.FINISHED),
+    ("FAILED", RunState.FAILED),
+    ("CANCELED", RunState.CANCELLED),
+])
+def test_psij_terminal_callback_evicts_stale_native_job(
+    monkeypatch, native_name, expected,
+):
+    """The delivered callback, not stale job.status, determines cache eviction."""
+    executor = _executor(monkeypatch, _Backend())
+    executor.backend = "pbs"
+    executor.url = "ssh://pbs-cluster"
+    job = _Job()
+    job.native_id = "shared"
+    job.status = _Status("ACTIVE")
+    executor._cache_submitted_job(job)
+
+    observed = []
+    first = executor._observe_job(job, lambda status: observed.append(status))
+    second = executor._observe_job(job, lambda status: observed.append(status))
+    terminal = _Status(native_name, 0 if expected is RunState.FINISHED else 1)
+
+    # PSI/J can deliver the terminal status before job.status is updated.
+    job.emit(terminal)
+    assert job.status.state.name == "ACTIVE"
+    assert observed == [terminal, terminal]
+    assert executor.status_native("shared").state is expected
+    assert executor.attach_native_job("shared") is job
+
+    first()
+    assert "shared" in executor._jobs
+    assert job in executor._terminal_observations
+    second()
+    assert "shared" not in executor._jobs
+    assert job not in executor._observers
+    assert job not in executor._terminal_observations
+
+    # A subsequent attach creates a fresh PSI/J object, never reuses stale ACTIVE.
+    assert executor.attach_native_job("shared") is not job
+
+
 def test_psij_simultaneous_attaches_share_callback_and_finish(monkeypatch, tmp_path):
     executor = _executor(monkeypatch, _Backend())
     job = _Job()
