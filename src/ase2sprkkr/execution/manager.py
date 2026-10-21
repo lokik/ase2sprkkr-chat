@@ -400,9 +400,12 @@ class RunStore:
                     if active is False and not record.state.is_terminal:
                         continue
                     records.append(record)
-                    if limit is not None and len(records) >= limit:
+                    if (limit is not None and len(records) >= limit
+                            and seen_ids is None):
                         return tuple(records)
-            return tuple(records)
+            # For project histories scan every shard before applying a limit;
+            # a duplicate ID beyond the requested page is still corruption.
+            return tuple(records if limit is None else records[:limit])
 
 
 class ExecutionManager:

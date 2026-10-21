@@ -302,6 +302,8 @@ def test_guarded_run_detects_preexisting_duplicate_ids(tmp_path):
     for operation in (
         lambda: store.get(first.id),
         lambda: store.runs(),
+        lambda: store.runs(limit=1),
+        lambda: store.runs(active=True, limit=1),
         lambda: store.save(first),
         lambda: store.update(first, lambda current: current),
     ):
