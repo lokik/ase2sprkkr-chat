@@ -269,6 +269,25 @@ def test_project_request_flushes_each_declared_file_once(tmp_path):
     assert (output.flush_count, inp.flush_count, cache.flush_count) == (1, 1, 1)
 
 
+def test_local_project_request_preserves_reserved_manifest(tmp_path):
+    """Changing spec declarations cannot replace the reserved file list."""
+    from dataclasses import asdict
+
+    spec = replace(_spec(tmp_path), output_files=("original.dat",))
+    runner = LocalExecutor().create_project_run(spec, run_id=RUN_ID)
+    reserved = FileManifest(
+        outputs=(FileEntry(local_path=str(tmp_path / "reserved.dat"),
+                           availability_state="pending"),),
+        stdout=FileEntry(local_path=str(tmp_path / "out.txt"),
+                         availability_state="pending"),
+    )
+    runner.set_manifest(reserved)
+    runner.spec = replace(spec, output_files=("unreserved.dat",),
+                          cache_files=("unreserved.cache",))
+    assert runner._request()["files"] == asdict(reserved)
+    assert runner.files is reserved
+
+
 def test_submission_cleanup_uses_manifest_to_protect_caches(tmp_path):
     from dataclasses import asdict
 

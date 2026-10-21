@@ -101,6 +101,9 @@ class LocalProjectRunner(ManagedRunner):
             executor, spec, callback, output_listener=output_listener,
             backend_id=backend_id, state=state,
         )
+        # Direct runners construct a manifest once; project persistence
+        # replaces it with the authoritative reserved manifest.
+        self._files = FileManifest.from_spec(spec)
         self._run_id = run_id
         self._prepared_request = None
         self._failure_phase = failure_phase
@@ -144,24 +147,11 @@ class LocalProjectRunner(ManagedRunner):
         self._apply_status(status)
 
     def _request(self):
-        def paths(values):
-            return tuple(
-                path for value in values
-                if (path := _file_path(value, self.spec.directory)) is not None
-            )
-
-        # Normalize named file objects only once. The same FileManifest is
-        # persisted by the client and frozen by the supervisor at termination.
-        normalized = replace(
-            self.spec,
-            input_file=self.result.input_file,
-            output_file=self.result.output_file,
-            error_file=self.result.error_file,
-            input_files=paths(self.spec.input_files),
-            output_files=paths(self.spec.output_files),
-            cache_files=paths(self.spec.cache_files),
-        )
-        self._files = FileManifest.from_spec(normalized)
+        # Flush supplementary streams without deriving file membership again.
+        for values in (self.spec.input_files, self.spec.output_files,
+                       self.spec.cache_files):
+            for value in values:
+                _file_path(value, self.spec.directory)
         return {
             "executor": "local",
             "id": self._run_id,
