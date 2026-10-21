@@ -252,25 +252,25 @@ def test_remote_input_file_policies(
     transport = _SpyTransport()
     workdir = tmp_path / "local" / "calculation"
     workdir.mkdir(parents=True)
-    artifact = workdir / "artifact.dat"
-    artifact.write_text(local_value)
-    remote_artifact = tmp_path / "remote" / "calculation" / "artifact.dat"
-    remote_artifact.parent.mkdir(parents=True)
-    remote_artifact.write_text(remote_value)
+    file = workdir / "file.dat"
+    file.write_text(local_value)
+    remote_file = tmp_path / "remote" / "calculation" / "file.dat"
+    remote_file.parent.mkdir(parents=True)
+    remote_file.write_text(remote_value)
 
     executor, spec, _, remote_root = _text_run(
         tmp_path,
         transport,
-        declared_input_files=(artifact,),
+        declared_input_files=(file,),
         input_files=policy,
-        code="import pathlib; print(pathlib.Path('artifact.dat').read_text())",
+        code="import pathlib; print(pathlib.Path('file.dat').read_text())",
     )
     if policy == "never":
         _expose_shared_input(remote_root, "input.txt", b"hello")
     result = _processed_run(executor, spec).run()
 
     assert result.output == (expected + "\n").encode()
-    assert sum(dst == remote_artifact for _, dst in transport.put_files) == uploads
+    assert sum(dst == remote_file for _, dst in transport.put_files) == uploads
 
 
 @pytest.mark.parametrize("direction", ("input", "output"))
@@ -326,23 +326,23 @@ def test_remote_output_file_policies(
     transport = _SpyTransport()
     workdir = tmp_path / "local" / "calculation"
     workdir.mkdir(parents=True)
-    artifact = workdir / "artifact.dat"
-    artifact.write_text(local_value)
+    file = workdir / "file.dat"
+    file.write_text(local_value)
 
     executor, spec, _, remote_root = _text_run(
         tmp_path,
         transport,
-        declared_output_files=(artifact,),
+        declared_output_files=(file,),
         output_files=policy,
-        code=f"import pathlib; pathlib.Path('artifact.dat').write_text({generated_value!r}); print('done')",
+        code=f"import pathlib; pathlib.Path('file.dat').write_text({generated_value!r}); print('done')",
     )
     result = _processed_run(executor, spec).run()
 
-    remote_artifact = remote_root / "calculation" / "artifact.dat"
+    remote_file = remote_root / "calculation" / "file.dat"
     assert result.return_code == 0
-    assert artifact.read_text() == expected
+    assert file.read_text() == expected
     assert transport.get_files == (
-        [(remote_artifact, artifact)] if downloads else []
+        [(remote_file, file)] if downloads else []
     )
 
 
@@ -350,23 +350,23 @@ def test_remote_executor_does_not_reuse_stale_output(tmp_path):
     transport = _SpyTransport()
     workdir = tmp_path / "local" / "calculation"
     workdir.mkdir(parents=True)
-    artifact = workdir / "artifact.dat"
-    remote_artifact = tmp_path / "remote" / "calculation" / "artifact.dat"
-    remote_artifact.parent.mkdir(parents=True)
-    remote_artifact.write_text("stale")
+    file = workdir / "file.dat"
+    remote_file = tmp_path / "remote" / "calculation" / "file.dat"
+    remote_file.parent.mkdir(parents=True)
+    remote_file.write_text("stale")
 
     executor, spec, _, _ = _text_run(
         tmp_path,
         transport,
-        declared_output_files=(artifact,),
+        declared_output_files=(file,),
         code="print('done')",
     )
 
     with pytest.raises(FileNotFoundError, match="was not created"):
         _processed_run(executor, spec).run()
 
-    assert not remote_artifact.exists()
-    assert not artifact.exists()
+    assert not remote_file.exists()
+    assert not file.exists()
 
 
 def test_remote_cache_creation_content_and_mtime_changes_in_one_run(tmp_path):
