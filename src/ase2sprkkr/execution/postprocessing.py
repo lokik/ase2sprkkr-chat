@@ -30,6 +30,7 @@ class CalculationRun:
         self._cancel_requested = Event()
         self._cancel_dispatched = False
         self._submission_uncertain = False
+        self._backend_submit_attempted = False
         self._submitting = False
         self._preparing = False
         self._cancel_after_prepare = False
@@ -303,6 +304,7 @@ class CalculationRun:
         # All persistent transaction barriers are sequenced by this one
         # lifecycle owner. The project layer never submits the backend itself.
         backend_attempted = False
+        self._backend_submit_attempted = False
         try:
             self.hooks.before_submit(self)
             preflight = getattr(self._runner, "prepare_submission", None)
@@ -317,6 +319,7 @@ class CalculationRun:
             if self.cancellation_requested:
                 raise asyncio.CancelledError("Run was cancelled before backend submission")
             backend_attempted = True
+            self._backend_submit_attempted = True
             self._runner.submit()
             self.hooks.submitted(self)
         except BaseException as exc:
@@ -364,12 +367,30 @@ class CalculationRun:
                 self._submitting = False
             self._close_resources()
             raise
-        except BaseException:
-            # A backend may have accepted the job even if its reply was lost.
-            # Never close prepared resources or allow an automatic resubmit.
+        except BaseException as exc:
+            # Only backend I/O can make submission ambiguous. Reservation,
+            # staging and pre-submit cancellation are definitely non-launches.
+            uncertain = (self.hooks is None or self._backend_submit_attempted)
             with self._lock:
-                self._submission_uncertain = True
+                self._submission_uncertain = uncertain
                 self._submitting = False
+                if not uncertain:
+                    self._state = (RunState.CANCELLED
+                                   if isinstance(exc, asyncio.CancelledError)
+                                   else RunState.FAILED)
+                    self._exception = None if isinstance(exc, asyncio.CancelledError) else exc
+                    self._failure_phase = (
+                        None if isinstance(exc, asyncio.CancelledError)
+                        else FailurePhase.SUBMISSION
+                    )
+                    self._failure_message = (
+                        None if isinstance(exc, asyncio.CancelledError)
+                        else str(exc)
+                    )
+                    self._settled = True
+                    self._done.set()
+            if not uncertain:
+                self._close_resources()
             raise
 
         with self._lock:
