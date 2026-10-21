@@ -5,7 +5,8 @@ from threading import Event, Thread
 
 import pytest
 
-from ase2sprkkr.execution.base import ExecutionResources, ResourceOwnedRunner, RunState
+from ase2sprkkr.execution.base import ExecutionResources, RunState
+from ase2sprkkr.execution.postprocessing import PostprocessingRunner
 
 
 class _Resource:
@@ -27,6 +28,7 @@ class _BackendRunner:
         self.cancelled = 0
         self.submit_entered = Event()
         self.release_submit = Event()
+        self.completed = Event()
 
     def submit(self):
         self.submit_entered.set()
@@ -36,6 +38,8 @@ class _BackendRunner:
         self.state = RunState.QUEUED
 
     def wait(self):
+        if not self.completed.wait(5):
+            raise TimeoutError("test did not complete backend")
         return self.result
 
     def cancel(self):
@@ -43,6 +47,7 @@ class _BackendRunner:
             raise RuntimeError("backend cannot cancel before submission")
         self.cancelled += 1
         self.state = RunState.CANCELLED
+        self.completed.set()
 
     def add_output_listener(self, _callback):
         pass
@@ -55,7 +60,7 @@ def _runner():
     backend = _BackendRunner()
     backend.release_submit.set()
     resource = _Resource()
-    return ResourceOwnedRunner(backend, ExecutionResources(resource)), backend, resource
+    return PostprocessingRunner(backend, lambda outcome: outcome, resources=ExecutionResources(resource)), backend, resource
 
 
 def test_public_runner_latches_cancel_before_submit():
@@ -75,7 +80,7 @@ def test_public_runner_latches_cancel_before_submit():
 def test_cancel_during_submit_is_dispatched_after_submission():
     backend = _BackendRunner()
     resource = _Resource()
-    runner = ResourceOwnedRunner(backend, ExecutionResources(resource))
+    runner = PostprocessingRunner(backend, lambda outcome: outcome, resources=ExecutionResources(resource))
     errors = []
 
     def submit():
@@ -91,7 +96,14 @@ def test_cancel_during_submit_is_dispatched_after_submission():
     cancel_thread = Thread(target=runner.cancel)
     cancel_thread.start()
     assert runner._cancel_requested.wait(5)
-    backend.release_submit.set()
+    try:
+        # Cancellation is accepted *before* the gated backend submit returns.
+        cancel_thread.join(1)
+        assert not cancel_thread.is_alive(), "cancel waited for backend submission"
+        assert backend.submitted == 0
+        assert backend.cancelled == 0
+    finally:
+        backend.release_submit.set()
 
     thread.join(5)
     cancel_thread.join(5)
@@ -100,8 +112,116 @@ def test_cancel_during_submit_is_dispatched_after_submission():
     assert not errors
     assert backend.submitted == 1
     assert backend.cancelled == 1
+    assert runner._done.wait(5)
     assert runner.state == RunState.CANCELLED
 
     # Repeated cancellation is idempotent at the public runner boundary.
     runner.cancel()
+    assert backend.cancelled == 1
+
+
+@pytest.mark.parametrize("owned", (False, True))
+@pytest.mark.parametrize("final_state", (RunState.FINISHED, RunState.FAILED, RunState.CANCELLED))
+def test_late_cancel_never_reaches_terminal_backend(owned, final_state):
+    backend = _BackendRunner()
+    backend.state = final_state
+    resource = _Resource()
+    resources = ExecutionResources(resource) if owned else None
+    runner = PostprocessingRunner(backend, lambda outcome: outcome, resources=resources)
+
+    assert runner.cancel() is None
+    assert runner.cancel() is None
+    assert backend.cancelled == 0
+    assert backend.state == final_state
+
+
+def test_project_cancel_returns_while_backend_submission_is_blocked():
+    """Project persistence must not hold cancellation behind raw submission."""
+    from types import SimpleNamespace
+
+    from ase2sprkkr.execution.manager import ProjectRunner
+
+    class Execution:
+        endpoint = "test"
+
+        def submitted(self, backend_id):
+            assert backend_id == "job-1"
+            return self
+
+    class Backend(_BackendRunner):
+        execution = Execution()
+        exception = None
+
+        def __init__(self):
+            super().__init__()
+            self.backend_id = "job-1"
+
+    class Store:
+        def __init__(self):
+            self.transitions = []
+
+        def reserve(self, record):
+            return SimpleNamespace(state=RunState.SUBMITTING, id=record.id,
+                                   updated_at="reserved", execution=record.execution)
+
+        def transition(self, record, **changes):
+            self.transitions.append(changes)
+            return SimpleNamespace(state=changes.get("state", record.state),
+                                   id=record.id, updated_at="transition",
+                                   execution=record.execution)
+
+        def complete(self, record, **changes):
+            return self.transition(record, **changes)
+
+        def register_executor(self, executor, endpoint):
+            pass
+
+        def _acknowledge_submission(self, executor, record):
+            pass
+
+    backend = Backend()
+    resource = _Resource()
+    processed = PostprocessingRunner(
+        backend, lambda outcome: outcome, resources=ExecutionResources(resource),
+    )
+    store = Store()
+    project = ProjectRunner(
+        store, object(), processed,
+        SimpleNamespace(state=RunState.NEW, id="test-run", updated_at="new",
+                        execution=Execution()),
+    )
+    errors = []
+
+    def submit():
+        try:
+            project.submit()
+        except BaseException as exc:
+            errors.append(exc)
+
+    submitting = Thread(target=submit)
+    submitting.start()
+    assert backend.submit_entered.wait(5)
+    cancelling = Thread(target=project.cancel)
+    cancelling.start()
+    try:
+        cancelling.join(1)
+        assert not cancelling.is_alive(), "project cancel waited for submit"
+        assert backend.submitted == 0
+        assert backend.cancelled == 0
+        assert not resource.closed
+    finally:
+        backend.release_submit.set()
+        submitting.join(5)
+        cancelling.join(5)
+
+    assert not submitting.is_alive()
+    assert not cancelling.is_alive()
+    assert not errors
+    assert backend.submitted == 1
+    assert backend.cancelled == 1
+    project.wait()
+    assert resource.closed
+    assert project.record.state == RunState.CANCELLED
+    assert any(change.get("state") == RunState.CANCELLED for change in store.transitions)
+    project.cancel()
     assert backend.cancelled == 1
