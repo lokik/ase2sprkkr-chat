@@ -341,7 +341,6 @@ class CalculationRun:
 
         # All persistent transaction barriers are sequenced by this one
         # lifecycle owner. The project layer never submits the backend itself.
-        backend_attempted = False
         self._backend_submit_attempted = False
         try:
             self.hooks.before_submit(self)
@@ -358,14 +357,13 @@ class CalculationRun:
             self.hooks.prepared(self)
             if self.cancellation_requested:
                 raise asyncio.CancelledError("Run was cancelled before backend submission")
-            backend_attempted = True
             self._backend_submit_attempted = True
             self._runner.submit()
             self.hooks.submitted(self)
         except BaseException as exc:
             try:
                 self.hooks.submission_failed(
-                    self, exc, uncertain=backend_attempted,
+                    self, exc, uncertain=self._backend_submit_attempted,
                 )
             except BaseException as hook_exc:
                 # A persistence failure must not erase the original
