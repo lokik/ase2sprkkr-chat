@@ -85,7 +85,7 @@ def test_psij_monitor_forwards_follow_bytes(monkeypatch):
 
     received = []
 
-    async def follow(paths, on_chunk, terminal, poll_interval):
+    async def follow(paths, on_chunk, terminal, *, poll_interval=None, wakeup=None):
         assert paths == {"out": "job.out", "err": "job.err"}
         on_chunk("out", "výstup".encode("utf8"))
         on_chunk("err", b"warning:\xff")
