@@ -95,6 +95,8 @@ class TestOutput:
                     extension,
                     output.MODE() if extension in ("bsf", "spc") else None,
                     output.KEYWORD() if extension in ("bsf", "spc") else None,
+                    # SPC's single-angle and 2D plotting branches differ.
+                    (output.NP() > 1, output.NT() > 1) if extension == "spc" else None,
                 )
                 if plot_kind in plotted_modes:
                     continue
