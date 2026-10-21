@@ -29,7 +29,7 @@ class GrowingFileTail:
 
     def __init__(self, paths, *, offsets=None, watch_paths=(),
                  poll_interval=1.0, chunk_size=65536):
-        if poll_interval <= 0:
+        if poll_interval is not None and poll_interval <= 0:
             raise ValueError("poll_interval must be positive")
         self.paths = dict(paths)
         self.offsets = offsets if offsets is not None else {
@@ -145,10 +145,13 @@ class GrowingFileTail:
     async def wait_for_change(self, *, wakeup=None):
         """Wake on file changes, optional terminal future, or filesystem timeout."""
         if wakeup is None:
-            try:
-                await asyncio.wait_for(self._changed.wait(), self.poll_interval)
-            except asyncio.TimeoutError:
-                pass
+            if self.poll_interval is None:
+                await self._changed.wait()
+            else:
+                try:
+                    await asyncio.wait_for(self._changed.wait(), self.poll_interval)
+                except asyncio.TimeoutError:
+                    pass
         else:
             file_change = asyncio.create_task(self._changed.wait())
             try:

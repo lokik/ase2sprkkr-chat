@@ -58,6 +58,7 @@ class SPRKKRProfile:
     output_sync: str = "changed"
     psij_backend: Any = None
     psij_url: Any = None
+    psij_poll_interval: Any = None
     mpi_warning: bool = True
     ssh_zstd: bool = False
 
@@ -71,6 +72,7 @@ class SPRKKRProfile:
             remote_command=self.remote_command,
             psij_backend=self.psij_backend,
             psij_url=self.psij_url,
+            psij_poll_interval=self.psij_poll_interval,
         )
 
     @property
@@ -267,6 +269,7 @@ def _configured_profile(profile, configuration):
         output_sync=_profile_value(profile, "output_sync") or "changed",
         psij_backend=_profile_value(profile, "psij_backend"),
         psij_url=_profile_value(profile, "psij_url"),
+        psij_poll_interval=_profile_value(profile, "psij_poll_interval"),
         mpi_warning=mpi_warning,
     )
 

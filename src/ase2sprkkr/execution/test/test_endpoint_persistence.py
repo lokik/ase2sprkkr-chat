@@ -194,3 +194,22 @@ def test_default_remote_psij_endpoint_survives_restart():
     assert isinstance(restored, RemoteEndpointExecutor)
     assert restored.backend == "psij"
     assert restored.backend_options == {"backend": "slurm", "url": None}
+
+
+def test_psij_profile_polling_interval_survives_endpoint_roundtrip():
+    from ase2sprkkr.execution.endpoint import create_executor_from_endpoint
+    from ase2sprkkr.execution.psij import PsijExecutor
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    profile = SPRKKRProfile(
+        executor="psij", psij_backend="slurm", psij_poll_interval=5,
+    )
+    assert profile.endpoint.psij_poll_interval == 5
+    with patch("ase2sprkkr.execution.psij._load_psij") as load:
+        load.return_value = SimpleNamespace(
+            JobExecutor=SimpleNamespace(get_instance=lambda *a, **kw: object())
+        )
+        executor = create_executor_from_endpoint(profile.endpoint)
+    assert isinstance(executor, PsijExecutor)
+    assert executor.poll_interval == 5

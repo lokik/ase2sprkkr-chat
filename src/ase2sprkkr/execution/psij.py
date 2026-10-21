@@ -440,7 +440,8 @@ class PsijRunner(ManagedRunner):
 
                 status = await follow_growing_files(
                     paths, lambda kind, data: self._output_observers.emit_bytes(data, kind),
-                    terminal_status, poll_interval=max(self.executor.poll_interval, 1.0),
+                    terminal_status, poll_interval=self.executor.poll_interval,
+                    wakeup=terminal,
                 )
         except OSError as exc:
             read_error = exc
@@ -544,10 +545,12 @@ class PsijExecutor(Executor):
         url=None,
         config=None,
         job_executor=None,
-        poll_interval=0.1,
+        poll_interval=None,
     ):
         self.backend = backend
         self.url = url
+        if poll_interval is not None and poll_interval <= 0:
+            raise ValueError('PSI/J polling interval must be positive or None')
         self.poll_interval = poll_interval
         self._psij = _load_psij()
         self._job_executor = (
