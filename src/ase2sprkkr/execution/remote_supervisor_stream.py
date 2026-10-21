@@ -11,25 +11,25 @@ import asyncio
 import json
 import os
 import shutil
+import struct
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from ._durability import fsync_directory
-from .stream_protocol import decode_terminal_payload
-from .frame_codec import (
-    OFFSET_HEADER as _HEADER, KIND_TO_CODE as _CODES,
-    CODE_TO_KIND as _BACK, MAX_DATA as _CHUNK,
-    MAX_TERMINAL as _MAX_REQUEST, encode_frame, read_frame,
-)
 
 MAGIC = b"A2SFOLL1"
+_HEADER = struct.Struct("!cQQ")
+_CODES = {"out": b"O", "err": b"E"}
+_BACK = {code: kind for kind, code in _CODES.items()}
+_CHUNK = 65536
 _HIGH = 512 * 1024
 _LOW = 128 * 1024
+_MAX_REQUEST = 4096
 
 
 def frame(kind, offset, data):
-    return encode_frame(_CODES[kind], data, offset=offset)
+    return _HEADER.pack(_CODES[kind], offset, len(data)) + data
 
 
 async def receive(reader):
@@ -37,12 +37,12 @@ async def receive(reader):
     if await reader.readexactly(len(MAGIC)) != MAGIC:
         raise ValueError("Unknown supervisor stream protocol")
     while True:
-        try:
-            code, offset, payload = await read_frame(reader, offsets=True)
-        except ValueError as exc:
-            raise ValueError("Oversized supervisor frame") from exc
+        code, offset, length = _HEADER.unpack(await reader.readexactly(_HEADER.size))
+        if length > (_MAX_REQUEST if code == b"T" else _CHUNK):
+            raise ValueError("Oversized supervisor frame")
+        payload = await reader.readexactly(length)
         if code == b"T":
-            yield "terminal", 0, decode_terminal_payload(payload)
+            yield "terminal", 0, json.loads(payload)
             return
         if code not in _BACK:
             raise ValueError("Invalid supervisor channel")
@@ -241,7 +241,7 @@ class SupervisorStreams:
                     follower.offsets[kind] == self._sizes[kind] for kind in self.paths
                 ):
                     payload = json.dumps(self._terminal, separators=(",", ":")).encode()
-                    writer.write(encode_frame(b"T", payload, offset=0))
+                    writer.write(_HEADER.pack(b"T", 0, len(payload)) + payload)
                     await writer.drain()
                     return
                 if not follower.replay:
