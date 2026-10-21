@@ -36,3 +36,26 @@ def test_required_missing_remote_output_is_failed(tmp_path):
     assert isinstance(error, FileNotFoundError)
     assert result.outputs[0].availability_state == "failed"
     assert not local.exists()
+
+
+
+def test_overlapping_optional_and_required_patterns_require_concrete_file(tmp_path):
+    """An optional first match cannot mask a mandatory overlapping pattern."""
+    local = tmp_path / "part-a.dat"
+    remote = tmp_path / "remote" / "part-a.dat"
+    manifest = FileManifest(outputs=(
+        FileEntry(str(local), str(remote), source=str(tmp_path / "part-*.dat"),
+                  optional=True, availability_state="pending"),
+        FileEntry(str(local), str(remote), source=str(tmp_path / "part-a*.dat"),
+                  optional=False, availability_state="pending"),
+    ))
+    handler = RemoteFileHandler(LocalTransport())
+    completed, error = asyncio.run(handler.collect(
+        FileMapping(str(tmp_path), str(tmp_path / "remote")),
+        manifest, ExecutionOutcome(), required=True,
+    ))
+    assert isinstance(error, FileNotFoundError)
+    assert [entry.availability_state for entry in completed.outputs] == [
+        "failed", "failed",
+    ]
+    assert not local.exists()
