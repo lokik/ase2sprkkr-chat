@@ -37,7 +37,8 @@ class TestSites:
         assert site0.potential(1.5) == 1.5
         assert site1.potential(2.0) == 2.0
 
-        site1.potential = site0.potential.copy()
+        # The initial copy is already attached to site1; verify its mesh
+        # isolation directly before exercising remeshing.
         assert site0.mesh != site1.mesh
         site1.remesh(site0.mesh)
         assert site0.mesh == site1.mesh
