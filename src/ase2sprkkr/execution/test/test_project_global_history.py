@@ -50,27 +50,30 @@ def test_cross_project_active_conflict_and_project_deletion(tmp_path):
     assert all(r.project_id != first.id for r in b.store.runs())
 
 
-def test_for_project_preserves_explicit_run_store(tmp_path):
+def test_project_bound_manager_rejects_noncanonical_run_store(tmp_path):
     projects = ProjectRepository(tmp_path / "projects")
     project = projects.create("Project")
     custom_store = RunStore(tmp_path / "custom-runs")
-    original = ExecutionManager(
+
+    unbound = ExecutionManager(
         store=custom_store, project_repository=projects, submitting_grace=17,
     )
+    with pytest.raises(ValueError, match="repository run store"):
+        unbound.for_project(project)
+    with pytest.raises(ValueError, match="repository run store"):
+        ExecutionManager(
+            store=custom_store, project_repository=projects, project=project,
+        )
 
-    bound = original.for_project(project)
-
-    assert bound.store is custom_store
-    assert bound.submitting_grace == 17
-    assert bound.executor_pool is original.executor_pool
+    canonical = projects.run_store
+    bound = ExecutionManager(
+        store=canonical, project_repository=projects, project=project,
+        submitting_grace=17,
+    )
+    assert bound.store is canonical
     assert bound.for_project(project) is bound
-
-    record = bound.new_record(task="DOS", directory=tmp_path / "work")
-    bound.store.save(record)
-
-    assert custom_store.get(record.id) == record
-    assert record.project_id == project.id
-    assert not (tmp_path / "projects_runs").exists()
+    assert bound.submitting_grace == 17
+    assert not (tmp_path / "custom-runs").exists()
 
 
 def test_for_project_without_explicit_store_uses_shared_project_store(tmp_path):
