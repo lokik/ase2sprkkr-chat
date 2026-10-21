@@ -1002,6 +1002,7 @@ class ProjectRunner:
         self._record = record
         self._completion_lock = Lock()
         self._lifecycle_lock = Lock()
+        self._submission_in_progress = False
         self._cancel_requested = Event()
         self._completion_persisted = False
         self._monitor_record_version = record.updated_at
@@ -1061,13 +1062,15 @@ class ProjectRunner:
         return self._runner.add_output_error_listener(callback)
 
     def submit(self):
+        # Claim exactly once, but never serialize cancellation behind backend I/O.
         with self._lifecycle_lock:
-            if self._cancel_requested.is_set():
+            if self._cancel_requested.is_set() or self._runner.state == RunState.CANCELLED:
                 raise RuntimeError("Run was cancelled before submission")
-            if self._runner.state == RunState.CANCELLED:
-                raise RuntimeError("Run was cancelled before submission")
-            if self._record.state != RunState.NEW:
+            if self._submission_in_progress or self._record.state != RunState.NEW:
                 raise RuntimeError(f"Run is already {self._record.state.value}")
+            self._submission_in_progress = True
+        submitted = False
+        try:
             try:
                 self._record = self.manager.reserve(self._record)
                 self._monitor_record_version = self._record.updated_at
@@ -1103,6 +1106,7 @@ class ProjectRunner:
                     raise asyncio.CancelledError("Run was cancelled before submission")
                 backend_submit_attempted = True
                 result = self._runner.submit()
+                submitted = True
             except SubmissionNotStarted as exc:
                 phase = self.failure_phase or FailurePhase.SUBMISSION
                 message = getattr(self._runner, "failure_message", None) or str(exc)
@@ -1115,7 +1119,14 @@ class ProjectRunner:
                 )
                 raise
             except asyncio.CancelledError:
-                # A cancellation before submit is already persisted above.
+                # A cancellation may win between the project's preflight check
+                # and the raw submission claim. It is a definite non-submit.
+                if (self._runner.state == RunState.CANCELLED
+                        and self._record.state != RunState.CANCELLED):
+                    self._record = self.manager.complete(
+                        self._record, state=RunState.CANCELLED,
+                        artifacts_available=False,
+                    )
                 raise
             except BaseException as exc:
                 if not backend_submit_attempted:
@@ -1148,7 +1159,6 @@ class ProjectRunner:
                         failure_phase=self.failure_phase,
                     )
                 raise
-    
             backend_id = self.backend_id
             if backend_id is None:
                 raise RuntimeError("Executor submit returned without a backend ID")
@@ -1168,6 +1178,14 @@ class ProjectRunner:
                     self._monitor_record_version = self._record.updated_at
             self.manager._acknowledge_submission(self.executor, self._record)
             return result
+        finally:
+            with self._lifecycle_lock:
+                self._submission_in_progress = False
+                dispatch = submitted and self._cancel_requested.is_set()
+            if dispatch:
+                # Project cancellation was accepted while the backend was
+                # submitting. The raw runner is now allowed to dispatch it.
+                self._runner.cancel()
 
     def start(self):
         self._runner.start()
@@ -1254,7 +1272,7 @@ class ProjectRunner:
     def close(self):
         """Release an unsubmitted project's prepared resources."""
         with self._lifecycle_lock:
-            if self._record.state != RunState.NEW:
+            if self._submission_in_progress or self._record.state != RunState.NEW:
                 raise RuntimeError("Cannot close a submitted project run")
             return self._runner.close()
 
@@ -1277,16 +1295,22 @@ class ProjectRunner:
     def cancel(self):
         self._cancel_requested.set()
         with self._lifecycle_lock:
+            if self._submission_in_progress:
+                # Reservation, preflight or submit owns the prepared inputs.
+                # Latch only: it will either abort before backend launch or
+                # dispatch once a backend identity becomes available.
+                self._runner.request_cancel()
+                return None
+        with self._completion_lock:
+            if self._record.state.is_terminal:
+                return None
+        try:
+            return self._runner.cancel()
+        finally:
             with self._completion_lock:
-                if self._record.state.is_terminal:
-                    return None
-            try:
-                return self._runner.cancel()
-            finally:
-                with self._completion_lock:
-                    if self._record.state != RunState.NEW and not self._completion_persisted:
-                        self._record = self.manager.transition(
-                            self._record, state=self._runner.state,
-                            execution=self.execution, failure_phase=self.failure_phase,
-                        )
-                        self._monitor_record_version = self._record.updated_at
+                if self._record.state != RunState.NEW and not self._completion_persisted:
+                    self._record = self.manager.transition(
+                        self._record, state=self._runner.state,
+                        execution=self.execution, failure_phase=self.failure_phase,
+                    )
+                    self._monitor_record_version = self._record.updated_at
