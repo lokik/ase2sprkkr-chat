@@ -7,6 +7,12 @@ import pytest
 
 from ase2sprkkr.execution.base import ExecutionResources, RunState
 from ase2sprkkr.execution.postprocessing import PostprocessingRunner
+from ase2sprkkr.execution.manager import PersistentRun
+
+
+def _tracked(manager, executor, processed, record):
+    processed.hooks = PersistentRun(manager, executor, processed, record)
+    return processed
 
 
 class _Resource:
@@ -139,7 +145,6 @@ def test_project_cancel_returns_while_backend_submission_is_blocked():
     """Project persistence must not hold cancellation behind raw submission."""
     from types import SimpleNamespace
 
-    from ase2sprkkr.execution.manager import ProjectRunner
 
     class Execution:
         endpoint = "test"
@@ -162,13 +167,14 @@ def test_project_cancel_returns_while_backend_submission_is_blocked():
 
         def reserve(self, record):
             return SimpleNamespace(state=RunState.SUBMITTING, id=record.id,
-                                   updated_at="reserved", execution=record.execution)
+                                   updated_at="reserved", execution=record.execution,
+                                   files=record.files)
 
         def transition(self, record, **changes):
             self.transitions.append(changes)
             return SimpleNamespace(state=changes.get("state", record.state),
                                    id=record.id, updated_at="transition",
-                                   execution=record.execution)
+                                   execution=record.execution, files=record.files)
 
         def complete(self, record, **changes):
             return self.transition(record, **changes)
@@ -185,10 +191,10 @@ def test_project_cancel_returns_while_backend_submission_is_blocked():
         backend, lambda outcome: outcome, resources=ExecutionResources(resource),
     )
     store = Store()
-    project = ProjectRunner(
+    project = _tracked(
         store, object(), processed,
         SimpleNamespace(state=RunState.NEW, id="test-run", updated_at="new",
-                        execution=Execution()),
+                        execution=Execution(), files=None),
     )
     errors = []
 
@@ -231,7 +237,6 @@ def test_project_cancel_returns_while_backend_submission_is_blocked():
 def test_project_cancellation_during_prelaunch_is_durable_and_nonblocking(phase):
     """One runtime cancel latch settles a project even before backend submit."""
     from types import SimpleNamespace
-    from ase2sprkkr.execution.manager import ProjectRunner
 
     entered, release = Event(), Event()
 
@@ -272,7 +277,7 @@ def test_project_cancellation_during_prelaunch_is_durable_and_nonblocking(phase)
         backend, lambda result: result, resources=ExecutionResources(resource),
     )
     manager = Manager()
-    project = ProjectRunner(
+    project = _tracked(
         manager, object(), processed,
         SimpleNamespace(
             state=RunState.NEW, id="run", updated_at="new",
