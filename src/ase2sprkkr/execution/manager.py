@@ -1319,6 +1319,10 @@ class ProjectRunner:
         return self._runner.stop_observation()
 
     def cancel(self):
+        # The persisted terminal state is final. In particular, never request
+        # backend cancellation merely because a stale observer still runs.
+        if self._record.state.is_terminal:
+            return None
         # CalculationRun owns the cancellation latch. This must happen before
         # acquiring any lock so a blocking reservation cannot delay cancel.
         self._runner.request_cancel()

@@ -153,7 +153,8 @@ def _project_wrapper(tmp_path, runner):
         directory=tmp_path,
         endpoint=endpoint,
     )
-    return manager, ProjectRunner(manager, executor, runner, record)
+    processed = PostprocessingRunner(runner, lambda outcome: outcome)
+    return manager, ProjectRunner(manager, executor, processed, record)
 
 
 def test_definite_pre_submit_failure_becomes_submission_failure(tmp_path):
