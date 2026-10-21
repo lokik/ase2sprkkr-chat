@@ -1407,3 +1407,30 @@ def test_remote_ack_retries_failed_unlink_barrier_without_losing_terminal_state(
     assert remote_service.acknowledge_remote(remote_id) == {"acknowledged": False}
     assert calls == 2
     assert remote_service.status_remote(remote_id)["state"] == "unknown"
+
+
+def test_submission_ack_retries_failed_unlink_barrier_via_service(
+    tmp_path, monkeypatch,
+):
+    from uuid import uuid4
+    from ase2sprkkr.execution import remote_mailbox
+
+    monkeypatch.setenv("ASE2SPRKKR_REMOTE_STATE_DIR", str(tmp_path))
+    run_id = uuid4().hex
+    remote_mailbox.publish_submission(run_id, {"remote_id": "native"})
+    original_sync = remote_mailbox.fsync_directory
+    calls = 0
+
+    def interrupt_ack_sync(directory):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("submission removal not synced")
+        return original_sync(directory)
+
+    monkeypatch.setattr(remote_mailbox, "fsync_directory", interrupt_ack_sync)
+    with pytest.raises(OSError, match="submission removal not synced"):
+        remote_service.acknowledge_submission(run_id)
+    assert remote_mailbox.read_submission(run_id) is None
+    assert remote_service.acknowledge_submission(run_id) == {"acknowledged": False}
+    assert calls == 2
