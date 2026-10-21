@@ -452,18 +452,14 @@ class ExecutionManager:
         record = self.store.get(run) if isinstance(run, str) else self.store.get(run.id)
         result_files = record.files
         return file_is_current(
-            result_files,
-            None if result_files is None else result_files.input_file,
-            () if result_files is None else result_files.input_versions,
+            result_files, result_files.input_file, result_files.input_versions,
         )
 
     def output_file_is_current(self, run):
         record = self.store.get(run) if isinstance(run, str) else self.store.get(run.id)
         result_files = record.files
         return file_is_current(
-            result_files,
-            None if result_files is None else result_files.output_file,
-            () if result_files is None else result_files.output_versions,
+            result_files, result_files.output_file, result_files.output_versions,
         )
 
     def new_record(
