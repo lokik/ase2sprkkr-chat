@@ -201,3 +201,100 @@ def test_persistence_failure_is_distinct_from_calculation_and_can_be_retried():
     assert observed == [backend.result]
     run.retry_persistence()
     assert len(attempts) == 2
+
+
+def test_persistent_hook_transaction_order_and_completion():
+    backend = Backend()
+    stages = []
+
+    def preflight():
+        stages.append("preflight")
+    backend.prepare_submission = preflight
+    original_submit = backend.submit
+
+    def submit():
+        stages.append("backend-submit")
+        original_submit()
+    backend.submit = submit
+
+    class Hooks:
+        def before_submit(self, run):
+            stages.append("reserved")
+
+        def prepared(self, run):
+            stages.append("prepared")
+
+        def submitted(self, run):
+            stages.append("submitted")
+
+        def submission_failed(self, run, error, *, uncertain):
+            pytest.fail(f"Unexpected submission failure: {error!r}")
+
+        def completed(self, run):
+            stages.append("persisted")
+
+    run = CalculationRun(
+        backend, lambda result: stages.append("processed") or result,
+        hooks=Hooks(), callback=lambda result: stages.append("callback"),
+    )
+    run.submit()
+    backend.release.set()
+    run.wait()
+    assert stages == [
+        "reserved", "preflight", "prepared", "backend-submit",
+        "submitted", "processed", "persisted", "callback",
+    ]
+
+
+def test_persistent_pre_submit_hook_failure_does_not_launch_or_allow_retry():
+    backend = Backend()
+    phases = []
+
+    class Hooks:
+        def before_submit(self, run):
+            phases.append("reservation")
+            raise OSError("reservation failed")
+
+        def submission_failed(self, run, error, *, uncertain):
+            assert isinstance(error, OSError)
+            assert uncertain is False
+            phases.append("failed")
+
+    run = CalculationRun(backend, lambda result: result, hooks=Hooks())
+    with pytest.raises(OSError, match="reservation failed"):
+        run.submit()
+    assert phases == ["reservation", "failed"]
+    assert run.state is RunState.FAILED
+    assert not run._submission_uncertain
+    assert backend.thread is None
+    with pytest.raises(RuntimeError, match="already"):
+        run.submit()
+
+
+def test_persistent_cancel_after_preflight_does_not_launch():
+    import asyncio
+
+    backend = Backend()
+    phases = []
+
+    class Hooks:
+        def before_submit(self, run):
+            phases.append("reserved")
+
+        def prepared(self, run):
+            phases.append("prepared")
+            run.request_cancel()
+
+        def submission_failed(self, run, error, *, uncertain):
+            assert isinstance(error, asyncio.CancelledError)
+            assert uncertain is False
+            phases.append("cancelled")
+
+    backend.prepare_submission = lambda: None
+    run = CalculationRun(backend, lambda result: result, hooks=Hooks())
+    with pytest.raises(asyncio.CancelledError):
+        run.submit()
+    assert phases == ["reserved", "prepared", "cancelled"]
+    assert run.state is RunState.CANCELLED
+    assert not run._submission_uncertain
+    assert backend.thread is None
