@@ -44,14 +44,14 @@ def test_absolute_task_defaults_are_preserved(task, emin, emax):
     assert p.ENERGY.EMIN() == emin
 
 
-def test_spectroscopy_defaults_follow_task_switch():
-    p = InputParameters.create('arpes')
-    for task, theta, phi, spol in (
-        ('ARPES', 0., 0., 2),
-        ('SPLEED', 45., 270., 1),
-    ):
-        p.TASK.TASK = task
-        assert tuple(p.SPEC_EL.THETA()) == (theta, theta), task
-        assert tuple(p.SPEC_EL.PHI()) == (phi, phi), task
-        assert p.SPEC_EL.NT() == p.SPEC_EL.NP() == 1, task
-        assert p.SPEC_EL.SPOL() == spol, task
+def test_spectroscopy_defaults_for_direct_and_switched_tasks():
+    for access_arpes_first in (False, True):
+        p = InputParameters.create('arpes')
+        steps = (('ARPES', 0., 0., 2),) if access_arpes_first else ()
+        steps += (('SPLEED', 45., 270., 1),)
+        for task, theta, phi, spol in steps:
+            p.TASK.TASK = task
+            assert tuple(p.SPEC_EL.THETA()) == (theta, theta), task
+            assert tuple(p.SPEC_EL.PHI()) == (phi, phi), task
+            assert p.SPEC_EL.NT() == p.SPEC_EL.NP() == 1, task
+            assert p.SPEC_EL.SPOL() == spol, task
