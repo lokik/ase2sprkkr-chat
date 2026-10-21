@@ -1021,7 +1021,13 @@ class ExecutionManager:
 
 
 class PersistentRun:
-    """Durable record and transactional hooks for one CalculationRun."""
+    """Durable transaction participant for one CalculationRun.
+
+    CalculationRun sequences execution and public completion. This object
+    serializes durable reservation and completion commits. Its submission
+    guard and completion lock protect distinct transactional boundaries,
+    not a second runner lifecycle state machine.
+    """
 
     def __init__(self, manager, executor, record, *, spec=None):
         self._spec = spec

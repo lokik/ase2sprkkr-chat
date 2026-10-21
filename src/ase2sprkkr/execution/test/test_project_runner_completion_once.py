@@ -288,3 +288,30 @@ def test_lost_ack_reply_after_receipt_deletion_is_safe_on_retry(tmp_path, monkey
     assert persistence.completed(raw) is RunState.FINISHED
     assert manager.completions == 1
     assert executor.attempts == [True, False]
+
+def test_persistent_reservation_rejects_duplicate_before_submitting():
+    """Persistent reservation cannot be repeated while the first is active."""
+    from ..run_model import FileManifest
+    import pytest
+
+    class ReservingManager(_Manager):
+        reservations = 0
+
+        def reserve(self, record):
+            self.reservations += 1
+            return record
+
+    manager = ReservingManager()
+    record = SimpleNamespace(
+        id="run", state=RunState.NEW,
+        updated_at="2026-10-20T10:00:00+00:00",
+        files=FileManifest(),
+    )
+    persistence = PersistentRun(manager, _Executor(), record)
+    published = []
+    runner = SimpleNamespace(set_manifest=published.append)
+    persistence.before_submit(runner)
+    with pytest.raises(RuntimeError, match="already"):
+        persistence.before_submit(runner)
+    assert manager.reservations == 1
+    assert published == [record.files]
