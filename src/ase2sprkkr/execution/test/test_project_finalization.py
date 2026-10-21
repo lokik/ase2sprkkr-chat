@@ -6,6 +6,7 @@ import pytest
 import ase2sprkkr.outputs.project_results as project_output
 from ase2sprkkr.execution import (
     ExecutionOutcome,
+    ExecutionSpec,
     Executor,
     FailurePhase,
     RunState,
@@ -66,7 +67,7 @@ def test_finished_run_is_persisted_before_callback_without_wait(tmp_path):
     finished = Event()
     run = manager.create_run(
         _Executor(),
-        SimpleNamespace(directory=str(tmp_path)),
+        ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
         process_result=lambda outcome: outcome,
         task="DOS",
         callback=lambda result: finished.set(),
@@ -88,7 +89,7 @@ def test_result_processor_failure_is_postprocessing_failure(tmp_path):
 
     run = manager.create_run(
         executor,
-        SimpleNamespace(directory=str(tmp_path)),
+        ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
         process_result=fail,
         task="DOS",
     )
@@ -660,7 +661,7 @@ def test_concurrent_wait_and_completion_callback_persist_only_once(
             raise ValueError("user callback error")
 
     run = manager.create_run(
-        _Executor(), SimpleNamespace(directory=str(tmp_path)),
+        _Executor(), ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
         process_result=lambda outcome: outcome,
         task="DOS", callback=callback, resources=resources,
     )
@@ -771,7 +772,7 @@ def test_unknown_observation_closes_owned_streams_but_attach_can_recover(tmp_pat
 
     executor = ExecutorWithAttach()
     first = manager.create_run(
-        executor, SimpleNamespace(directory=str(tmp_path)),
+        executor, ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
         task="DOS", process_result=lambda outcome: outcome,
         callback=lambda _: callbacks.append("unknown"), resources=resources,
     )
@@ -814,7 +815,7 @@ def test_project_persistence_failure_can_be_retried_without_resubmitting(
 
     monkeypatch.setattr(manager, "complete", fail_once)
     run = manager.create_run(
-        _Executor(), SimpleNamespace(directory=str(tmp_path)),
+        _Executor(), ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
         process_result=lambda result: result, task="DOS",
     )
     run.submit()
