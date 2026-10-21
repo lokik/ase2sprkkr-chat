@@ -171,18 +171,26 @@ def _manifest_accesses(record):
     return reads, writes
 
 
-def _path_overlap(a, b):
-    """Conservatively compare literal paths and glob declarations."""
+def _path_overlap(a, b, *, local=False):
+    """Conservatively compare paths, glob patterns and local hardlinks."""
     a_magic, b_magic = has_file_magic(a), has_file_magic(b)
+    if not a_magic and not b_magic:
+        if a == b:
+            return True
+        if local:
+            try:
+                return os.path.samefile(a, b)
+            except (FileNotFoundError, NotADirectoryError):
+                pass
+        return False
     if not a_magic:
-        return fnmatch.fnmatchcase(a, b) if b_magic else a == b
+        return fnmatch.fnmatchcase(a, b)
     if not b_magic:
         return fnmatch.fnmatchcase(b, a)
     if a == b:
         return True
 
-    # Glob/glob intersection is not generally decidable by fnmatch.
-    # Only disjoint literal prefixes can prove that no collision is possible.
+    # Only disjoint literal prefixes prove that two glob patterns cannot overlap.
     def prefix(pattern):
         return pattern[:min((pattern.find(c) for c in "*?[" if c in pattern),
                             default=len(pattern))]
@@ -192,20 +200,7 @@ def _path_overlap(a, b):
 
 
 def _paths_overlap(first, second, *, local=False):
-    for a in first:
-        for b in second:
-            if _path_overlap(a, b):
-                return True
-            # Symlink normalization cannot detect hardlinks to the same inode.
-            # Only compare inode identity for local, non-globbed paths.
-            if local and not has_file_magic(a) and not has_file_magic(b):
-                try:
-                    if os.path.samefile(a, b):
-                        return True
-                except (FileNotFoundError, NotADirectoryError):
-                    # A not-yet-created output has no inode to compare.
-                    pass
-    return False
+    return any(_path_overlap(a, b, local=local) for a in first for b in second)
 
 
 def submission_conflicts(left: RunRecord, right: RunRecord) -> bool:
