@@ -107,6 +107,17 @@ def test_sfn_write_roundtrip(tmp_path):
             copy.faces[0].VERTICES(), original.faces[0].VERTICES()
         )
 
+    # Use the same parsed SFN to check validation; rejected setters must
+    # not require rebuilding the grammar or parsing the fixture again.
+    invalid_values = (
+        (output.RADIAL_MESHES[0].RMESH, np.ones((2, 2))),
+        (output.RADIAL_MESHES[0].SHAPE_FUNCTIONS[0].VALUES, np.ones(2)),
+        (output.VORONOI_MESHES[0].FACES[0].VERTICES, np.ones((2, 3))),
+    )
+    for option, value in invalid_values:
+        with pytest.raises(DataValidityError, match=r"expected \(3[,)]"):
+            option.set(value)
+
 
 @pytest.mark.slow
 @pytest.mark.skipif(
@@ -149,19 +160,6 @@ def test_written_sfn_is_accepted_by_sprkkr(tmp_path):
     assert second.sfn_generated is False
     assert second.sfn_filename == str(rewritten)
     assert len(second.iterations) == 1
-
-
-def test_sfn_dependent_array_lengths_are_validated():
-    output = definition.read_from_string(SFN)
-
-    invalid_values = (
-        (output.RADIAL_MESHES[0].RMESH, np.ones((2, 2))),
-        (output.RADIAL_MESHES[0].SHAPE_FUNCTIONS[0].VALUES, np.ones(2)),
-        (output.VORONOI_MESHES[0].FACES[0].VERTICES, np.ones((2, 3))),
-    )
-    for option, value in invalid_values:
-        with pytest.raises(DataValidityError, match=r"expected \(3[,)]"):
-            option.set(value)
 
 
 def test_sfn_is_registered(tmp_path):
