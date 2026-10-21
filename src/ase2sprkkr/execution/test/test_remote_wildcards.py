@@ -283,3 +283,46 @@ def test_overlapping_exact_and_wildcard_caches_are_transferred_once(tmp_path):
     entries = {item.local_path: item for item in runner.files.caches}
     assert entries[str(exact)].availability_state == "available"
     assert exact.read_text() == "new"
+
+
+def test_remote_completed_run_keeps_missing_optional_wildcard_skipped(tmp_path):
+    from .test_taskfile_optional_contract import DeclaredPath
+
+    workdir = tmp_path / "local" / "calculation"
+    executor, spec, _, _ = _text_run(
+        tmp_path,
+        declared_output_files=(
+            DeclaredPath(str(workdir / "optional-*.dat"), optional=True),
+        ),
+        code="print('done')",
+    )
+    runner = _processed_run(executor, spec)
+    result = runner.run()
+    assert result.return_code == 0
+    missing = [
+        e for e in runner.files.outputs
+        if e.local_path == str(workdir / "optional-*.dat")
+    ]
+    assert len(missing) == 1
+    assert missing[0].availability_state == "skipped"
+
+
+def test_remote_completed_run_fails_on_missing_mandatory_wildcard(tmp_path):
+    import pytest
+
+    workdir = tmp_path / "local" / "calculation"
+    executor, spec, _, _ = _text_run(
+        tmp_path,
+        declared_output_files=(workdir / "required-*.dat",),
+        code="print('done')",
+    )
+    runner = _processed_run(executor, spec)
+    with pytest.raises((FileNotFoundError, RuntimeError),
+                       match="required-\\*\\.dat|remote output pattern"):
+        runner.run()
+    missing = [
+        e for e in runner.files.outputs
+        if e.local_path == str(workdir / "required-*.dat")
+    ]
+    assert len(missing) == 1
+    assert missing[0].availability_state == "failed"
