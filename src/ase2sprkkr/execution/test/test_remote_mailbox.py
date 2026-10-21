@@ -125,3 +125,32 @@ def test_retry_after_first_publication_fsync_failure(monkeypatch):
     assert remote_mailbox.publish_outcome(key, RunState.CANCELLED, None) is False
     assert calls >= 4
     assert remote_mailbox.read_outcome(key)["state"] == "finished"
+
+
+@pytest.mark.parametrize("field,value", [
+    ("state", "running"),
+    ("return_code", True),
+    ("return_code", "0"),
+    ("failure_phase", "invalid-phase"),
+    ("files", []),
+    ("error", {"unexpected": "mapping"}),
+    ("materialization_error", 4),
+])
+def test_rejects_malformed_terminal_receipt_fields(tmp_path, field, value):
+    import json
+    key = uuid4().hex
+    assert remote_mailbox.publish_outcome(key, RunState.FINISHED, 0)
+    path = remote_mailbox._path(key)
+    payload = json.loads(path.read_text())
+    payload[field] = value
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="Invalid terminal receipt"):
+        remote_mailbox.read_outcome(key)
+
+
+def test_rejects_non_object_terminal_receipt():
+    key = uuid4().hex
+    assert remote_mailbox.publish_outcome(key, RunState.FINISHED, 0)
+    remote_mailbox._path(key).write_text("[]")
+    with pytest.raises(ValueError, match="Invalid terminal receipt"):
+        remote_mailbox.read_outcome(key)
