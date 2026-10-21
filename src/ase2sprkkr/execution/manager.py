@@ -195,8 +195,18 @@ def _path_overlap(a, b):
     return pa.startswith(pb) or pb.startswith(pa)
 
 
-def _paths_overlap(first, second):
-    return any(_path_overlap(a, b) for a in first for b in second)
+def _paths_overlap(first, second, *, local=False):
+    for a in first:
+        for b in second:
+            if _path_overlap(a, b):
+                return True
+            # Symlink normalization cannot detect hardlinks to the same inode.
+            # Only compare inode identity for local, non-globbed paths.
+            if (local and not has_file_magic(a) and not has_file_magic(b)
+                    and os.path.exists(a) and os.path.exists(b)
+                    and os.path.samefile(a, b)):
+                return True
+    return False
 
 
 def submission_conflicts(left: RunRecord, right: RunRecord) -> bool:
@@ -204,14 +214,18 @@ def submission_conflicts(left: RunRecord, right: RunRecord) -> bool:
     a, b = left.execution, right.execution
     if a.endpoint != b.endpoint:
         return False
-    same_directory = a.directory.target == b.directory.target
+    local = a.directory.remote is None and b.directory.remote is None
+    same_directory = (
+        os.path.realpath(a.directory.target) == os.path.realpath(b.directory.target)
+        if local else a.directory.target == b.directory.target
+    )
     # SCF can overwrite undeclared canonical files in its working directory.
     if same_directory and (left.task == "SCF" or right.task == "SCF"):
         return True
     left_reads, left_writes = _manifest_accesses(left)
     right_reads, right_writes = _manifest_accesses(right)
-    if (_paths_overlap(left_writes, right_reads | right_writes)
-            or _paths_overlap(right_writes, left_reads)):
+    if (_paths_overlap(left_writes, right_reads | right_writes, local=local)
+            or _paths_overlap(right_writes, left_reads, local=local)):
         return True
     # Without declared writes, preserve namespace-based protection for legacy
     # and generic executors that cannot describe their output footprint.
