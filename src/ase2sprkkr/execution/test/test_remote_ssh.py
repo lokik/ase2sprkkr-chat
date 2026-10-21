@@ -65,7 +65,6 @@ def test_remote_executor_over_ssh(docker_execution_image):
     from ase.build import bulk
     from ase2sprkkr.execution import (
         ExecutionManager,
-        ExecutorPool,
         RemoteExecutor,
         ProjectRepository,
         SshTransport,
@@ -151,7 +150,7 @@ def test_remote_executor_over_ssh(docker_execution_image):
             projects = ProjectRepository(tmp / "projects")
             project = projects.create("SSH integration")
             manager = ExecutionManager(
-                executor_pool=ExecutorPool(), project_repository=projects
+                project_repository=projects
             )
             output_seen = Event()
             output = []
@@ -219,7 +218,7 @@ def test_remote_executor_over_ssh(docker_execution_image):
             # the outputs layer rather than by attaching a live runner.
             run_id = runner.id
             restarted = ExecutionManager(
-                executor_pool=ExecutorPool(), project_repository=projects
+                project_repository=projects
             )
             record = restarted.store.get(run_id)
             restarted_executor = restarted.executor_for(record)
