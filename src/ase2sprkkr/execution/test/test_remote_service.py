@@ -511,9 +511,9 @@ def test_scheduler_request_protects_remote_cache_wildcards(tmp_path):
                 {"remote_path": "*.pot"}, {"remote_path": "case.out"},
             ],
             "caches": [
-                {"file": {"remote_path": "known-restart.pot"}},
-                {"file": {"remote_path": "restart-*.pot"}},
-                {"file": {"remote_path": "external-cache.pot"}},
+                {"remote_path": "known-restart.pot"},
+                {"remote_path": "restart-*.pot"},
+                {"remote_path": "external-cache.pot"},
             ],
         },
     }
