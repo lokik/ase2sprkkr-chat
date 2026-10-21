@@ -162,7 +162,7 @@ def test_cancelled_backend_survives_diagnostic_download_failure(tmp_path):
 def test_remote_stderr_incomplete_after_success_is_download_failure(tmp_path):
     """FINISHED must not hide a truncated stderr FOLLOW stream."""
     from ase2sprkkr.execution.base import FailurePhase
-    from ase2sprkkr.execution.remote_endpoint import _RemoteRun
+    from ase2sprkkr.execution.remote import RemoteRunner
 
     stdout_path = tmp_path / "run.out"
     stderr_path = tmp_path / "run.err"
@@ -179,7 +179,7 @@ def test_remote_stderr_incomplete_after_success_is_download_failure(tmp_path):
 
     executor = _Executor(RunState.FINISHED)
     executor.endpoint.transport = Transport()
-    runner = _RemoteRun(
+    runner = RemoteRunner(
         executor,
         ExecutionSpec(
             argv=(), input_file=None, output_file=output,

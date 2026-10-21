@@ -152,7 +152,7 @@ def test_remote_executor_over_ssh(docker_execution_image):
             project = projects.create("SSH integration")
             manager = ExecutionManager(
                 executor_pool=ExecutorPool(), project_repository=projects
-            ).for_project(project)
+            )
             output_seen = Event()
             output = []
             first_output_at = []
@@ -171,7 +171,7 @@ def test_remote_executor_over_ssh(docker_execution_image):
                 directory=workdir,
                 executor=executor,
                 profile=profile,
-                project=manager,
+                project=(manager, project.id),
                 empty_spheres=False,
                 print_output=False,
             )
@@ -220,7 +220,7 @@ def test_remote_executor_over_ssh(docker_execution_image):
             run_id = runner.id
             restarted = ExecutionManager(
                 executor_pool=ExecutorPool(), project_repository=projects
-            ).for_project(project)
+            )
             record = restarted.store.get(run_id)
             restarted_executor = restarted.executor_for(record)
             replayed = load_project_result(restarted, run_id)
