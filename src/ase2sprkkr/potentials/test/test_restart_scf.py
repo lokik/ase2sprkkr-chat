@@ -60,9 +60,10 @@ def test_set_from_atoms_does_not_infer_scf_status():
     assert standalone.SCF_INFO.SCFSTATUS() == "START"
     assert atoms.potential is attached
 
+    # Return to a converged base before testing the transient result override.
+    potential.SCF_INFO.SCFSTATUS = "CONVERGED"
+    assert potential.SCF_INFO.SCFSTATUS() == "CONVERGED"
 
-def test_temporary_override_and_restart_restore_existing_result():
-    potential = _converged_potential()
     status = potential.SCF_INFO.SCFSTATUS
     status.result = "ITR"
 
