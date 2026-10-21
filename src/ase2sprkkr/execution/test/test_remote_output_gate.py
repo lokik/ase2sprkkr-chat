@@ -15,11 +15,12 @@ class _Executor:
 
         self.backend_state = RunState(state)
         self.sync_calls = 0
-        self.endpoint = SimpleNamespace(
-            connection=self,
-            file_handler=RemoteFileHandler(None),
-            transport=None,
-        )
+        self.connection = self
+        self.transport = None
+        self.file_handler = RemoteFileHandler(None)
+        async def no_stream_verification(*args):
+            return None
+        self.file_handler.verify_streams = no_stream_verification
 
     async def follow(self, run_id, files, *, offsets=None, on_chunk):
         on_chunk("out", b"streamed\n")
@@ -178,7 +179,9 @@ def test_remote_stderr_incomplete_after_success_is_download_failure(tmp_path):
             return hashlib.sha256(b"streamed\n").hexdigest()
 
     executor = _Executor(RunState.FINISHED)
-    executor.endpoint.transport = Transport()
+    executor.transport = Transport()
+    executor.file_handler.transport = executor.transport
+    del executor.file_handler.verify_streams
     runner = RemoteRunner(
         executor,
         ExecutionSpec(

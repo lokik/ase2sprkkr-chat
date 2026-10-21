@@ -1,3 +1,6 @@
+import asyncio
+import pytest
+
 """Crash boundary: remote staging metadata must be persisted before submit."""
 
 from ase2sprkkr.execution.remote import RemoteRunner
@@ -44,7 +47,7 @@ def test_prepared_manifest_is_durable_before_remote_backend_submit(tmp_path, mon
         return {"state": "running", "remote_id": "opaque-job"}
 
     monkeypatch.setattr(RemoteRunner, "_prepare_async", prepare)
-    monkeypatch.setattr("ase2sprkkr.execution.remote_endpoint.start_monitor", lambda *args, **kwargs: None)
+    monkeypatch.setattr("ase2sprkkr.execution.remote.start_monitor", lambda *args, **kwargs: None)
     executor.connection.submit = submit
 
     async def status(_backend_id, _files=None):
@@ -88,9 +91,11 @@ def test_remote_manifest_uses_same_declarations_as_local(tmp_path):
     local = FileManifest.from_spec(spec)
     executor = RemoteEndpointExecutor(LocalTransport())
     runner = executor.create_run(spec)
-    manifest = asyncio.run(runner.file_handler.prepare(
-        await executor.resolve_mapping(runner.spec.launch), runner.spec,
-    ))
+    async def prepare_files():
+        mapping = await executor.resolve_mapping(runner.spec.launch)
+        return await runner.file_handler.prepare(mapping, runner.spec)
+
+    manifest = asyncio.run(prepare_files())
     assert tuple(e.local_path for e in manifest.inputs) == (
         str(directory / "main.inp"), str(directory / "extra.inp"),
     )
@@ -107,7 +112,7 @@ def test_remote_manifest_uses_same_declarations_as_local(tmp_path):
     assert manifest.stderr.remote_path == str(remote / "local" / "main.err")
     assert manifest.stdout.remote_path == str(remote / "local" / "main.out")
     assert manifest.outputs[0].remote_path == str(remote / "local" / "one.dat")
-    assert manifest.caches[0].file.remote_path == str(remote / "local" / "restart.pot")
+    assert manifest.caches[0].remote_path == str(remote / "local" / "restart.pot")
     assert len(manifest.caches) == 1
 
 
@@ -134,14 +139,16 @@ def test_remote_file_preparation_deduplicates_paths_before_mapping(tmp_path):
     )
     runner = executor.create_run(spec)
 
-    manifest = asyncio.run(runner.file_handler.prepare(
-        await executor.resolve_mapping(runner.spec.launch), runner.spec,
-    ))
+    async def prepare_files():
+        mapping = await executor.resolve_mapping(runner.spec.launch)
+        return await runner.file_handler.prepare(mapping, runner.spec)
+
+    manifest = asyncio.run(prepare_files())
     assert [e.remote_path for e in manifest.outputs if "*" in e.remote_path] == [
         str(remote / "work" / "cut-*.dat")
     ]
-    assert [c.file.remote_path for c in manifest.caches
-            if c.file.local_path and "*" in c.file.remote_path] == [
+    assert [c.remote_path for c in manifest.caches
+            if c.local_path and "*" in c.remote_path] == [
         str(remote / "work" / "checkpoint-*.dat")
     ]
     assert manifest.caches
