@@ -237,6 +237,14 @@ def _validate_file_declarations(entries):
                             and not same_remote)):
                     raise ValueError("Merged stdout/stderr must share one file")
                 continue
+            # An explicitly declared output may also be the stdout/stderr
+            # destination. It is the same physical file, not a second
+            # competing source. Require matching paths on both hosts.
+            if ({role, previous_role} in ({"stdout", "output"}, {"stderr", "output"})
+                    and same_local
+                    and (entry.remote_path is None or previous.remote_path is None
+                         or same_remote)):
+                continue
             raise ValueError(
                 f"Duplicate file declaration: {previous_role} and {role} "
                 f"refer to the same file"
