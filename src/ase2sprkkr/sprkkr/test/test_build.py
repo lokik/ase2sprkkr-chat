@@ -22,15 +22,38 @@ class TestBuild:
         assert sum(si.symbols == "X") == 11
         np.testing.assert_allclose(si.positions, (atoms * (1, 1, 11)).positions)
 
-    def test_deprecated_hkl_warns(self, cu_sc):
-        atoms = cu_sc.copy()
-        with pytest.warns(DeprecationWarning, match="hkl parameter"):
-            semiinfinite_system(atoms, 1, hkl=(0, 0, 1))
+    @pytest.mark.parametrize("orientation_arg", ("hkl", "hkl2"))
+    def test_deprecated_orientation_warns_without_building(
+        self, monkeypatch, cu_sc, orientation_arg,
+    ):
+        # Deprecation warnings precede rotation. Stop there instead of
+        # constructing and resolving symmetry for a semi-infinite system.
+        from .. import build as build_module
 
-    def test_deprecated_hkl2_warns(self, cu_sc):
+        class StopAfterWarning(Exception):
+            pass
+
+        rotations = []
+
+        def stop_at_rotate(atoms, direction):
+            rotations.append((atoms, direction))
+            raise StopAfterWarning
+
+        monkeypatch.setattr(build_module, "rotate", stop_at_rotate)
         atoms = cu_sc.copy()
-        with pytest.warns(DeprecationWarning, match="hkl2 parameter"):
-            semiinfinite_system(atoms, 1, atoms2=atoms.copy(), hkl2=(0, 0, 1))
+        options = {orientation_arg: (0, 0, 1)}
+        if orientation_arg == "hkl2":
+            options["atoms2"] = atoms.copy()
+
+        with pytest.warns(
+            DeprecationWarning, match=rf"{orientation_arg} parameter",
+        ):
+            with pytest.raises(StopAfterWarning):
+                semiinfinite_system(atoms, 1, **options)
+
+        assert len(rotations) == 1
+        assert rotations[0][0] is options.get("atoms2", atoms)
+        assert rotations[0][1] == (0, 0, 1)
 
     def test_zero_repeat(self, cu_sc):
         atoms = cu_sc.copy()
