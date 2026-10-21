@@ -55,6 +55,7 @@ def test_local_forward_output_persists_and_observes_bytes(kind):
     output = BytesIO()
     runner = object.__new__(LocalRunner)
     runner.spec = SimpleNamespace(output_file=output, error_file=None)
+    runner._stream_handles = {"out": output, "err": None}
     runner._output_observers = OutputObservers(
         lambda text, stream: received.append((text, stream))
     )
