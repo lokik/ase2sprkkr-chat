@@ -91,16 +91,16 @@ class TestOutput:
                 # BSF/SPC rendering branches are selected by mode and keyword.
                 # Large fixtures with the same branch need not be rasterized
                 # again merely to repeat a plotting smoke check.
-                plot_kind = (
-                    extension,
-                    output.MODE() if extension in ("bsf", "spc") else None,
-                    output.KEYWORD() if extension in ("bsf", "spc") else None,
-                    # SPC's single-angle and 2D plotting branches differ.
-                    (output.NP() > 1, output.NT() > 1) if extension == "spc" else None,
-                    # DOS plots also branch on the number of atom types
-                    # (including the total curve) and spin channels.
-                    (output.n_types(), output.n_spins()) if extension == "dos" else None,
-                )
+                if extension in ("bsf", "spc"):
+                    plot_kind = (
+                        extension, output.MODE(), output.KEYWORD(),
+                        # SPC's single-angle and 2D plotting branches differ.
+                        (output.NP() > 1, output.NT() > 1) if extension == "spc" else None,
+                    )
+                else:
+                    # Other file types may select plots using additional data.
+                    # Keep their per-fixture smoke coverage until proven equivalent.
+                    plot_kind = (extension, filename)
                 if plot_kind in plotted_modes:
                     continue
                 with tempfile.NamedTemporaryFile() as target:
