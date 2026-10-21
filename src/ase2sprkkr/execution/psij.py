@@ -701,6 +701,9 @@ class PsijExecutor(Executor):
             return job
 
     def _observe_job(self, job, observer):
+        # A first registration can receive a synchronous native callback.
+        # Replay is only needed for subscribers joining an existing group.
+        replay_terminal = None
         with self._jobs_lock:
             observers = self._observers.get(job)
             if observers is None:
@@ -717,6 +720,7 @@ class PsijExecutor(Executor):
                     raise
             else:
                 observers.add(observer)
+                replay_terminal = self._terminal_observations.get(job)
 
         def detach():
             with self._jobs_lock:
@@ -743,12 +747,25 @@ class PsijExecutor(Executor):
                              or _psij_state(job.status).is_terminal)):
                     del self._jobs[str(native_id)]
                 self._trim_jobs()
+
+        # The callback is application code: never invoke it under _jobs_lock.
+        # This is the already-observed terminal fact, not stale job.status.
+        if replay_terminal is not None:
+            try:
+                observer(replay_terminal)
+            except BaseException:
+                detach()
+                raise
         return detach
 
     def _dispatch_job_status(self, job, status):
         with self._jobs_lock:
             observers = tuple(self._observers.get(job, ()))
-            if observers and _psij_state(status).is_terminal:
+            if not observers or job in self._terminal_observations:
+                # A native terminal callback is definitive. Ignore later
+                # stale/duplicate notifications, including ACTIVE regressions.
+                return
+            if _psij_state(status).is_terminal:
                 self._terminal_observations[job] = status
         for observer in observers:
             observer(status)

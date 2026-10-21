@@ -1130,6 +1130,69 @@ def test_psij_subscriptions_share_job_and_detach_independently(monkeypatch):
     ("FAILED", RunState.FAILED),
     ("CANCELED", RunState.CANCELLED),
 ])
+def test_psij_late_subscriber_replays_terminal_native_status(
+    monkeypatch, native_name, expected,
+):
+    """A subscriber joining after completion must not wait for another event."""
+    executor = _executor(monkeypatch, _Backend())
+    job = _Job()
+    job.native_id = "shared"
+    job.status = _Status("ACTIVE")
+    executor._cache_submitted_job(job)
+
+    delivered = []
+    first = executor._observe_job(
+        job, lambda status: delivered.append(("first", status)),
+    )
+    terminal = _Status(native_name, 0 if expected is RunState.FINISHED else 1)
+    job.emit(terminal)  # Deliberately leave job.status at ACTIVE.
+    assert job.status.state.name == "ACTIVE"
+    assert delivered == [("first", terminal)]
+
+    # _observe_job must replay before returning, independent of job.status.
+    second = executor._observe_job(
+        job, lambda status: delivered.append(("second", status)),
+    )
+    assert delivered == [("first", terminal), ("second", terminal)]
+    assert executor._terminal_observations[job] is terminal
+
+    # Stale/duplicate native callbacks must not undo confirmed completion.
+    job.emit(_Status("ACTIVE"))
+    job.emit(_Status(native_name, 17))
+    assert delivered == [("first", terminal), ("second", terminal)]
+
+    first()
+    assert job in executor._observers
+    assert executor.attach_native_job("shared") is job
+    second()
+    assert job not in executor._observers
+    assert job not in executor._terminal_observations
+    assert "shared" not in executor._jobs
+
+
+def test_psij_late_subscriber_callback_failure_detaches(monkeypatch):
+    """Failed synchronous replay must not leak an unusable subscription."""
+    executor = _executor(monkeypatch, _Backend())
+    job = _Job()
+    initial = lambda _: None
+    first = executor._observe_job(job, initial)
+    job.emit(_Status("COMPLETED", 0))
+
+    def broken(_):
+        raise ValueError("observer rejected completion")
+
+    with pytest.raises(ValueError, match="observer rejected"):
+        executor._observe_job(job, broken)
+    assert executor._observers[job] == {initial}
+    first()
+    assert job not in executor._observers
+
+
+@pytest.mark.parametrize("native_name, expected", [
+    ("COMPLETED", RunState.FINISHED),
+    ("FAILED", RunState.FAILED),
+    ("CANCELED", RunState.CANCELLED),
+])
 def test_psij_terminal_callback_evicts_stale_native_job(
     monkeypatch, native_name, expected,
 ):
