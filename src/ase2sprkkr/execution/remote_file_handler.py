@@ -289,7 +289,7 @@ class RemoteFileHandler:
             if signature is None:
                 raise FileNotFoundError(f"Remote {kind} output is missing: {entry.remote_path}")
             for stream in (spec.output_file, spec.error_file):
-                if stream is not None and not stream.closed:
+                if stream is not None and hasattr(stream, "flush") and not stream.closed:
                     stream.flush()
             stat = os.stat(local)
             if stat.st_size != signature[0]:

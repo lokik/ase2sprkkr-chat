@@ -105,7 +105,6 @@ class RemoteRunner(ManagedRunner):
         if target is None or not data:
             return
         offset = self._stream_positions[kind]
-        target.flush()
         path = self._local_path(target)
         with open(path, "r+b", buffering=0) as stream:
             fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
@@ -141,7 +140,6 @@ class RemoteRunner(ManagedRunner):
             elif kind == "err" and target is self.spec.output_file:
                 offsets[kind] = offsets["out"]
             else:
-                target.flush()
                 offsets[kind] = os.path.getsize(self._local_path(target))
         self._stream_positions = dict(offsets)
         return await self.executor.connection.follow(
