@@ -21,7 +21,9 @@ class ProcessOutputParser:
 
     def result(self, output, error, return_code):
         """Postprocess parsed stdout/stderr after execution completes."""
-        if return_code != 0:
+        # Missing exit status is not evidence of process failure. Preserve
+        # the unknown code instead of converting it to either zero or an error.
+        if return_code is not None and return_code != 0:
             exc = ValueError(f"The process ended with return value {return_code}")
             exc.output = output
             exc.error = error

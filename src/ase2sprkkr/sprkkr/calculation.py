@@ -918,9 +918,7 @@ def _create_sprkkr_run(
             return reader.read_from_file(
                 outcome.output_file,
                 outcome.error_file,
-                return_code=(
-                    0 if outcome.return_code is None else outcome.return_code
-                ),
+                return_code=outcome.return_code,
                 input_file=outcome.input_file,
             )
 
