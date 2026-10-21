@@ -161,3 +161,41 @@ def test_concurrent_wait_and_completion_callback_persist_and_ack_once():
     assert manager.completions == 1
     assert executor.acknowledgements == 1
     assert run.record.state is RunState.FINISHED
+
+
+def test_terminal_record_deduplicates_after_recreating_persistence():
+    manager, raw, executor = _Manager(), _Runner(), _Executor()
+    record = SimpleNamespace(
+        id="run", state=RunState.RUNNING,
+        updated_at="2026-10-20T10:00:00+00:00",
+        execution=SimpleNamespace(submitted=lambda value: value),
+    )
+    raw.state = RunState.FINISHED
+    first = PersistentRun(manager, executor, record)
+    first.completed(raw)
+    assert manager.completions == 1
+
+    restarted = PersistentRun(manager, executor, first.record)
+    assert restarted.completed(raw) is RunState.FINISHED
+    assert manager.completions == 1
+    assert executor.acknowledgements == 1
+
+
+def test_unknown_is_observation_not_terminal_state():
+    manager, raw, executor = _Manager(), _Runner(), _Executor()
+    record = SimpleNamespace(
+        id="run", state=RunState.RUNNING,
+        updated_at="2026-10-20T10:00:00+00:00",
+        execution=SimpleNamespace(submitted=lambda value: value),
+    )
+    raw.state = RunState.UNKNOWN
+    first = PersistentRun(manager, executor, record)
+    first.completed(raw)
+    first.completed(raw)
+    assert manager.transitions == 1
+
+    raw.state = RunState.FINISHED
+    recovered = PersistentRun(manager, executor, first.record)
+    recovered.completed(raw)
+    assert manager.completions == 1
+    assert executor.acknowledgements == 1
