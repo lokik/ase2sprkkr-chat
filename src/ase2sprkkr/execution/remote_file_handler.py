@@ -435,9 +435,18 @@ class RemoteFileHandler:
                     raise ValueError(
                         f"Cannot restore unresolved remote file: {entry.local_path}"
                     )
-                # A remote source must stay under the run's persisted workspace.
-                # unmap_path additionally refuses local symlink escapes.
+                # Validate both workspace boundaries without reconstructing
+                # (and potentially replacing) the persisted file pairing.
                 manifest.unmap_path(remote)
+                from pathlib import Path
+                try:
+                    Path(entry.local_path).resolve().relative_to(
+                        Path(manifest.local_root).resolve()
+                    )
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Local file is outside mapped root: {entry.local_path}"
+                    ) from exc
                 target = os.path.abspath(os.fspath(
                     destinations.get(entry.local_path, entry.local_path)
                 ))

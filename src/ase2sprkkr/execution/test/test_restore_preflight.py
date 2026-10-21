@@ -60,3 +60,24 @@ def test_restore_rejects_conflicting_staging_targets_before_transfer(tmp_path):
         ))
     assert transport.downloads == []
     assert not staged.exists()
+
+
+def test_restore_rejects_local_path_outside_project_before_download(tmp_path):
+    local = tmp_path / "local"
+    remote = tmp_path / "remote"
+    outside = tmp_path / "outside"
+    for directory in (local, remote, outside):
+        directory.mkdir()
+    (remote / "good.dat").write_bytes(b"good")
+    good = FileEntry(str(local / "good.dat"), str(remote / "good.dat"))
+    escaped = FileEntry(str(outside / "bad.dat"), str(remote / "bad.dat"))
+    record = SimpleNamespace(files=FileManifest(
+        outputs=(good, escaped), local_root=str(local), remote_root=str(remote),
+    ))
+    transport = RecordingTransport()
+    with pytest.raises(ValueError, match="outside mapped root"):
+        asyncio.run(RemoteFileHandler(transport).restore(
+            record, (good.local_path, escaped.local_path),
+        ))
+    assert transport.downloads == []
+    assert not (local / "good.dat").exists()
