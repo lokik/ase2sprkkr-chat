@@ -399,20 +399,22 @@ class RemoteFileHandler:
             os.utime(local, ns=(stat.st_atime_ns, signature[1]))
 
     async def restore(self, run, paths, *, destinations=None):
-        """Restore only persisted concrete files; caller checks digests."""
+        """Restore only persisted concrete files after validating every request."""
+        manifest = run.files
+        if manifest is None or manifest.remote_root is None:
+            raise ValueError("Remote run has no persisted file workspace")
         destinations = {} if destinations is None else {
-            os.path.abspath(os.fspath(p)): os.fspath(target)
-            for p, target in destinations.items()
+            os.path.abspath(os.fspath(path)): os.fspath(target)
+            for path, target in destinations.items()
         }
         entries = (
-            *run.files.inputs, *run.files.outputs,
-            *(cache for cache in run.files.caches),
-            run.files.stdout, run.files.stderr,
+            *manifest.inputs, *manifest.outputs, *manifest.caches,
+            manifest.stdout, manifest.stderr,
         )
+        transfers = []
+        destinations_seen = {}
         for value in paths:
             local = os.path.abspath(os.fspath(value))
-            # A wildcard request selects only already-materialized members.
-            # Never rediscover historical membership on the target.
             if has_file_magic(local):
                 selected = tuple(
                     entry for entry in entries if entry is not None
@@ -426,10 +428,26 @@ class RemoteFileHandler:
             if not selected:
                 raise ValueError(f"File has no persisted remote source: {local}")
             for entry in selected:
-                if entry.remote_path is None or has_file_magic(entry.remote_path):
+                remote = entry.remote_path
+                if remote is None or has_file_magic(remote):
                     raise ValueError(
                         f"Cannot restore unresolved remote file: {entry.local_path}"
                     )
-                target = destinations.get(entry.local_path, entry.local_path)
-                if not os.path.isfile(target):
-                    await self.transport.get_file(entry.remote_path, target)
+                # A remote source must stay under the run's persisted workspace.
+                # unmap_path additionally refuses local symlink escapes.
+                manifest.unmap_path(remote)
+                target = os.path.abspath(os.fspath(
+                    destinations.get(entry.local_path, entry.local_path)
+                ))
+                previous = destinations_seen.get(os.path.realpath(target))
+                if previous is not None and previous != remote:
+                    raise ValueError(f"Conflicting restore destinations: {target}")
+                destinations_seen[os.path.realpath(target)] = remote
+                pair = (remote, target)
+                if pair not in transfers:
+                    transfers.append(pair)
+
+        # Validate every requested file before starting the first download.
+        for remote, target in transfers:
+            if not os.path.isfile(target):
+                await self.transport.get_file(remote, target)
