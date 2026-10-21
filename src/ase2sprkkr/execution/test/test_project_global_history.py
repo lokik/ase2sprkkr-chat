@@ -264,7 +264,11 @@ def test_guarded_run_identity_across_day_shards(tmp_path):
             store.save(changed)
         with pytest.raises(ValueError, match="persistent creation time"):
             store.update(changed, lambda current: current)
-        assert not store._path(changed).exists()
+        # A changed timestamp on the same day resolves to the existing
+        # shard path. Its record must be unchanged, not absent.
+        if store._path(changed) != store._path(original):
+            assert not store._path(changed).exists()
+        assert store._path(original).is_file()
         assert store.get(original.id) == original
         assert store.runs() == (original,)
 
