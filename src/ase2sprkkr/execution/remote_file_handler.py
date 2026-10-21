@@ -326,28 +326,6 @@ class RemoteFileHandler:
         return manifest
 
     @classmethod
-    def mark_pending_failed(cls, manifest, message):
-        if manifest is None:
-            return None
-        return cls._mark_entries(
-            manifest,
-            (entry for entry in manifest.files
-             if entry.availability_state in (None, "pending")),
-            "failed", message,
-        )
-
-    @classmethod
-    def mark_pending_available(cls, manifest):
-        if manifest is None:
-            return None
-        return cls._mark_entries(
-            manifest,
-            (entry for entry in manifest.files
-             if entry.availability_state == "pending"),
-            "available",
-        )
-
-    @classmethod
     def mark_streams_failed(cls, manifest, message):
         if manifest is None:
             return None
@@ -431,6 +409,38 @@ class RemoteFileHandler:
                 entry.local_path, state, kind=kind,
                 remote_path=entry.remote_path,
             )
+        return manifest, first_error
+
+    async def verify_stream_availability(self, manifest, spec):
+        """Record each FOLLOW stream only after its own integrity check."""
+        if manifest is None:
+            return None, None
+        first_error = None
+        checked = set()
+        for name in ("stdout", "stderr"):
+            entry = getattr(manifest, name)
+            if entry is None or entry.local_path is None:
+                continue
+            identity = (entry.local_path, entry.remote_path)
+            if identity in checked:
+                continue
+            checked.add(identity)
+            try:
+                if entry.remote_path is None:
+                    raise ValueError(f"No remote path for {name}")
+                single = replace(manifest, stdout=None, stderr=None, **{name: entry})
+                await self.verify_streams(single, spec)
+            except Exception as exc:
+                manifest = manifest.with_file_availability(
+                    entry.local_path, "failed", str(exc),
+                    remote_path=entry.remote_path,
+                )
+                if first_error is None:
+                    first_error = exc
+            else:
+                manifest = manifest.with_file_availability(
+                    entry.local_path, "available", remote_path=entry.remote_path,
+                )
         return manifest, first_error
 
     async def verify_streams(self, manifest, spec):

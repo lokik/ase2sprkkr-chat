@@ -176,7 +176,6 @@ class RemoteRunner(ManagedRunner):
             if transfer_error is not None:
                 raise transfer_error
         except Exception as exc:
-            self._files = self.file_handler.mark_pending_failed(self._files, str(exc))
             if backend_state == RunState.FINISHED:
                 self._state = RunState.FAILED
                 self._failure_phase = FailurePhase.DOWNLOAD
@@ -187,21 +186,18 @@ class RemoteRunner(ManagedRunner):
                 self._failure_phase = FailurePhase.EXECUTION
             return
 
-        self._files = self.file_handler.mark_pending_available(self._files)
         self._state = backend_state
         if self._state == RunState.FAILED and self._failure_phase is None:
             self._failure_phase = FailurePhase.EXECUTION
         if self._state == RunState.FINISHED and self._files is not None:
-            try:
-                await self.file_handler.verify_streams(self._files, self.spec)
-            except Exception as exc:
+            self._files, verification_error = (
+                await self.file_handler.verify_stream_availability(self._files, self.spec)
+            )
+            if verification_error is not None:
                 self._state = RunState.FAILED
                 self._failure_phase = FailurePhase.DOWNLOAD
-                self._failure_message = str(exc)
-                self._files = self.file_handler.mark_streams_failed(
-                    self._files, str(exc),
-                )
-                raise
+                self._failure_message = str(verification_error)
+                raise verification_error
 
     def set_manifest(self, files):
         """Use the exact manifest already reserved by the project layer."""

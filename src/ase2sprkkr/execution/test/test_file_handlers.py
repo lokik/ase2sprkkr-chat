@@ -609,3 +609,48 @@ def test_remote_file_handler_does_not_add_files_on_availability_change(tmp_path)
     assert len(updated.outputs) == 1
     assert updated.outputs[0].availability_state == "failed"
     assert original.outputs == (declared,)
+
+def test_file_delivery_status_is_not_inferred_from_global_success(tmp_path):
+    import asyncio
+    from types import SimpleNamespace
+    from ase2sprkkr.execution.remote_file_handler import RemoteFileHandler
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+
+    class Transport:
+        async def file_signature(self, path):
+            return None
+    out = str(tmp_path / "missing.out")
+    manifest = FileManifest(stdout=FileEntry(out, "/remote/missing.out", "pending"))
+    updated, error = asyncio.run(RemoteFileHandler(Transport()).verify_stream_availability(
+        manifest, SimpleNamespace(output_file=None, error_file=None),
+    ))
+    assert isinstance(error, FileNotFoundError)
+    assert updated.stdout.availability_state == "failed"
+    assert manifest.stdout.availability_state == "pending"
+
+
+def test_stream_verification_records_success_and_failure_separately(tmp_path):
+    import asyncio
+    from types import SimpleNamespace
+    from ase2sprkkr.execution.remote_file_handler import RemoteFileHandler
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+    from ase2sprkkr.common.file_versions import file_digest
+
+    good = tmp_path / "good.out"
+    good.write_bytes(b"good")
+    bad = tmp_path / "bad.err"
+    class Transport:
+        async def file_signature(self, path):
+            return (4, good.stat().st_mtime_ns) if path == "/remote/good" else None
+        async def file_digest(self, path):
+            return file_digest(good) if path == "/remote/good" else None
+    manifest = FileManifest(
+        stdout=FileEntry(str(good), "/remote/good", "pending"),
+        stderr=FileEntry(str(bad), "/remote/bad", "pending"),
+    )
+    updated, error = asyncio.run(RemoteFileHandler(Transport()).verify_stream_availability(
+        manifest, SimpleNamespace(output_file=None, error_file=None),
+    ))
+    assert isinstance(error, FileNotFoundError)
+    assert updated.stdout.availability_state == "available"
+    assert updated.stderr.availability_state == "failed"
