@@ -225,3 +225,48 @@ def test_project_cancel_returns_while_backend_submission_is_blocked():
     assert any(change.get("state") == RunState.CANCELLED for change in store.transitions)
     project.cancel()
     assert backend.cancelled == 1
+
+
+def test_preflight_cancellation_settles_project_record():
+    """An interrupted preflight cannot strand a reserved SUBMITTING record."""
+    from types import SimpleNamespace
+    from ase2sprkkr.execution.manager import ProjectRunner
+
+    class Backend(_BackendRunner):
+        def __init__(self):
+            super().__init__()
+            self.release_submit.set()
+
+        def prepare_submission(self):
+            project.cancel()
+            raise asyncio.CancelledError("cancelled while preparing")
+
+    class Manager:
+        def __init__(self):
+            self.completed = []
+
+        def reserve(self, record):
+            return SimpleNamespace(**{**vars(record), "state": RunState.SUBMITTING})
+
+        def complete(self, record, **changes):
+            self.completed.append(changes)
+            return SimpleNamespace(**{**vars(record), **changes})
+
+    backend = Backend()
+    resource = _Resource()
+    runner = PostprocessingRunner(
+        backend, lambda x: x, resources=ExecutionResources(resource),
+    )
+    manager = Manager()
+    project = ProjectRunner(
+        manager, object(), runner,
+        SimpleNamespace(state=RunState.NEW, id="run", updated_at="new"),
+    )
+    with pytest.raises(asyncio.CancelledError):
+        project.submit()
+
+    assert project.record.state == RunState.CANCELLED
+    assert len(manager.completed) == 1
+    assert manager.completed[0]["artifacts_available"] is False
+    assert resource.closed
+    assert backend.submitted == 0
