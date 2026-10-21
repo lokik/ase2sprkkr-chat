@@ -6,7 +6,7 @@ import pytest
 
 import ase2sprkkr.execution._durability as durability
 import ase2sprkkr.execution.manager as manager_module
-import ase2sprkkr.execution.artifact_history as artifact_history
+import ase2sprkkr.execution.file_history as file_history
 from ase2sprkkr.execution.base import RunState
 from ase2sprkkr.execution.endpoint import ExecutorEndpoint
 from ase2sprkkr.execution.run_model import FileManifest, FileEntry
@@ -126,7 +126,7 @@ def test_reserve_syncs_inputs_before_submitting_record(tmp_path, monkeypatch):
     events = []
 
     monkeypatch.setattr(
-        artifact_history,
+        file_history,
         "sync_file",
         lambda path: events.append(("sync", Path(path).name)),
     )
@@ -145,7 +145,7 @@ def test_reserve_syncs_inputs_before_submitting_record(tmp_path, monkeypatch):
     assert events[:2] == [("sync", "input.inp"), ("state", "submitting")]
 
 
-def test_artifact_publication_syncs_outputs_before_terminal_record(tmp_path, monkeypatch):
+def test_file_publication_syncs_outputs_before_terminal_record(tmp_path, monkeypatch):
     output_file = tmp_path / "output.out"
     output_file.write_text("result")
     store = RunStore(tmp_path / "runs")
@@ -160,7 +160,7 @@ def test_artifact_publication_syncs_outputs_before_terminal_record(tmp_path, mon
     events = []
 
     monkeypatch.setattr(
-        artifact_history,
+        file_history,
         "sync_file",
         lambda path: events.append(("sync", Path(path).name)),
     )
@@ -173,7 +173,7 @@ def test_artifact_publication_syncs_outputs_before_terminal_record(tmp_path, mon
 
     monkeypatch.setattr(manager, "transition", tracked_transition)
 
-    finalized = manager.complete(record, state=RunState.FINISHED, return_code=0, artifacts_available=True)
+    finalized = manager.complete(record, state=RunState.FINISHED, return_code=0, files_available=True)
 
     assert finalized.state == RunState.FINISHED
     assert events[:2] == [("sync", "output.out"), ("state", "finished")]

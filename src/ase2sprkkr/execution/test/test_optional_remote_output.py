@@ -1,4 +1,4 @@
-"""Focused tests for optional remote artifact availability."""
+"""Focused tests for optional remote file availability."""
 
 import asyncio
 
