@@ -80,6 +80,10 @@ def publish_outcome(receipt_id, state, return_code, failure_phase=None, *,
         try:
             os.link(temporary, path)
         except FileExistsError:
+            # An earlier publisher may have linked the receipt but failed
+            # before syncing the directory. Retry the durability barrier
+            # before treating the existing receipt as committed.
+            fsync_directory(path.parent)
             return False
         fsync_directory(path.parent)
         return True
