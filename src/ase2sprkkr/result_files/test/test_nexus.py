@@ -2,6 +2,7 @@
 from pathlib import Path
 import numpy as np
 import pytest
+from importlib.util import find_spec
 
 h5py = pytest.importorskip("h5py")
 from ase2sprkkr.result_files.nexus import write_arpes_nexus
@@ -53,13 +54,14 @@ class SPC:
 @pytest.mark.parametrize("mode,np_", [("energy",1),("energy",2),("kx_ky",2)])
 def test_native_modes(tmp_path, mode, np_):
     spc=SPC(mode,np_)
-    dest=tmp_path/"map.nxs"
+    dest=tmp_path/f"native_{mode}_{np_}.nxs"
     with pytest.warns(UserWarning,match="No SPR-KKR input"):
         assert write_arpes_nexus(spc,dest)==dest
     expected=(2,2,3) if mode=="energy" and np_>1 else (
         (2,3) if mode=="energy" else (np_,3)
     )
     with h5py.File(dest) as f:
+        assert f.attrs["file_name"] == dest.name
         data=f["entry/data"]
         assert data["data"].shape==expected
         np.testing.assert_array_equal(data["data"],spc.raw[:,2].reshape(expected))
@@ -80,6 +82,12 @@ def test_native_modes(tmp_path, mode, np_):
             assert data["energy"].attrs["units"]=="eV"
             assert data["k_parallel"].attrs["units"] == "1/angstrom"
             assert "native_units" not in data["k_parallel"].attrs
+
+    # Keep the core kx_ky assertions active if optional nexusformat is absent.
+    if mode == "kx_ky" and find_spec("nexusformat") is not None:
+        from nexusformat.nexus import nxopen
+        with nxopen(str(dest)) as root:
+            assert root.get_default().nxsignal.shape == expected
 
 
 def test_explicit_input_precedence_and_original_options(tmp_path,monkeypatch):
@@ -111,11 +119,6 @@ def test_explicit_input_precedence_and_original_options(tmp_path,monkeypatch):
         np.testing.assert_array_equal(original["SPEC_EL/NK1"],3)
         np.testing.assert_array_equal(original["SPEC_EL/K1"],[1,0])
         assert "k_basis" not in f["entry/data"]
-
-
-def test_missing_input_warning(tmp_path):
-    with pytest.warns(UserWarning,match="No SPR-KKR input"):
-        write_arpes_nexus(SPC(),tmp_path/"missing.nxs")
 
 
 def test_explicit_invalid_input_raises(tmp_path):
@@ -175,24 +178,6 @@ def test_real_wse2_spectrum(tmp_path):
     with h5py.File(out) as f:
         np.testing.assert_array_equal(f["entry/data/data"],spc.TOTAL())
         np.testing.assert_array_equal(f["entry/sprkkr_spc/raw_data"],spc.RAW_DATA())
-
-
-def test_independent_nexus_reader(tmp_path):
-    nxopen = pytest.importorskip("nexusformat.nexus").nxopen
-    dest=tmp_path/"reader.nxs"
-    with pytest.warns(UserWarning):
-        write_arpes_nexus(SPC("kx_ky",2),dest)
-    with nxopen(str(dest)) as root:
-        assert root.get_default().nxsignal.shape==(2,3)
-
-
-
-def test_atomic_output_filename_is_final_target(tmp_path):
-    target=tmp_path/"real-target.nxs"
-    with pytest.warns(UserWarning):
-        write_arpes_nexus(SPC(),target)
-    with h5py.File(target) as f:
-        assert f.attrs["file_name"]=="real-target.nxs"
 
 
 def test_native_au_constant_energy_spc(tmp_path):

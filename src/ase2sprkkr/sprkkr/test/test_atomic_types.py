@@ -15,49 +15,26 @@ def make_atom():
     )
 
 
-def test_explicit_n_core_is_returned():
+def test_electron_counts_accept_consistent_values_and_reject_inconsistent_ones():
+    """Exercise successive setters on one atom and check cross-field invariants."""
     atom = make_atom()
-    assert atom.n_core == 18
+    expected = (26, 18, 8, 0)
+    attributes = ("n_electrons", "n_core", "n_valence", "n_semicore")
+    invalid = (25, 17, 7, 1)
 
+    # Check constructor values before testing the setters.
+    assert tuple(getattr(atom, name) for name in attributes) == expected
 
-@pytest.mark.parametrize(
-    ("attribute", "value"),
-    [
-        ("n_electrons", 26),
-        ("n_core", 18),
-        ("n_valence", 8),
-        ("n_semicore", 0),
-    ],
-)
-def test_electron_count_setters_accept_consistent_values(attribute, value):
-    atom = make_atom()
+    for name, value, invalid_value in zip(attributes, expected, invalid):
+        setattr(atom, name, value)
+        # A successful assignment must not change any other electron count.
+        assert tuple(getattr(atom, attr) for attr in attributes) == expected, f"accepted {name}"
 
-    setattr(atom, attribute, value)
+        with pytest.raises(ValueError):
+            setattr(atom, name, invalid_value)
 
-    assert getattr(atom, attribute) == value
-
-
-@pytest.mark.parametrize(
-    ("attribute", "invalid_value", "expected_value"),
-    [
-        ("n_electrons", 25, 26),
-        ("n_core", 17, 18),
-        ("n_valence", 7, 8),
-        ("n_semicore", 1, 0),
-    ],
-)
-def test_electron_count_setters_reject_without_mutating_state(
-    attribute,
-    invalid_value,
-    expected_value,
-):
-    atom = make_atom()
-
-    with pytest.raises(ValueError):
-        setattr(atom, attribute, invalid_value)
-
-    assert getattr(atom, attribute) == expected_value
-    assert (atom.n_electrons, atom.n_core, atom.n_valence, atom.n_semicore) == (26, 18, 8, 0)
+        # A failed assignment must leave every electron count unchanged.
+        assert tuple(getattr(atom, attr) for attr in attributes) == expected, f"rejected {name}"
 
 
 def test_invalid_n_electrons_does_not_update_potential_z():
