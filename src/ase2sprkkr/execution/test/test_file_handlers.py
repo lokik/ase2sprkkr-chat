@@ -391,3 +391,83 @@ def test_always_input_sync_uploads_without_unnecessary_digest_checks(tmp_path):
     assert (remote / source.name).read_text() == "input"
     assert manifest.inputs[0].remote_path == str(remote / source.name)
 
+
+def test_cheap_remote_sync_decisions_do_not_hash_files(tmp_path, monkeypatch):
+    """Existence checks suffice for ALWAYS/MISSING and absent CHANGED outputs."""
+    from ase2sprkkr.execution import FileMapping
+    from ase2sprkkr.execution.base import ExecutionOutcome
+    from ase2sprkkr.execution import remote_file_handler
+
+    def unexpected_digest(*args, **kwargs):
+        pytest.fail("A content digest is unnecessary for this sync policy")
+
+    class NoDigestTransport(LocalTransport):
+        async def file_digest(self, path):
+            unexpected_digest(path)
+
+    monkeypatch.setattr(remote_file_handler, "file_digest", unexpected_digest)
+    handler = RemoteEndpointExecutor(NoDigestTransport()).file_handler
+
+    cases = (
+        ("always", True, "remote"),
+        ("missing", True, "local"),
+        ("missing", False, "remote"),
+        ("changed", False, "remote"),
+    )
+    for index, (policy, local_exists, expected) in enumerate(cases):
+        local, remote = tmp_path / f"local-{index}", tmp_path / f"remote-{index}"
+        local.mkdir()
+        remote.mkdir()
+        target, source = local / "output.dat", remote / "output.dat"
+        source.write_text("remote")
+        if local_exists:
+            target.write_text("local")
+        mapping = FileMapping(str(local), str(remote), output_sync=policy)
+        manifest = FileManifest(outputs=(
+            FileEntry(str(target), str(source), availability_state="pending"),
+        ))
+        result, error = asyncio.run(handler.collect(
+            mapping, manifest, ExecutionOutcome(), required=True,
+        ))
+        assert error is None
+        assert target.read_text() == expected
+        assert result.outputs[0].availability_state == "available"
+
+
+def test_cache_missing_policy_uses_signature_and_local_existence(tmp_path, monkeypatch):
+    """Cache baselines matter even when output content hashes are unnecessary."""
+    from ase2sprkkr.execution import FileMapping
+    from ase2sprkkr.execution.base import ExecutionOutcome
+    from ase2sprkkr.execution import remote_file_handler
+
+    def unexpected_digest(*args, **kwargs):
+        pytest.fail("Cache sync must not hash file contents for MISSING")
+
+    class NoDigestTransport(LocalTransport):
+        async def file_digest(self, path):
+            unexpected_digest(path)
+
+    monkeypatch.setattr(remote_file_handler, "file_digest", unexpected_digest)
+    local, remote = tmp_path / "local", tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    source = remote / "restart.pot"
+    source.write_text("updated")
+    target = local / "restart.pot"
+    target.write_text("existing")
+    manifest = FileManifest(caches=(
+        FileEntry(str(target), str(source), pre_run_signature=(0, 0)),
+    ))
+    handler = RemoteEndpointExecutor(NoDigestTransport()).file_handler
+    mapping = FileMapping(str(local), str(remote), output_sync="missing")
+
+    first, error = asyncio.run(handler.collect(mapping, manifest, ExecutionOutcome()))
+    assert error is None
+    assert first.caches[0].availability_state == "skipped"
+    assert target.read_text() == "existing"
+
+    target.unlink()
+    second, error = asyncio.run(handler.collect(mapping, manifest, ExecutionOutcome()))
+    assert error is None
+    assert second.caches[0].availability_state == "available"
+    assert target.read_text() == "updated"

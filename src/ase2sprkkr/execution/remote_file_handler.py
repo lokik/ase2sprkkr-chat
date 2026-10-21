@@ -56,21 +56,30 @@ class RemoteFileHandler:
         if policy == FileSyncPolicy.NEVER:
             used[target] = source
             return target
+        local_exists = os.path.isfile(source)
         if policy == FileSyncPolicy.ALWAYS:
-            # Content hashes cannot change this decision. Avoid hashing large
-            # inputs locally and on the remote host before uploading them.
-            exists = os.path.isfile(source)
-            if required and not exists:
+            if required and not local_exists:
                 raise FileNotFoundError(f"Local input file does not exist: {source}")
-            should_upload = exists
-        else:
-            local_digest = file_digest(source, missing_ok=True)
-            remote_digest = await self.transport.file_digest(target)
-            if required and local_digest is None and remote_digest is None:
+            should_upload = local_exists
+        elif not local_exists:
+            # A missing local cache is valid; a mandatory input must exist
+            # on at least one host. Neither case requires a content digest.
+            if required and await self.transport.file_signature(target) is None:
                 raise FileNotFoundError(
                     f"Input file exists neither locally nor remotely: {source}"
                 )
-            should_upload = policy.should_transfer(local_digest, remote_digest)
+            should_upload = False
+        elif policy == FileSyncPolicy.MISSING:
+            should_upload = await self.transport.file_signature(target) is None
+        else:
+            remote_digest = await self.transport.file_digest(target)
+            # No need to hash the local file when the target is absent.
+            should_upload = (
+                remote_digest is None or
+                policy.should_transfer(
+                    file_digest(source, missing_ok=True), remote_digest,
+                )
+            )
         if should_upload:
             if uploads is None:
                 await self.transport.put_file(source, target)
@@ -170,22 +179,32 @@ class RemoteFileHandler:
     async def _sync_file(self, mapping, entry, *, is_cache, before=None, required=False):
         """One transfer mechanism; cache and output policies differ only in decision."""
         remote, local = entry.remote_path, entry.local_path
+        policy = FileSyncPolicy(mapping.output_sync)
+        local_exists = os.path.isfile(local)
         if is_cache:
+            # Cache membership was frozen at termination; compare to the
+            # target's pre-run signature, not the client's current contents.
             after = await self.transport.file_signature(remote)
-            if (after is None or after == before
-                    or (FileSyncPolicy(mapping.output_sync) == FileSyncPolicy.MISSING
-                        and file_digest(local, missing_ok=True) is not None)):
+            if after is None or after == before:
                 return "skipped"
-        else:
-            digest = await self.transport.file_digest(remote)
-            if digest is None:
+        elif policy == FileSyncPolicy.CHANGED and local_exists:
+            # Hash only when both sides have a file and contents matter.
+            remote_digest = await self.transport.file_digest(remote)
+            if remote_digest is None:
                 if required:
                     raise FileNotFoundError(f"Declared remote output was not created: {remote}")
                 return "skipped"
-            if not FileSyncPolicy(mapping.output_sync).should_transfer(
-                digest, file_digest(local, missing_ok=True),
-            ):
+            if remote_digest == file_digest(local, missing_ok=True):
                 return "available"
+        elif await self.transport.file_signature(remote) is None:
+            if required:
+                raise FileNotFoundError(f"Declared remote output was not created: {remote}")
+            return "skipped"
+
+        # The MISSING policy applies to both kinds, but an unchanged cache is
+        # "skipped", while a locally present output is already "available".
+        if policy == FileSyncPolicy.MISSING and local_exists:
+            return "skipped" if is_cache else "available"
         await self.transport.get_file(remote, local)
         return "available"
 
