@@ -6,6 +6,7 @@ from ase2sprkkr.execution import (
 )
 
 from ase2sprkkr.execution.manager import ExecutionManager
+import pytest
 
 
 def _record(manager, tmp_path):
@@ -245,3 +246,48 @@ def test_endpoint_and_local_directory_are_immutable_before_submission(tmp_path):
                 original, execution=replace(original.execution, **changes),
             )
     assert manager.store.get(original.id).execution == original.execution
+
+
+def test_concurrent_completers_reuse_one_durable_terminal_snapshot(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    record = _record(manager, tmp_path)
+    running = manager.transition(record, state=RunState.RUNNING)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(manager.complete, running, state=RunState.FINISHED,
+                        return_code=0, files_available=False)
+            for _ in range(2)
+        ]
+        first, second = (future.result() for future in futures)
+
+    assert first == second == manager.store.get(record.id)
+    assert first.state is RunState.FINISHED
+    assert first.finished_at is not None
+
+
+def test_terminal_retry_after_lost_fsync_confirmation(tmp_path, monkeypatch):
+    import ase2sprkkr.execution.manager as manager_module
+
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    record = _record(manager, tmp_path)
+    running = manager.transition(record, state=RunState.RUNNING)
+    actual_write = manager.store._write_unlocked
+    calls = []
+
+    def lost_confirmation(value):
+        calls.append("write")
+        result = actual_write(value)
+        if len(calls) == 1:
+            raise OSError("lost fsync confirmation")
+        return result
+
+    monkeypatch.setattr(manager.store, "_write_unlocked", lost_confirmation)
+    with pytest.raises(OSError, match="lost fsync confirmation"):
+        manager.complete(running, state=RunState.FINISHED, return_code=0)
+    confirmed = manager.complete(running, state=RunState.FINISHED, return_code=0)
+    assert confirmed == manager.store.get(record.id)
+    assert confirmed.state is RunState.FINISHED
+    assert calls == ["write"]
