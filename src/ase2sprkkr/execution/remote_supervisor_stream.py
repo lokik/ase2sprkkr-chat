@@ -120,7 +120,7 @@ class SupervisorStreams:
             spool.write(data)
             spool.flush()
         self._sizes[kind] += len(data)
-        wire = frame(kind, offset, data)
+        wire = None
         for follower in tuple(self._followers):
             # A spooled channel can catch up from disk. A live-only channel
             # cannot: forward it even while another channel is replaying.
@@ -130,6 +130,8 @@ class SupervisorStreams:
             # A full buffer skips the write; a write that fills the buffer
             # triggers exactly the same backpressure handling below.
             if follower.writer.transport.get_write_buffer_size() < _HIGH:
+                if wire is None:
+                    wire = frame(kind, offset, data)
                 follower.writer.write(wire)
                 follower.offsets[kind] += len(data)
             if follower.writer.transport.get_write_buffer_size() >= _HIGH:
