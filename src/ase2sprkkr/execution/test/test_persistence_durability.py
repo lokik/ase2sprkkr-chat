@@ -6,6 +6,7 @@ import pytest
 
 import ase2sprkkr.execution._durability as durability
 import ase2sprkkr.execution.manager as manager_module
+import ase2sprkkr.execution.artifact_history as artifact_history
 from ase2sprkkr.execution.base import RunState
 from ase2sprkkr.execution.endpoint import ExecutorEndpoint
 from ase2sprkkr.execution.run_model import FileManifest, FileEntry
@@ -125,7 +126,7 @@ def test_reserve_syncs_inputs_before_submitting_record(tmp_path, monkeypatch):
     events = []
 
     monkeypatch.setattr(
-        manager_module,
+        artifact_history,
         "sync_file",
         lambda path: events.append(("sync", Path(path).name)),
     )
@@ -159,7 +160,7 @@ def test_artifact_publication_syncs_outputs_before_terminal_record(tmp_path, mon
     events = []
 
     monkeypatch.setattr(
-        manager_module,
+        artifact_history,
         "sync_file",
         lambda path: events.append(("sync", Path(path).name)),
     )

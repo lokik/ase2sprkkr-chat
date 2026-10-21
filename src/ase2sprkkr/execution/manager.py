@@ -17,8 +17,8 @@ from uuid import uuid4
 
 
 from ..common.file_locks import FileLock
-from ..common.file_versions import FileState, FileVersion, file_digest
-from ._durability import durable_mkdir, durable_write_json, sync_file
+from ..common.file_versions import FileState, file_digest
+from ._durability import durable_mkdir, durable_write_json
 from .base import (
     Executor,
     FailurePhase,
@@ -26,13 +26,16 @@ from .base import (
     RunStatus,
     SubmissionNotStarted,
 )
+from .artifact_history import (
+    capture_result_files, file_is_current, missing_result_files, sync_result_files,
+)
 from .endpoint import ExecutorEndpoint, endpoint_for_executor
 from .pool import default_executor_pool
 from .postprocessing import PostprocessingRunner
 from .run_model import (
     ArtifactAvailabilityState, Execution, WorkingDirectory, FileManifest,
 )
-from .transport import expand_local_candidates, has_file_magic
+from .transport import has_file_magic
 
 
 class HistoricalFileMismatchError(OSError):
@@ -69,10 +72,6 @@ def _timestamp(value):
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed
-
-
-def _unique(values):
-    return tuple(dict.fromkeys(value for value in values if value is not None))
 
 
 def _failure_phase(value):
@@ -371,83 +370,10 @@ class ExecutionManager:
     def executor_for(self, record):
         return self.executor_pool.for_endpoint(record.execution.endpoint)
 
-    @staticmethod
-    def _concrete_result_files(manifests):
-        paths = []
-        seen = set()
-        for manifest in manifests:
-            for path in expand_local_candidates(manifest):
-                path = os.path.abspath(path)
-                if path in seen or not os.path.isfile(path):
-                    continue
-                seen.add(path)
-                paths.append(path)
-        return tuple(paths)
-
-    @classmethod
-    def _result_files_snapshot(cls, manifests, *, sync=False):
-        versions = []
-        for path in cls._concrete_result_files(manifests):
-            if sync:
-                sync_file(path)
-            versions.append(FileVersion.capture(path, require_digest=True))
-        return tuple(sorted(versions, key=lambda value: os.fspath(value.path)))
-
-    @classmethod
-    def _sync_result_files(cls, manifests):
-        for path in cls._concrete_result_files(manifests):
-            sync_file(path)
-
-    @classmethod
-    def _file_is_current(cls, result_files, path, versions):
-        if result_files is None or path is None:
-            return False
-        path = os.path.abspath(path)
-        if result_files.captured_at is None:
-            return os.path.isfile(path)
-        for version in versions:
-            if os.path.abspath(os.fspath(version.path)) == path:
-                return version.is_current()
-        return False
-
-    @staticmethod
-    def _missing_result_files(result_files):
-        if result_files is None:
-            return ()
-        if result_files.captured_at is not None:
-            return tuple(
-                os.fspath(item.path)
-                for item in result_files.all_versions
-                if item.state() is FileState.MISSING
-            )
-
-        missing = []
-        for manifest in result_files.manifests:
-            if has_file_magic(manifest):
-                if not expand_local_candidates(manifest):
-                    missing.append(manifest)
-            elif not os.path.isfile(manifest):
-                missing.append(manifest)
-        return _unique(missing)
-
-    def _capture_result_files(self, result_files):
-        if result_files is None or result_files.captured_at is not None:
-            return result_files
-        from .file_availability import discover_local_files
-        captured = replace(
-            result_files,
-            input_versions=self._result_files_snapshot(result_files.input_files),
-            output_versions=self._result_files_snapshot(
-                result_files.output_files, sync=True
-            ),
-            captured_at=_now(),
-        )
-        return discover_local_files(captured)
-
     def input_file_is_current(self, run):
         record = self.store.get(run) if isinstance(run, str) else self.store.get(run.id)
         result_files = record.files
-        return self._file_is_current(
+        return file_is_current(
             result_files,
             None if result_files is None else result_files.input_file,
             () if result_files is None else result_files.input_versions,
@@ -456,7 +382,7 @@ class ExecutionManager:
     def output_file_is_current(self, run):
         record = self.store.get(run) if isinstance(run, str) else self.store.get(run.id)
         result_files = record.files
-        return self._file_is_current(
+        return file_is_current(
             result_files,
             None if result_files is None else result_files.output_file,
             () if result_files is None else result_files.output_versions,
@@ -639,7 +565,7 @@ class ExecutionManager:
                 )
                 if not conflicts:
                     if record.files is not None:
-                        self._sync_result_files(record.files.input_files)
+                        sync_result_files(record.files.input_files)
                     return self.transition(
                         record,
                         state=RunState.SUBMITTING,
@@ -711,7 +637,7 @@ class ExecutionManager:
 
         if artifacts_available and result_files is not None:
             try:
-                result_files = self._capture_result_files(result_files)
+                result_files = capture_result_files(result_files)
             except OSError as exc:
                 state = RunState.FAILED
                 phase = FailurePhase.ARTIFACTS
@@ -791,7 +717,7 @@ class ExecutionManager:
             if (not files.output_versions
                     or any(version.state() is not FileState.CURRENT
                            for version in files.output_versions)
-                    or not self._file_is_current(files, files.output_file,
+                    or not file_is_current(files, files.output_file,
                                                  files.output_versions)):
                 raise ValueError("Postprocessing retry requires unchanged historical artifacts")
             return replace(
@@ -802,7 +728,7 @@ class ExecutionManager:
         reopened = self.store.update(record, eligible)
         files = reopened.files
         outcome = ExecutionOutcome(
-            input_file=(files.input_file if self._file_is_current(
+            input_file=(files.input_file if file_is_current(
                 files, files.input_file, files.input_versions) else None),
             output_file=files.output_file,
             error_file=None if files.stderr is None else files.stderr.local_path,
@@ -836,7 +762,7 @@ class ExecutionManager:
         if not record.state.is_terminal:
             raise RuntimeError(f"Run {record.id} is not finished")
 
-        missing = self._missing_result_files(record.files)
+        missing = missing_result_files(record.files)
         if not missing or record.execution.backend_id is None:
             return record
 
@@ -880,7 +806,7 @@ class ExecutionManager:
                 if staged is not None:
                     staged.unlink(missing_ok=True)
             refreshed = self.store.get(record.id)
-            if path in self._missing_result_files(refreshed.files):
+            if path in missing_result_files(refreshed.files):
                 record = self.update_artifact_availability(
                     refreshed, path, ArtifactAvailabilityState.FAILED,
                     "Historical artifact is still missing",
