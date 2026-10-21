@@ -759,8 +759,6 @@ def test_unknown_observation_closes_owned_streams_but_attach_can_recover(tmp_pat
             self.result.output_file = self.output_stream
 
         def wait(self):
-            if self.recovered:
-                self.start()
             return self.result
 
     class ExecutorWithAttach(_Executor):
@@ -796,5 +794,4 @@ def test_unknown_observation_closes_owned_streams_but_attach_can_recover(tmp_pat
         assert callbacks == ["unknown", "finished"]
         assert submissions == ["submit"]
     finally:
-        if recovered.result is not None:
-            pass
+        recovered._runner._runner.output_stream.close()
