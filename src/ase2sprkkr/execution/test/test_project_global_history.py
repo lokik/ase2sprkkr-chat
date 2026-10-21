@@ -258,9 +258,7 @@ def test_guarded_run_identity_across_day_shards(tmp_path):
     # Duplicate IDs within one project retain the historical newest-first
     # semantics; only crossing project boundaries is forbidden.
     store.save(earlier)
-    assert store.get(original.id) == earlier if (
-        original.created_at < earlier.created_at
-    ) else store.get(original.id) == original
+    assert store.get(original.id) == earlier
 
     foreign = replace(
         original, created_at=next_day, updated_at=next_day,
@@ -320,3 +318,26 @@ def test_guarded_run_cross_day_save_serializes_across_store_instances(
             future.result(timeout=10)
     assert len(a.runs()) == 1
     assert a.get(record.id) == record
+
+
+def test_project_deletion_removes_every_day_shard_for_same_run(tmp_path):
+    projects = ProjectRepository(tmp_path / "projects")
+    root = projects.create("Root")
+    child = projects.create("Child", parent_id=root.id)
+    manager = ExecutionManager(project_repository=projects, project=child)
+    original = replace(
+        manager.new_record(task="DOS", directory=tmp_path / "work"),
+        state=RunState.FINISHED,
+    )
+    later = replace(
+        original, created_at="2030-01-02T10:00:00+00:00",
+        updated_at="2030-01-02T10:00:00+00:00",
+    )
+    manager.store.save(original)
+    manager.store.save(later)
+    assert len(manager.store.runs()) == 2
+
+    projects.delete(child.id, expected_generation=child.generation)
+    assert manager.store.runs() == ()
+    with pytest.raises(FileNotFoundError):
+        manager.store.get(original.id)
