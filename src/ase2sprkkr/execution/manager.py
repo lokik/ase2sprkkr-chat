@@ -348,9 +348,13 @@ class RunStore:
 class ExecutionManager:
     """Persist public run lifecycle without task-specific knowledge."""
 
-    def __init__(self, store=None, *, executor_pool=None, submitting_grace=60.0):
+    def __init__(self, store=None, *, executor_pool=None, submitting_grace=60.0,
+                 project_repository=None):
         if submitting_grace < 0:
             raise ValueError("submitting_grace must be non-negative")
+        self.projects = project_repository
+        if self.projects is not None and store is None:
+            store = RunStore(self.projects.directory.parent / "projects_runs")
         self.store = store
         self.executor_pool = (
             executor_pool if executor_pool is not None else default_executor_pool()
@@ -461,6 +465,12 @@ class ExecutionManager:
         remote_directory=None, files=None, input_definition=None, run_id=None,
         project_id=None,
     ):
+        if self.projects is not None:
+            if project_id is None:
+                raise ValueError("Tracked runs require an explicit project_id")
+            from .projects import Project
+            identity = project_id.id if isinstance(project_id, Project) else str(project_id)
+            project_id = self.projects.project(identity).id
         now = _now()
         local = os.path.abspath(os.fspath(directory))
         return RunRecord(
@@ -839,6 +849,7 @@ class ExecutionManager:
         dataset=None,
         callback=None,
         run_id=None,
+        project_id=None,
     ):
         """Create a project run from raw execution plus generic processing."""
         endpoint = endpoint_for_executor(executor)
@@ -854,6 +865,7 @@ class ExecutionManager:
             ),
             files=FileManifest.from_spec(spec),
             run_id=run_id,
+            project_id=project_id,
         )
         self.register_executor(executor, endpoint)
 

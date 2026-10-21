@@ -15,11 +15,11 @@ def test_different_projects_share_one_store_and_keep_project_identity(tmp_path):
     root = projects.create("Root")
     first = projects.create("First", parent_id=root.id)
     second = projects.create("Second", parent_id=root.id)
-    a = ExecutionManager(project_repository=projects, project=first)
-    b = ExecutionManager(project_repository=projects, project=second)
+    a = ExecutionManager(project_repository=projects)
+    b = ExecutionManager(project_repository=projects)
     assert a.store.directory == b.store.directory
-    first_run = a.new_record(task="DOS", directory=tmp_path / "work", dataset="same")
-    second_run = b.new_record(task="DOS", directory=tmp_path / "work", dataset="same")
+    first_run = a.new_record(task="DOS", directory=tmp_path / "work", dataset="same", project_id=first.id)
+    second_run = b.new_record(task="DOS", directory=tmp_path / "work", dataset="same", project_id=second.id)
     assert first_run.project_id == first.id
     assert second_run.project_id == second.id
     a.store.save(first_run)
@@ -34,8 +34,8 @@ def test_cross_project_active_conflict_and_project_deletion(tmp_path):
     second = projects.create("Second", parent_id=root.id)
     a = ExecutionManager(project_repository=projects, project=first)
     b = ExecutionManager(project_repository=projects, project=second)
-    first_record = a.new_record(task="SCF", directory=tmp_path / "work")
-    second_record = b.new_record(task="DOS", directory=tmp_path / "work")
+    first_record = a.new_record(task="SCF", directory=tmp_path / "work", project_id=first.id)
+    second_record = b.new_record(task="DOS", directory=tmp_path / "work", project_id=second.id)
     a.reserve(first_record)
     with pytest.raises(DuplicateSubmissionError):
         b.reserve(second_record)
@@ -46,40 +46,36 @@ def test_cross_project_active_conflict_and_project_deletion(tmp_path):
     assert all(r.project_id != first.id for r in b.store.runs())
 
 
-def test_for_project_preserves_explicit_run_store(tmp_path):
+def test_explicit_project_uses_shared_store_and_validates_membership(tmp_path):
     projects = ProjectRepository(tmp_path / "projects")
     project = projects.create("Project")
     custom_store = RunStore(tmp_path / "custom-runs")
-    original = ExecutionManager(
+    manager = ExecutionManager(
         store=custom_store, project_repository=projects, submitting_grace=17,
     )
-
-    bound = original.for_project(project)
-
-    assert bound.store is custom_store
-    assert bound.submitting_grace == 17
-    assert bound.executor_pool is original.executor_pool
-    assert bound.for_project(project) is bound
-
-    record = bound.new_record(task="DOS", directory=tmp_path / "work")
-    bound.store.save(record)
-
-    assert custom_store.get(record.id) == record
+    with pytest.raises(ValueError, match="project_id"):
+        manager.new_record(task="DOS", directory=tmp_path / "work")
+    record = manager.new_record(
+        task="DOS", directory=tmp_path / "work", project_id=project.id,
+    )
+    manager.store.save(record)
+    assert manager.store is custom_store
     assert record.project_id == project.id
-    assert not (tmp_path / "projects_runs").exists()
+    assert custom_store.get(record.id) == record
+    with pytest.raises(Exception):
+        manager.new_record(task="DOS", directory=tmp_path / "work", project_id="nonexistent")
 
 
-def test_for_project_without_explicit_store_uses_shared_project_store(tmp_path):
+def test_default_project_store_shared_across_projects(tmp_path):
     projects = ProjectRepository(tmp_path / "projects")
-    project = projects.create("Project")
-    unbound = ExecutionManager(project_repository=projects)
-
-    bound = unbound.for_project(project)
-
-    assert unbound.store is None
-    assert bound.project_id == project.id
-    assert bound.store.directory == tmp_path / "projects_runs"
-
+    one, two = projects.create("First"), projects.create("Second")
+    manager = ExecutionManager(project_repository=projects)
+    first = manager.new_record(task="DOS", directory=tmp_path / "a", project_id=one.id)
+    second = manager.new_record(task="DOS", directory=tmp_path / "b", project_id=two.id)
+    manager.store.save(first)
+    manager.store.save(second)
+    assert manager.store.directory == tmp_path / "projects_runs"
+    assert {run.project_id for run in manager.store.runs()} == {one.id, two.id}
 
 
 def test_unknown_run_prevents_project_deletion_until_terminal(tmp_path):
@@ -87,9 +83,9 @@ def test_unknown_run_prevents_project_deletion_until_terminal(tmp_path):
     projects = ProjectRepository(tmp_path / "projects")
     root = projects.create("Root")
     project = projects.create("Child", parent_id=root.id)
-    manager = ExecutionManager(project_repository=projects, project=project)
+    manager = ExecutionManager(project_repository=projects)
     record = replace(
-        manager.new_record(task="DOS", directory=tmp_path / "work"),
+        manager.new_record(task="DOS", directory=tmp_path / "work", project_id=project.id),
         state=RunState.UNKNOWN,
     )
     manager.store.save(record)

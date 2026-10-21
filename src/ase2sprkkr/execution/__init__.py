@@ -39,7 +39,7 @@ from .projects import (
     ProjectRepositoryError,
     default_projects_directory,
 )
-from .project_manager import ExecutionManager
+from .manager import ExecutionManager
 from .psij import PsijExecutor, PsijRunner
 from .remote import FileSyncPolicy, RemoteRunner
 from .remote_endpoint import RemoteEndpointExecutor
