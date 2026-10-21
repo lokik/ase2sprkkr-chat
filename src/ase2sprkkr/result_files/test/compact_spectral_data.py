@@ -135,7 +135,9 @@ def compact_spc(text, max_e=12, max_k=16):
         data = values.reshape(np_, nt, 7)[np.ix_(p, t, range(7))]
     header = set_field(set_field(header, "NP", len(p)), "NT", len(t))
     rows = data.reshape(-1, width)
-    # The native SPC reader expects columnar lines with a leading blank\n    # and scientific notation (as written by SPR-KKR).\n    return header + "".join("".join(f" {v:16.5E}" for v in row) + "\n" for row in rows)
+    # The native SPC reader expects columnar lines with a leading blank
+    # and scientific notation (as written by SPR-KKR).
+    return header + "".join("".join(f" {v:16.5E}" for v in row) + "\n" for row in rows)
 
 
 def main():
