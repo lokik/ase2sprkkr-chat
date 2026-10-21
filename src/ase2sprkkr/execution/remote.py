@@ -131,12 +131,10 @@ class RemoteRunner:
         # expose FINISHED before artifacts are locally available.
         if self._thread is not None:
             return self._state
-        if self._backend_id is None or self._state in (
-            RunState.NEW,
-            RunState.DOWNLOADING,
-            RunState.FINISHED,
-            RunState.FAILED,
-            RunState.CANCELLED,
+        if (
+            self._backend_id is None
+            or self._state in (RunState.NEW, RunState.DOWNLOADING)
+            or self._state.is_terminal
         ):
             return self._state
         status = _run_sync(
@@ -615,9 +613,7 @@ class RemoteRunner:
             self._failure_phase = None if phase is None else FailurePhase(phase)
             self._failure_message = status.get("error")
 
-            if stream_error is not None and backend_state not in (
-                RunState.FINISHED, RunState.FAILED, RunState.CANCELLED,
-            ):
+            if stream_error is not None and not backend_state.is_terminal:
                 self._state = RunState.UNKNOWN
                 self._failure_message = str(stream_error)
                 return self.result
@@ -629,11 +625,7 @@ class RemoteRunner:
                 self._state = RunState.FAILED
                 return self.result
 
-            if backend_state not in (
-                RunState.FINISHED,
-                RunState.FAILED,
-                RunState.CANCELLED,
-            ):
+            if not backend_state.is_terminal:
                 # The stream helper may stop because a backend identity was lost
                 # (for example a direct-process hard crash before its durable
                 # outcome barrier). Received bytes remain on disk, but no

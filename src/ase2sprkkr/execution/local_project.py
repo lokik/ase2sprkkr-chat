@@ -20,8 +20,6 @@ from .remote_service import (
     _decode_handle, cancel_remote, follow_remote, status_remote, submit_remote,
 )
 
-_TERMINAL = {RunState.FINISHED, RunState.FAILED, RunState.CANCELLED}
-
 
 def _file_path(value, directory=None):
     # Local project submission flushes file objects before publishing paths.
@@ -68,7 +66,7 @@ def _local_status_from_facts(backend_id, facts, files=None):
         return_code=facts.get("return_code"), message=facts.get("error"),
         failure_phase=facts.get("failure_phase"),
     )
-    if files is not None and status.state in _TERMINAL:
+    if files is not None and status.state.is_terminal:
         status = replace(status, files=local_manifest(files, status))
     return status
 
@@ -140,7 +138,7 @@ class LocalProjectRunner:
     def _refresh(self):
         # A terminal result is immutable. After acknowledgment the receipt
         # may disappear while the supervisor process is still shutting down.
-        if self._backend_id is None or self._state in _TERMINAL:
+        if self._backend_id is None or self._state.is_terminal:
             return self._state
         status = local_status(self._backend_id, self._files)
         self._state = status.state
@@ -192,7 +190,7 @@ class LocalProjectRunner:
             # already exited may have no socket, or no replayable spool.
             # Backend outcome is authoritative, never a guessed exit code.
             status = self._refresh()
-            if status not in _TERMINAL:
+            if not status.is_terminal:
                 self._state = RunState.UNKNOWN
                 self._failure_message = str(exc)
                 return self.result
