@@ -77,7 +77,8 @@ def test_manager_reconstructs_local_executor_after_restart(tmp_path):
 
 def test_attach_reconstructs_persisted_endpoint_without_task_reader(tmp_path):
     class AttachedRunner:
-        def __init__(self, run):
+        def __init__(self, run, executor):
+            self.executor = executor
             self.backend_id = run.execution.backend_id
             self.state = RunState.RUNNING
             self.result = None
@@ -114,7 +115,7 @@ def test_attach_reconstructs_persisted_endpoint_without_task_reader(tmp_path):
             start=True,
         ):
             self.calls.append((run, callback, output_listener, start))
-            runner = AttachedRunner(run)
+            runner = AttachedRunner(run, self)
             if start:
                 runner.start()
             return runner
