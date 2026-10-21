@@ -112,3 +112,59 @@ def test_staging_rejects_changed_reserved_target(tmp_path):
         asyncio.run(executor.file_handler.prepare(
             mismatched.mapping, spec, mismatched,
         ))
+
+
+def test_staging_rejects_changed_spec_before_transfer(tmp_path):
+    """A reserved manifest, not a later spec, determines what may be staged."""
+    from dataclasses import replace
+
+    executor = RemoteEndpointExecutor(LocalTransport())
+    source = tmp_path / "work"
+    source.mkdir()
+    (source / "first.in").write_text("first")
+    (source / "extra.in").write_text("extra")
+    spec = ExecutionSpec(
+        argv=("true",), directory=str(source),
+        input_file="first.in", output_file="out",
+        launch=LaunchSpec(
+            local_root=str(tmp_path), remote_root=str(tmp_path / "remote"),
+        ),
+    )
+    reserved, _ = executor.reservation_context(
+        spec, FileManifest.from_spec(spec),
+    )
+    changed = replace(spec, input_files=("extra.in",))
+    with pytest.raises(ValueError, match="differs from reserved manifest"):
+        asyncio.run(executor.file_handler.prepare(
+            reserved.mapping, changed, reserved,
+        ))
+    assert not (tmp_path / "remote" / "work" / "first.in").exists()
+    assert not (tmp_path / "remote" / "work" / "extra.in").exists()
+
+
+def test_staging_validates_all_reserved_paths_before_transfer(tmp_path):
+    """A malformed output mapping cannot leave a partially uploaded input."""
+    from dataclasses import replace
+
+    executor = RemoteEndpointExecutor(LocalTransport())
+    source = tmp_path / "work"
+    source.mkdir()
+    (source / "first.in").write_text("first")
+    spec = ExecutionSpec(
+        argv=("true",), directory=str(source),
+        input_file="first.in", output_file="out",
+        launch=LaunchSpec(
+            local_root=str(tmp_path), remote_root=str(tmp_path / "remote"),
+        ),
+    )
+    reserved, _ = executor.reservation_context(
+        spec, FileManifest.from_spec(spec),
+    )
+    invalid = replace(reserved, stdout=replace(
+        reserved.stdout, remote_path="/unexpected/path",
+    ))
+    with pytest.raises(ValueError, match="differs from reserved path"):
+        asyncio.run(executor.file_handler.prepare(
+            invalid.mapping, spec, invalid,
+        ))
+    assert not (tmp_path / "remote" / "work" / "first.in").exists()
