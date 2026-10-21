@@ -133,9 +133,7 @@ class CalculationRun:
         return state
 
     def set_manifest(self, manifest):
-        setter = getattr(self._runner, "set_manifest", None)
-        if setter is not None:
-            setter(manifest)
+        self._runner.set_manifest(manifest)
 
     def add_output_listener(self, callback):
         return self._runner.add_output_listener(callback)
