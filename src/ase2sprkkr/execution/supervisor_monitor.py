@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 
-from .base import FailurePhase, RunState, RunStatus, close_output_files, finish_monitor
+from .base import FailurePhase, RunState, RunStatus, close_output_files
 
 _TERMINAL = {RunState.FINISHED, RunState.FAILED, RunState.CANCELLED}
 _FOLLOW_ERRORS = (OSError, ConnectionError, RuntimeError, ValueError)
@@ -111,19 +111,3 @@ async def monitor_supervisor(runner, follow, status, complete):
                     cleanup_error = exc
         if primary is None and cleanup_error is not None:
             raise cleanup_error
-
-
-def supervisor_thread_main(runner):
-    """Identical monitoring, exception and callback boundary for both modes."""
-    try:
-        asyncio.run(runner._monitor())
-    except BaseException as exc:
-        runner._exception = exc
-        if runner._failure_message is None:
-            runner._failure_message = str(exc)
-        if runner._failure_phase is None:
-            runner._failure_phase = FailurePhase.EXECUTION
-        if runner._state != RunState.CANCELLED:
-            runner._state = RunState.FAILED
-    finally:
-        finish_monitor(runner)

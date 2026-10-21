@@ -11,10 +11,10 @@ import asyncio
 from threading import Event, Lock
 
 from .base import (
-    ExecutionOutcome, OutputObservers, RunState, file_path,
-    request_cancellation, start_monitor, wait_for_monitor,
+    ExecutionOutcome, FailurePhase, OutputObservers, RunState, file_path,
+    finish_monitor, request_cancellation, start_monitor, wait_for_monitor,
 )
-from .supervisor_monitor import monitor_supervisor, supervisor_thread_main
+from .supervisor_monitor import monitor_supervisor
 
 
 class ManagedRunner:
@@ -105,11 +105,34 @@ class ManagedRunner:
             self._complete_terminal,
         )
 
+    def _monitor_failure(self, exc):
+        self._exception = exc
+        if self._failure_message is None:
+            self._failure_message = str(exc)
+        if self._failure_phase is None:
+            self._failure_phase = FailurePhase.EXECUTION
+        if self._state != RunState.CANCELLED:
+            self._state = RunState.FAILED
+
+    def _finish_monitoring(self):
+        """Optional backend-specific observation cleanup before callbacks."""
+
     def _thread_main(self):
-        supervisor_thread_main(self)
+        """One exception, cleanup, callback and completion boundary for all monitors."""
+        try:
+            asyncio.run(self._monitor())
+        except BaseException as exc:
+            self._monitor_failure(exc)
+        finally:
+            try:
+                self._finish_monitoring()
+            except BaseException as exc:
+                if self._exception is None:
+                    self._monitor_failure(exc)
+            finish_monitor(self)
 
     def start(self):
-        if self._backend_id is None:
+        if self.backend_id is None:
             return self.submit()
         return start_monitor(self, missing_backend=self._missing_backend_message)
 
@@ -124,7 +147,10 @@ class ManagedRunner:
     async def run_async(self):
         return await asyncio.to_thread(self.run)
 
+    def _can_cancel(self):
+        return self.backend_id is not None
+
     def cancel(self):
-        if self._backend_id is None:
+        if not self._can_cancel():
             raise RuntimeError("Run has not been submitted")
         return request_cancellation(self, self._cancel_backend)

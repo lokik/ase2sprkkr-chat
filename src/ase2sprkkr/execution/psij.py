@@ -17,21 +17,10 @@ from threading import Event, Lock, RLock
 from .file_availability import prepare_local_files, discover_local_files
 from .growing_file_tail import follow_growing_files
 from .base import (
-    ExecutionOutcome,
-    ExecutionSpec,
-    Executor,
-    FailurePhase,
-    OutputObservers,
-    close_output_files,
-    file_path,
-    finish_monitor,
-    wait_for_monitor,
-    RunState,
-    RunStatus,
-    SubmissionNotStarted,
-    request_cancellation,
-    start_monitor,
+    ExecutionSpec, Executor, FailurePhase, close_output_files, file_path,
+    RunState, RunStatus, SubmissionNotStarted, start_monitor,
 )
+from .managed_runner import ManagedRunner
 
 
 _log = logging.getLogger(__name__)
@@ -260,7 +249,7 @@ def _slurm_status_native(native_id):
 
 
 
-class PsijRunner:
+class PsijRunner(ManagedRunner):
     """One raw job managed by a PSI/J executor."""
 
     def __init__(
@@ -275,33 +264,19 @@ class PsijRunner:
         attached=False,
         run_id=None,
     ):
-        self.executor = executor
-        self.spec = spec
-        self.callback = callback
-        self._run_id = run_id
-
+        # File names must be concrete for PSI/J; execution monitoring and
+        # public runner lifecycle are inherited from ManagedRunner.
         self._stdout_path = _path(spec.output_file, spec.directory)
         self._stderr_path = _path(spec.error_file, spec.directory)
         self._stdin_path = _path(spec.stdin, spec.directory)
-        self.result = ExecutionOutcome(
-            output_file=self._stdout_path,
-            input_file=_path(spec.input_file, spec.directory),
-            error_file=self._stderr_path,
+        _path(spec.input_file, spec.directory)
+        super().__init__(
+            executor, spec, callback, output_listener=output_listener,
+            state=RunState.UNKNOWN if attached else RunState.NEW, strict_paths=True,
         )
-
-        self._output_observers = OutputObservers(output_listener)
-        self._lock = Lock()
-        self._submit_lock = Lock()
-        self._done = Event()
-        self._exception = None
-        self._callback_exception = None
-        self._return_code = None
-        self._failure_phase = None
-        self._failure_message = None
-        self._thread = None
+        self._run_id = run_id
         self._attached = attached
-        self._files = None
-        self._cancel_future = None
+        self._submit_lock = Lock()
         self._observed_state = None
         self._observation_stopped = Event()
         self._observation_signal_lock = Lock()
@@ -373,10 +348,6 @@ class PsijRunner:
                            return_code=self.return_code)
 
     @property
-    def exception(self):
-        return self._exception
-
-    @property
     def return_code(self):
         if self._observed_state is not None:
             # A completed wait() is authoritative even without an exit code.
@@ -385,20 +356,8 @@ class PsijRunner:
             return self._return_code
         return getattr(getattr(self._job, "status", None), "exit_code", None)
 
-    @property
-    def failure_phase(self):
-        return self._failure_phase
-
-    @property
-    def failure_message(self):
-        return self._failure_message
-
     def set_manifest(self, files):
         self._files = files
-
-    @property
-    def files(self):
-        return self._files
 
     def _update_files(self):
         if self._files is None:
@@ -409,12 +368,6 @@ class PsijRunner:
     def backend_id(self):
         native_id = getattr(self._job, "native_id", None)
         return None if native_id is None else str(native_id)
-
-    def add_output_listener(self, callback):
-        self._output_observers.add(callback)
-
-    def add_output_error_listener(self, callback):
-        self._output_observers.add_error_listener(callback)
 
     def _prepare_io(self):
         if self.spec.input_file is not None and hasattr(self.spec.input_file, "flush"):
@@ -544,22 +497,6 @@ class PsijRunner:
                 self._failure_message = str(exc)
         return self.result
 
-    def _thread_main(self):
-        try:
-            asyncio.run(self._monitor())
-        except BaseException as exc:
-            self._exception = exc
-            self._failure_phase = self._failure_phase or FailurePhase.EXECUTION
-            self._failure_message = self._failure_message or str(exc)
-        finally:
-            self._output_observers.finish_bytes()
-            finish_monitor(self)
-
-    def start(self):
-        if self._attached:
-            return start_monitor(self)
-        return self.submit()
-
     def submit(self):
         with self._submit_lock:
             if self._attached:
@@ -580,21 +517,6 @@ class PsijRunner:
             self.executor._cache_submitted_job(self._job)
             start_monitor(self)
 
-    def wait(self):
-        if self._thread is None:
-            raise RuntimeError("Run has not been started")
-        return wait_for_monitor(self)
-
-    def run(self):
-        if self._thread is None:
-            self.start()
-        return self.wait()
-
-    async def run_async(self):
-        if self._thread is None:
-            self.start()
-        return await asyncio.to_thread(self.wait)
-
     def stop_observation(self):
         """Stop monitoring without cancelling the scheduler calculation."""
         self._observation_stopped.set()
@@ -603,10 +525,15 @@ class PsijRunner:
         if wakeup is not None:
             wakeup()
 
-    def cancel(self):
-        if self._thread is None and not self._attached:
-            raise RuntimeError("Run has not been submitted")
-        return request_cancellation(self, self._job.cancel)
+    def _can_cancel(self):
+        # PSI/J may accept the job before its native ID is observable.
+        return self._thread is not None or self._attached
+
+    def _cancel_backend(self):
+        return self._job.cancel()
+
+    def _finish_monitoring(self):
+        self._output_observers.finish_bytes()
 
 
 class PsijExecutor(Executor):
