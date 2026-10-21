@@ -1148,14 +1148,17 @@ class ProjectRunner:
                 )
                 raise
             except asyncio.CancelledError:
-                # A cancellation may win between the project's preflight check
-                # and the raw submission claim. It is a definite non-submit.
-                if (self._runner.state == RunState.CANCELLED
-                        and self._record.state != RunState.CANCELLED):
-                    self._record = self.manager.complete(
-                        self._record, state=RunState.CANCELLED,
-                        artifacts_available=False,
-                    )
+                if not backend_submit_attempted:
+                    # Cancellation during preflight is a definite non-submit,
+                    # even when the raw runner has only latched the request.
+                    self._runner.cancel()
+                    if self._record.state != RunState.CANCELLED:
+                        self._record = self.manager.complete(
+                            self._record, state=RunState.CANCELLED,
+                            artifacts_available=False,
+                        )
+                # After backend submit was attempted, acceptance is uncertain.
+                # Keep SUBMITTING for recovery rather than allowing a retry.
                 raise
             except BaseException as exc:
                 if not backend_submit_attempted:
