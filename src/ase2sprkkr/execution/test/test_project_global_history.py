@@ -239,3 +239,84 @@ def test_guarded_run_store_rejects_missing_or_foreign_project_id(tmp_path):
     with pytest.raises(ValueError, match="canonical project ID"):
         manager.store.save(replace(original, project_id=None))
     assert manager.store.get(original.id) == original
+
+
+def test_guarded_run_identity_across_day_shards(tmp_path):
+    projects = ProjectRepository(tmp_path / "projects")
+    first = projects.create("First")
+    second = projects.create("Second")
+    store = projects.run_store
+    manager = ExecutionManager(project_repository=projects, project=first)
+    original = manager.new_record(task="DOS", directory=tmp_path / "work")
+    store.save(original)
+
+    next_day = "2030-01-02T10:00:00+00:00"
+    earlier = replace(
+        original, created_at="2030-01-01T10:00:00+00:00",
+        updated_at="2030-01-01T10:00:00+00:00",
+    )
+    # Duplicate IDs within one project retain the historical newest-first
+    # semantics; only crossing project boundaries is forbidden.
+    store.save(earlier)
+    assert store.get(original.id) == earlier if (
+        original.created_at < earlier.created_at
+    ) else store.get(original.id) == original
+
+    foreign = replace(
+        original, created_at=next_day, updated_at=next_day,
+        project_id=second.id,
+    )
+    independent = ProjectRepository(projects.directory).run_store
+    for action in (
+        lambda: independent.save(foreign),
+        lambda: independent.update(foreign, lambda current: current),
+    ):
+        with pytest.raises(ValueError, match="persistent project identity"):
+            action()
+    assert not independent._path(foreign).exists()
+    assert {r.project_id for r in independent.runs()} == {first.id}
+
+
+def test_guarded_run_cross_day_save_serializes_across_store_instances(
+    tmp_path, monkeypatch,
+):
+    projects = ProjectRepository(tmp_path / "projects")
+    first = projects.create("First")
+    second = projects.create("Second")
+    a = projects.run_store
+    b = ProjectRepository(projects.directory).run_store
+    record = ExecutionManager(
+        project_repository=projects, project=first,
+    ).new_record(task="DOS", directory=tmp_path / "work")
+    foreign = replace(
+        record, created_at="2030-01-02T10:00:00+00:00",
+        updated_at="2030-01-02T10:00:00+00:00",
+        project_id=second.id,
+    )
+    entered, release = Event(), Event()
+    original_write = a._write_unlocked
+
+    def blocked_write(value):
+        entered.set()
+        assert release.wait(10)
+        return original_write(value)
+
+    monkeypatch.setattr(a, "_write_unlocked", blocked_write)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        writer = pool.submit(a.save, record)
+        try:
+            assert entered.wait(10)
+            probe = FileLock(a._run_lock_path(record))
+            try:
+                assert not probe.acquire(blocking=False)
+                future = pool.submit(b.save, foreign)
+                assert not future.done()
+            finally:
+                probe.release()
+        finally:
+            release.set()
+        assert writer.result(timeout=10) == record
+        with pytest.raises(ValueError, match="persistent project identity"):
+            future.result(timeout=10)
+    assert len(a.runs()) == 1
+    assert a.get(record.id) == record
