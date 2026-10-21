@@ -26,6 +26,11 @@ def test_run_context_is_staging_policy_not_executor(tmp_path):
     assert context.output_sync == "missing"
     assert context.local_root == tmp_path.resolve()
     assert context.remote_root == "/scratch/a"
+    # Mapping owns only file paths and policy, never backend operations.
+    assert not any(
+        hasattr(context, name)
+        for name in ("_submit", "_status", "_cancel", "_follow")
+    )
 
 
 
