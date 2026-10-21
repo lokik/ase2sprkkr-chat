@@ -1,5 +1,3 @@
-import pytest
-
 from ase2sprkkr.common.file_versions import FileState, FileVersion
 from ase2sprkkr.execution import (
     LocalTransport, RemoteExecutor, RunRecord, RunState, Execution,
@@ -44,7 +42,18 @@ def test_remote_executor_fetches_only_requested_historical_files(tmp_path):
             WorkingDirectory(str(local_directory), str(remote_directory)),
             "opaque-historical-handle",
         ),
-        files=FileManifest(mapping=FileMapping(str(local_root), str(remote_root))),
+        files=FileManifest(
+            mapping=FileMapping(str(local_root), str(remote_root)),
+            inputs=(
+                FileEntry(str(local_directory / "run.inp"), str(remote_input)),
+                FileEntry(str(local_directory / "start.pot"), str(remote_potential)),
+            ),
+            stdout=FileEntry(str(local_directory / "run.out"), str(remote_output)),
+            outputs=(
+                FileEntry(str(local_directory / "result-1.dat"), str(remote_first)),
+                FileEntry(str(local_directory / "result-2.dat"), str(remote_second)),
+            ),
+        ),
     )
     local_input = local_directory / "run.inp"
     local_potential = local_directory / "start.pot"
@@ -110,16 +119,27 @@ def test_remote_fetch_uses_transport_expansion_for_exact_and_wildcard(tmp_path):
             WorkingDirectory(str(local_root / "calc"), str(remote_dir)),
             "opaque-handle",
         ),
-        files=FileManifest(mapping=FileMapping(str(local_root), str(remote_root))),
+        files=FileManifest(
+            mapping=FileMapping(str(local_root), str(remote_root)),
+            outputs=(
+                FileEntry(str(local_root / "calc" / "exact.dat"),
+                          str(remote_dir / "exact.dat")),
+                FileEntry(str(local_root / "calc" / "part-a.dat"),
+                          str(remote_dir / "part-a.dat"),
+                          source=str(local_root / "calc" / "part-*.dat")),
+                FileEntry(str(local_root / "calc" / "part-b.dat"),
+                          str(remote_dir / "part-b.dat"),
+                          source=str(local_root / "calc" / "part-*.dat")),
+            ),
+        ),
     )
 
     executor.fetch_result_files(
         run, (local_root / "calc" / "exact.dat",
               local_root / "calc" / "part-*.dat"),
     )
-    assert transport.expanded == [
-        str(remote_dir / "exact.dat"), str(remote_dir / "part-*.dat"),
-    ]
+    # Historical recovery never expands wildcards on the target.
+    assert transport.expanded == []
     assert transport.downloaded == [
         str(remote_dir / "exact.dat"), str(remote_dir / "part-b.dat"),
     ]
@@ -155,6 +175,7 @@ def test_remote_staged_result_keeps_canonical_file_absent(tmp_path):
         ),
         files=FileManifest(
             mapping=FileMapping(str(local_root), str(remote_root)),
+            stdout=FileEntry(str(local), str(remote_dir / "run.out")),
             output_versions=(captured,),
             captured_at="2026-10-13T08:00:00+00:00",
         ),
@@ -207,6 +228,7 @@ def test_fetch_rejects_local_symlink_escape(tmp_path, wildcard):
     assert sorted(path.name for path in outside.iterdir()) == ["result.dat"]
 
 
+
 def test_fetch_validates_canonical_path_before_explicit_staging(tmp_path):
     """An explicit destination must not bypass checks on mapped source paths."""
     local = tmp_path / "local"
@@ -241,3 +263,4 @@ def test_fetch_validates_canonical_path_before_explicit_staging(tmp_path):
         )
     assert not staged.exists()
     assert not (outside / "output.dat").exists()
+

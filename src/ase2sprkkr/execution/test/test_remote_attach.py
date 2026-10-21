@@ -129,6 +129,7 @@ def test_remote_executor_attach_reconnects_running_run_and_restores_stage_out(tm
 
     assert original.wait().return_code == 0
 
+
     # A second client arriving only after completion must replay the same
     # finished run without starting another calculation or duplicating bytes.
     finished_attached = _processed(_executor().attach(run, start=False))
@@ -139,8 +140,7 @@ def test_remote_executor_attach_reconnects_running_run_and_restores_stage_out(tm
     assert finished_result.output == b"done\n"
     assert (workdir / "run.out").read_bytes() == b"done\n"
 
-
-def test_remote_executor_first_attach_after_completion_replays_finished_run(tmp_path):
+def test_remote_executor_attach_replays_finished_run(tmp_path):
     local_root = tmp_path / "local"
     remote_root = tmp_path / "remote"
     workdir = local_root / "calculation"
@@ -203,7 +203,7 @@ def test_remote_attach_preserves_existing_partial_stream(tmp_path, monkeypatch):
     local_output = local_root / "run.out"
     local_output.write_bytes(b"partial")
     endpoint = _executor()
-    context = endpoint._context(endpoint, _launch(local_root, remote_root))
+    mapping = asyncio.run(endpoint.resolve_mapping(_launch(local_root, remote_root)))
     run = RunRecord(
         id="partial", task="SCF", state=RunState.RUNNING,
         created_at="2026-10-13T08:00:00+00:00",
@@ -214,13 +214,13 @@ def test_remote_attach_preserves_existing_partial_stream(tmp_path, monkeypatch):
         files=FileManifest(stdout=FileEntry(
             local_path=str(local_output),
             remote_path=str(remote_root / "run.out"),
-        )),
+        ), mapping=mapping),
     )
 
     async def status(*args, **kwargs):
         return {"state": "running"}
-    monkeypatch.setattr(context, "_status", status)
-    runner = asyncio.run(context.attach(run, start=False))
+    monkeypatch.setattr(endpoint.connection, "status", status)
+    runner = endpoint.attach(run, start=False)
     assert runner.spec.output_file.tell() == len(b"partial")
     runner.spec.output_file.close()
     assert local_output.read_bytes() == b"partial"

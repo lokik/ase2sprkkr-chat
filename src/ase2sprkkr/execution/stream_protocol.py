@@ -40,6 +40,21 @@ def encode_terminal_frame(outcome):
     return _HEADER.pack(b"T", len(data)) + data
 
 
+def decode_terminal_payload(data):
+    """Validate terminal facts for both supervisor and SSH wire formats."""
+    try:
+        outcome = json.loads(data)
+    except (ValueError, UnicodeError) as exc:
+        raise StreamProtocolError("Invalid terminal frame JSON") from exc
+    if not isinstance(outcome, dict):
+        raise StreamProtocolError("Invalid terminal frame outcome")
+    try:
+        RunState(outcome.get("state"))
+    except (TypeError, ValueError) as exc:
+        raise StreamProtocolError("Invalid terminal frame outcome") from exc
+    return outcome
+
+
 async def _read_exactly(source, size):
     try:
         return await source.readexactly(size)
@@ -64,17 +79,9 @@ async def read_stream_frames(source):
         if code == b"T":
             if size > 4096:
                 raise StreamProtocolError("Terminal frame is too large")
-            try:
-                outcome = json.loads(await _read_exactly(source, size))
-            except (ValueError, UnicodeError) as exc:
-                raise StreamProtocolError("Invalid terminal frame JSON") from exc
-            if not isinstance(outcome, dict):
-                raise StreamProtocolError("Invalid terminal frame outcome")
-            try:
-                RunState(outcome.get("state"))
-            except (TypeError, ValueError) as exc:
-                raise StreamProtocolError("Invalid terminal frame outcome") from exc
-            yield "terminal", outcome
+            yield "terminal", decode_terminal_payload(
+                await _read_exactly(source, size)
+            )
             return
         if size > 65536:
             raise StreamProtocolError("Stream frame is too large")

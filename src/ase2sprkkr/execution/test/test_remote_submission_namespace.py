@@ -57,15 +57,15 @@ def test_context_and_submission_directory_share_local_path_resolution(
         argv=("true",), directory=local_root / name,
         input_file=None, output_file=None, launch=launch,
     )
-    context = executor._context(executor, launch)
+    context = asyncio.run(executor.resolve_mapping(launch))
 
     async def home():
         return "/home/cluster"
 
-    executor._remote_home = home
+    executor.connection.remote_home = home
     expected = "/scratch/project" + suffix
     assert executor.submission_directory(spec) == expected
-    assert asyncio.run(context.map_path(local_root / name)) == expected
+    assert context.map_path(local_root / name) == expected
 
 
 def test_context_and_submission_directory_reject_symlink_escaping_root(
@@ -84,8 +84,8 @@ def test_context_and_submission_directory_reject_symlink_escaping_root(
         argv=("true",), directory=local_root / "escape",
         input_file=None, output_file=None, launch=launch,
     )
-    context = executor._context(executor, launch)
+    context = asyncio.run(executor.resolve_mapping(launch))
     with pytest.raises(ValueError, match="outside mapped root"):
         executor.submission_directory(spec)
     with pytest.raises(ValueError, match="outside mapped root"):
-        asyncio.run(context.map_path(local_root / "escape"))
+        context.map_path(local_root / "escape")

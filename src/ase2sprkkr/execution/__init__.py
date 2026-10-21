@@ -18,7 +18,7 @@ from .base import (
 )
 from .run_model import (
     ArtifactAvailabilityState, Execution, WorkingDirectory, FileEntry,
-    CacheEntry, FileMapping, FileManifest,
+    FileMapping, FileManifest,
 )
 from .endpoint import ExecutorEndpoint
 from .local import LocalExecutor, LocalRunner
@@ -39,7 +39,7 @@ from .projects import (
     ProjectRepositoryError,
     default_projects_directory,
 )
-from .project_manager import ExecutionManager
+from .manager import ExecutionManager
 from .psij import PsijExecutor, PsijRunner
 from .remote import FileSyncPolicy, RemoteRunner
 from .remote_endpoint import RemoteEndpointExecutor
@@ -52,7 +52,6 @@ __all__ = [
     "Execution",
     "WorkingDirectory",
     "FileEntry",
-    "CacheEntry",
     "FileMapping",
     "FileManifest",
     "ExecutionOutcome",

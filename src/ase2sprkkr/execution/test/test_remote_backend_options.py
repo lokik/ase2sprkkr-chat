@@ -41,10 +41,7 @@ def test_remote_request_carries_target_executor_options(tmp_path):
         input_files=(input_file, potential),
     )
     runner = executor.create_run(spec)
-    context = runner.executor
-
-    remote_directory = asyncio.run(context.map_directory(directory))
-    request = asyncio.run(runner._prepare_request("test-run", remote_directory))
+    request, _manifest = asyncio.run(runner._prepare_async())
 
     assert request["executor"] == "psij"
     assert request["executor_options"] == {"backend": "slurm", "url": None}
@@ -69,8 +66,9 @@ def test_remote_request_carries_target_executor_options(tmp_path):
     remote_potential = tmp_path / "remote" / "calculation" / "start.pot"
     assert "output_files" not in request
     assert "cache_files" not in request
-    assert request["client_sync"]["output_files"] == []
-    assert request["client_sync"]["cache_files"] == []
+    assert "client_sync" not in request
+    assert request["files"]["outputs"] == ()
+    assert request["files"]["caches"] == ()
     assert request["input_file"] == str(remote_input)
     assert remote_input.read_bytes() == b"input"
     assert remote_potential.read_text() == "potential"
@@ -112,9 +110,31 @@ def test_remote_sync_declarations_have_one_wire_authority(tmp_path):
         launch=LaunchSpec(local_root=root, remote_root=tmp_path / "remote"),
     ))
     remote_dir = tmp_path / "remote" / "work"
-    request = asyncio.run(run._prepare_request("test-run", str(remote_dir)))
+    request, _manifest = asyncio.run(run._prepare_async())
     assert "output_files" not in request
     assert "cache_files" not in request
     restored = _request_spec(request)
     assert str(remote_dir / "plot-*.dat") in restored.output_files
     assert str(remote_dir / "restart.dat") in restored.cache_files
+
+
+def test_remote_manifest_is_sole_authority_for_input_declarations(tmp_path):
+    from ase2sprkkr.execution.remote_service import _request_spec
+
+    root = tmp_path / "local"
+    root.mkdir()
+    inp = root / "data.in"
+    inp.write_text("input")
+    executor = RemoteExecutor(LocalTransport())
+    run = executor.create_run(ExecutionSpec(
+        argv=("program",), directory=str(root),
+        input_file=str(inp), input_files=(str(inp),),
+        output_file=None, launch=LaunchSpec(
+            local_root=str(root), remote_root=str(tmp_path / "remote"),
+        ),
+    ))
+    request, manifest = asyncio.run(run._prepare_async())
+    assert "input_files" not in request
+    assert _request_spec(request).input_files == tuple(
+        entry.remote_path for entry in manifest.inputs
+    )

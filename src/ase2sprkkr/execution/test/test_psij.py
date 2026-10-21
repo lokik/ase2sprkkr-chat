@@ -394,7 +394,7 @@ def test_psij_project_manifest_marks_concrete_and_wildcard_files(monkeypatch, tm
     runner.wait()
     assert runner.files.stdout.availability_state == "available"
     assert runner.files.outputs[0].availability_state == "available"
-    matches = [entry for entry in runner.files.outputs if entry.source_pattern is not None]
+    matches = [entry for entry in runner.files.outputs if entry.source is not None]
     assert len(matches) == 1
     assert matches[0].availability_state == "available"
 
@@ -414,38 +414,56 @@ def test_psij_missing_optional_output_is_skipped(monkeypatch, tmp_path):
     assert runner.files.outputs[0].availability_state == "skipped"
 
 
-@pytest.mark.parametrize(
-    "mpi, process_count",
-    [(16, 16), ("auto", None)],
-)
-def test_psij_mpi_job_uses_mpi_executable_and_requested_resources(
-    monkeypatch, tmp_path, mpi, process_count,
-):
-    executor = _executor(monkeypatch, _Backend())
-    input_path = tmp_path / "run.inp"
-    with input_path.open("w+b") as input_file, (tmp_path / "run.out").open("wb") as output_file:
-        spec = ExecutionSpec(
-            argv=("program",),
-            mpi_argv=("programMPI", str(input_path)),
-            launch=LaunchSpec.from_mpi(mpi),
-            input_file=input_file,
-            output_file=output_file,
-            directory=str(tmp_path),
-            stdin=input_file,
-        )
+def test_psij_mpi_process_count_becomes_resource_spec(monkeypatch, tmp_path):
+    backend = _Backend()
+    executor = _executor(monkeypatch, backend)
+    input_file = open(tmp_path / "run.inp", "wb+")
+    output_file = open(tmp_path / "run.out", "wb")
+    spec = ExecutionSpec(
+        argv=("program",),
+        mpi_argv=("programMPI", str(tmp_path / "run.inp")),
+        launch=LaunchSpec.from_mpi(16),
+        input_file=input_file,
+        output_file=output_file,
+        directory=str(tmp_path),
+        stdin=input_file,
+    )
 
-        runner = executor.create_run(spec)
-        job_spec = runner._job.spec
+    runner = executor.create_run(spec)
+    job_spec = runner._job.spec
 
-        assert job_spec.executable == "programMPI"
-        assert job_spec.arguments == [str(input_path)]
-        assert job_spec.launcher == "srun"
-        assert job_spec.stdin_path == str(input_path)
-        if process_count is None:
-            assert job_spec.resources is None
-        else:
-            assert job_spec.resources.process_count == process_count
+    assert job_spec.executable == "programMPI"
+    assert job_spec.arguments == [str(tmp_path / "run.inp")]
+    assert job_spec.resources.process_count == 16
+    assert job_spec.launcher == "srun"
+    assert job_spec.stdin_path == str(tmp_path / "run.inp")
+    input_file.close()
+    output_file.close()
 
+
+def test_psij_auto_uses_mpi_without_fixed_process_count(monkeypatch, tmp_path):
+    backend = _Backend()
+    executor = _executor(monkeypatch, backend)
+    input_file = open(tmp_path / "run.inp", "wb+")
+    output_file = open(tmp_path / "run.out", "wb")
+    spec = ExecutionSpec(
+        argv=("program",),
+        mpi_argv=("programMPI", str(tmp_path / "run.inp")),
+        launch=LaunchSpec.from_mpi("auto"),
+        input_file=input_file,
+        output_file=output_file,
+        directory=str(tmp_path),
+        stdin=input_file,
+    )
+
+    runner = executor.create_run(spec)
+    job_spec = runner._job.spec
+
+    assert job_spec.executable == "programMPI"
+    assert job_spec.resources is None
+    assert job_spec.launcher == "srun"
+    input_file.close()
+    output_file.close()
 
 def test_psij_status_is_nonblocking_and_explicit_wait_synchronizes(monkeypatch):
     executor = _executor(monkeypatch, _Backend())
@@ -573,25 +591,26 @@ def test_psij_status_and_attach_check_complete_endpoint(monkeypatch, tmp_path):
             ),
         ),
     )
-    seen = []
-    state = psij_backend.RunStatus(RunState.RUNNING, backend_id="456")
-
-    def status_native(native_id):
-        seen.append(native_id)
-        return state
-
-    monkeypatch.setattr(executor, "status_native", status_native)
-    assert executor.status(matching) == (state,)
+    expected = psij_backend.RunStatus(RunState.RUNNING, backend_id="456")
+    monkeypatch.setattr(executor, "status_native", lambda native_id: expected)
+    assert executor.status(matching) == (expected,)
     attached = executor.attach(matching, start=False)
     assert attached.backend_id == "456"
-    assert seen == ["456"]
 
-    # A completed native result must also propagate its return code.
-    state = psij_backend.RunStatus(
+
+def test_psij_record_status_uses_native_status(monkeypatch, tmp_path):
+    executor = _executor(monkeypatch, _Backend())
+    expected = psij_backend.RunStatus(
         RunState.FINISHED, backend_id="456", return_code=0,
     )
-    assert executor.status(matching) == (state,)
-    assert seen == ["456", "456"]
+    seen = []
+    def status_native(native_id):
+        seen.append(native_id)
+        return expected
+
+    monkeypatch.setattr(executor, "status_native", status_native)
+    assert executor.status(_psij_run(tmp_path, "456")) == (expected,)
+    assert seen == ["456"]
 
 
 def test_psij_uncertain_submit_without_native_id_stays_recoverable(monkeypatch, tmp_path):
@@ -1123,6 +1142,110 @@ def test_psij_subscriptions_share_job_and_detach_independently(monkeypatch):
     assert job._status_callback is psij_backend._ignore_job_status
     assert executor.attach_native_job("shared") is job
 
+
+
+@pytest.mark.parametrize("native_name, expected", [
+    ("COMPLETED", RunState.FINISHED),
+    ("FAILED", RunState.FAILED),
+    ("CANCELED", RunState.CANCELLED),
+])
+def test_psij_late_subscriber_replays_terminal_native_status(
+    monkeypatch, native_name, expected,
+):
+    """A subscriber joining after completion must not wait for another event."""
+    executor = _executor(monkeypatch, _Backend())
+    job = _Job()
+    job.native_id = "shared"
+    job.status = _Status("ACTIVE")
+    executor._cache_submitted_job(job)
+
+    delivered = []
+    first = executor._observe_job(
+        job, lambda status: delivered.append(("first", status)),
+    )
+    terminal = _Status(native_name, 0 if expected is RunState.FINISHED else 1)
+    job.emit(terminal)  # Deliberately leave job.status at ACTIVE.
+    assert job.status.state.name == "ACTIVE"
+    assert delivered == [("first", terminal)]
+
+    # _observe_job must replay before returning, independent of job.status.
+    second = executor._observe_job(
+        job, lambda status: delivered.append(("second", status)),
+    )
+    assert delivered == [("first", terminal), ("second", terminal)]
+    assert executor._terminal_observations[job] is terminal
+
+    # Stale/duplicate native callbacks must not undo confirmed completion.
+    job.emit(_Status("ACTIVE"))
+    job.emit(_Status(native_name, 17))
+    assert delivered == [("first", terminal), ("second", terminal)]
+
+    first()
+    assert job in executor._observers
+    assert executor.attach_native_job("shared") is job
+    second()
+    assert job not in executor._observers
+    assert job not in executor._terminal_observations
+    assert "shared" not in executor._jobs
+
+
+def test_psij_late_subscriber_callback_failure_detaches(monkeypatch):
+    """Failed synchronous replay must not leak an unusable subscription."""
+    executor = _executor(monkeypatch, _Backend())
+    job = _Job()
+    initial = lambda _: None
+    first = executor._observe_job(job, initial)
+    job.emit(_Status("COMPLETED", 0))
+
+    def broken(_):
+        raise ValueError("observer rejected completion")
+
+    with pytest.raises(ValueError, match="observer rejected"):
+        executor._observe_job(job, broken)
+    assert executor._observers[job] == {initial}
+    first()
+    assert job not in executor._observers
+
+
+@pytest.mark.parametrize("native_name, expected", [
+    ("COMPLETED", RunState.FINISHED),
+    ("FAILED", RunState.FAILED),
+    ("CANCELED", RunState.CANCELLED),
+])
+def test_psij_terminal_callback_evicts_stale_native_job(
+    monkeypatch, native_name, expected,
+):
+    """The delivered callback, not stale job.status, determines cache eviction."""
+    executor = _executor(monkeypatch, _Backend())
+    executor.backend = "pbs"
+    executor.url = "ssh://pbs-cluster"
+    job = _Job()
+    job.native_id = "shared"
+    job.status = _Status("ACTIVE")
+    executor._cache_submitted_job(job)
+
+    observed = []
+    first = executor._observe_job(job, lambda status: observed.append(status))
+    second = executor._observe_job(job, lambda status: observed.append(status))
+    terminal = _Status(native_name, 0 if expected is RunState.FINISHED else 1)
+
+    # PSI/J can deliver the terminal status before job.status is updated.
+    job.emit(terminal)
+    assert job.status.state.name == "ACTIVE"
+    assert observed == [terminal, terminal]
+    assert executor.status_native("shared").state is expected
+    assert executor.attach_native_job("shared") is job
+
+    first()
+    assert "shared" in executor._jobs
+    assert job in executor._terminal_observations
+    second()
+    assert "shared" not in executor._jobs
+    assert job not in executor._observers
+    assert job not in executor._terminal_observations
+
+    # A subsequent attach creates a fresh PSI/J object, never reuses stale ACTIVE.
+    assert executor.attach_native_job("shared") is not job
 
 
 def test_psij_simultaneous_attaches_share_callback_and_finish(monkeypatch, tmp_path):

@@ -1,5 +1,6 @@
 """ProjectRunner state observation and exactly-once finalization."""
 
+from threading import Event, Thread
 from types import SimpleNamespace
 
 from ..base import RunState
@@ -105,3 +106,57 @@ def test_unknown_observation_does_not_fire_completion_callback():
     ExecutionManager._complete(new_run, raw.result, delivered.append)
     assert delivered == [raw.result, raw.result]
 
+def test_concurrent_wait_and_completion_callback_persist_and_ack_once():
+    """The callback must finish persisting before a simultaneous wait returns."""
+    entered, release, wait_entered = Event(), Event(), Event()
+    errors, returned = [], []
+
+    class SlowManager(_Manager):
+        def complete(self, record, **kwargs):
+            entered.set()
+            if not release.wait(5):
+                raise AssertionError("Timed out waiting to release persistence")
+            return super().complete(record, **kwargs)
+
+    class WaitingRunner(_Runner):
+        def wait(self):
+            wait_entered.set()
+            return super().wait()
+
+    manager, raw, executor = SlowManager(), WaitingRunner(), _Executor()
+    record = SimpleNamespace(
+        id="run", state=RunState.RUNNING,
+        updated_at="2026-10-20T10:00:00+00:00",
+        execution=SimpleNamespace(submitted=lambda native_id: native_id),
+    )
+    run = ProjectRunner(manager, executor, raw, record)
+    raw.state = RunState.FINISHED
+
+    def invoke(action):
+        try:
+            action()
+        except BaseException as exc:
+            errors.append(exc)
+
+    callback = Thread(target=lambda: invoke(lambda: run._sync_completion(raw.result)))
+    waiter = Thread(target=lambda: invoke(lambda: returned.append(run.wait())))
+    try:
+        callback.start()
+        assert entered.wait(5), "Completion callback did not enter persistence"
+        waiter.start()
+        assert wait_entered.wait(5), "wait() did not reach the runner"
+        assert manager.completions == 0
+        assert executor.acknowledgements == 0
+    finally:
+        release.set()
+        if callback.ident is not None:
+            callback.join(5)
+        if waiter.ident is not None:
+            waiter.join(5)
+
+    assert not callback.is_alive() and not waiter.is_alive()
+    assert not errors
+    assert returned == [raw.result]
+    assert manager.completions == 1
+    assert executor.acknowledgements == 1
+    assert run.record.state is RunState.FINISHED

@@ -161,10 +161,12 @@ def _manifest_accesses(record):
             value if os.path.isabs(value) else os.path.join(directory.target, value)
         )
 
-    reads = {path(entry) for entry in files.inputs}
-    reads.update(path(cache.file) for cache in files.caches)
+    reads = {path(entry) for entry in files.input_entries}
+    reads.update(path(cache) for cache in files.caches)
     writes = {path(entry) for entry in (files.stdout, files.stderr, *files.outputs)}
-    writes.update(path(cache.file) for cache in files.caches)
+    if remote and (files.mapping is None or files.mapping.input_sync != "never"):
+        writes.update(path(entry) for entry in files.input_entries)
+    writes.update(path(cache) for cache in files.caches)
     return reads - {None}, writes - {None}
 
 
@@ -348,9 +350,13 @@ class RunStore:
 class ExecutionManager:
     """Persist public run lifecycle without task-specific knowledge."""
 
-    def __init__(self, store=None, *, executor_pool=None, submitting_grace=60.0):
+    def __init__(self, store=None, *, executor_pool=None, submitting_grace=60.0,
+                 project_repository=None):
         if submitting_grace < 0:
             raise ValueError("submitting_grace must be non-negative")
+        self.projects = project_repository
+        if self.projects is not None and store is None:
+            store = RunStore(self.projects.directory.parent / "projects_runs")
         self.store = store
         self.executor_pool = (
             executor_pool if executor_pool is not None else default_executor_pool()
@@ -461,6 +467,12 @@ class ExecutionManager:
         remote_directory=None, files=None, input_definition=None, run_id=None,
         project_id=None,
     ):
+        if self.projects is not None:
+            if project_id is None:
+                raise ValueError("Tracked runs require an explicit project_id")
+            from .projects import Project
+            identity = project_id.id if isinstance(project_id, Project) else str(project_id)
+            project_id = self.projects.project(identity).id
         now = _now()
         local = os.path.abspath(os.fspath(directory))
         return RunRecord(
@@ -631,6 +643,8 @@ class ExecutionManager:
                     return self.transition(
                         record,
                         state=RunState.SUBMITTING,
+                        files=record.files,
+                        execution=record.execution,
                     )
                 stale = tuple(
                     conflict
@@ -909,6 +923,7 @@ class ExecutionManager:
         dataset=None,
         callback=None,
         run_id=None,
+        project_id=None,
     ):
         """Create a project run from raw execution plus generic processing."""
         endpoint = endpoint_for_executor(executor)
@@ -918,12 +933,9 @@ class ExecutionManager:
             dataset=dataset,
             directory=spec.directory,
             endpoint=endpoint,
-            remote_directory=(
-                executor.submission_directory(spec)
-                if endpoint.executor not in ("local", "psij") else None
-            ),
             files=FileManifest.from_spec(spec),
             run_id=run_id,
+            project_id=project_id,
         )
         self.register_executor(executor, endpoint)
 
@@ -934,7 +946,7 @@ class ExecutionManager:
         if set_manifest is not None:
             set_manifest(record.files)
         processed = PostprocessingRunner(raw, process_result)
-        project_run = ProjectRunner(self, executor, processed, record)
+        project_run = ProjectRunner(self, executor, processed, record, spec=spec)
         processed.callback = lambda result: self._complete(
             project_run, result, callback
         )
@@ -994,7 +1006,8 @@ class ExecutionManager:
 class ProjectRunner:
     """Caller-owned runner that persists the public lifecycle directly."""
 
-    def __init__(self, manager, executor, runner, record):
+    def __init__(self, manager, executor, runner, record, *, spec=None):
+        self._spec = spec
         self.manager = manager
         self.executor = executor
         self._runner = runner
@@ -1060,7 +1073,15 @@ class ProjectRunner:
     def submit(self):
         if self._record.state != RunState.NEW:
             raise RuntimeError(f"Run is already {self._record.state.value}")
+        files, remote_directory = self.executor.reservation_context(self._spec, self._record.files)
+        execution = self._record.execution
+        if remote_directory is not None:
+            execution = replace(execution, directory=replace(execution.directory, remote=remote_directory))
+        self._record = replace(self._record, files=files, execution=execution)
         self._record = self.manager.reserve(self._record)
+        set_manifest = getattr(self._runner, "set_manifest", None)
+        if set_manifest is not None:
+            set_manifest(self._record.files)
         self._monitor_record_version = self._record.updated_at
         try:
             prepare = getattr(self._runner, "prepare_submission", None)

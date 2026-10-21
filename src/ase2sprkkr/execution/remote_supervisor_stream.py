@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ._durability import fsync_directory
+from .stream_protocol import decode_terminal_payload
 
 MAGIC = b"A2SFOLL1"
 _HEADER = struct.Struct("!cQQ")
@@ -42,7 +43,7 @@ async def receive(reader):
             raise ValueError("Oversized supervisor frame")
         payload = await reader.readexactly(length)
         if code == b"T":
-            yield "terminal", 0, json.loads(payload)
+            yield "terminal", 0, decode_terminal_payload(payload)
             return
         if code not in _BACK:
             raise ValueError("Invalid supervisor channel")
