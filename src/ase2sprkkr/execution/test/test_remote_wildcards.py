@@ -326,3 +326,32 @@ def test_remote_completed_run_fails_on_missing_mandatory_wildcard(tmp_path):
     ]
     assert len(missing) == 1
     assert missing[0].availability_state == "failed"
+
+
+def test_overlapping_required_and_optional_output_patterns_download_once(tmp_path):
+    """Overlapping globs do not duplicate physical downloads."""
+    from .test_remote import _SpyTransport
+    from .test_taskfile_optional_contract import DeclaredPath
+
+    transport = _SpyTransport()
+    workdir = tmp_path / "local" / "calculation"
+    executor, spec, _, remote_root = _text_run(
+        tmp_path, transport,
+        declared_output_files=(
+            DeclaredPath(str(workdir / "part-*.dat"), optional=True),
+            DeclaredPath(str(workdir / "part-a*.dat")),
+        ),
+        output_files=FileSyncPolicy.ALWAYS,
+        code=(
+            "from pathlib import Path; "
+            "Path('part-a.dat').write_text('a'); "
+            "Path('part-b.dat').write_text('b')"
+        ),
+    )
+    runner = _processed_run(executor, spec)
+    assert runner.run().return_code == 0
+    assert (workdir / "part-a.dat").read_text() == "a"
+    assert (workdir / "part-b.dat").read_text() == "b"
+    for name in ("part-a.dat", "part-b.dat"):
+        assert sum(src == remote_root / "calculation" / name
+                   for src, _ in transport.get_files) == 1
