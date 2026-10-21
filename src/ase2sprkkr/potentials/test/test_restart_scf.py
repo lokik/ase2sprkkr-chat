@@ -46,20 +46,6 @@ def test_restart_and_normal_save_preserve_status_and_electronic_data():
     assert potential.SCF_INFO.SCFSTATUS() == "ITR-L-BULK"
 
 
-def test_set_from_atoms_does_not_infer_scf_status():
-    attached = _converged_potential()
-    atoms = attached.atoms
-    attached.SCF_INFO.SCFSTATUS = "ITR"
-
-    standalone = Potential(atoms=atoms, set_from_atoms=False)
-    assert standalone.SCF_INFO.SCFSTATUS() == "START"
-
-    standalone.set_from_atoms(atoms)
-
-    assert attached.SCF_INFO.SCFSTATUS() == "ITR"
-    assert standalone.SCF_INFO.SCFSTATUS() == "START"
-    assert atoms.potential is attached
-
     # Return to a converged base before testing the transient result override.
     potential.SCF_INFO.SCFSTATUS = "CONVERGED"
     assert potential.SCF_INFO.SCFSTATUS() == "CONVERGED"
@@ -84,3 +70,18 @@ def test_set_from_atoms_does_not_infer_scf_status():
 
     status.clear_result()
     assert status() == "CONVERGED"
+
+
+def test_set_from_atoms_does_not_infer_scf_status():
+    attached = _converged_potential()
+    atoms = attached.atoms
+    attached.SCF_INFO.SCFSTATUS = "ITR"
+
+    standalone = Potential(atoms=atoms, set_from_atoms=False)
+    assert standalone.SCF_INFO.SCFSTATUS() == "START"
+
+    standalone.set_from_atoms(atoms)
+
+    assert attached.SCF_INFO.SCFSTATUS() == "ITR"
+    assert standalone.SCF_INFO.SCFSTATUS() == "START"
+    assert atoms.potential is attached
