@@ -266,3 +266,75 @@ def test_fetch_validates_canonical_path_before_explicit_staging(tmp_path):
     assert not staged.exists()
     assert not (outside / "output.dat").exists()
 
+
+
+def test_historical_restore_preflights_all_requested_sources(tmp_path):
+    """A later invalid entry must not leave an earlier file downloaded."""
+    local = tmp_path / "local"
+    remote = tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    first = local / "first.dat"
+    second = local / "second.dat"
+    (remote / "first.dat").write_text("first")
+    (remote / "second.dat").write_text("second")
+
+    executor = RemoteExecutor(LocalTransport())
+    run = RunRecord(
+        id="preflight-restore", state=RunState.FINISHED,
+        created_at="2026-10-13T08:00:00+00:00",
+        updated_at="2026-10-13T08:00:00+00:00",
+        task="DOS",
+        execution=Execution(
+            endpoint_for_executor(executor),
+            WorkingDirectory(str(local), str(remote)), "backend-id",
+        ),
+        files=FileManifest(
+            mapping=FileMapping(str(local), str(remote)),
+            outputs=(
+                FileEntry(str(first), str(remote / "first.dat")),
+                FileEntry(str(second), str(remote / "wrong.dat")),
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="differs from mapped path"):
+        executor.fetch_result_files(run, (first, second))
+    assert not first.exists()
+    assert not second.exists()
+
+
+def test_historical_restore_preflights_staging_collisions(tmp_path):
+    local = tmp_path / "local"
+    remote = tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    first = local / "first.dat"
+    second = local / "second.dat"
+    staged = tmp_path / "staged.dat"
+    (remote / "first.dat").write_text("first")
+    (remote / "second.dat").write_text("second")
+
+    executor = RemoteExecutor(LocalTransport())
+    run = RunRecord(
+        id="colliding-restore", state=RunState.FINISHED,
+        created_at="2026-10-13T08:00:00+00:00",
+        updated_at="2026-10-13T08:00:00+00:00",
+        task="DOS",
+        execution=Execution(
+            endpoint_for_executor(executor),
+            WorkingDirectory(str(local), str(remote)), "backend-id",
+        ),
+        files=FileManifest(
+            mapping=FileMapping(str(local), str(remote)),
+            outputs=(
+                FileEntry(str(first), str(remote / "first.dat")),
+                FileEntry(str(second), str(remote / "second.dat")),
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="Conflicting restore sources"):
+        executor.fetch_result_files(
+            run, (first, second),
+            destinations={str(first): str(staged), str(second): str(staged)},
+        )
+    assert not staged.exists()
