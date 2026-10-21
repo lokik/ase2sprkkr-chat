@@ -99,3 +99,43 @@ def test_compactor_round_trip_spc(tmp_path, name, mode):
     else:
         assert result.NP() == 3
         assert result.NT() == 3
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("original", "expected_mode"),
+    (
+        ("FePt.new_BSFEK_BLOCHSF.bsf", "EK-REL"),
+        ("FePt.new_BSFEK_BLOCHSF_spol.bsf", "EK-REL"),
+        ("WSe2_BLOCHSF_spol_kx_ky.bsf", "CONST-E"),
+        ("WSe2_ARPES.spc", "energy"),
+        ("Au_kx_ky_ARPES_data.spc", "kx_ky"),
+    ),
+)
+def test_compact_large_native_example(tmp_path, original, expected_mode):
+    """Full-size source -> strict reducer -> standard reader, including channel geometry."""
+    from .compact_spectral_data import compact_bsf, compact_spc
+
+    source = Path(__file__).resolve().parents[1] / "examples" / original
+    text = source.read_text()
+    reduced = (compact_bsf(text, max_e=6, max_k=8)
+               if source.suffix == ".bsf"
+               else compact_spc(text, max_e=6, max_k=8))
+    assert len(reduced) < len(text) / 4
+    dest = tmp_path / original
+    dest.write_text(reduced)
+    result = ResultFile.from_file(dest, unknown=False)
+    if source.suffix == ".bsf":
+        assert result.MODE() == expected_mode
+        assert result.I().size > 0
+        assert np.isfinite(result.I()).all()
+        if result.KEYWORD() == "BSF":
+            channels = ("I_UP", "I_DOWN")
+        else:
+            channels = ("I_X", "I_Y", "I_Z")
+        for channel in channels:
+            assert result[channel]().shape == result.I().shape
+    else:
+        assert result.MODE() == expected_mode
+        assert result.TOTAL().size > 0
+        assert np.isfinite(result.TOTAL()).all()
