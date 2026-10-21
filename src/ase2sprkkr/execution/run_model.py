@@ -80,17 +80,20 @@ class FileEntry:
     remote_path: Optional[str] = None
     availability_state: Optional[str] = None
     availability_message: Optional[str] = None
-    source_pattern: Optional[str] = None
+    source: Optional[str] = None
+    pre_run_signature: Optional[tuple] = None
 
     def __post_init__(self):
         import os
-        if self.source_pattern is not None:
-            object.__setattr__(self, "source_pattern", os.fspath(self.source_pattern))
+        if self.source is not None:
+            object.__setattr__(self, "source", os.fspath(self.source))
 
         for name in ("local_path", "remote_path"):
             value = getattr(self, name)
             if value is not None:
                 object.__setattr__(self, name, os.fspath(value))
+        if self.pre_run_signature is not None:
+            object.__setattr__(self, "pre_run_signature", tuple(self.pre_run_signature))
         if self.local_path is None and self.remote_path is None:
             raise ValueError("A file entry must have at least one location")
         if self.availability_state is not None:
@@ -105,20 +108,6 @@ class FileEntry:
             and self.availability_state != ArtifactAvailabilityState.FAILED
         ):
             raise ValueError("An availability error belongs to a failed file")
-
-
-@dataclass(frozen=True)
-class CacheEntry:
-    """Cache identity and its pre-execution remote signature."""
-
-    file: FileEntry
-    before: Optional[tuple] = None
-
-    def __post_init__(self):
-        if isinstance(self.file, dict):
-            object.__setattr__(self, "file", FileEntry(**self.file))
-        if self.before is not None:
-            object.__setattr__(self, "before", tuple(self.before))
 
 
 class FileSyncPolicy(str, Enum):
@@ -166,6 +155,42 @@ class FileMapping:
         object.__setattr__(self, "input_sync", input_sync.value)
         object.__setattr__(self, "output_sync", output_sync.value)
 
+    def map_path(self, path):
+        """Map an existing local path without querying the target service."""
+        import os
+        import posixpath
+        from pathlib import Path
+        root = Path(self.local_root).expanduser().resolve()
+        local = Path(path).expanduser().resolve()
+        try:
+            relative = local.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"Local path {local} is outside mapped root {root}") from exc
+        return posixpath.join(self.remote_root, *relative.parts)
+
+    def unmap_path(self, path):
+        """Map target path back, rejecting lexical and symlink escapes."""
+        import os
+        import posixpath
+        from pathlib import Path, PurePosixPath
+        remote = posixpath.normpath(os.fspath(path))
+        if not posixpath.isabs(remote):
+            raise ValueError(f"Remote path must be absolute: {remote}")
+        try:
+            inside = posixpath.commonpath((self.remote_root, remote)) == self.remote_root
+        except ValueError:
+            inside = False
+        if not inside:
+            raise ValueError(f"Remote path {remote} is outside mapped root {self.remote_root}")
+        relative = posixpath.relpath(remote, self.remote_root)
+        root = Path(self.local_root).expanduser().resolve()
+        local = root if relative == "." else root.joinpath(*PurePosixPath(relative).parts)
+        try:
+            local.resolve().relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"Local path {local} is outside mapped root {root}") from exc
+        return local
+
 
 @dataclass(frozen=True)
 class FileManifest:
@@ -173,13 +198,15 @@ class FileManifest:
 
     inputs: tuple[FileEntry, ...] = ()
     outputs: tuple[FileEntry, ...] = ()
-    caches: tuple[CacheEntry, ...] = ()
+    caches: tuple[FileEntry, ...] = ()
     stdout: Optional[FileEntry] = None
     stderr: Optional[FileEntry] = None
     mapping: Optional[FileMapping] = None
     input_versions: tuple[FileVersion, ...] = ()
     output_versions: tuple[FileVersion, ...] = ()
     captured_at: Optional[str] = None
+    primary_input: Optional[FileEntry] = None
+    stdin: Optional[FileEntry] = None
 
     @classmethod
     def from_spec(cls, spec):
@@ -196,7 +223,9 @@ class FileManifest:
                 if (path := file_path(value, directory)) is not None
             ))
 
-        inputs = paths(getattr(spec, "input_file", None), *getattr(spec, "input_files", ()))
+        primary = file_path(spec.input_file, directory)
+        inputs = paths(primary, *spec.input_files)
+        stdin = file_path(spec.stdin, directory)
         stdout = file_path(getattr(spec, "output_file", None), directory)
         stderr = file_path(getattr(spec, "error_file", None), directory)
         streams = {stdout, stderr}
@@ -206,20 +235,24 @@ class FileManifest:
         caches = paths(*getattr(spec, "cache_files", ()))
         return cls(
             inputs=tuple(FileEntry(local_path=x) for x in inputs),
+            primary_input=None if primary is None else FileEntry(local_path=primary),
+            stdin=None if stdin is None else FileEntry(local_path=stdin),
             outputs=tuple(FileEntry(local_path=x) for x in outputs),
-            caches=tuple(CacheEntry(FileEntry(local_path=x)) for x in caches),
+            caches=tuple(FileEntry(local_path=x) for x in caches),
             stdout=None if stdout is None else FileEntry(local_path=stdout),
             stderr=None if stderr is None else FileEntry(local_path=stderr),
         ).initialize_availability()
 
     def __post_init__(self):
-        for name, cls in (("inputs", FileEntry), ("outputs", FileEntry), ("caches", CacheEntry)):
-            items = getattr(self, name)
+        for name in ("inputs", "outputs", "caches"):
             object.__setattr__(
                 self, name,
-                tuple(item if isinstance(item, cls) else cls(**item) for item in items),
+                tuple(
+                    item if isinstance(item, FileEntry) else FileEntry(**item)
+                    for item in getattr(self, name)
+                ),
             )
-        for name in ("stdout", "stderr"):
+        for name in ("stdout", "stderr", "primary_input", "stdin"):
             item = getattr(self, name)
             if isinstance(item, dict):
                 object.__setattr__(self, name, FileEntry(**item))
@@ -236,7 +269,7 @@ class FileManifest:
     @property
     def artifacts(self):
         """Output streams, declared outputs and caches (one status per local file)."""
-        entries = (self.stdout, self.stderr, *self.outputs, *(x.file for x in self.caches))
+        entries = (self.stdout, self.stderr, *self.outputs, *self.caches)
         unique = {}
         for entry in entries:
             if entry is not None and entry.local_path is not None:
@@ -262,7 +295,9 @@ class FileManifest:
     @property
     def availability_message(self):
         failures = self.failed_artifacts
-        return None if not failures else failures[0].availability_message
+        if failures:
+            return failures[0].availability_message
+        return None
 
     def with_remote_stream_paths(self, *, stdout=None, stderr=None):
         """Update recovered stream locations without changing artifact identity.
@@ -290,18 +325,17 @@ class FileManifest:
             stdout=None if self.stdout is None else transform(self.stdout),
             stderr=None if self.stderr is None else transform(self.stderr),
             outputs=tuple(transform(x) for x in self.outputs),
-            caches=tuple(replace(x, file=transform(x.file)) for x in self.caches),
+            caches=tuple(transform(x) for x in self.caches),
         )
 
     def with_file_availability(
         self, local_path, state, message=None, *,
-        remote_path=None, kind="output", source_pattern=None,
+        remote_path=None, kind="output", source=None,
     ):
-        """Update one artifact, adding each wildcard match as it is discovered.
+        """Update one file, recording availability or a transfer failure.
 
-        The pattern declaration retains its own independent status. A child's
-        source_pattern identifies the declaration, including after restart.
-        Duplicate stream/output declarations of one path are updated together.
+        Materialized files have an optional source. A missing wildcard match
+        produces no FileEntry; transfer failures belong to concrete entries.
         """
         import os
         path = os.fspath(local_path)
@@ -317,17 +351,32 @@ class FileManifest:
         file = FileEntry(
             local_path=path, remote_path=remote_path,
             availability_state=state, availability_message=message,
-            source_pattern=source_pattern,
+            source=source,
         )
         if kind == "output":
             return replace(self, outputs=(*self.outputs, file))
         if kind == "cache":
-            return replace(self, caches=(*self.caches, CacheEntry(file)))
+            return replace(self, caches=(*self.caches, file))
         raise ValueError(f"Unknown artifact kind: {kind!r}")
+
+    def has_wildcards(self):
+        """Whether any declared output/cache path still needs materializing."""
+        from .transport import has_file_magic
+        return any(
+            entry is not None and
+            has_file_magic(entry.remote_path or entry.local_path)
+            for entry in (*self.outputs, *self.caches)
+            if entry.local_path is not None
+        )
 
     @property
     def input_file(self):
-        return self.inputs[0].local_path if self.inputs else None
+        return None if self.primary_input is None else self.primary_input.local_path
+
+    @property
+    def input_entries(self):
+        """All read inputs, including stdin without making it primary."""
+        return (*self.inputs, self.stdin) if self.stdin is not None else self.inputs
 
     @property
     def output_file(self):
@@ -335,7 +384,8 @@ class FileManifest:
 
     @property
     def input_files(self):
-        return tuple(entry.local_path for entry in self.inputs if entry.local_path is not None)
+        return tuple(dict.fromkeys(entry.local_path for entry in self.input_entries
+                                   if entry.local_path is not None))
 
     @property
     def output_files(self):

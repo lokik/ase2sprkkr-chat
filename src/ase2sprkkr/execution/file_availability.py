@@ -8,40 +8,140 @@ from __future__ import annotations
 
 import os
 
-from .transport import expand_local_candidates, has_file_magic
+from .transport import expand_local_candidates, expand_local_files, has_file_magic
+
+
+def prepare_local_files(spec, *, output_file=None, error_file=None,
+                        preserve_open_streams=False):
+    """Protect inputs and caches, then clear declared outputs before launch."""
+    from .base import file_path
+    directory = spec.directory
+
+    def paths(values):
+        return tuple(
+            path for value in values
+            if (path := file_path(value, directory)) is not None
+        )
+
+    protected = paths((
+        spec.input_file, spec.stdin, *spec.input_files, *spec.cache_files,
+    ))
+    streams = paths((
+        spec.output_file if output_file is None else output_file,
+        spec.error_file if error_file is None else error_file,
+    ))
+    declared = paths(spec.output_files)
+    validate_output_collisions((*declared, *streams), protected=protected)
+    if preserve_open_streams:
+        # Unlinking streams already open would orphan the output descriptors.
+        clear_declared_outputs(declared, protected=(*protected, *streams))
+    else:
+        clear_declared_outputs((*declared, *streams), protected=protected)
+
+
+
+def _pattern_root(pattern):
+    """Find an existing literal ancestor for a local wildcard declaration."""
+    directory = os.path.dirname(os.path.abspath(os.fspath(pattern)))
+    while has_file_magic(directory):
+        parent = os.path.dirname(directory)
+        if parent == directory:
+            break
+        directory = parent
+    return directory
+
+
+def materialize_manifest(manifest, *, remote=False, include_streams=True):
+    """Resolve local filesystem declarations and return (manifest, first_error).
+
+    This is the only wildcard evaluator for job outputs. An unmatched pattern
+    is simply empty. Exceptional filesystem errors do not discard successful
+    matches of other patterns. The caller owns lifecycle and persistence.
+    """
+    from dataclasses import replace
+    from .run_model import FileManifest
+
+    if not isinstance(manifest, FileManifest):
+        manifest = FileManifest(**manifest)
+    first_error = None
+
+    def resolve(entry):
+        nonlocal first_error
+        if entry is None:
+            return ()
+        if entry.local_path is None:
+            return (entry,)
+        if entry.availability_state not in (None, "pending"):
+            return (entry,)
+        pattern = entry.remote_path if remote else entry.local_path
+        if pattern is None:
+            return (entry,)
+        if not has_file_magic(pattern):
+            if remote:
+                return (entry,)
+            return (replace(entry, availability_state=(
+                "available" if os.path.isfile(pattern) else "skipped"
+            )),)
+        root = manifest.mapping.remote_root if remote else _pattern_root(pattern)
+        try:
+            matches = expand_local_files(pattern, root)
+        except (OSError, ValueError) as exc:
+            if first_error is None:
+                first_error = exc
+            # A failed filesystem scan is not an empty wildcard. Preserve
+            # the unresolved declaration in the frozen receipt so the client
+            # can distinguish it from a genuinely unmatched optional output.
+            return (entry,)
+        found = []
+        for path in matches:
+            if remote:
+                relative = os.path.relpath(path, manifest.mapping.remote_root)
+                if relative == ".." or relative.startswith(".." + os.sep):
+                    if first_error is None:
+                        first_error = ValueError("Materialized file is outside remote root")
+                    continue
+                found.append(replace(
+                    entry, local_path=os.path.join(manifest.mapping.local_root, relative),
+                    remote_path=path, source=entry.local_path,
+                    availability_state="pending",
+                ))
+            else:
+                found.append(replace(
+                    entry, local_path=path, source=entry.local_path,
+                    availability_state="available",
+                ))
+        return tuple(found)
+
+    outputs = tuple(concrete for entry in manifest.outputs for concrete in resolve(entry))
+    # Remote-only cache entries carry pre-run signatures, not artifacts.
+    # Apply those baselines to the frozen concrete entries and drop the
+    # placeholders once membership is known.
+    baselines = {
+        cache.remote_path: cache.pre_run_signature
+        for cache in manifest.caches if cache.local_path is None
+    } if remote else {}
+    caches = tuple(
+        replace(concrete,
+                pre_run_signature=baselines.get(
+                    concrete.remote_path, cache.pre_run_signature))
+        for cache in manifest.caches
+        if not remote or cache.local_path is not None
+        for concrete in resolve(cache)
+    )
+    stdout, stderr = manifest.stdout, manifest.stderr
+    if not remote and include_streams:
+        stdout = next(iter(resolve(stdout)), None)
+        stderr = next(iter(resolve(stderr)), None)
+    return replace(manifest, outputs=outputs, caches=caches,
+                   stdout=stdout, stderr=stderr), first_error
 
 
 def discover_local_files(files, *, include_streams=True):
-    """Resolve pending local declarations and retain individual wildcard matches."""
-    declarations = []
-    if include_streams:
-        declarations.extend(("output", entry) for entry in (files.stdout, files.stderr))
-    declarations.extend(("output", entry) for entry in files.outputs)
-    declarations.extend(("cache", item.file) for item in files.caches)
-
-    for kind, entry in declarations:
-        if (
-            entry is None or entry.local_path is None
-            or entry.source_pattern is not None
-            or entry.availability_state not in (None, "pending")
-        ):
-            continue
-        path = entry.local_path
-        if has_file_magic(path):
-            matches = tuple(
-                candidate for candidate in expand_local_candidates(path)
-                if os.path.isfile(candidate)
-            )
-            for concrete in matches:
-                files = files.with_file_availability(
-                    concrete, "available", kind=kind, source_pattern=path,
-                )
-            state = "available" if matches else "skipped"
-        else:
-            state = "available" if os.path.isfile(path) else "skipped"
-        files = files.with_file_availability(path, state)
-    return files
-
+    """Read local artifacts using the common materializer."""
+    materialized, error = materialize_manifest(files, include_streams=include_streams)
+    if error is not None:
+        raise error
+    return materialized
 
 
 def _expanded_protected_paths(protected):

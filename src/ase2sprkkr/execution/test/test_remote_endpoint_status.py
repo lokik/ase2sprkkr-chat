@@ -1,4 +1,4 @@
-from dataclasses import replace
+from dataclasses import asdict, replace
 
 import pytest
 
@@ -46,14 +46,14 @@ def test_remote_endpoint_status_queries_opaque_handles_individually():
         calls.append((action, args, payload))
         return replies[args[0]]
 
-    executor._json_request = request
+    executor.connection._json_request = request
     runs = (_run("job-1"), _run("job-2"))
 
     statuses = executor.status(*runs)
 
     assert calls == [
-        ("status", ("job-1",), None),
-        ("status", ("job-2",), None),
+        ("status", ("job-1",), {"files": asdict(runs[0].files)}),
+        ("status", ("job-2",), {"files": asdict(runs[1].files)}),
     ]
     assert tuple(status.backend_id for status in statuses) == ("job-1", "job-2")
     assert tuple(status.state for status in statuses) == (
@@ -73,7 +73,7 @@ def test_direct_remote_status_uses_opaque_handle_without_client_receipt_path():
         calls.append((action, args, payload))
         return {"state": "finished", "return_code": 0}
 
-    executor._json_request = request
+    executor.connection._json_request = request
     run = _run("opaque-process", backend="local")
     (status,) = executor.status(run)
 
@@ -82,7 +82,7 @@ def test_direct_remote_status_uses_opaque_handle_without_client_receipt_path():
         (
             "status",
             ("opaque-process",),
-            None,
+            {"files": asdict(run.files)},
         )
     ]
 
@@ -106,7 +106,7 @@ def test_remote_recovery_passes_submission_timestamp_to_stateless_service():
             "directory": "/work/case",
         }
 
-    executor._json_request = request
+    executor.connection._json_request = request
     submission = _run(None, backend="local")
 
     status = executor.recover_submission(
@@ -136,7 +136,7 @@ def test_remote_recovery_can_report_unsupported_backend_recovery():
     async def request(action, *args, payload=None):
         return {"unsupported": True, "error": "identity cannot be reconstructed"}
 
-    executor._json_request = request
+    executor.connection._json_request = request
 
     with pytest.raises(NotImplementedError, match="cannot be reconstructed"):
         executor.recover_submission(
@@ -179,7 +179,7 @@ def test_remote_status_and_recovery_share_backend_facts_mapping(
             }
         pytest.fail(f"Unexpected operation: {action}")
 
-    executor._json_request = request
+    executor.connection._json_request = request
     (queried,) = executor.status(_run("opaque-job", backend="local"))
     original = _run(None, backend="local")
     submission = replace(original, files=FileManifest(
@@ -206,30 +206,11 @@ def test_remote_status_and_recovery_share_backend_facts_mapping(
     assert recovered.files.stderr.remote_path == "/other/work/run.err"
 
 
-@pytest.mark.parametrize(
-    "facts, expected_phase",
-    [
-        ({"return_code": 7, "failure_phase": "execution", "error": "failed"},
-         FailurePhase.EXECUTION),
-        ({"return_code": 0, "failure_phase": None, "error": None}, None),
-        ({}, None),
-    ],
-)
-def test_remote_runner_backend_facts_are_consistent(
-    tmp_path, facts, expected_phase,
-):
-    """Backend metadata is applied to both the runner and its result."""
-    from ase2sprkkr.execution.base import ExecutionSpec
-    from ase2sprkkr.execution.remote import RemoteRunner
+def test_status_delivery_policy_distinguishes_project_and_ssh():
+    from ase2sprkkr.execution.supervisor_monitor import backend_status_from_facts
 
-    runner = RemoteRunner(
-        None, ExecutionSpec(
-            argv=(), input_file=None, output_file=None,
-            directory=str(tmp_path),
-        ),
-    )
-    runner._apply_backend_facts(facts)
-
-    assert runner.return_code == runner.result.return_code == facts.get("return_code")
-    assert runner.failure_phase == expected_phase
-    assert runner.failure_message == facts.get("error")
+    facts = {"state": "finished", "return_code": 0}
+    assert backend_status_from_facts(facts, "job").state == RunState.FINISHED
+    assert backend_status_from_facts(
+        facts, "job", needs_delivery=True,
+    ).state == RunState.DOWNLOADING

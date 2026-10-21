@@ -1,19 +1,21 @@
-"""Resolve explicit project-backed execution without global persistence."""
-
+"""Resolve a project identity and one shared execution manager."""
 from __future__ import annotations
 
-from .project_manager import ExecutionManager
-from .projects import Project
+from .manager import ExecutionManager
+from .projects import Project, ProjectRepository
 
 
 def resolve_project_manager(project):
-    """Only an existing project enables durable run tracking."""
+    """Return (manager, project_id); no manager is bound to one project."""
     if project is None or project is False:
         return None
-    if isinstance(project, ExecutionManager):
-        if project.project_id is None:
-            raise ValueError("ExecutionManager must be bound to a project")
-        return project
-    if isinstance(project, (Project, str)):
-        return ExecutionManager(project=project)
-    raise TypeError("project must be a Project, project ID, or project-bound ExecutionManager")
+    if isinstance(project, tuple) and len(project) == 2:
+        manager, project = project
+        if not isinstance(manager, ExecutionManager) or manager.projects is None:
+            raise TypeError("Project execution requires an ExecutionManager with a repository")
+    elif isinstance(project, (Project, str)):
+        manager = ExecutionManager(project_repository=ProjectRepository())
+    else:
+        raise TypeError("project must be a Project, project ID, or (ExecutionManager, project)")
+    project_id = project.id if isinstance(project, Project) else str(project)
+    return manager, manager.projects.project(project_id).id

@@ -106,3 +106,20 @@ def test_reader_only_closes_streams_that_it_opens(tmp_path):
             assert borrowed.read() == b"data"
         assert reader.file is None
         assert not borrowed.closed
+
+
+@pytest.mark.parametrize("return_code", [None, 0, 7], ids=["unknown", "success", "failed"])
+def test_saved_stream_parser_preserves_unknown_exit_status(return_code):
+    output = io.BytesIO(b"parsed output\n")
+    error = io.BytesIO(b"parsed error\n")
+    if return_code == 7:
+        with pytest.raises(ValueError, match="return value 7") as failure:
+            _OutputParser().read_from_file(
+                output, error, return_code=return_code,
+            )
+        assert failure.value.output == b"parsed output\n"
+        assert failure.value.error == b"parsed error\n"
+    else:
+        assert _OutputParser().read_from_file(
+            output, error, return_code=return_code,
+        ) == (b"parsed output\n", b"parsed error\n", return_code)
