@@ -913,7 +913,7 @@ class ExecutionManager:
         if set_manifest is not None:
             set_manifest(record.files)
         processed = CalculationRun(raw, process_result, resources=resources)
-        persistence = PersistentRun(self, executor, processed, record, spec=spec)
+        persistence = PersistentRun(self, executor, record, spec=spec)
         processed.hooks = persistence
         processed.callback = callback
         return processed
@@ -961,7 +961,7 @@ class ExecutionManager:
             start=False,
         )
         processed = CalculationRun(raw, process_result)
-        persistence = PersistentRun(self, executor, processed, record)
+        persistence = PersistentRun(self, executor, record)
         processed.hooks = persistence
         processed.callback = callback
         processed.start(attached=True)
@@ -971,13 +971,12 @@ class ExecutionManager:
 class PersistentRun:
     """Durable record and transactional hooks for one CalculationRun."""
 
-    def __init__(self, manager, executor, runner: CalculationRun, record, *, spec=None):
+    def __init__(self, manager, executor, record, *, spec=None):
         self._spec = spec
         self._lifecycle_lock = Lock()
         self._submission_in_progress = False
         self.manager = manager
         self.executor = executor
-        self._runner = runner
         self._record = record
         self._completion_lock = Lock()
         self._completion_persisted = False
@@ -991,45 +990,15 @@ class PersistentRun:
     def record(self):
         return self._record
 
-    @property
-    def result(self):
-        return self._runner.result
-
-    @property
-    def backend_id(self):
-        return self._runner.backend_id
-
-    @property
-    def execution(self):
-        proposed = self._runner.execution
+    @staticmethod
+    def _execution_for(run, record):
+        """Derive execution from the observation and durable path mapping."""
+        proposed = run.execution
         if proposed is not None:
             return proposed
-        if self.backend_id is None:
+        if run.backend_id is None:
             return None
-        return self._record.execution.submitted(self.backend_id)
-
-    @property
-    def files(self):
-        return self._runner.files
-
-    @property
-    def exception(self):
-        return self._runner.exception
-
-    @property
-    def failure_phase(self):
-        return _failure_phase(self._runner.failure_phase)
-
-    @property
-    def state(self):
-        """Observe runner state without persisting a transition."""
-        state = self._runner.state
-        if state == RunState.NEW and self._record.state != RunState.NEW:
-            return self._record.state
-        if state == RunState.UNKNOWN and self._record.state != RunState.NEW:
-            # The completed observer cannot overwrite a newer refresh.
-            return self._record.state
-        return self._record.state if self._record.state.is_terminal else state
+        return record.execution.submitted(run.backend_id)
 
     def before_submit(self, run: CalculationRun):
         """Reserve the run atomically before any backend file staging."""
@@ -1063,15 +1032,15 @@ class PersistentRun:
         """Commit the exact staged layout before the backend is launched."""
         self._record = self.manager.transition(
             self._record,
-            execution=self.execution,
-            files=self.files if self.files is not None else _UNCHANGED,
+            execution=self._execution_for(run, self._record),
+            files=run.files if run.files is not None else _UNCHANGED,
         )
         self._monitor_record_version = self._record.updated_at
 
     def submitted(self, run: CalculationRun):
         """Persist backend identity before clearing its temporary ticket."""
         try:
-            backend_id = self.backend_id
+            backend_id = run.backend_id
             if backend_id is None:
                 raise RuntimeError("Executor submit returned without a backend ID")
             self.manager.register_executor(
@@ -1083,9 +1052,9 @@ class PersistentRun:
                     if observed == RunState.FINISHED:
                         observed = RunState.POSTPROCESSING
                     self._record = self.manager.transition(
-                        self._record, state=observed, execution=self.execution,
-                        failure_phase=self.failure_phase,
-                        files=self.files if self.files is not None else _UNCHANGED,
+                        self._record, state=observed, execution=self._execution_for(run, self._record),
+                        failure_phase=_failure_phase(run.failure_phase),
+                        files=run.files if run.files is not None else _UNCHANGED,
                     )
                     self._monitor_record_version = self._record.updated_at
             self.manager._acknowledge_submission(self.executor, self._record)
@@ -1107,19 +1076,19 @@ class PersistentRun:
                         files_available=False,
                     )
                 else:
-                    phase = self.failure_phase or FailurePhase.SUBMISSION
+                    phase = _failure_phase(run.failure_phase) or FailurePhase.SUBMISSION
                     message = run.failure_message or str(error)
                     self._record = self.manager.complete(
                         self._record, state=RunState.FAILED, message=message,
                         failure_phase=phase, files_available=False,
                     )
-            elif self.backend_id is not None:
+            elif run.backend_id is not None:
                 with self._completion_lock:
                     if not self._completion_persisted:
                         self._record = self.manager.transition(
                             self._record, state=run.state,
-                            execution=self.execution,
-                            failure_phase=self.failure_phase,
+                            execution=self._execution_for(run, self._record),
+                            failure_phase=_failure_phase(run.failure_phase),
                         )
         finally:
             with self._lifecycle_lock:
@@ -1127,7 +1096,7 @@ class PersistentRun:
 
     def completed(self, run: CalculationRun):
         """Durably record an observed completion before user notifications."""
-        self._sync_completion(run.result)
+        self._sync_completion(run)
         return self._record.state
 
     def attached(self, run: CalculationRun):
@@ -1138,7 +1107,7 @@ class PersistentRun:
                     and state != RunState.NEW):
                 self._record = self.manager.transition(
                     self._record, state=state,
-                    execution=self.execution, failure_phase=self.failure_phase,
+                    execution=self._execution_for(run, self._record), failure_phase=_failure_phase(run.failure_phase),
                 )
                 self._monitor_record_version = self._record.updated_at
 
@@ -1146,23 +1115,23 @@ class PersistentRun:
         """A durable terminal record cannot be cancelled by a stale observer."""
         return not self._record.state.is_terminal
 
-    def _sync_completion(self, result):
+    def _sync_completion(self, run):
         # Callback and wait() can reach this path concurrently. Only the
         # first successful durable completion may publish and acknowledge it.
         with self._completion_lock:
             if self._completion_persisted:
                 return
-            state = self._runner.state
-            phase = self.failure_phase
-            message = self._runner.failure_message
-            error = self._runner.exception
+            state = run.state
+            phase = _failure_phase(run.failure_phase)
+            message = run.failure_message
+            error = run.exception
             if message is None and error is not None:
                 message = str(error)
             if state == RunState.UNKNOWN:
                 # The observer ended, not necessarily the calculation.
                 # No final file publication or completion timestamp.
                 self._record = self.manager.transition(
-                    self._record, state=state, execution=self.execution,
+                    self._record, state=state, execution=self._execution_for(run, self._record),
                     message=message,
                     expected_updated_at=self._monitor_record_version,
                 )
@@ -1177,17 +1146,17 @@ class PersistentRun:
             self._record = self.manager.complete(
                 self._record,
                 state=state,
-                execution=self.execution,
-                return_code=self._runner.return_code,
+                execution=self._execution_for(run, self._record),
+                return_code=run.return_code,
                 message=message,
                 failure_phase=phase,
                 files_available=files_available,
-                files=self.files,
+                files=run.files,
             )
             # ACK is strictly after RunStore's crash-durable terminal transition.
             # A lost ACK reply is harmless: backend receipts are idempotently deleted.
             # Keep the persisted result even if the acknowledgement cannot be sent.
-            if self._record.state.is_terminal and self.backend_id is not None:
+            if self._record.state.is_terminal and run.backend_id is not None:
                 acknowledge = getattr(self.executor, "acknowledge", None)
                 if acknowledge is not None:
                     try:
