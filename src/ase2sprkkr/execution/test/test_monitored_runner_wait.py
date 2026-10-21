@@ -1,6 +1,7 @@
 """Shared monitor waiting contract for local-project and remote runners."""
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -22,7 +23,7 @@ def test_wait_without_started_monitor_fails_immediately(
     spec = ExecutionSpec(
         argv=(), input_file=None, output_file=None, directory=str(tmp_path),
     )
-    runner = runner_class(None, spec, state=state)
+    runner = runner_class(SimpleNamespace(file_handler=None), spec, state=state)
     with pytest.raises(RuntimeError, match=message):
         runner.wait()
 
@@ -32,7 +33,7 @@ def test_wait_and_run_async_return_completed_monitor_result(tmp_path, runner_cla
     spec = ExecutionSpec(
         argv=(), input_file=None, output_file=None, directory=str(tmp_path),
     )
-    runner = runner_class(None, spec)
+    runner = runner_class(SimpleNamespace(file_handler=None), spec)
     runner._thread = object()  # A monitor is already running/attached.
     runner._done.set()
     assert runner.wait() is runner.result

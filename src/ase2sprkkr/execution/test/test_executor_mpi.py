@@ -10,10 +10,10 @@ from ...execution import (
     LocalExecutor,
     MpiNotFoundWarning,
     MpiSpec,
-    RemoteEndpointExecutor,
     RunState,
 )
 from ...execution.local import materialize_local_spec
+from ...execution.target_connection import SSHConnection
 from ...input_parameters.input_parameters import InputParameters
 from ...input_parameters.task_definition import TaskDefinition
 from ...sprkkr import calculation as calculation_module
@@ -170,9 +170,11 @@ def test_local_auto_mpi_fallback_respects_warning_option(monkeypatch, tmp_path, 
 
 
 @pytest.mark.parametrize("warn", (True, False), ids=("warn", "silent"))
-def test_remote_endpoint_mpi_warning_probe_respects_option(monkeypatch, warn):
-    endpoint = object.__new__(RemoteEndpointExecutor)
-    endpoint.backend = "local"
+def test_remote_ssh_connection_mpi_warning_probe_respects_option(monkeypatch, warn):
+    connection = SSHConnection(
+        SimpleNamespace(), command=("ase2sprkkr", "remote"),
+        backend="local", backend_options={},
+    )
     calls = []
 
     async def request(action, *args, payload=None):
@@ -181,7 +183,7 @@ def test_remote_endpoint_mpi_warning_probe_respects_option(monkeypatch, warn):
             return {"mpi": None}
         return {"state": "queued", "directory": "/remote/run"}
 
-    monkeypatch.setattr(endpoint, "_json_request", request)
+    monkeypatch.setattr(connection, "_json_request", request)
     payload = {
         "directory": "/remote/run",
         "launch": {
@@ -197,7 +199,7 @@ def test_remote_endpoint_mpi_warning_probe_respects_option(monkeypatch, warn):
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        asyncio.run(endpoint._submit(payload))
+        asyncio.run(connection.submit(payload))
 
     assert [call[0] for call in calls] == (
         ["resolve-mpi", "submit"] if warn else ["submit"]

@@ -3,7 +3,6 @@
 import asyncio
 from io import BytesIO
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -67,18 +66,15 @@ def test_local_forward_output_persists_and_observes_bytes(kind):
     assert received == [("message:\ufffd", kind)]
 
 
-def test_remote_pump_delivers_bytes_without_runner_decoder():
+def test_remote_follow_chunk_persists_and_observes_bytes():
     received, written = [], []
     runner = object.__new__(RemoteRunner)
     runner._output_observers = OutputObservers(
         lambda text, kind: received.append((text, kind))
     )
     runner._write_output = lambda data, kind: written.append((data, kind))
-    source = SimpleNamespace(
-        read=AsyncMock(side_effect=[b"remote:\xff", b""])
-    )
 
-    asyncio.run(runner._pump(source, "out"))
+    runner._on_follow_chunk("out", b"remote:\xff")
 
     assert written == [(b"remote:\xff", "out")]
     assert received == [("remote:\ufffd", "out")]
