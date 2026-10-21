@@ -44,9 +44,16 @@ def test_local_runners_close_unique_output_handles(monkeypatch, tmp_path, backen
         assert runner.state == RunState.FAILED
     else:
         runner = LocalProjectRunner(None, spec)
-        async def monitored():
-            return runner.result
-        monkeypatch.setattr(runner, "_monitor", monitored)
+        async def follow():
+            return {"state": "finished", "return_code": 0, "files": {}}
+
+        async def complete(_facts, state):
+            runner._state = state
+
+        # Exercise the actual supervisor cleanup path rather than replacing
+        # _monitor(), which owns stream closure.
+        monkeypatch.setattr(runner, "_follow_once", follow)
+        monkeypatch.setattr(runner, "_complete_terminal", complete)
         runner._thread_main()
         assert runner._done.is_set()
         assert runner.exception is None
@@ -113,9 +120,10 @@ def test_local_project_cleanup_attempts_all_stages(
     monkeypatch.setattr(runner._output_observers, "finish_bytes", finish_bytes)
     runner._thread_main()
 
-    assert calls == ["monitor", "finish", "close"]
+    assert calls == ["monitor", "close", "finish"]
     expected = next(error for failed, error in zip(
-        (monitor_fails, finish_fails, close_fails), errors
+        (monitor_fails, close_fails, finish_fails),
+        (errors[0], errors[2], errors[1])
     ) if failed)
     assert runner.exception is expected
     assert runner.failure_message == str(expected)
