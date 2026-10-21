@@ -232,6 +232,14 @@ def _validate_file_declarations(entries):
                 continue
             if {role, previous_role} == {"input", "stdin"}:
                 continue
+            # Concrete wildcard members can collide with exact declarations
+            # only after materialization. Delivery preflight validates them
+            # together before any transfer, while raw declarations remain
+            # subject to strict validation here.
+            if ((entry.source is not None or previous.source is not None)
+                    and role in ("output", "cache")
+                    and previous_role in ("output", "cache")):
+                continue
             # Multiple local destinations may deliberately retrieve the same
             # remote result. Only a shared *destination* is a collision.
             if (same_remote and not same_local
