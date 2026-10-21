@@ -276,7 +276,9 @@ class _RemoteRunContext:
         relative = posixpath.relpath(path, remote_root)
         if relative == ".":
             return self.local_root
-        return self.local_root.joinpath(*PurePosixPath(relative).parts)
+        local = self.local_root.joinpath(*PurePosixPath(relative).parts)
+        _relative_local_path(local, self.local_root)
+        return local
 
     async def map_directory(self, directory):
         return await self.map_path(directory)
@@ -628,6 +630,7 @@ class RemoteEndpointExecutor(Executor):
                     os.fspath(await context.unmap_path(matched))
                     if glob.has_magic(remote) else local
                 )
+                _relative_local_path(destination, context.local_root)
                 target = destinations.get(destination, destination)
                 if not os.path.isfile(target):
                     await self.transport.get_file(matched, target)
