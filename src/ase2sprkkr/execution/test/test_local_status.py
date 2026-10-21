@@ -70,32 +70,32 @@ def test_local_recovery_and_status_share_projection_without_extra_query(
     }
     remote_id = "opaque-backend-reference"
     reply = {"remote_id": remote_id, **facts}
-    monkeypatch.setattr(
-        local_project, "status_remote",
-        lambda backend_id: facts if backend_id == remote_id else pytest.fail(
-            "Unexpected backend identity"
-        ),
-    )
+    async def status(backend_id, files=None):
+        assert backend_id == remote_id
+        return facts
+
+    monkeypatch.setattr(local_project._LOCAL_CONNECTION, "status", status)
     queried = local_project.local_status(remote_id, files)
 
-    def no_second_status_query(_backend_id):
+    async def unexpected_status(backend_id, files=None):
         pytest.fail("Recovery must not query backend status again")
 
-    monkeypatch.setattr(local_project, "status_remote", no_second_status_query)
+    monkeypatch.setattr(local_project._LOCAL_CONNECTION, "status", unexpected_status)
 
-    def recover(run_id, request):
+    async def recover(run_id, directory, *, submitted_at=None):
         assert run_id == "test-run"
-        assert request == {"executor": "local", "directory": str(tmp_path)}
+        assert directory == str(tmp_path)
         return reply
 
-    monkeypatch.setattr(remote_service, "recover_remote", recover)
+    executor = LocalExecutor()
+    monkeypatch.setattr(executor.connection, "recover", recover)
     submission = SimpleNamespace(
         execution=SimpleNamespace(
             directory=SimpleNamespace(local=str(tmp_path)),
         ),
         files=files,
     )
-    recovered = LocalExecutor().recover_submission("test-run", submission)
+    recovered = executor.recover_submission("test-run", submission)
     assert recovered == queried
     assert recovered.backend_id == remote_id
     assert recovered.message == "backend message"
@@ -115,7 +115,11 @@ def test_local_status_without_manifest_keeps_backend_facts(monkeypatch):
         "error": None,
         "failure_phase": None,
     }
-    monkeypatch.setattr(local_project, "status_remote", lambda backend_id: facts)
+    async def status_reply(backend_id, files=None):
+        assert backend_id == "opaque"
+        return facts
+
+    monkeypatch.setattr(local_project._LOCAL_CONNECTION, "status", status_reply)
     status = local_project.local_status("opaque", files=None)
     assert status.state == RunState.FINISHED
     assert status.backend_id == "opaque"
