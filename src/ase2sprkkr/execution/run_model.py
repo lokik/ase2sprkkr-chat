@@ -297,9 +297,15 @@ class FileManifest:
 
         primary = file_path(spec.input_file, directory)
         inputs = []
-        for path in paths(primary, *spec.input_files):
-            if not any(_same_local_file(path, prior) for prior in inputs):
-                inputs.append(path)
+        for entry in entries(spec.input_file, *spec.input_files):
+            if primary is not None and _same_local_file(entry.local_path, primary):
+                entry = replace(entry, optional=False)
+            for index, prior in enumerate(inputs):
+                if _same_local_file(entry.local_path, prior.local_path):
+                    inputs[index] = replace(prior, optional=prior.optional and entry.optional)
+                    break
+            else:
+                inputs.append(entry)
         stdin = file_path(getattr(spec, "stdin", None), directory)
         stdout = file_path(getattr(spec, "output_file", None), directory)
         stderr = file_path(getattr(spec, "error_file", None), directory)
@@ -309,7 +315,7 @@ class FileManifest:
         # Validate the user's declarations before primary_input becomes
         # another metadata reference to the matching inputs entry.
         _validate_file_declarations((
-            *(("input", FileEntry(local_path=x)) for x in inputs),
+            *(("input", entry) for entry in inputs),
             ("stdin", None if stdin is None else FileEntry(local_path=stdin)),
             ("stdout", None if stdout is None else FileEntry(local_path=stdout)),
             ("stderr", None if stderr is None else FileEntry(local_path=stderr)),
@@ -317,7 +323,7 @@ class FileManifest:
             *(("cache", entry) for entry in caches),
         ))
         return cls(
-            inputs=tuple(FileEntry(local_path=x) for x in inputs),
+            inputs=tuple(inputs),
             primary_input=None if primary is None else FileEntry(local_path=primary),
             stdin=None if stdin is None else FileEntry(local_path=stdin),
             outputs=outputs,
