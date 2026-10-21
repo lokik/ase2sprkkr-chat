@@ -1,12 +1,20 @@
 """TaskFile metadata at the execution manifest boundary."""
 
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
+import os
 
 import pytest
 
 from ase2sprkkr.execution.base import ExecutionSpec
 from ase2sprkkr.execution.run_model import FileEntry, FileManifest
-from ase2sprkkr.input_parameters.task_definition import TaskFile
+# Model the public TaskFile path/optional protocol without importing #86.
+@dataclass(frozen=True)
+class DeclaredPath(os.PathLike):
+    pathname: str
+    optional: bool = False
+
+    def __fspath__(self):
+        return self.pathname
 
 
 def spec(tmp_path, **changes):
@@ -22,10 +30,10 @@ def spec(tmp_path, **changes):
 def test_optional_task_files_survive_manifest_roundtrip(tmp_path):
     files = FileManifest.from_spec(spec(
         tmp_path,
-        input_files=(TaskFile(tmp_path / "maybe.inp", optional=True),),
+        input_files=(DeclaredPath(str(tmp_path / "maybe.inp"), optional=True),),
         output_files=(
-            TaskFile(tmp_path / "maybe-*.dat", optional=True),
-            TaskFile(tmp_path / "required.dat"),
+            DeclaredPath(str(tmp_path / "maybe-*.dat"), optional=True),
+            DeclaredPath(str(tmp_path / "required.dat")),
         ),
     ))
     assert files.inputs[1].optional
@@ -43,7 +51,7 @@ def test_repeated_output_is_not_silently_coalesced(tmp_path):
     path = tmp_path / "extra.dat"
     with pytest.raises(ValueError, match="Duplicate file declaration"):
         FileManifest.from_spec(spec(
-            tmp_path, output_files=(TaskFile(path, optional=True), path),
+            tmp_path, output_files=(DeclaredPath(str(path), optional=True), path),
         ))
 
 
