@@ -29,7 +29,7 @@ from .manager import (
     RunStore,
 )
 from .pool import ExecutorPool, default_executor_pool
-from .postprocessing import PostprocessingRunner
+from .postprocessing import CalculationRun, PostprocessingRunner
 from .projects import (
     Project,
     ProjectConflictError,
@@ -62,6 +62,7 @@ __all__ = [
     "LaunchSpec",
     "MpiSpec",
     "MpiNotFoundWarning",
+    "CalculationRun",
     "PostprocessingRunner",
     "Runner",
     "RunState",
