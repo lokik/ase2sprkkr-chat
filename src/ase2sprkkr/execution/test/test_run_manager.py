@@ -213,3 +213,24 @@ def test_duplicate_submission_is_blocked_by_persisted_namespace(tmp_path):
 
     with pytest.raises(DuplicateSubmissionError):
         second.submit()
+
+
+def test_project_manager_returns_one_public_calculation_runner(tmp_path):
+    from ase2sprkkr.execution import CalculationRun, PersistentRun
+
+    manager = _manager(tmp_path)
+    run = manager.create_run(
+        _Executor(), _spec(tmp_path), task="DOS",
+        process_result=lambda value: value,
+    )
+
+    assert type(run) is CalculationRun
+    assert isinstance(run.hooks, PersistentRun)
+    assert run.record is run.hooks.record
+    assert run.id == run.record.id
+    assert run.record.state is RunState.NEW
+    assert run.refresh().state is RunState.NEW
+
+    run.submit()
+    assert run.record.state is RunState.QUEUED
+    assert run.backend_id == "native-1"
