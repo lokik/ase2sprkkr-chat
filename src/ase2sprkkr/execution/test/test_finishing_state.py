@@ -4,7 +4,6 @@ from types import SimpleNamespace
 from ase2sprkkr.execution import (
     ExecutionOutcome,
     Executor,
-    ExecutorPool,
     FailurePhase,
     PostprocessingRunner,
     RunState,
@@ -74,7 +73,7 @@ class _RawRunner:
 
 def _record(tmp_path, executor, state=RunState.RUNNING):
     manager = ExecutionManager(
-        RunStore(tmp_path / "runs"), executor_pool=ExecutorPool()
+        RunStore(tmp_path / "runs")
     )
     endpoint = manager.register_executor(executor)
     record = manager.new_record(
