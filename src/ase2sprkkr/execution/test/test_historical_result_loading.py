@@ -569,7 +569,7 @@ def test_restore_detects_content_changed_immediately_after_publication(
 
     saved = manager.store.get(record.id)
     assert saved.state is RunState.FINISHED
-    assert saved.files.outputs[0].availability_state == "failed"
+    assert saved.files.stdout.availability_state == "failed"
     assert output.read_text() == "different contents"
 
 
