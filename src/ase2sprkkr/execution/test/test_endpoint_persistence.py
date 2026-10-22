@@ -10,10 +10,10 @@ from ase2sprkkr.execution import (
     RunState,
     RunStore,
     SshTransport,
-    JobFiles,
+    RunFiles,
 )
 
-from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.run_manager import RunManager
 from ase2sprkkr.execution.pool import Executors
 from ase2sprkkr.execution.endpoint import endpoint_for_executor
 from ase2sprkkr.sprkkr.profile import SPRKKRProfile
@@ -54,7 +54,7 @@ def test_ssh_default_remote_command_preserves_endpoint_identity():
 
 def test_run_store_roundtrips_endpoint(tmp_path):
     store = RunStore(tmp_path / "runs")
-    manager = ExecutionManager(store, executors=Executors())
+    manager = RunManager(store, executors=Executors())
     endpoint = ExecutorEndpoint(
         executor="ssh", host="cluster", ssh_options=("-v",), ssh_zstd=True,
     )
@@ -75,7 +75,7 @@ def test_run_store_roundtrips_endpoint(tmp_path):
 def test_manager_reconstructs_local_executor_after_restart(tmp_path):
     store = RunStore(tmp_path / "runs")
     endpoint = ExecutorEndpoint()
-    first = ExecutionManager(store, executors=Executors())
+    first = RunManager(store, executors=Executors())
     record = first.new_record(
         task="DOS",
         directory=tmp_path,
@@ -83,7 +83,7 @@ def test_manager_reconstructs_local_executor_after_restart(tmp_path):
     )
     store.save(record)
 
-    restarted = ExecutionManager(store, executors=Executors())
+    restarted = RunManager(store, executors=Executors())
     executor = restarted.executors.for_endpoint(store.get(record.id).execution.endpoint)
 
     assert isinstance(executor, LocalExecutor)
@@ -94,7 +94,7 @@ def test_attach_reconstructs_persisted_endpoint_without_task_reader(tmp_path, by
     class AttachedRunner:
         def __init__(self, run, executor):
             self.callback = None
-            self.job_files = JobFiles(run.files)
+            self.job_files = RunFiles(run.files)
             self.executor = executor
             self.backend_id = run.execution.backend_id
             self.state = RunState.RUNNING
@@ -139,7 +139,7 @@ def test_attach_reconstructs_persisted_endpoint_without_task_reader(tmp_path, by
 
     store = RunStore(tmp_path / "runs")
     endpoint = ExecutorEndpoint(executor="ssh", host="cluster")
-    first = ExecutionManager(store, executors=Executors())
+    first = RunManager(store, executors=Executors())
     record = first.new_record(
         task="DOS",
         directory=tmp_path,
@@ -152,7 +152,7 @@ def test_attach_reconstructs_persisted_endpoint_without_task_reader(tmp_path, by
     executor = ReconstructedExecutor()
     executors = Executors()
     executors.register(executor, endpoint)
-    restarted = ExecutionManager(store, executors=executors)
+    restarted = RunManager(store, executors=executors)
 
     attached = restarted.attach(
         record.id if by_id else stale,

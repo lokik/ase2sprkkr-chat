@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from ase2sprkkr.execution import (
-    ExecutionOutcome, FileEntry, FileManifest, FileMapping, JobFiles,
+    ExecutionOutcome, FileEntry, FileManifest, FileMapping, RunFiles,
 )
 from ase2sprkkr.execution.remote_file_handler import RemoteFileHandler
 from ase2sprkkr.execution.transport import LocalTransport
@@ -80,7 +80,7 @@ def test_programming_error_escapes_collection_coordinator(tmp_path):
             raise AssertionError("Should never be reached")
 
     with pytest.raises(TypeError, match="internal typo"):
-        asyncio.run(JobFiles(files).collect_remote(
+        asyncio.run(RunFiles(files).collect_remote(
             files, BrokenHandler(), ExecutionOutcome(), SimpleNamespace(),
             required=True,
         ))

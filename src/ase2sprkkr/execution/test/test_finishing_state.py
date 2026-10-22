@@ -11,8 +11,8 @@ from ase2sprkkr.execution import (
     RunStore,
 )
 
-from ase2sprkkr.execution.manager import ExecutionManager
-from ase2sprkkr.execution.job_files import JobFiles
+from ase2sprkkr.execution.run_manager import RunManager
+from ase2sprkkr.execution.run_files import RunFiles
 from ase2sprkkr.execution.run_model import FileManifest
 
 
@@ -41,7 +41,7 @@ class _Executor(Executor):
 class _RawRunner:
     def __init__(self):
         self.callback = None
-        self.job_files = JobFiles(FileManifest())
+        self.job_files = RunFiles(FileManifest())
         self.result = ExecutionOutcome(return_code=0)
         self.state = RunState.NEW
         self.backend_id = "job-1"
@@ -78,7 +78,7 @@ class _RawRunner:
 
 
 def _record(tmp_path, executor, state=RunState.RUNNING):
-    manager = ExecutionManager(
+    manager = RunManager(
         RunStore(tmp_path / "runs")
     )
     endpoint = manager.executors.register(executor)
@@ -155,7 +155,7 @@ def test_failed_wait_keeps_original_error_when_backend_status_is_unavailable():
         result = None
 
         def __init__(self):
-            self.job_files = JobFiles(FileManifest())
+            self.job_files = RunFiles(FileManifest())
             self.started = False
 
         @property

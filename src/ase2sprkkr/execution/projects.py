@@ -35,7 +35,7 @@ class ProjectConflictError(ProjectRepositoryError):
         project_id: str,
         *,
         expected_generation: int,
-        current: "Project",
+        current: "ProjectRecord",
     ) -> None:
         self.project_id = project_id
         self.expected_generation = expected_generation
@@ -51,7 +51,7 @@ class ProjectDeleteError(ProjectRepositoryError):
 
 
 @dataclass(frozen=True)
-class Project:
+class ProjectRecord:
     """One immutable project snapshot.
 
     Projects provide the namespace for tracked ASE2SPRKKR runs independently of any user
@@ -77,12 +77,12 @@ class Project:
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "parent_id", parent_id)
 
-    def rename(self, name: str) -> "Project":
+    def rename(self, name: str) -> "ProjectRecord":
         """Return this project with a validated display name."""
         normalized = _project_name(name)
         return self if normalized == self.name else replace(self, name=normalized)
 
-    def move_to(self, parent_id: str | None) -> "Project":
+    def move_to(self, parent_id: str | None) -> "ProjectRecord":
         """Return this project with a different direct parent."""
         parent = None if parent_id is None else _project_id(parent_id)
         if parent == self.id:
@@ -109,9 +109,9 @@ def _project_name(value: str) -> str:
     return name
 
 
-def validate_hierarchy(projects: tuple[Project, ...]) -> None:
+def validate_hierarchy(projects: tuple[ProjectRecord, ...]) -> None:
     """Validate parent references and reject hierarchy cycles."""
-    by_id: dict[str, Project] = {}
+    by_id: dict[str, ProjectRecord] = {}
     for project in projects:
         if project.id in by_id:
             raise ProjectRepositoryError(f"Duplicate project id {project.id!r}")
@@ -158,7 +158,7 @@ class ProjectRepository:
         )
         self._state_lock = RLock()
         self._listeners: set[ProjectChangedListener] = set()
-        self._known: dict[str, Project] = {}
+        self._known: dict[str, ProjectRecord] = {}
         self._run_store = None
         self._manager = None
 
@@ -182,28 +182,28 @@ class ProjectRepository:
             except Exception:  # noqa: BLE001 - subscriber isolation boundary
                 logger.exception("Project listener failed for %s", project_id)
 
-    def _remember(self, projects: tuple[Project, ...]) -> None:
+    def _remember(self, projects: tuple[ProjectRecord, ...]) -> None:
         with self._state_lock:
             self._known = {project.id: project for project in projects}
 
-    def _remember_one(self, project: Project) -> None:
+    def _remember_one(self, project: ProjectRecord) -> None:
         with self._state_lock:
             self._known[project.id] = project
 
-    def projects(self) -> tuple[Project, ...]:
+    def projects(self) -> tuple[ProjectRecord, ...]:
         """Load and remember the complete project forest."""
         projects = self._read_projects()
         self._remember(projects)
         return projects
 
-    def project(self, project_id: str) -> Project:
+    def project(self, project_id: str) -> ProjectRecord:
         """Load and remember one project by UUID."""
         canonical = _project_id(project_id)
         project = self._read_path(self._json_path(canonical))
         self._remember_one(project)
         return project
 
-    def refresh(self) -> tuple[Project, ...]:
+    def refresh(self) -> tuple[ProjectRecord, ...]:
         """Reload project files and publish ids whose snapshots changed."""
         projects = self._read_projects()
         current = {project.id: project for project in projects}
@@ -219,10 +219,10 @@ class ProjectRepository:
             self._notify(project_id)
         return projects
 
-    def create(self, name: str, *, parent_id: str | None = None) -> Project:
+    def create(self, name: str, *, parent_id: str | None = None) -> ProjectRecord:
         """Create a root or child project at generation one."""
         parent = None if parent_id is None else _project_id(parent_id)
-        project = Project(
+        project = ProjectRecord(
             id=uuid4().hex,
             generation=1,
             name=name,
@@ -245,19 +245,19 @@ class ProjectRepository:
 
     def save(
         self,
-        project: Project,
+        project: ProjectRecord,
         *,
         expected_generation: int,
         overwrite: bool = False,
-    ) -> Project:
+    ) -> ProjectRecord:
         """Persist an edited project snapshot using optimistic concurrency.
 
         ``overwrite`` means exactly that: the supplied snapshot replaces newer
         persisted values after validating it against the current project forest.
         It is intentionally not an implicit merge operation.
         """
-        if not isinstance(project, Project):
-            raise TypeError("project must be a Project")
+        if not isinstance(project, ProjectRecord):
+            raise TypeError("project must be a ProjectRecord")
 
         canonical = _project_id(project.id)
         with self._project_lock(canonical):
@@ -314,9 +314,19 @@ class ProjectRepository:
         """Lazily reuse one execution manager and its executor registry."""
         with self._state_lock:
             if self._manager is None:
-                from .manager import ExecutionManager
-                self._manager = ExecutionManager(project_repository=self)
+                from .run_manager import RunManager
+                self._manager = RunManager(project_repository=self)
             return self._manager
+
+    def open_project(self, project_id):
+        """Return the live public facade for an existing project."""
+        from .project import Project
+        record = self.project(project_id)
+        return Project(self, record.id)
+
+    def create_project(self, name, *, parent_id=None):
+        """Create a project and return its live public facade."""
+        return self.open_project(self.create(name, parent_id=parent_id).id)
 
     def job(self, run_id):
         """Open a persistent job by ID."""
@@ -381,7 +391,7 @@ class ProjectRepository:
             self._known.pop(canonical, None)
         self._notify(canonical)
 
-    def _read_projects(self) -> tuple[Project, ...]:
+    def _read_projects(self) -> tuple[ProjectRecord, ...]:
         try:
             paths = sorted(self.directory.glob("*.json"))
         except OSError as exc:
@@ -392,14 +402,14 @@ class ProjectRepository:
         validate_hierarchy(projects)
         return projects
 
-    def _save_locked(self, project: Project, current: Project) -> Project:
+    def _save_locked(self, project: ProjectRecord, current: ProjectRecord) -> ProjectRecord:
         updated = replace(project, generation=current.generation + 1)
         self._write(updated)
         return updated
 
     @staticmethod
     def _check_generation(
-        current: Project,
+        current: ProjectRecord,
         *,
         expected_generation: int,
         overwrite: bool,
@@ -411,7 +421,7 @@ class ProjectRepository:
                 current=current,
             )
 
-    def _read_path(self, path: Path) -> Project:
+    def _read_path(self, path: Path) -> ProjectRecord:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError as exc:
@@ -428,7 +438,7 @@ class ProjectRepository:
                 f"Unsupported project schema version {schema_version!r} in {path}"
             )
         try:
-            project = Project(**data)
+            project = ProjectRecord(**data)
         except (TypeError, ValueError) as exc:
             raise ProjectRepositoryError(f"Invalid project file {path}: {exc}") from exc
         if path.stem != project.id:
@@ -437,7 +447,7 @@ class ProjectRepository:
             )
         return project
 
-    def _write(self, project: Project) -> None:
+    def _write(self, project: ProjectRecord) -> None:
         try:
             durable_mkdir(self.directory, parents=True, exist_ok=True, mode=0o700)
             durable_write_json(

@@ -121,7 +121,7 @@ def test_missing_skip_can_download_after_local_conflict_is_removed(tmp_path):
 
 def test_missing_skip_allows_finished_run_without_capturing_stale_file(tmp_path):
     from ase2sprkkr.execution.base import RunState
-    from ase2sprkkr.execution.manager import ExecutionManager
+    from ase2sprkkr.execution.run_manager import RunManager
     from ase2sprkkr.execution.run_store import RunStore
     from ase2sprkkr.execution.file_history import missing_result_files
 
@@ -152,7 +152,7 @@ def test_missing_skip_allows_finished_run_without_capturing_stale_file(tmp_path)
     assert local.read_bytes() == b"stale result from an earlier run"
 
     store = RunStore(tmp_path / "runs")
-    manager = ExecutionManager(store)
+    manager = RunManager(store)
     record = store.save(manager.new_record(
         task="DOS", directory=local.parent, files=files,
     ))

@@ -61,9 +61,9 @@ def test_current_schema_round_trips_with_one_execution_identity(tmp_path, backen
 
 def test_persisted_execution_identity_cannot_be_replaced(tmp_path):
     from dataclasses import replace
-    from ase2sprkkr.execution.manager import ExecutionManager
+    from ase2sprkkr.execution.run_manager import RunManager
 
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     record = manager.new_record(task="DOS", directory=tmp_path)
     first = manager.transition(
         record, state=RunState.RUNNING,

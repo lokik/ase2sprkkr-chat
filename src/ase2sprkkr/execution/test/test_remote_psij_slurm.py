@@ -225,11 +225,11 @@ def test_remote_executor_runs_psij_slurm_over_ssh(docker_execution_image):
                 ssh_options=ssh_options,
                 psij_backend="slurm",
             )
-            from ase2sprkkr.execution import ExecutionManager, ProjectRepository
+            from ase2sprkkr.execution import RunManager, ProjectRepository
 
             projects = ProjectRepository(tmp / "projects")
             project = projects.create("Remote PSI/J integration")
-            manager = ExecutionManager(project_repository=projects)
+            manager = RunManager(project_repository=projects)
             calculator = SPRKKR(
                 atoms=bulk("Al"),
                 directory=workdir,

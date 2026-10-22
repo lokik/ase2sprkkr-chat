@@ -10,7 +10,7 @@ import ase2sprkkr.execution.file_history as file_history
 from ase2sprkkr.execution.base import RunState
 from ase2sprkkr.execution.endpoint import ExecutorEndpoint
 from ase2sprkkr.execution.run_model import FileManifest, FileEntry
-from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.run_manager import RunManager
 from ase2sprkkr.execution.run_store import RunStore
 
 
@@ -100,7 +100,7 @@ def test_run_store_uses_durable_json_writer(tmp_path, monkeypatch):
 
     monkeypatch.setattr(store_module, "durable_write_json", tracked_write)
     store = RunStore(tmp_path / "runs")
-    manager = ExecutionManager(store)
+    manager = RunManager(store)
     record = manager.new_record(task="SCF", directory=tmp_path)
 
     store.save(record)
@@ -114,7 +114,7 @@ def test_reserve_syncs_inputs_before_submitting_record(tmp_path, monkeypatch):
     input_file = tmp_path / "input.inp"
     input_file.write_text("input")
     store = RunStore(tmp_path / "runs")
-    manager = ExecutionManager(store)
+    manager = RunManager(store)
     record = manager.new_record(
         task="SCF",
         directory=tmp_path,
@@ -148,7 +148,7 @@ def test_input_sync_failure_never_commits_submission(tmp_path, monkeypatch):
     input_file = tmp_path / "input.inp"
     input_file.write_text("input")
     store = RunStore(tmp_path / "runs")
-    manager = ExecutionManager(store)
+    manager = RunManager(store)
     record = manager.new_record(
         task="SCF", directory=tmp_path,
         files=FileManifest(inputs=(FileEntry(local_path=str(input_file)),)),
@@ -169,7 +169,7 @@ def test_file_publication_syncs_outputs_before_terminal_record(tmp_path, monkeyp
     output_file = tmp_path / "output.out"
     output_file.write_text("result")
     store = RunStore(tmp_path / "runs")
-    manager = ExecutionManager(store)
+    manager = RunManager(store)
     record = manager.new_record(
         task="SCF",
         directory=tmp_path,

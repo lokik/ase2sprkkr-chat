@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from ..base import ExecutionSpec, LaunchSpec, RunState
-from ..manager import RunRecord
+from ..run_manager import RunRecord
 from ..run_model import Execution, WorkingDirectory, FileManifest
 from ..endpoint import endpoint_for_executor
 from ..postprocessing import CalculationRun

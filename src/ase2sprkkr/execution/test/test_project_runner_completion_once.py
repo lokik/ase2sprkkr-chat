@@ -4,11 +4,11 @@ from threading import Event, Thread
 from types import SimpleNamespace
 
 from ..base import RunState
-from ..job_files import JobFiles
+from ..run_files import RunFiles
 from ..run_model import FileManifest
 from ..endpoint import ExecutorEndpoint
 from ..run_model import Execution, WorkingDirectory
-from ..manager import RunPersistence
+from ..run_manager import RunPersistence
 
 
 def _execution():
@@ -66,7 +66,7 @@ class _Runner:
     execution = None
 
     def __init__(self):
-        self.job_files = JobFiles(FileManifest())
+        self.job_files = RunFiles(FileManifest())
 
     def wait(self):
         self.state = RunState.FINISHED
@@ -324,13 +324,13 @@ def test_lost_ack_reply_after_receipt_deletion_is_safe_on_retry(tmp_path, monkey
 def test_persistent_reservation_rejects_duplicate_before_submitting(tmp_path):
     """The store claim, not another hook-local flag, prevents duplicates."""
     import pytest
-    from ..manager import ExecutionManager
+    from ..run_manager import RunManager
     from ..run_store import RunStore
 
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     record = manager.store.save(manager.new_record(task="DOS", directory=tmp_path))
     persistence = RunPersistence(manager, _Executor(), record)
-    runner = SimpleNamespace(job_files=JobFiles(record.files))
+    runner = SimpleNamespace(job_files=RunFiles(record.files))
     persistence.before_submit(runner)
     assert persistence.record.state is RunState.SUBMITTING
     with pytest.raises(RuntimeError, match="already"):

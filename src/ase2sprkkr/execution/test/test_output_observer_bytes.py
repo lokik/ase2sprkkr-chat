@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from ase2sprkkr.execution.base import OutputObservers
-from ase2sprkkr.execution.job_files import JobFiles
+from ase2sprkkr.execution.run_files import RunFiles
 from ase2sprkkr.execution.run_model import FileManifest
 from ase2sprkkr.execution.local import LocalRunner
 from ase2sprkkr.execution.psij import PsijRunner
@@ -107,7 +107,7 @@ def test_psij_monitor_forwards_follow_bytes(monkeypatch):
         lambda text, kind: received.append((text, kind))
     )
     runner.result = SimpleNamespace(return_code=None)
-    runner.job_files = JobFiles(FileManifest())
+    runner.job_files = RunFiles(FileManifest())
     runner._observed_state = None
     from threading import Event, Lock
     runner._observation_stopped = Event()
@@ -154,7 +154,7 @@ def test_local_project_follow_delivers_bytes_through_shared_decoder():
     runner = object.__new__(LocalProjectRunner)
     runner.executor = SimpleNamespace(connection=Connection())
     runner._backend_id = "opaque-backend"
-    runner.job_files = JobFiles(frozen_files)
+    runner.job_files = RunFiles(frozen_files)
     runner._output_observers = OutputObservers(
         lambda text, kind: received.append((text, kind))
     )

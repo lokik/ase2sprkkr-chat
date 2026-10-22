@@ -6,7 +6,7 @@ import pytest
 
 from ase2sprkkr.execution.base import ExecutionOutcome, FailurePhase, RunState
 from ase2sprkkr.execution.postprocessing import CalculationRun
-from ase2sprkkr.execution.job_files import JobFiles
+from ase2sprkkr.execution.run_files import RunFiles
 from ase2sprkkr.execution.run_model import FileManifest
 
 
@@ -14,7 +14,7 @@ class Backend:
     def __init__(self, state=RunState.FINISHED):
         self.callback = None
         self.state = RunState.NEW
-        self.job_files = JobFiles(FileManifest())
+        self.job_files = RunFiles(FileManifest())
         self.terminal = state
         self.result = ExecutionOutcome(return_code=0)
         self.exception = None
@@ -153,7 +153,7 @@ def test_external_wait_only_backend_and_late_callback_finalize_once():
         def __init__(self):
             self.callback = None
             self.state = RunState.NEW
-            self.job_files = JobFiles(FileManifest())
+            self.job_files = RunFiles(FileManifest())
             self.result = ExecutionOutcome(return_code=0)
             self.exception = None
 
@@ -378,7 +378,7 @@ def test_synchronous_completion_waits_for_durable_backend_identity():
         failure_message = None
 
         def __init__(self):
-            self.job_files = JobFiles(FileManifest())
+            self.job_files = RunFiles(FileManifest())
             self.result = SimpleNamespace(return_code=0)
 
         def prepare_submission(self):
@@ -436,7 +436,7 @@ def test_fast_completion_does_not_publish_if_identity_persistence_fails():
         failure_message = None
 
         def __init__(self):
-            self.job_files = JobFiles(FileManifest())
+            self.job_files = RunFiles(FileManifest())
             self.result = SimpleNamespace(return_code=0)
 
         def prepare_submission(self):
