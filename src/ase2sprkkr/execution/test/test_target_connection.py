@@ -1,6 +1,7 @@
 """Target-service command semantics independent of the execution location."""
 import asyncio
 from dataclasses import asdict
+import json
 
 from ase2sprkkr.execution import FileManifest
 from ase2sprkkr.execution.target_connection import LocalConnection, SSHConnection
@@ -51,7 +52,8 @@ def test_ssh_connection_preserves_status_manifest_and_acknowledgements():
     asyncio.run(conn.acknowledge_submission("run"))
     asyncio.run(conn.acknowledge("job"))
     assert calls == [
-        (("ase2sprkkr", "remote", "status", "job"), {"files": asdict(files)}),
+        (("ase2sprkkr", "remote", "status", "job"),
+         json.loads(json.dumps({"files": asdict(files)}))),
         (("ase2sprkkr", "remote", "ack-submit", "run"), None),
         (("ase2sprkkr", "remote", "ack", "job"), None),
     ]
