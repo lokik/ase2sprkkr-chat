@@ -5,15 +5,13 @@ from pathlib import Path
 import pytest
 
 import ase2sprkkr.execution._durability as durability
-import ase2sprkkr.execution.manager as manager_module
+import ase2sprkkr.execution.run_store as store_module
 import ase2sprkkr.execution.file_history as file_history
 from ase2sprkkr.execution.base import RunState
 from ase2sprkkr.execution.endpoint import ExecutorEndpoint
 from ase2sprkkr.execution.run_model import FileManifest, FileEntry
-from ase2sprkkr.execution.manager import (
-    ExecutionManager,
-    RunStore,
-)
+from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.run_store import RunStore
 
 
 pytestmark = pytest.mark.skipif(
@@ -94,13 +92,13 @@ def test_durable_mkdir_syncs_parent_directory_entries(
 
 def test_run_store_uses_durable_json_writer(tmp_path, monkeypatch):
     calls = []
-    real_write = manager_module.durable_write_json
+    real_write = store_module.durable_write_json
 
     def tracked_write(path, data, **options):
         calls.append((Path(path), options))
         return real_write(path, data, **options)
 
-    monkeypatch.setattr(manager_module, "durable_write_json", tracked_write)
+    monkeypatch.setattr(store_module, "durable_write_json", tracked_write)
     store = RunStore(tmp_path / "runs")
     manager = ExecutionManager(store)
     record = manager.new_record(task="SCF", directory=tmp_path)
@@ -130,14 +128,14 @@ def test_reserve_syncs_inputs_before_submitting_record(tmp_path, monkeypatch):
         "sync_file",
         lambda path: events.append(("sync", Path(path).name)),
     )
-    real_write = manager_module.durable_write_json
+    real_write = store_module.durable_write_json
 
     def tracked_write(path, data, **options):
         if data["state"] == RunState.SUBMITTING.value:
             events.append(("state", "submitting"))
         return real_write(path, data, **options)
 
-    monkeypatch.setattr(manager_module, "durable_write_json", tracked_write)
+    monkeypatch.setattr(store_module, "durable_write_json", tracked_write)
 
     reserved = manager.reserve(record)
 

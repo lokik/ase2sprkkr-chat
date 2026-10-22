@@ -5,9 +5,8 @@ from dataclasses import replace
 import pytest
 
 from ase2sprkkr.execution.base import RunState
-from ase2sprkkr.execution.manager import (
-    ExecutionManager, RunStore,
-)
+from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.run_store import RunStore
 
 
 def test_conflict_does_not_write_unclaimed_record(tmp_path):
@@ -146,7 +145,7 @@ def test_recovered_status_does_not_overwrite_newer_backend_observation(
 
 
 def test_corrupt_run_blocks_reservation_but_history_remains_readable(tmp_path):
-    from ase2sprkkr.execution.manager import CorruptRunRecord
+    from ase2sprkkr.execution.run_store import CorruptRunRecord
 
     store = RunStore(tmp_path / "runs")
     manager = ExecutionManager(store)
@@ -253,7 +252,7 @@ def test_fresh_submission_is_not_recovered(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("payload", ("null", "[]", '"text"', "7"))
 def test_malformed_run_record_json_value_is_corrupt(tmp_path, payload):
-    from ase2sprkkr.execution.manager import CorruptRunRecord
+    from ase2sprkkr.execution.run_store import CorruptRunRecord
 
     store = RunStore(tmp_path / "runs")
     manager = ExecutionManager(store)
