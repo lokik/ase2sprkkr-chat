@@ -41,16 +41,21 @@ def _executor(mode):
 
 
 def _record(executor, runner, run_id, directory):
-    execution = (
-        runner.execution if isinstance(executor, RemoteEndpointExecutor)
-        else Execution(endpoint_for_executor(executor), WorkingDirectory(str(directory)),
-                       runner.backend_id)
+    execution = Execution(
+        endpoint_for_executor(executor),
+        WorkingDirectory(
+            str(directory),
+            (runner.file_snapshot().mapping.map_path(str(directory))
+             if isinstance(executor, RemoteEndpointExecutor)
+             else None),
+        ),
+        runner.backend_id,
     )
     return RunRecord(
         id=run_id, task="SCF", state=RunState.RUNNING,
         created_at="2026-10-21T08:00:00+00:00",
         updated_at="2026-10-21T08:00:00+00:00",
-        execution=execution, files=runner.files,
+        execution=execution, files=runner.file_snapshot(),
     )
 
 
@@ -81,8 +86,8 @@ def test_project_round_trip_freezes_same_files(mode, tmp_path):
         runner = executor.create_project_run(spec, run_id=run_id)
         observed = []
         runner.add_output_listener(lambda text, kind: observed.append((kind, text)))
-        assert runner.prepare_submission() or runner.files is not None
-        assert runner.files is not None
+        runner.prepare_submission()
+        assert runner.file_snapshot() is not None
         runner.submit()
         assert runner.wait().return_code == 0
         assert runner.state == RunState.FINISHED
@@ -92,9 +97,9 @@ def test_project_round_trip_freezes_same_files(mode, tmp_path):
     assert stdout.read_text() == "stdout-value\n"
     assert stderr.read_text() == "stderr-value\n"
     assert product.read_text() == "result"
-    assert [Path(e.local_path) for e in runner.files.outputs] == [product]
-    assert runner.files.stdout.availability_state == "available"
-    assert runner.files.stderr.availability_state == "available"
+    assert [Path(e.local_path) for e in runner.file_snapshot().outputs] == [product]
+    assert runner.file_snapshot().stdout.availability_state == "available"
+    assert runner.file_snapshot().stderr.availability_state == "available"
 
     # A late file is not part of the supervisor's terminal receipt.
     (directory / "result-late.dat").write_text("not a result")
@@ -102,12 +107,12 @@ def test_project_round_trip_freezes_same_files(mode, tmp_path):
     (status,) = executor.status(record)
     assert status.backend_id == runner.backend_id
     assert status.return_code == 0
-    assert len(runner.files.outputs) == 1
+    assert len(runner.file_snapshot().outputs) == 1
 
     attached = executor.attach(record, start=True)
     assert attached.wait().return_code == 0
     assert attached.state == RunState.FINISHED
-    assert [Path(e.local_path) for e in attached.files.outputs] == [product]
+    assert [Path(e.local_path) for e in attached.file_snapshot().outputs] == [product]
     assert stdout.read_text() == "stdout-value\n"
     assert stderr.read_text() == "stderr-value\n"
 
