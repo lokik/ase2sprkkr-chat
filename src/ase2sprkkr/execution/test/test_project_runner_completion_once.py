@@ -4,7 +4,7 @@ from threading import Event, Thread
 from types import SimpleNamespace
 
 from ..base import RunState
-from ..job_files import JobFiles
+from ..job_files import JobFiles, JobFilesOwner
 from ..run_model import FileManifest
 from ..endpoint import ExecutorEndpoint
 from ..run_model import Execution, WorkingDirectory
@@ -35,7 +35,7 @@ class _Manager:
         return SimpleNamespace(**{**vars(record), **changes})
 
 
-class _Runner:
+class _Runner(JobFilesOwner):
     state = RunState.RUNNING
     backend_id = "backend-id"
     result = SimpleNamespace(return_code=0)
@@ -47,7 +47,7 @@ class _Runner:
     execution = None
 
     def __init__(self):
-        self.job_files = JobFiles(FileManifest())
+        self._initialize_job_files(FileManifest())
 
     def wait(self):
         self.state = RunState.FINISHED
