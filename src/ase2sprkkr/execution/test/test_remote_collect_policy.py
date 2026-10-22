@@ -21,24 +21,20 @@ class NoRemoteAccess(LocalTransport):
         raise AssertionError(f"Unexpected download: {source}")
 
 
-@pytest.mark.parametrize("policy, expected", (
-    ("never", "skipped"),
-    ("missing", "available"),
-))
-def test_collect_existing_output_without_remote_access(tmp_path, policy, expected):
+def test_collect_existing_output_without_remote_access(tmp_path):
     local = tmp_path / "existing.out"
     local.write_text("retained")
     files = FileManifest(outputs=(
         FileEntry(str(local), str(tmp_path / "missing-remote.out"),
                   availability_state="pending"),
     ))
-    mapping = FileMapping(str(tmp_path), str(tmp_path), output_sync=policy)
+    mapping = FileMapping(str(tmp_path), str(tmp_path), output_sync="never")
     result, error = asyncio.run(RemoteFileHandler(NoRemoteAccess()).collect(
         mapping, files, ExecutionOutcome(), required=True,
     ))
     assert error is None
     assert local.read_text() == "retained"
-    assert result.outputs[0].availability_state == expected
+    assert result.outputs[0].availability_state == "skipped"
     assert files.outputs[0].availability_state == "pending"
 
 

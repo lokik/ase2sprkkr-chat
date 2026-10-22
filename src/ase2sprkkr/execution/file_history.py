@@ -10,7 +10,7 @@ import os
 from dataclasses import replace
 from datetime import datetime, timezone
 
-from ..common.file_versions import FileState, FileVersion
+from ..common.file_versions import FileState, FileVersion, FileVersionCaptureError
 from ._durability import sync_file
 from .transport import expand_local_candidates, has_file_magic
 from .file_availability import discover_local_files
@@ -78,12 +78,44 @@ def missing_result_files(result_files):
 def capture_result_files(result_files):
     if result_files is None or result_files.captured_at is not None:
         return result_files
+    # A later capture cannot assign a new SHA-256 to a remote output that was
+    # already delivered and independently verified. Uncollected/skipped remote
+    # files are not historical outputs, even if an unrelated local file exists.
+    remote_entries = (
+        (result_files.stdout, result_files.stderr, *result_files.outputs)
+        if result_files.mapping is not None else ()
+    )
+    remote_by_path = {}
+    selected_outputs = set(result_files.output_files)
+    for entry in remote_entries:
+        if entry is None or entry.local_path is None or entry.remote_path is None:
+            continue
+        path = os.path.abspath(entry.local_path)
+        if entry.availability_state == "available":
+            if not entry.verified_delivery_is_current():
+                raise FileVersionCaptureError(
+                    f"Previously delivered remote file changed or lacks a "
+                    f"verified version: {path}"
+                )
+            remote_by_path[path] = entry.verified_local_version
+        else:
+            selected_outputs.discard(path)
+
+    captured_outputs = snapshot_result_files(
+        (path for path in result_files.output_files
+         if path in selected_outputs), sync=True,
+    )
+    for version in captured_outputs:
+        verified = remote_by_path.get(os.path.abspath(os.fspath(version.path)))
+        if verified is not None and version != verified:
+            raise FileVersionCaptureError(
+                f"Remote file changed during final capture: {version.path}"
+            )
+
     captured = replace(
         result_files,
         input_versions=snapshot_result_files(result_files.input_files),
-        output_versions=snapshot_result_files(
-            result_files.output_files, sync=True,
-        ),
+        output_versions=captured_outputs,
         captured_at=datetime.now(timezone.utc).isoformat(),
     )
     return discover_local_files(captured)

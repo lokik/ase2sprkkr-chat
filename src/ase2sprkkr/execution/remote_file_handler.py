@@ -218,10 +218,22 @@ class RemoteFileHandler:
         remote, local = entry.remote_path, entry.local_path
         local_exists = os.path.isfile(local)
 
-        # MISSING never replaces an existing local copy. Caches still need
-        # their terminal signature checked against the pre-run baseline.
+        # MISSING does not overwrite an existing local output. It can be
+        # recorded as delivered only when it matches the authoritative remote
+        # result; mere local existence is not provenance.
         if not is_cache and policy == FileSyncPolicy.MISSING and local_exists:
-            return "available"
+            remote_digest = await self.transport.file_digest(remote)
+            if remote_digest is None:
+                if required:
+                    raise FileNotFoundError(
+                        f"Declared remote output was not created: {remote}"
+                    )
+                return "skipped"
+            if remote_digest == file_digest(local, missing_ok=True):
+                return "available"
+            raise RuntimeError(
+                f"Local output differs from remote under MISSING policy: {local}"
+            )
 
         if is_cache:
             after = await self.transport.file_signature(remote)
@@ -277,8 +289,7 @@ class RemoteFileHandler:
                     continue
                 if entry.availability_state == "skipped":
                     continue
-                if (entry.availability_state == "available"
-                        and os.path.isfile(entry.local_path)):
+                if entry.verified_delivery_is_current():
                     continue
 
                 identity = (kind, entry.remote_path, entry.local_path)

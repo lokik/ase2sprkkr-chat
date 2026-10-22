@@ -1,6 +1,5 @@
 """Pure transformations of immutable file manifests."""
 from __future__ import annotations
-import os
 from dataclasses import replace
 from .run_model import FileManifest
 
@@ -61,17 +60,21 @@ def merge_snapshot(current, requested):
         if prior.availability_state not in ("available", "failed", "skipped"):
             return False
         if entry.availability_state == "pending":
-            return True
+            # Remote status without a validated version is only a claim, not
+            # proof of an intact previously delivered result.
+            return (
+                prior.verified_delivery_is_current()
+                if prior.availability_state == "available"
+                and prior.remote_path is not None else True
+            )
         if (prior.availability_state == entry.availability_state == "available"
-                and prior.verified_local_version is not None
                 and entry.verified_local_version is None
-                and prior.verified_local_version.is_current()):
+                and prior.verified_delivery_is_current()):
             # A status-only observation does not invalidate the verified copy.
             return True
         if (prior.availability_state == "available"
                 and entry.availability_state == "failed"
-                and prior.verified_local_version is not None
-                and prior.verified_local_version.is_current()):
+                and prior.verified_delivery_is_current()):
             return True
         # A concurrent failed transfer invalidates speculative capture.
         return (
@@ -89,22 +92,10 @@ def merge_terminal_files(previous, received):
 
     def preserve(prior, entry):
         if entry.availability_state in ("failed", "skipped"):
-            return (
-                prior.availability_state == "available"
-                and prior.verified_local_version is not None
-                and prior.verified_local_version.is_current()
-            )
+            return prior.verified_delivery_is_current()
         if prior.availability_state == "skipped":
             return True
-        return (
-            prior.availability_state == "available"
-            and entry.local_path is not None
-            and (
-                prior.verified_local_version.is_current()
-                if prior.verified_local_version is not None
-                else os.path.isfile(entry.local_path)
-            )
-        )
+        return prior.verified_delivery_is_current()
 
     return _merge_availability(previous, received, preserve)
 
