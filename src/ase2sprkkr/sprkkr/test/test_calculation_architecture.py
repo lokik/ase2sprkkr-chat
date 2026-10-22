@@ -6,6 +6,7 @@ from ase.build import bulk
 import pytest
 
 from ...execution.base import RunState
+from ...execution import JobFiles, FileManifest
 from ...input_parameters.input_parameters import InputParameters
 from ...input_parameters.task_definition import TaskDefinition
 from ...potentials.potentials import Potential
@@ -23,6 +24,7 @@ def fe_bulk():
 class _UnstartedRunner:
     def __init__(self, spec):
         self.spec = spec
+        self.job_files = JobFiles(FileManifest.from_spec(spec))
         self.state = RunState.NEW
         self.result = None
         self.reference = None
