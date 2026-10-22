@@ -338,3 +338,40 @@ def test_historical_restore_preflights_staging_collisions(tmp_path):
             destinations={str(first): str(staged), str(second): str(staged)},
         )
     assert not staged.exists()
+
+
+def test_restore_existing_staging_file_is_rejected_before_any_download(tmp_path):
+    local = tmp_path / "local"
+    remote = tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    first, second = local / "first.dat", local / "second.dat"
+    (remote / "first.dat").write_text("first")
+    (remote / "second.dat").write_text("second")
+    second_stage = local / ".second.stage"
+    second_stage.write_text("unrelated")
+    executor = RemoteExecutor(LocalTransport())
+    record = RunRecord(
+        id="stage-preflight", state=RunState.FINISHED,
+        created_at="2026-10-22T00:00:00+00:00",
+        updated_at="2026-10-22T00:00:00+00:00", task="DOS",
+        execution=Execution(
+            endpoint_for_executor(executor),
+            WorkingDirectory(str(local), str(remote)), "backend-id",
+        ),
+        files=FileManifest(
+            mapping=FileMapping(str(local), str(remote)),
+            outputs=(
+                FileEntry(str(first), str(remote / "first.dat")),
+                FileEntry(str(second), str(remote / "second.dat")),
+            ),
+        ),
+    )
+    with pytest.raises(FileExistsError, match="staging destination already exists"):
+        executor.fetch_result_files(record, (first, second), destinations={
+            str(first): str(local / ".first.stage"),
+            str(second): str(second_stage),
+        })
+    assert not (local / ".first.stage").exists()
+    assert second_stage.read_text() == "unrelated"
+    assert not first.exists() and not second.exists()
