@@ -789,7 +789,9 @@ class ExecutionManager:
             if len(statuses) != len(group):
                 raise RuntimeError("Executor returned wrong number of run statuses")
             for record, status in zip(group, statuses):
-                current[record.id] = self.update(record, status)
+                current[record.id] = self.update(
+                    record, status, expected_updated_at=record.updated_at,
+                )
         return tuple(current[record.id] for record in records)
 
     def attach(
