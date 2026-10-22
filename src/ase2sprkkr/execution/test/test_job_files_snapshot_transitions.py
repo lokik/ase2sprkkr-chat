@@ -58,3 +58,29 @@ def test_explicit_file_status_update_is_not_discarded(tmp_path):
     failed = pending.with_file_availability(path, "failed", "download error")
     merged = JobFiles.merge_snapshot(pending, failed)
     assert merged.outputs[0].availability_state == "failed"
+
+
+def test_snapshot_capture_failure_records_failed_files(tmp_path, monkeypatch):
+    from ase2sprkkr.execution.base import FailurePhase, RunState
+    from ase2sprkkr.execution.job_files import JobFiles
+    from ase2sprkkr.execution.run_model import FileEntry
+
+    path = str(tmp_path / "result.dat")
+    manager = ExecutionManager(RunStore(tmp_path / "failure-runs"))
+    record = manager.new_record(
+        task="DOS", directory=tmp_path,
+        files=FileManifest(outputs=(FileEntry(path, availability_state="pending"),)),
+    )
+    record = manager.store.save(record)
+
+    def fail_capture(self, manifest=None):
+        raise OSError("capture failed")
+
+    monkeypatch.setattr(JobFiles, "capture", fail_capture)
+    completed = manager.complete(
+        record, state=RunState.FINISHED, files_available=True,
+    )
+    assert completed.state == RunState.FAILED
+    assert completed.failure_phase == FailurePhase.FILES
+    assert completed.files.outputs[0].availability_state == "failed"
+    assert completed.files.outputs[0].availability_message == "capture failed"
