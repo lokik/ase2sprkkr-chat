@@ -74,6 +74,14 @@ class JobFiles:
                     manifest = merged
                     break
 
+        def apply_observation(observed, error):
+            if observed is None:
+                return error
+            merged = self.merge(observed)
+            if error is not None and observed.failed_files and not merged.failed_files:
+                return None
+            return error
+
         try:
             observed, transfer_error = await handler.collect(
                 manifest.mapping, manifest, outcome, required=required,
@@ -83,15 +91,8 @@ class JobFiles:
             # files. Still verify FOLLOW streams for successful jobs.
             transfer_error = exc
         else:
-            if observed is not None:
-                merged = self.merge(observed)
-                # An unrelated failed attempt may race with a successfully
-                # verified download. Only suppress the transfer error if
-                # every reported failure was superseded by intact delivery.
-                if (transfer_error is not None and observed.failed_files
-                        and not merged.failed_files):
-                    transfer_error = None
-            else:
+            transfer_error = apply_observation(observed, transfer_error)
+            if observed is None:
                 manifest = None
 
         if required and manifest is not None:
@@ -102,8 +103,7 @@ class JobFiles:
             except FILE_DELIVERY_ERRORS as exc:
                 stream_error = exc
             else:
-                if observed is not None:
-                    self.merge(observed)
+                stream_error = apply_observation(observed, stream_error)
             if transfer_error is None:
                 transfer_error = stream_error
 

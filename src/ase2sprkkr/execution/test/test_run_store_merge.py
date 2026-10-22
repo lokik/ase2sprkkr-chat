@@ -205,8 +205,17 @@ def test_explicit_availability_update_preserves_terminal_snapshot(tmp_path):
         files=FileManifest(outputs=(FileEntry(local_path=output),)),
     )
     terminal = manager.transition(original, state=RunState.FINISHED)
-    from ase2sprkkr.execution import JobFiles
-    updated = JobFiles(terminal.files).update_availability(terminal, manager.store, output, "skipped")
+    from dataclasses import replace
+
+    # A completed run permits explicit status amendments through RunStore,
+    # independently of the mutable working JobFiles object.
+    updated = manager.store.update(
+        terminal,
+        lambda latest: replace(
+            latest,
+            files=latest.files.with_file_availability(output, "skipped"),
+        ),
+    )
 
     assert updated.state is RunState.FINISHED
     assert updated.finished_at == terminal.finished_at

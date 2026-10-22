@@ -237,3 +237,55 @@ def test_simultaneous_collections_keep_verified_success_after_late_failure(tmp_p
     assert failed_error is None
     assert owner.manifest.outputs[0].availability_state == "available"
     assert owner.manifest.outputs[0].verified_local_version.is_current()
+
+
+def test_stream_error_superseded_by_concurrent_verified_delivery(tmp_path):
+    from ase2sprkkr.common.file_versions import FileVersion
+
+    stream = tmp_path / "stdout.log"
+    stream.write_bytes(b"complete stream")
+    path = str(stream)
+    frozen = FileManifest(stdout=FileEntry(path, "/remote/stdout", "pending"))
+    owner = JobFiles(frozen)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class FailedObserver:
+        async def collect(self, mapping, manifest, outcome, *, required):
+            return manifest, None
+
+        async def verify_stream_availability(self, manifest, spec):
+            started.set()
+            await release.wait()
+            return manifest.with_file_availability(
+                path, "failed", "lost connection",
+            ), OSError("lost connection")
+
+    class SuccessfulObserver:
+        async def collect(self, mapping, manifest, outcome, *, required):
+            return manifest, None
+
+        async def verify_stream_availability(self, manifest, spec):
+            version = await asyncio.to_thread(
+                FileVersion.capture, stream, require_digest=True,
+            )
+            return manifest.with_file_availability(
+                path, "available", verified_local_version=version,
+            ), None
+
+    async def scenario():
+        first = asyncio.create_task(owner.collect_remote(
+            frozen, FailedObserver(), SimpleNamespace(), SimpleNamespace(),
+            required=True,
+        ))
+        await asyncio.wait_for(started.wait(), 5)
+        second_error = await owner.collect_remote(
+            frozen, SuccessfulObserver(), SimpleNamespace(), SimpleNamespace(),
+            required=True,
+        )
+        release.set()
+        first_error = await asyncio.wait_for(first, 5)
+        return first_error, second_error
+
+    assert asyncio.run(scenario()) == (None, None)
+    assert owner.manifest.stdout.verified_delivery_is_current()
