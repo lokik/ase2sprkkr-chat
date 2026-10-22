@@ -143,3 +143,21 @@ def test_recovered_status_does_not_overwrite_newer_backend_observation(
     result = manager.recover_submitting(submitted)
     assert result.state == RunState.RUNNING
     assert store.get(submitted.id).state == RunState.RUNNING
+
+
+def test_corrupt_run_blocks_reservation_but_history_remains_readable(tmp_path):
+    from ase2sprkkr.execution.manager import CorruptRunRecord
+
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    original = manager.reserve(manager.new_record(task="SCF", directory=tmp_path))
+    path = store._path(original)
+    path.write_text("{broken json")
+
+    with pytest.warns(RuntimeWarning, match="Corrupt run record"):
+        assert store.runs(active=True) == ()
+
+    with pytest.raises(CorruptRunRecord):
+        manager.reserve(manager.new_record(task="SCF", directory=tmp_path))
+
+    assert path.read_text() == "{broken json"
