@@ -140,12 +140,14 @@ def test_profile_executor_is_selected_before_mpi_resolution(monkeypatch, tmp_pat
     parameters = InputParameters.create("DOS")
     parameters.CONTROL.DATASET = "test"
     parameters.CONTROL.POTFIL = "test.pot"
+    from ase2sprkkr.execution import JobFiles, FileManifest
     backend_runner = SimpleNamespace(
         state=RunState.NEW,
         result=object(),
         reference=None,
         exception=None,
         callback=None,
+        job_files=JobFiles(FileManifest()),
         add_output_listener=lambda callback: None,
     )
     calls = []
