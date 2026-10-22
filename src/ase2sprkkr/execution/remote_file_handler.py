@@ -288,7 +288,9 @@ class RemoteFileHandler:
             for entry in entries:
                 if entry.local_path is None or entry.remote_path is None:
                     continue
-                if entry.availability_state == "skipped":
+                if (entry.availability_state == "skipped"
+                        and not (mapping.output_sync == FileSyncPolicy.MISSING
+                                 and not os.path.isfile(entry.local_path))):
                     continue
                 if entry.verified_delivery_is_current():
                     continue

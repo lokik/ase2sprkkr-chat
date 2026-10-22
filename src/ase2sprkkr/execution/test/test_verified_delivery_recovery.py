@@ -97,6 +97,27 @@ def test_missing_policy_requires_matching_remote_copy(tmp_path):
     assert again.outputs[0].availability_state == "skipped"
 
 
+def test_missing_skip_can_download_after_local_conflict_is_removed(tmp_path):
+    local, _, _, pending, mapping = _case(tmp_path)
+    mapping = FileMapping(mapping.local_root, mapping.remote_root, output_sync="missing")
+    local.write_bytes(b"conflicting local output")
+    handler = RemoteFileHandler(LocalTransport())
+    skipped, error = asyncio.run(handler.collect(
+        mapping, pending, ExecutionOutcome(), required=True,
+    ))
+    assert error is None
+    assert skipped.outputs[0].availability_state == "skipped"
+
+    local.unlink()
+    recovered, error = asyncio.run(handler.collect(
+        mapping, merge_terminal_files(skipped, pending),
+        ExecutionOutcome(), required=True,
+    ))
+    assert error is None
+    assert recovered.outputs[0].verified_delivery_is_current()
+    assert local.read_bytes() == b"original result"
+
+
 def test_missing_skip_allows_finished_run_without_capturing_stale_file(tmp_path):
     from ase2sprkkr.execution.base import RunState
     from ase2sprkkr.execution.manager import ExecutionManager
