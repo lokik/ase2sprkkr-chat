@@ -118,6 +118,12 @@ def test_compact_large_native_example(tmp_path, original, expected_mode):
 
     source = Path(__file__).resolve().parents[1] / "examples" / original
     text = source.read_text()
+    if original.startswith("FePt.new_BSFEK_"):
+        # These native examples have multiple K-direction segments. The
+        # strict reducer intentionally rejects that unsupported geometry.
+        with pytest.raises(ValueError, match="Multiple K direction segments"):
+            compact_bsf(text, max_e=6, max_k=8)
+        return
     reduced = (compact_bsf(text, max_e=6, max_k=8)
                if source.suffix == ".bsf"
                else compact_spc(text, max_e=6, max_k=8))
