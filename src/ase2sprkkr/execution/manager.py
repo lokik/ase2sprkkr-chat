@@ -137,6 +137,105 @@ class RunRecord:
     def job_files(self):
         return JobFiles(self)
 
+    def _merged_state(self, requested):
+        if requested is None:
+            return self.state
+        requested = RunState(requested)
+        if self.state.is_terminal:
+            return self.state
+        if requested == RunState.UNKNOWN:
+            # Uncertainty cannot retract confirmed execution completion.
+            if self.state in (RunState.POSTPROCESSING, RunState.DOWNLOADING):
+                return self.state
+            return requested
+        if self.state == RunState.UNKNOWN:
+            return requested
+        if _STATE_RANK[requested] < _STATE_RANK[self.state]:
+            return self.state
+        return requested
+
+    def with_transition(
+        self,
+        *,
+        state=None,
+        execution=_UNCHANGED,
+        return_code=_UNCHANGED,
+        message=_UNCHANGED,
+        failure_phase=_UNCHANGED,
+        files=_UNCHANGED,
+        expected_updated_at=_UNCHANGED,
+        expected_record=None,
+        skip_if_terminal=False,
+        validate_completed_files=False,
+    ):
+        """Return a validated immutable snapshot of a run-state observation.
+
+        No disk I/O or backend calls happen here; RunStore owns atomicity.
+        """
+        if expected_record is not None and self != expected_record:
+            raise RuntimeError("Run changed during postprocessing retry")
+        if skip_if_terminal and self.state.is_terminal:
+            return self
+        if (expected_updated_at is not _UNCHANGED
+                and self.updated_at != expected_updated_at):
+            # An independent refresh has superseded this observation.
+            return self
+        final_locked = self.state.is_terminal
+        now = _now()
+        merged_state = self._merged_state(state)
+        if (state is not None and RunState(state) == RunState.UNKNOWN
+                and merged_state != RunState.UNKNOWN):
+            # Ignore the entire stale observation, including its message
+            # and file metadata, not merely its proposed state.
+            return self
+        changes = {"state": merged_state, "updated_at": now}
+        if not self.state.is_terminal and merged_state.is_terminal:
+            changes["finished_at"] = now
+        if not final_locked and files is not _UNCHANGED and files is not None:
+            merged_files = JobFiles.merge_snapshot(self.files, files)
+            if merged_files is not self.files:
+                changes["files"] = merged_files
+        if execution is not _UNCHANGED and execution is not None:
+            if execution.endpoint != self.execution.endpoint:
+                raise ValueError("Execution endpoint cannot change")
+            if execution.directory.local != self.execution.directory.local:
+                raise ValueError("Execution local directory cannot change")
+            if self.execution.backend_id is not None:
+                if execution.backend_id != self.execution.backend_id:
+                    raise ValueError("Backend identity cannot change")
+                if execution.directory != self.execution.directory:
+                    raise ValueError("Submitted execution directory cannot change")
+            elif final_locked and execution != self.execution:
+                raise ValueError("Final execution identity cannot change")
+            changes["execution"] = execution
+        if return_code is not _UNCHANGED and return_code is not None:
+            if not final_locked or self.return_code is None:
+                changes["return_code"] = return_code
+        if message is not _UNCHANGED:
+            if message is None and self.state == RunState.UNKNOWN and merged_state != RunState.UNKNOWN:
+                # A later scheduler observation supersedes the stale
+                # connection-error diagnostic.
+                changes["message"] = None
+            elif message is not None and (not final_locked or self.message is None):
+                changes["message"] = message
+        if failure_phase is not _UNCHANGED:
+            normalized = _failure_phase(failure_phase)
+            if not final_locked or self.failure_phase is None:
+                changes["failure_phase"] = normalized
+        if validate_completed_files and changes["state"] == RunState.FINISHED:
+            # Completion must use the manifest merged under the RunStore
+            # lock. A concurrent download failure may have been persisted
+            # after the caller captured its candidate manifest.
+            completed_files = changes.get("files", self.files)
+            if completed_files.failed_files:
+                changes["state"] = RunState.FAILED
+                changes["failure_phase"] = FailurePhase.DOWNLOAD
+                changes["message"] = completed_files.availability_message or message
+                if (completed_files.captured_at is not None
+                        and self.files.captured_at is None):
+                    changes["files"] = JobFiles.discard_capture(completed_files)
+        return replace(self, **changes)
+
 
 class RunStore:
     """Project run history stored as date-sharded durable JSON files."""
@@ -399,24 +498,6 @@ class ExecutionManager:
             project_id=project_id,
         )
 
-    @staticmethod
-    def _merged_state(latest, requested):
-        if requested is None:
-            return latest.state
-        requested = RunState(requested)
-        if latest.state.is_terminal:
-            return latest.state
-        if requested == RunState.UNKNOWN:
-            # Uncertainty cannot retract confirmed execution completion.
-            if latest.state in (RunState.POSTPROCESSING, RunState.DOWNLOADING):
-                return latest.state
-            return requested
-        if latest.state == RunState.UNKNOWN:
-            return requested
-        if _STATE_RANK[requested] < _STATE_RANK[latest.state]:
-            return latest.state
-        return requested
-
     def transition(
         self,
         record,
@@ -432,73 +513,18 @@ class ExecutionManager:
         skip_if_terminal=False,
         validate_completed_files=False,
     ):
-        def merge(latest):
-            if expected_record is not None and latest != expected_record:
-                raise RuntimeError("Run changed during postprocessing retry")
-            if skip_if_terminal and latest.state.is_terminal:
-                return latest
-            if (expected_updated_at is not _UNCHANGED
-                    and latest.updated_at != expected_updated_at):
-                # An independent refresh has superseded this observation.
-                return latest
-            final_locked = latest.state.is_terminal
-            now = _now()
-            merged_state = self._merged_state(latest, state)
-            if (state is not None and RunState(state) == RunState.UNKNOWN
-                    and merged_state != RunState.UNKNOWN):
-                # Ignore the entire stale observation, including its message
-                # and file metadata, not merely its proposed state.
-                return latest
-            changes = {"state": merged_state, "updated_at": now}
-            if not latest.state.is_terminal and merged_state.is_terminal:
-                changes["finished_at"] = now
-            if not final_locked:
-                if files is not _UNCHANGED and files is not None:
-                    merged_files = JobFiles.merge_snapshot(latest.files, files)
-                    if merged_files is not latest.files:
-                        changes["files"] = merged_files
-            if execution is not _UNCHANGED and execution is not None:
-                if execution.endpoint != latest.execution.endpoint:
-                    raise ValueError("Execution endpoint cannot change")
-                if execution.directory.local != latest.execution.directory.local:
-                    raise ValueError("Execution local directory cannot change")
-                if latest.execution.backend_id is not None:
-                    if execution.backend_id != latest.execution.backend_id:
-                        raise ValueError("Backend identity cannot change")
-                    if execution.directory != latest.execution.directory:
-                        raise ValueError("Submitted execution directory cannot change")
-                elif final_locked and execution != latest.execution:
-                    raise ValueError("Final execution identity cannot change")
-                changes["execution"] = execution
-            if return_code is not _UNCHANGED and return_code is not None:
-                if not final_locked or latest.return_code is None:
-                    changes["return_code"] = return_code
-            if message is not _UNCHANGED:
-                if message is None and latest.state == RunState.UNKNOWN and merged_state != RunState.UNKNOWN:
-                    # A later scheduler observation supersedes the stale
-                    # connection-error diagnostic.
-                    changes["message"] = None
-                elif message is not None and (not final_locked or latest.message is None):
-                    changes["message"] = message
-            if failure_phase is not _UNCHANGED:
-                normalized = _failure_phase(failure_phase)
-                if not final_locked or latest.failure_phase is None:
-                    changes["failure_phase"] = normalized
-            if validate_completed_files and changes["state"] == RunState.FINISHED:
-                # Completion must use the manifest merged under the RunStore
-                # lock. A concurrent download failure may have been persisted
-                # after the caller captured its candidate manifest.
-                completed_files = changes.get("files", latest.files)
-                if completed_files.failed_files:
-                    changes["state"] = RunState.FAILED
-                    changes["failure_phase"] = FailurePhase.DOWNLOAD
-                    changes["message"] = completed_files.availability_message or message
-                    if (completed_files.captured_at is not None
-                            and latest.files.captured_at is None):
-                        changes["files"] = JobFiles.discard_capture(completed_files)
-            return replace(latest, **changes)
-
-        return self.store.update(record, merge)
+        """Atomically commit the value object's validated state transition."""
+        return self.store.update(
+            record,
+            lambda latest: latest.with_transition(
+                state=state, execution=execution, return_code=return_code,
+                message=message, failure_phase=failure_phase, files=files,
+                expected_updated_at=expected_updated_at,
+                expected_record=expected_record,
+                skip_if_terminal=skip_if_terminal,
+                validate_completed_files=validate_completed_files,
+            ),
+        )
 
     def _is_stale_submitting(self, record, *, now=None):
         if record.state != RunState.SUBMITTING or record.execution.backend_id is not None:
