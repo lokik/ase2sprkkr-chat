@@ -1,0 +1,199 @@
+"""Quick real-SPC regression tests for ARPES figure content and sliders."""
+
+from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.colors import CenteredNorm
+import numpy as np
+import pytest
+
+from ase2sprkkr.result_files import ResultFile
+
+
+_EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "Mo2Se4_ARPES_ARPES_data.spc"
+
+
+def _artists(figure):
+    controls = getattr(figure, "_ase2sprkkr_controls", None)
+    control_axes = set() if controls is None else {
+        widget.ax for widget in controls.widgets.values()
+    }
+    return [
+        axis for axis in figure.axes
+        if axis not in control_axes and (axis.lines or axis.collections)
+    ]
+
+
+@pytest.fixture(scope="module")
+def single_angle_spc():
+    return ResultFile.from_file(str(_EXAMPLE), unknown=False)
+
+
+@pytest.fixture(scope="module")
+def multi_azimuth_spc(tmp_path_factory):
+    directory = tmp_path_factory.mktemp("arpes-np3")
+    return ResultFile.from_file(str(_multi_azimuth_file(directory)), unknown=False)
+
+
+def test_real_single_angle_spectrum_is_not_blank(single_angle_spc):
+    spc = single_angle_spc
+    assert spc.NP() == spc.NT() == 1
+    try:
+        spc.plot(show=False)
+        figure = plt.gcf()
+        panels = _artists(figure)
+        assert len(panels) == 4
+        assert all(len(ax.lines) == 1 for ax in panels)
+        for axis in panels:
+            line = axis.lines[0]
+            assert len(line.get_xdata()) == spc.NE()
+            assert len(line.get_ydata()) == spc.NE()
+            assert np.max(line.get_ydata()) > 0
+        assert len(figure.axes) == 4  # NP=1: no artificial slider
+    finally:
+        plt.close("all")
+
+
+def _sample_spc_energy_rows(count=8):
+    """Keep representative energies without replicating all 300 rows."""
+    header, payload = _EXAMPLE.read_text().split("#######################", 1)
+    rows = [line for line in payload.splitlines() if line.strip()]
+    assert len(rows) == 300
+    assert "NE               300" in header
+    header = header.replace("NE               300", f"NE               {count}")
+    # Include both energy endpoints and several points in between.
+    sample = [rows[index] for index in np.linspace(0, len(rows) - 1, count, dtype=int)]
+    return header, sample
+
+
+def _multi_azimuth_file(tmp_path):
+    """Turn sampled real NP=1 data into an NP=3 native SPC input."""
+    header, rows = _sample_spc_energy_rows()
+    header = header.replace("NP                 1", "NP                 3")
+    assert "NP                 3" in header
+    output = tmp_path / "synthetic_np3.spc"
+    lines = []
+    for line in rows:
+        values = np.fromstring(line, sep=" ")
+        assert len(values) == 8
+        for ip in range(3):
+            modified = values.copy()
+            modified[2:5] *= ip + 1
+            modified[5] = (
+                (modified[3] - modified[4]) /
+                (modified[3] + modified[4])
+            )
+            lines.append(" ".join(f"{x:.9E}" for x in modified))
+    output.write_text(header + "#######################\n" + "\n".join(lines) + "\n")
+    return output
+
+
+def test_real_parser_multi_azimuth_slider_draws_all_four_panels(multi_azimuth_spc):
+    spc = multi_azimuth_spc
+    assert spc.NP() == 3
+    assert spc.TOTAL().shape == (spc.NE(), 3, 1)
+    try:
+        spc.plot(show=False, live=True)
+        fig = plt.gcf()
+        axes = _artists(fig)
+        assert len(axes) == 4
+        energy_label = r"$E-E_{\rm F}$ (eV)"
+        assert all(axis.get_xlabel() == energy_label for axis in axes)
+        controls = fig._ase2sprkkr_controls
+        assert controls._slider_values["slice"] == (0, 1, 2)
+        lines = [ax.lines[0] for ax in _artists(fig)]
+        before = np.asarray(lines[0].get_ydata()).copy()
+        controls.widgets["slice"].set_val(2)
+        after = np.asarray(lines[0].get_ydata())
+        np.testing.assert_allclose(after, 3 * before)
+        assert all(axis.get_xlabel() == energy_label for axis in axes)
+    finally:
+        plt.close("all")
+
+
+def test_multi_azimuth_static_slice_count(multi_azimuth_spc):
+    spc = multi_azimuth_spc
+    try:
+        spc.plot(show=False, live=False, azimuths=2)
+        fig = plt.gcf()
+        assert len(_artists(fig)) == 8
+        assert not hasattr(fig, "_ase2sprkkr_controls")
+    finally:
+        plt.close("all")
+
+
+
+def test_controls_switch_np_nt_on_real_parser_grid(tmp_path):
+    """A parsed NP x NT spectrum changes slice direction and slider limits."""
+    header, rows = _sample_spc_energy_rows()
+    header = header.replace("NT                 1", "NT                 3")
+    header = header.replace("NP                 1", "NP                 4")
+    lines = []
+    for line in rows:
+        values = np.fromstring(line, sep=" ")
+        for ip in range(4):
+            for it in range(3):
+                point = values.copy()
+                point[0] = -10 + 10 * it
+                point[2:5] *= (ip + 1) * (it + 1)
+                lines.append(" ".join(f"{v:.9E}" for v in point))
+    path = tmp_path / "two_angles.spc"
+    path.write_text(header + "#######################\n" + "\n".join(lines) + "\n")
+    spc = ResultFile.from_file(str(path), unknown=False)
+    assert spc.TOTAL().shape == (spc.NE(), 4, 3)
+    try:
+        spc.plot(show=False, live=True)
+        fig = plt.gcf()
+        controls = fig._ase2sprkkr_controls
+        assert len(_artists(fig)) == 4
+        # The signed polarization panel uses the same rendering path as
+        # ordinary 2D spectra; verify its normalization on this figure
+        # rather than loading and plotting another large SPC fixture.
+        polarization = _artists(fig)[3].collections[0]
+        assert isinstance(polarization.norm, CenteredNorm)
+        assert polarization.norm.vcenter == 0
+        assert polarization.norm.halfrange == 1
+        np.testing.assert_allclose(
+            np.asarray(_artists(fig)[0].collections[0].get_array()),
+            spc.TOTAL()[:, 0, :]
+        )
+        assert controls.state == {"direction": "NP", "slice": 0}
+        assert len(controls._slider_values["slice"]) == 4
+        assert _artists(fig)[0].get_xlabel() == r"$\theta$ (deg)"
+        controls.widgets["slice"].set_val(3)
+        controls.widgets["direction"].set_active(1)
+        assert controls.state == {"direction": "NT", "slice": 0}
+        assert len(controls._slider_values["slice"]) == 3
+        assert _artists(fig)[0].get_xlabel() == "Azimuth index (NP)"
+        np.testing.assert_allclose(
+            np.asarray(_artists(fig)[0].collections[0].get_array()),
+            spc.TOTAL()[:, :, 0]
+        )
+        controls.widgets["slice"].set_val(2)
+        assert controls.state["slice"] == 2
+        np.testing.assert_allclose(
+            np.asarray(_artists(fig)[0].collections[0].get_array()),
+            spc.TOTAL()[:, :, 2]
+        )
+        assert len(_artists(fig)) == 4
+    finally:
+        plt.close("all")
+
+
+def test_live_azimuth_selection_keeps_requested_indices(multi_azimuth_spc):
+    """An explicit NP selection stays the slider domain in live mode."""
+    spc = multi_azimuth_spc
+    try:
+        spc.plot(show=False, live=True, azimuths=2, phi_range=(15., 45.))
+        controls = plt.gcf()._ase2sprkkr_controls
+        assert controls._slider_values["slice"] == (0, 2)
+        widget = controls.widgets["slice"]
+        assert widget.valtext.get_text() == "15°"
+        widget.set_val(1)
+        assert controls.state["slice"] == 2
+        assert widget.valtext.get_text() == "45°"
+    finally:
+        plt.close("all")
+
