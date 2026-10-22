@@ -221,7 +221,7 @@ def test_manifest_from_spec_preserves_distinct_roles(tmp_path):
     from types import SimpleNamespace
 
     spec = SimpleNamespace(
-        directory=str(tmp_path), input_file="input.inp", stdin=None,
+        directory=str(tmp_path), input_file="input.inp", stdin=False,
         input_files=("other.inp",), output_file="stdout.out",
         error_file="stderr.err", output_files=("result.dat",),
         cache_files=("restart.pot",),
@@ -248,7 +248,7 @@ def test_duplicate_file_declarations_are_errors(tmp_path, role, overlap):
     from types import SimpleNamespace
 
     spec = SimpleNamespace(
-        directory=str(tmp_path), input_file="input.inp", stdin=None,
+        directory=str(tmp_path), input_file="input.inp", stdin=False,
         input_files=("other.inp",), output_file="stdout.out",
         error_file="stderr.err", output_files=("result.dat",),
         cache_files=(),
@@ -259,9 +259,9 @@ def test_duplicate_file_declarations_are_errors(tmp_path, role, overlap):
 
 
 @pytest.mark.parametrize("extras,stdin", [
-    (("input.inp",), None),
+    (("input.inp",), False),
     (("input.inp",), "input.inp"),
-    (("other.inp", "./other.inp"), None),
+    (("other.inp", "./other.inp"), False),
 ])
 def test_independent_duplicate_inputs_are_rejected(tmp_path, extras, stdin):
     from types import SimpleNamespace
@@ -428,3 +428,14 @@ def test_stdin_boolean_requires_nonempty_inputs_and_literal_first_entry():
     files = FileManifest(inputs=(FileEntry("/does/not/exist.inp"),), stdin=True)
     assert files.stdin is True
     assert FileManifest(**asdict(files)) == files
+
+
+def test_manifest_refuses_ambiguous_none_stdin(tmp_path):
+    from types import SimpleNamespace
+    spec = SimpleNamespace(
+        directory=str(tmp_path), input_file="input.inp", input_files=(),
+        stdin=None, output_file=None, error_file=None,
+        output_files=(), cache_files=(),
+    )
+    with pytest.raises(ValueError, match="stdin=None is ambiguous"):
+        FileManifest.from_spec(spec)

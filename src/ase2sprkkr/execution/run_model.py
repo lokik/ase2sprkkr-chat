@@ -329,6 +329,8 @@ class FileManifest:
         # to the front when the caller supplied a separate stream.
         values = [value for value in (spec.input_file, *spec.input_files)
                   if value is not None]
+        if spec.stdin is None:
+            raise ValueError("ExecutionSpec.stdin=None is ambiguous; use False to disable stdin")
         stdin = spec.stdin is not False
         if stdin:
             stdin_path = file_path(spec.stdin, directory, required=True)

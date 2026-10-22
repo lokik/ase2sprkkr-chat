@@ -95,7 +95,7 @@ def _decode_handle(value):
 
 
 def _absolute(directory, value):
-    if value is None:
+    if value is None or value is False:
         return None
     path = Path(value)
     if not path.is_absolute():

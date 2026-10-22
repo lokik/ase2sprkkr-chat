@@ -1488,3 +1488,21 @@ def test_request_spec_does_not_duplicate_primary_input():
     assert FileManifest.from_spec(spec).input_files == (
         "/remote/main.in", "/remote/extra.in",
     )
+
+
+def test_disabled_stdin_is_not_materialized_as_filename(tmp_path):
+    from ase2sprkkr.execution import ExecutionSpec
+
+    assert remote_service._absolute(tmp_path, False) is None
+    spec = ExecutionSpec(
+        argv=("program",), directory=str(tmp_path),
+        input_file=None, output_file=None,
+    )
+    request = {
+        "directory": str(tmp_path),
+        "argv": list(spec.argv),
+        "stdin": None,
+    }
+    recovered = remote_service._request_spec(request)
+    assert recovered.stdin is False
+    assert remote_service._absolute(tmp_path, recovered.stdin) is None
