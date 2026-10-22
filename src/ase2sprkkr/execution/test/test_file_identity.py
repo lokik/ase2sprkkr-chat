@@ -132,3 +132,23 @@ def test_materialized_output_cannot_duplicate_stdout():
     )
     with pytest.raises(ValueError, match="Duplicate file declaration"):
         FileManifest(stdout=stream, outputs=(expanded,))
+
+
+@pytest.mark.parametrize("role", ("stdout", "stderr"))
+@pytest.mark.parametrize(
+    ("stream_local", "stream_remote", "output_local", "output_remote"),
+    (
+        ("/local/shared", "/remote/stream", "/local/shared", "/remote/output"),
+        ("/local/stream", "/remote/shared", "/local/output", "/remote/shared"),
+        ("/local/shared", "/remote/shared", "/local/shared", "/remote/shared"),
+    ),
+)
+def test_stream_and_output_cannot_share_either_local_or_remote_identity(
+    role, stream_local, stream_remote, output_local, output_remote,
+):
+    """Stream/output conflicts are errors even when only one side collides."""
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest(
+            **{role: FileEntry(stream_local, stream_remote)},
+            outputs=(FileEntry(output_local, output_remote),),
+        )
