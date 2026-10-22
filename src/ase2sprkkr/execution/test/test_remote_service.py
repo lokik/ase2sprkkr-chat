@@ -1528,6 +1528,46 @@ def test_disabled_stdin_is_not_materialized_as_filename(tmp_path):
     assert remote_service._absolute(tmp_path, recovered.stdin) is None
 
 
+def test_local_submit_prepares_resolved_spec_before_supervisor_launch(
+    tmp_path, monkeypatch,
+):
+    """Prelaunch cleanup must receive the resolved request, not an undefined name."""
+    from ase2sprkkr.execution.base import ExecutionSpec, SubmissionNotStarted
+
+    prepared = []
+
+    def record_preparation(spec, *, output_file, error_file, side):
+        assert isinstance(spec, ExecutionSpec)
+        prepared.append((spec, output_file, error_file, side))
+
+    def reject_launch(*args, **kwargs):
+        assert len(prepared) == 1, "Cleanup must precede supervisor creation"
+        raise OSError("supervisor launch disabled for test")
+
+    monkeypatch.setattr(remote_service, "prepare_local_files", record_preparation)
+    monkeypatch.setattr(remote_service.subprocess, "Popen", reject_launch)
+
+    with pytest.raises(SubmissionNotStarted, match="supervisor launch disabled"):
+        remote_service._local_submit({
+            "argv": ("no-process",),
+            "directory": str(tmp_path),
+            "input_file": "main.inp",
+            "output_file": "run.out",
+            "error_file": "run.err",
+            "output_files": ("part.dat",),
+            "cache_files": ("restart.dat",),
+            "cleanup_side": "remote",
+        })
+
+    spec, output, error, side = prepared[0]
+    assert spec.input_file == "main.inp"
+    assert spec.output_files == ("part.dat",)
+    assert spec.cache_files == ("restart.dat",)
+    assert output == str(tmp_path / "run.out")
+    assert error == str(tmp_path / "run.err")
+    assert side == "remote"
+
+
 def test_target_ipc_failure_does_not_delete_declared_outputs(tmp_path, monkeypatch):
     """Target cleanup belongs after IPC preparation, just before Popen."""
     from ase2sprkkr.execution.base import SubmissionNotStarted

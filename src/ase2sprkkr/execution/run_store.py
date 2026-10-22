@@ -215,6 +215,13 @@ class RunStore:
 
     def save(self, record: RunRecord):
         with self._locked_run(record):
+            path = self._path(record)
+            if path.is_file():
+                previous = self._decode(path)
+                if previous.state.is_terminal and previous != record:
+                    # Explicit changes to final history belong to update(),
+                    # never a stale replacement through save().
+                    raise ValueError("Cannot overwrite a terminal run using save()")
             return self._write_unlocked(record)
 
     def _commit_update_unlocked(self, path, latest, updated):

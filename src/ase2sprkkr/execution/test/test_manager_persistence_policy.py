@@ -80,6 +80,43 @@ def test_terminal_ack_retries_transport_error_without_overwriting_record(manager
     assert backend.calls == 2
     assert manager.store.get(record.id) == record
 
+@pytest.mark.parametrize(
+    "negative_reply",
+    [
+        pytest.param(False, id="boolean"),
+        pytest.param({"acknowledged": False}, id="remote-rejected"),
+        pytest.param({}, id="incomplete-reply"),
+    ],
+)
+def test_terminal_ack_retries_negative_reply(manager, tmp_path, negative_reply):
+    from ase2sprkkr.execution.run_persistence import RunPersistence
+
+    original = manager.new_record(task="DOS", directory=tmp_path)
+    running = manager.transition(
+        original, state=RunState.RUNNING,
+        execution=original.execution.submitted("backend-1"),
+    )
+    record = manager.complete(running, state=RunState.FINISHED)
+
+    class Backend:
+        def __init__(self):
+            self.calls = 0
+
+        def acknowledge(self, current):
+            assert current == record
+            self.calls += 1
+            return negative_reply if self.calls == 1 else {"acknowledged": True}
+
+    backend = Backend()
+    persistence = RunPersistence(manager, backend, record)
+    # Repeated observers must retry a negative reply, but stop after success.
+    assert persistence.completed(None) == RunState.FINISHED
+    assert persistence.completed(None) == RunState.FINISHED
+    assert persistence.completed(None) == RunState.FINISHED
+    assert backend.calls == 2
+    assert manager.store.get(record.id) == record
+
+
 def test_reservation_commits_executor_placement_before_staging(manager, tmp_path):
     class Backend:
         def reservation_context(self, spec, files):
