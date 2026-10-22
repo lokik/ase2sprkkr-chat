@@ -79,7 +79,7 @@ class ExecutionManager:
         now = _now()
         local = os.path.abspath(os.fspath(directory))
         return RunRecord(
-            id=run_id or uuid4().hex, state=RunState.NEW, created_at=now,
+            id=uuid4().hex if run_id is None else run_id, state=RunState.NEW, created_at=now,
             updated_at=now, task=str(task).upper(), dataset=dataset,
             execution=Execution(endpoint or ExecutorEndpoint(), WorkingDirectory(local, remote_directory)),
             files=files if files is not None else FileManifest(),

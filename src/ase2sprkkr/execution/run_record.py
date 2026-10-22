@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -23,6 +24,13 @@ _STATE_RANK = {
     RunState.CANCELLED: 6,
 }
 _UNCHANGED = object()
+
+def _validate_run_id(run_id):
+    """Reject unsafe or non-portable run file path components."""
+    if not isinstance(run_id, str) or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", run_id) is None:
+        raise ValueError(f"Invalid run ID: {run_id!r}")
+    return run_id
+
 
 def _now():
     return datetime.now(timezone.utc).isoformat()
@@ -55,6 +63,7 @@ class RunRecord:
     project_id: Optional[str] = None
 
     def __post_init__(self):
+        _validate_run_id(self.id)
         object.__setattr__(self, "task", str(self.task).upper())
         if self.dataset is not None:
             object.__setattr__(self, "dataset", str(self.dataset))
