@@ -70,7 +70,7 @@ def compact_bsf(text, max_e=8, max_k=12):
         # Preserve every K-direction junction, including the last point of
         # each segment, when reducing a multi-segment band path.
         boundaries = [int(v) for v in re.findall(
-            r"(?m)^\\s*INDKDIR\\s+(\\d+)\\s*$", header)]
+            r"(?m)^\s*INDKDIR\s+(\d+)\s*$", header)]
         ndir = field(header, "NKDIR")
         if len(boundaries) != ndir or not boundaries or boundaries[-1] != nk:
             raise ValueError("Inconsistent K-direction boundaries")
@@ -100,7 +100,7 @@ def compact_bsf(text, max_e=8, max_k=12):
         positions = iter(int(np.searchsorted(k, edge - 1, side="right"))
                          for edge in boundaries)
         header = re.sub(
-            r"(?m)^(\\s*INDKDIR\\s+)\\d+(\\s*)$",
+            r"(?m)^(\s*INDKDIR\s+)\d+(\s*)$",
             lambda match: match[1] + str(next(positions)) + match[2],
             header,
         )
