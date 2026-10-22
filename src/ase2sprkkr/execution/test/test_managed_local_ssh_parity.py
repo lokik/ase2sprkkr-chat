@@ -187,10 +187,22 @@ def test_detach_follow_then_reattach_running_job(mode, tmp_path):
     run_id = uuid4().hex
     ready = Event()
     callbacks = []
+
+    # The backend must still be running when the first client disconnects.
+    # A fixed sleep in the child races SSH's separate Python FOLLOW helper
+    # on slower CI workers, turning this into a terminal-replay test instead.
+    target = tmp_path / ("remote" if mode == "ssh" else "local") / "calculation"
+    release = target / "allow-finish"
+    script = (
+        "from pathlib import Path\n"
+        "import time\n"
+        "print('ready', flush=True)\n"
+        "while not Path('allow-finish').exists():\n"
+        "    time.sleep(0.05)\n"
+        "print('finished', flush=True)\n"
+    )
     spec = ExecutionSpec(
-        argv=(sys.executable, "-u", "-c",
-              "import time; print('ready', flush=True); "
-              "time.sleep(2); print('finished', flush=True)"),
+        argv=(sys.executable, "-u", "-c", script),
         input_file=None, output_file=str(directory / "run.out"),
         directory=str(directory),
         launch=LaunchSpec(local_root=str(tmp_path / "local"),
@@ -202,17 +214,28 @@ def test_detach_follow_then_reattach_running_job(mode, tmp_path):
         lambda text, kind: ready.set() if kind == "out" and "ready" in text else None
     )
     runner.submit()
-    assert ready.wait(10)
-    assert runner.stop_observation()
-    runner._thread.join(10)
-    assert not runner._thread.is_alive()
-    with pytest.raises(ObservationDetached):
-        runner.wait()
-    assert callbacks == []
-    assert runner.detached
-    assert runner._state == RunState.RUNNING
-    record = _record(executor, runner, run_id, directory)
-    attached = executor.attach(record, start=True)
-    assert attached.wait().return_code == 0
-    assert attached.state == RunState.FINISHED
-    assert (directory / "run.out").read_text().splitlines() == ["ready", "finished"]
+    try:
+        assert ready.wait(30), (
+            "First FOLLOW chunk was not delivered",
+            runner._state, runner.exception, runner.failure_message,
+        )
+        assert runner.stop_observation()
+        runner._thread.join(10)
+        assert not runner._thread.is_alive()
+        with pytest.raises(ObservationDetached):
+            runner.wait()
+        assert callbacks == []
+        assert runner.detached
+        assert runner._state == RunState.RUNNING
+        record = _record(executor, runner, run_id, directory)
+        attached = executor.attach(record, start=True)
+        # Release only after the replacement observer has started.
+        target.mkdir(parents=True, exist_ok=True)
+        release.touch()
+        assert attached.wait().return_code == 0
+        assert attached.state == RunState.FINISHED
+        assert (directory / "run.out").read_text().splitlines() == ["ready", "finished"]
+    finally:
+        # Do not leave a detached test subprocess running if an assertion fails.
+        target.mkdir(parents=True, exist_ok=True)
+        release.touch()
