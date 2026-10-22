@@ -112,3 +112,23 @@ def test_explicit_registration_shares_identity_update_logic():
     )
     assert updated.outputs[0].availability_state == "failed"
     assert updated.outputs[0].source == entry.source
+
+
+def test_stdin_and_auxiliary_input_wildcard_overlap_rejected():
+    primary = FileEntry("/local/main.inp")
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest(
+            inputs=(primary, FileEntry("/local/*.inp", optional=True)),
+            primary_input=primary,
+            stdin=primary,
+        )
+
+
+def test_materialized_output_cannot_duplicate_stdout():
+    stream = FileEntry("/local/run.log", "/remote/run.log", "pending")
+    expanded = FileEntry(
+        "/local/run.log", "/remote/run.log", "pending",
+        source="/local/*.log",
+    )
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest(stdout=stream, outputs=(expanded,))
