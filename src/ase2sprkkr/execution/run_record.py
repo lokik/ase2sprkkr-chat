@@ -162,7 +162,9 @@ class RunRecord:
         if inconclusive:
             changes["confirmed"] = False
             changes["error"] = None if message is _UNCHANGED else message
-        elif state is not None:
+        elif observed or (merged_state.is_terminal and not self.state.is_terminal):
+            # Metadata and internal nonterminal transitions are not backend
+            # observations. A locally established terminal result is final.
             changes["confirmed"] = True
             changes["error"] = None
         if observed:
