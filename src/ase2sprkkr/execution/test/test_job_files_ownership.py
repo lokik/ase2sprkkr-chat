@@ -261,3 +261,20 @@ def test_file_manifest_aggregates_distinct_cache_and_output_states(tmp_path):
     assert len(files.files) == 2
     assert files.availability_state == "failed"
     assert files.failed_files == (cache,)
+
+
+def test_merge_snapshot_preserves_remote_only_cache_baseline_status():
+    """A remote-only cache is excluded from the availability summary."""
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+
+    previous = FileManifest(caches=(
+        FileEntry(remote_path="/remote/cache.dat", availability_state="failed",
+                  availability_message="remote scan failed"),
+    ))
+    pending = FileManifest(caches=(
+        FileEntry(remote_path="/remote/cache.dat", availability_state="pending"),
+    ))
+    assert previous.files == ()
+    merged = JobFiles.merge_snapshot(previous, pending)
+    assert merged.caches[0].availability_state == "failed"
+    assert merged.caches[0].availability_message == "remote scan failed"
