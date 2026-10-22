@@ -2,6 +2,7 @@
 
 from ase2sprkkr.execution import JobFiles
 from ase2sprkkr.execution.job_files import JobFiles as ModuleJobFiles
+from ase2sprkkr.execution.run_model import FileAvailabilityUpdate
 from ase2sprkkr.execution.run_record import RunRecord
 
 
@@ -429,7 +430,7 @@ def test_job_files_working_updates_do_not_modify_old_snapshots(tmp_path):
     initial = FileManifest(outputs=(FileEntry(path, availability_state="pending"),))
     files = JobFiles(initial)
     first = files.manifest
-    files.mark_availability(path, "available")
+    files.apply_updates((FileAvailabilityUpdate(path, "available"),))
     second = files.manifest
 
     assert first is initial
@@ -450,7 +451,7 @@ def test_job_files_reconciles_stale_observation_with_working_changes(tmp_path):
     files = JobFiles(original)
     observed = original.with_file_availability(first, "available")
 
-    files.mark_availability(second, "failed", "download failed")
+    files.apply_updates((FileAvailabilityUpdate(second, "failed", "download failed"),))
     combined = files.merge(observed)
 
     assert combined.outputs[0].availability_state == "available"
@@ -480,3 +481,50 @@ def test_runner_owns_job_files_and_preserves_immutable_snapshots(tmp_path):
     assert runner.job_files.merge(observed).outputs[0].availability_state == "available"
     assert runner.job_files.manifest.outputs[0].availability_state == "available"
     assert manifest.outputs[0].availability_state == "pending"
+
+def test_mutable_job_files_batch_is_atomic_and_snapshots_remain_frozen(tmp_path):
+    import pytest
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+
+    first, second = (str(tmp_path / name) for name in ("first", "second"))
+    original = FileManifest(outputs=(
+        FileEntry(first, availability_state="pending"),
+        FileEntry(second, availability_state="pending"),
+    ))
+    owner = JobFiles(original)
+    owner.apply_updates((
+        FileAvailabilityUpdate(first, "available"),
+        FileAvailabilityUpdate(second, "failed", "transfer failed"),
+    ))
+    current = owner.snapshot()
+    assert [entry.availability_state for entry in current.outputs] == [
+        "available", "failed",
+    ]
+    assert original.outputs[0].availability_state == "pending"
+
+    with pytest.raises(KeyError):
+        owner.apply_updates((
+            FileAvailabilityUpdate(first, "failed", "later error"),
+            FileAvailabilityUpdate(str(tmp_path / "not-declared"), "available"),
+        ))
+    assert owner.snapshot() is current
+
+    with pytest.raises(ValueError, match="Conflicting file availability"):
+        owner.apply_updates((
+            FileAvailabilityUpdate(first, "available"),
+            FileAvailabilityUpdate(first, "failed", "bad"),
+        ))
+    assert owner.snapshot() is current
+
+
+def test_mutable_job_files_updates_both_roles_of_shared_stream(tmp_path):
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+
+    path = str(tmp_path / "combined.out")
+    entry = FileEntry(path, "/remote/combined", "pending")
+    owner = JobFiles(FileManifest(stdout=entry, stderr=entry))
+    owner.apply_updates((FileAvailabilityUpdate(path, "failed", "lost"),))
+    snapshot = owner.snapshot()
+    assert snapshot.stdout.availability_state == "failed"
+    assert snapshot.stderr.availability_state == "failed"
+    assert snapshot.stdout.availability_message == "lost"
