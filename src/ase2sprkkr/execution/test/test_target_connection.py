@@ -53,7 +53,7 @@ def test_ssh_connection_preserves_status_manifest_and_acknowledgements():
     asyncio.run(conn.acknowledge("job"))
     assert calls == [
         (("ase2sprkkr", "remote", "status", "job"),
-         json.loads(json.dumps({"files": json.loads(json.dumps(asdict(files)))}))),
+         json.loads(json.dumps({"files": asdict(files)}))),
         (("ase2sprkkr", "remote", "ack-submit", "run"), None),
         (("ase2sprkkr", "remote", "ack", "job"), None),
     ]
@@ -67,6 +67,8 @@ def test_ssh_follow_delivers_decoded_chunks_without_exposing_transport(monkeypat
     class Framed:
         terminal = {"state": "finished", "return_code": 0}
         def __init__(self, process):
+            # Readers must be constructed inside asyncio.run(), not at
+            # class definition time outside the running event loop.
             self.stdout = asyncio.StreamReader()
             self.stderr = asyncio.StreamReader()
             self.stdout.feed_data(b"standard")
