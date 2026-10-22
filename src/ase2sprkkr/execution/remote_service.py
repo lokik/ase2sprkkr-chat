@@ -143,7 +143,8 @@ def _request_spec(request):
     cache_files = (
         tuple(request.get("cache_files", ())) if manifest is None else
         tuple(entry.remote_path for entry in manifest.caches
-              if entry.local_path is not None and entry.remote_path)
+              if entry.remote_path and (entry.local_path is not None
+                                        or entry.source is None))
     )
     return ExecutionSpec(
         argv=tuple(request["argv"]),
