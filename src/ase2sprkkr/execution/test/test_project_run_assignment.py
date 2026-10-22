@@ -6,16 +6,17 @@ import pytest
 
 from ase2sprkkr.execution import (
     ExecutionManager, ExecutionSpec, Executor, ProjectRepository, RunState,
-    JobFiles, FileManifest,
+    FileManifest,
 )
+from ase2sprkkr.execution.job_files import JobFilesOwner
 
 
-class _Runner:
+class _Runner(JobFilesOwner):
     def __init__(self, spec, executor):
         self.spec = spec
         self.executor = executor
         self.callback = None
-        self.job_files = JobFiles(FileManifest.from_spec(spec))
+        self._initialize_job_files(FileManifest.from_spec(spec))
         self.state = RunState.NEW
         self.backend_id = None
         self.result = SimpleNamespace(return_code=0)
@@ -31,9 +32,6 @@ class _Runner:
             self.on_submit()
         self.backend_id = "native-1"
         self.state = RunState.QUEUED
-
-    def replace_file_manifest(self, manifest):
-        return self.job_files.replace(manifest)
 
     @property
     def return_code(self):
