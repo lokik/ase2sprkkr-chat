@@ -237,9 +237,9 @@ def test_remote_missing_wildcards_distinguish_required_and_optional(tmp_path):
     frozen, error = materialize_manifest(files, remote=True)
     assert isinstance(error, FileNotFoundError)
     assert [entry.availability_state for entry in frozen.outputs] == [
-        "skipped", "failed",
+        "failed",
     ]
-    assert "required-*.dat" in frozen.outputs[1].availability_message
+    assert "required-*.dat" in frozen.outputs[0].availability_message
     assert FileManifest(**asdict(frozen)) == frozen
 
 
@@ -275,7 +275,43 @@ def test_remote_optional_glob_does_not_hide_successful_required_result(tmp_path)
     )
     frozen, error = materialize_manifest(files, remote=True)
     assert error is None
-    assert frozen.outputs[0].availability_state == "skipped"
-    assert frozen.outputs[1].local_path == str(local / "result-a.dat")
-    assert frozen.outputs[1].source == str(local / "result-*.dat")
-    assert frozen.outputs[1].optional is False
+    assert len(frozen.outputs) == 1
+    assert frozen.outputs[0].local_path == str(local / "result-a.dat")
+    assert frozen.outputs[0].source == str(local / "result-*.dat")
+    assert frozen.outputs[0].optional is False
+
+
+
+def test_unmatched_optional_remote_wildcards_are_frozen_as_empty_membership(tmp_path):
+    from dataclasses import asdict
+    from ..run_model import FileMapping
+
+    local, remote = tmp_path / "local", tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    pattern = "optional-*.dat"
+    files = FileManifest(
+        outputs=(FileEntry(str(local / pattern), str(remote / pattern),
+                           optional=True, availability_state="pending"),),
+        caches=(FileEntry(str(local / "cache-*.dat"),
+                          str(remote / "cache-*.dat"), availability_state="pending"),),
+        mapping=FileMapping(str(local), str(remote), output_sync="missing"),
+    )
+    from ..file_availability import materialize_manifest
+
+    frozen, error = materialize_manifest(files, remote=True)
+    assert error is None
+    assert frozen.outputs == ()
+    assert frozen.caches == ()
+    assert frozen.files == ()
+    assert frozen.download_files == ()
+    assert frozen.availability_state == "available"
+    assert not frozen.has_wildcards()
+    assert FileManifest(**asdict(frozen)) == frozen
+
+    # A later file must not retroactively become a member of the frozen run.
+    (remote / "optional-late.dat").write_bytes(b"new later file")
+    again, error = materialize_manifest(frozen, remote=True)
+    assert error is None
+    assert again == frozen
+    assert again.outputs == ()

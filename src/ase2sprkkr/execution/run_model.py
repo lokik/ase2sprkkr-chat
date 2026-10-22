@@ -417,6 +417,23 @@ class FileManifest:
         return tuple(unique.values())
 
     @property
+    def download_files(self):
+        """Concrete remote files and their individual delivery states.
+
+        Before wildcard materialization, unresolved declarations do not count
+        as downloadable files. Each returned FileEntry has local_path,
+        remote_path, availability_state and (when verified) its file version.
+        """
+        from .transport import has_file_magic
+
+        return tuple(
+            entry for entry in self.files
+            if entry.remote_path is not None
+            and not has_file_magic(entry.remote_path)
+            and not has_file_magic(entry.local_path)
+        )
+
+    @property
     def failed_files(self):
         return tuple(x for x in self.files if x.availability_state == "failed")
 
@@ -426,10 +443,11 @@ class FileManifest:
         statuses = tuple(x.availability_state for x in self.files)
         if "failed" in statuses:
             return "failed"
-        if not statuses or None in statuses or "pending" in statuses:
+        if None in statuses or "pending" in statuses:
             return "pending"
-        if all(x == "skipped" for x in statuses):
-            return "skipped"
+        if "skipped" in statuses:
+            return "partial" if "available" in statuses else "skipped"
+        # Empty membership is a successfully resolved absence of downloads.
         return "available"
 
     @property

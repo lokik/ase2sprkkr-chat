@@ -144,7 +144,10 @@ def test_missing_skip_allows_finished_run_without_capturing_stale_file(tmp_path)
     assert [entry.availability_state for entry in observed.outputs] == [
         "skipped", "available",
     ]
-    assert observed.availability_state == "available"
+    assert observed.availability_state == "partial"
+    assert [entry.availability_state for entry in observed.download_files] == [
+        "skipped", "available",
+    ]
     assert valid_local.read_bytes() == b"new result"
     assert local.read_bytes() == b"stale result from an earlier run"
 
