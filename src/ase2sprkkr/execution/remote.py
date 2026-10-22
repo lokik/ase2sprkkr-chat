@@ -131,7 +131,16 @@ class RemoteRunner(ManagedRunner):
             elif kind == "err" and target is self.spec.output_file:
                 offsets[kind] = offsets["out"]
             else:
-                offsets[kind] = os.path.getsize(self._local_path(target))
+                path = self._local_path(target)
+                # The declared output may not exist before the first FOLLOW
+                # chunk. Create it without truncating a concurrent client's
+                # copy or overwriting previously streamed bytes.
+                try:
+                    with open(path, "xb"):
+                        pass
+                except FileExistsError:
+                    pass
+                offsets[kind] = os.path.getsize(path)
         self._stream_positions = dict(offsets)
         return await self.executor.connection.follow(
             self._backend_id, self.job_files.manifest, offsets=offsets,

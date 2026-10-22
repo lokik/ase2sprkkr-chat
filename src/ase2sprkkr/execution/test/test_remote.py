@@ -123,6 +123,37 @@ def _expose_shared_input(remote_root, name, data):
     return remote
 
 
+def test_remote_follow_creates_missing_named_output_without_losing_bytes(
+    tmp_path, monkeypatch,
+):
+    """A fresh named output must support live SSH FOLLOW before it exists."""
+    output = tmp_path / "run.out"
+    spec = ExecutionSpec(
+        argv=("unused",), input_file=None, output_file=str(output),
+        directory=str(tmp_path), stdin=False,
+    )
+    executor = _executor()
+    runner = executor.create_project_run(spec, run_id="follow-missing-output")
+    runner._backend_id = "test-backend"
+    observed = []
+
+    async def follow(backend_id, manifest, *, offsets, on_chunk):
+        assert backend_id == "test-backend"
+        assert offsets == {"out": 0, "err": None}
+        assert output.read_bytes() == b""
+        on_chunk("out", b"ready\\n")
+        on_chunk("out", b"finished\\n")
+        return {"state": "finished", "return_code": 0}
+
+    monkeypatch.setattr(executor.connection, "follow", follow)
+    runner.add_output_listener(lambda chunk, kind: observed.append((kind, chunk)))
+
+    asyncio.run(runner._follow_once())
+
+    assert output.read_bytes() == b"ready\\nfinished\\n"
+    assert observed == [("out", "ready\\n"), ("out", "finished\\n")]
+
+
 def test_remote_executor_local_transport_streams_output(tmp_path):
     input_file = (tmp_path / "input.txt").open("w+b")
     input_file.write(b"hello")
