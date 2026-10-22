@@ -98,18 +98,27 @@ def capture_result_files(result_files):
     )
     selected = set(result_files.output_files)
     original_versions = {}
+    # Several declarations (merged streams or overlapping wildcards) may
+    # represent the same destination. Preserve a verified delivery even when
+    # a different alias is still pending.
+    aliases_by_path = {}
     for entry in remote_entries:
-        if entry is None or entry.local_path is None or entry.remote_path is None:
-            continue
-        path = os.path.abspath(entry.local_path)
-        if entry.availability_state != "available":
+        if entry is not None and entry.local_path is not None and entry.remote_path is not None:
+            aliases_by_path.setdefault(os.path.abspath(entry.local_path), []).append(entry)
+    for path, aliases in aliases_by_path.items():
+        delivered = [entry for entry in aliases if entry.availability_state == "available"]
+        if not delivered:
             selected.discard(path)
-        else:
+            continue
+        for entry in delivered:
             if not entry.verified_delivery_is_current():
                 raise FileVersionCaptureError(
                     f"Remote result is unverified or changed: {path}"
                 )
-            original_versions[path] = entry.verified_local_version
+        versions = [entry.verified_local_version for entry in delivered]
+        if any(version != versions[0] for version in versions[1:]):
+            raise FileVersionCaptureError(f"Conflicting remote delivery versions: {path}")
+        original_versions[path] = versions[0]
 
     verified_versions = (
         entry.verified_local_version for entry in result_files.files

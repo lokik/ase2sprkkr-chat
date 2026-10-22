@@ -1,5 +1,7 @@
 """Focused regression tests for historical file file operations."""
 
+import pytest
+
 from ase2sprkkr.execution.file_history import (
     capture_result_files, file_is_current, missing_result_files,
 )
@@ -88,3 +90,45 @@ def test_capture_rehashes_changed_verified_output(tmp_path):
     captured = capture_result_files(files)
     assert captured.output_versions[0].digest == file_digest(output)
     assert captured.output_versions[0].digest != verified.digest
+
+@pytest.mark.parametrize("verified_stream", ("stdout", "stderr"))
+def test_capture_merged_stream_keeps_verified_delivery(tmp_path, verified_stream):
+    """A pending alias cannot erase a verified stream sharing its destination."""
+    from ase2sprkkr.common.file_versions import FileVersion
+    from ase2sprkkr.execution.run_model import FileMapping
+
+    local = tmp_path / "merged.log"
+    local.write_bytes(b"one shared output")
+    version = FileVersion.capture(local, require_digest=True)
+    verified = FileEntry(str(local), "/remote/merged.log", "available",
+                         verified_local_version=version)
+    pending = FileEntry(str(local), "/remote/merged.log", "pending")
+    files = FileManifest(
+        stdout=verified if verified_stream == "stdout" else pending,
+        stderr=pending if verified_stream == "stdout" else verified,
+        mapping=FileMapping(str(tmp_path), "/remote"),
+    )
+    captured = capture_result_files(files)
+    assert captured.output_versions == (version,)
+    assert captured.captured_at is not None
+
+
+def test_capture_merged_stream_rejects_changed_verified_alias(tmp_path):
+    """A damaged verified alias is never overridden by a successful peer."""
+    from dataclasses import replace
+    from ase2sprkkr.common.file_versions import FileVersion, FileVersionCaptureError
+    from ase2sprkkr.execution.run_model import FileMapping
+
+    local = tmp_path / "merged.log"
+    local.write_bytes(b"one shared output")
+    current = FileVersion.capture(local, require_digest=True)
+    stale = replace(current, digest="0" * 64)
+    files = FileManifest(
+        stdout=FileEntry(str(local), "/remote/merged.log", "available",
+                         verified_local_version=current),
+        stderr=FileEntry(str(local), "/remote/merged.log", "available",
+                         verified_local_version=stale),
+        mapping=FileMapping(str(tmp_path), "/remote"),
+    )
+    with pytest.raises(FileVersionCaptureError, match="unverified or changed"):
+        capture_result_files(files)
