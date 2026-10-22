@@ -7,7 +7,7 @@ from ase2sprkkr.common.module_registry import RegistryEntryNotFound
 from ase2sprkkr.execution import (
     FileManifest,
     FileEntry,
-    JobFiles,
+    RunFiles,
     Execution,
     WorkingDirectory,
     ExecutorEndpoint,

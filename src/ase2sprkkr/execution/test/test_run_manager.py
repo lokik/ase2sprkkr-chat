@@ -17,8 +17,8 @@ from ase2sprkkr.execution import (
     FileManifest,
 )
 
-from ase2sprkkr.execution.manager import ExecutionManager
-from ase2sprkkr.execution.job_files import JobFiles
+from ase2sprkkr.execution.run_manager import RunManager
+from ase2sprkkr.execution.run_files import RunFiles
 from ase2sprkkr.execution.pool import Executors
 
 
@@ -26,7 +26,7 @@ class _RawRunner:
     def __init__(self, spec, executor, on_submit=None):
         self.spec = spec
         self.executor = executor
-        self.job_files = JobFiles(FileManifest.from_spec(spec))
+        self.run_files = RunFiles(FileManifest.from_spec(spec))
         self.callback = None
         self.on_submit = on_submit
         self.state = RunState.NEW
@@ -107,7 +107,7 @@ def _spec(tmp_path, *, dataset="case"):
 
 
 def _manager(tmp_path):
-    return ExecutionManager(
+    return RunManager(
         RunStore(tmp_path / "runs"), executors=Executors()
     )
 
@@ -355,7 +355,7 @@ def test_before_submit_returns_reserved_files_without_mutating_runner(tmp_path, 
         _spec(tmp_path), endpoint=manager.executors.register(executor),
         process_result=lambda outcome: outcome, task="DOS",
     )
-    original = run.job_files.manifest
+    original = run.run_files.manifest
     reserved = replace(original, mapping=FileMapping(str(tmp_path), "/remote/dos"))
     monkeypatch.setattr(
         executor, "reservation_context",
@@ -363,7 +363,7 @@ def test_before_submit_returns_reserved_files_without_mutating_runner(tmp_path, 
     )
 
     assert run.persistence.before_submit(run) is reserved
-    assert run.job_files.manifest is original
+    assert run.run_files.manifest is original
     assert run.record.files is reserved
     assert run.record.state == RunState.SUBMITTING
     assert manager.store.get(run.id).files == reserved
@@ -379,7 +379,7 @@ def test_calculation_run_installs_reserved_files_before_staging(tmp_path, monkey
         _spec(tmp_path), endpoint=manager.executors.register(executor),
         process_result=lambda outcome: outcome, task="DOS",
     )
-    original = run.job_files.manifest
+    original = run.run_files.manifest
     reserved = replace(original, mapping=FileMapping(str(tmp_path), "/remote/dos"))
     monkeypatch.setattr(
         executor, "reservation_context",
@@ -387,18 +387,18 @@ def test_calculation_run_installs_reserved_files_before_staging(tmp_path, monkey
     )
     raw = executor.runners[0]
     staged = []
-    monkeypatch.setattr(raw, "prepare_submission", lambda: staged.append(raw.job_files.manifest))
+    monkeypatch.setattr(raw, "prepare_submission", lambda: staged.append(raw.run_files.manifest))
 
     run.submit()
 
     assert staged == [reserved]
     assert staged[0] is reserved
-    assert run.job_files is raw.job_files
-    assert run.job_files.manifest is reserved
+    assert run.run_files is raw.run_files
+    assert run.run_files.manifest is reserved
     assert run.record.files == reserved
 
 
-def test_calculation_run_job_files_is_read_only_runner_view(tmp_path):
+def test_calculation_run_run_files_is_read_only_runner_view(tmp_path):
     manager = _manager(tmp_path)
     executor = _Executor()
     run = manager.create_run(
@@ -407,11 +407,11 @@ def test_calculation_run_job_files_is_read_only_runner_view(tmp_path):
         process_result=lambda outcome: outcome,
         task="DOS",
     )
-    files = executor.runners[0].job_files
-    assert run.job_files is files
+    files = executor.runners[0].run_files
+    assert run.run_files is files
     with pytest.raises(AttributeError):
-        run.job_files = JobFiles(FileManifest())
-    assert run.job_files is files
+        run.run_files = RunFiles(FileManifest())
+    assert run.run_files is files
 
 
 def test_executors_are_owned_by_manager_and_keyed_by_endpoint(tmp_path):
@@ -697,7 +697,7 @@ def test_refresh_cannot_promote_stale_monitor_unknown(tmp_path):
         state=RunState.UNKNOWN, backend_id=run.backend_id,
         return_code=None, failure_phase=None,
         failure_message="stale monitor disconnected", exception=None,
-        job_files=run.job_files,
+        run_files=run.run_files,
     )
     result = run.persistence.completed(stale_monitor)
 

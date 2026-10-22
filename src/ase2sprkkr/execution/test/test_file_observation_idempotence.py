@@ -1,7 +1,7 @@
 """No-op file observations must not invalidate durable run versions."""
 
 from ase2sprkkr.execution import (
-    ExecutionManager, FileEntry, FileManifest, RunStore,
+    RunManager, FileEntry, FileManifest, RunStore,
 )
 from ase2sprkkr.execution.historical_restore import update_historical_availability
 
@@ -32,7 +32,7 @@ def test_unchanged_file_status_does_not_bump_run_record_version(tmp_path):
     files = FileManifest(
         outputs=(FileEntry(local_path=path, availability_state="pending"),),
     )
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     record = manager.store.save(
         manager.new_record(task="DOS", directory=tmp_path, files=files),
     )

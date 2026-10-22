@@ -50,7 +50,7 @@ def test_local_executor_resolves_before_runner_manifest(tmp_path, monkeypatch):
     )
     runner = LocalExecutor().create_run(spec(tmp_path))
     assert runner.spec.argv == ("srun", "-n", "4", "parallel")
-    assert runner.job_files.manifest.input_file == str(tmp_path / "only-mpi.in")
+    assert runner.run_files.manifest.input_file == str(tmp_path / "only-mpi.in")
 
 
 def test_required_mpi_preflight_failure_does_not_create_runner(tmp_path, monkeypatch):

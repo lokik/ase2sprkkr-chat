@@ -3,7 +3,7 @@
 from ase2sprkkr.execution import Job
 from ase2sprkkr.execution.base import RunState
 from ase2sprkkr.execution.projects import ProjectRepository
-from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.run_manager import RunManager
 from ase2sprkkr.execution.postprocessing import CalculationRun
 from ase2sprkkr.execution.run_model import FileManifest
 

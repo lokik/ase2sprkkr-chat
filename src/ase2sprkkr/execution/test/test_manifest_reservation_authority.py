@@ -10,7 +10,7 @@ from ase2sprkkr.execution import (
     LocalTransport, RemoteEndpointExecutor, RunStore,
 )
 from ase2sprkkr.execution.endpoint import endpoint_for_executor
-from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.run_manager import RunManager
 
 
 def test_explicit_input_roles_roundtrip(tmp_path):
@@ -33,7 +33,7 @@ def test_explicit_input_roles_roundtrip(tmp_path):
     ("missing", True), ("never", False),
 ])
 def test_reserved_remote_input_upload_access(tmp_path, sync, conflict):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     executor = RemoteEndpointExecutor(LocalTransport())
     records = []
     for name in ("one", "two"):

@@ -7,7 +7,7 @@ import pytest
 from ase2sprkkr.execution import (
     DuplicateSubmissionError, ExecutionSpec, RunState, RunStatus, RunStore,
 )
-from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.run_manager import RunManager
 from ase2sprkkr.execution.pool import Executors
 from ase2sprkkr.execution.run_record import SubmissionPhase
 from ase2sprkkr.execution.test.test_run_manager import _Executor, _manager
@@ -22,7 +22,7 @@ def _run(manager, executor, directory):
 
 
 def test_owner_survives_long_staging_and_recovery_cannot_release(tmp_path):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"), executors=Executors(), submitting_grace=0)
+    manager = RunManager(RunStore(tmp_path / "runs"), executors=Executors(), submitting_grace=0)
     executor = _Executor()
     first = _run(manager, executor, tmp_path)
     entered, release = Event(), Event()
@@ -109,7 +109,7 @@ def test_abandoned_preparing_remote_remains_reserved(tmp_path):
 
 @pytest.mark.parametrize("recovery", [None, NotImplementedError(), OSError("offline")])
 def test_unknown_dispatch_preserves_reservation(tmp_path, recovery):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"), executors=Executors(), submitting_grace=0)
+    manager = RunManager(RunStore(tmp_path / "runs"), executors=Executors(), submitting_grace=0)
     executor = _Executor()
     endpoint = manager.executors.register(executor)
     reserved = manager.reserve(manager.new_record(task="SCF", directory=tmp_path, endpoint=endpoint))
@@ -127,7 +127,7 @@ def test_unknown_dispatch_preserves_reservation(tmp_path, recovery):
 
 
 def test_found_dispatch_restores_identity(tmp_path):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"), executors=Executors(), submitting_grace=0)
+    manager = RunManager(RunStore(tmp_path / "runs"), executors=Executors(), submitting_grace=0)
     executor = _Executor()
     endpoint = manager.executors.register(executor)
     reserved = manager.reserve(manager.new_record(task="SCF", directory=tmp_path, endpoint=endpoint))
@@ -153,7 +153,7 @@ def test_invalid_recovery_result_preserves_dispatch_reservation(
     tmp_path, monkeypatch, result, exception, pattern,
 ):
     """Malformed recovery cannot release the claim or invent backend identity."""
-    manager = ExecutionManager(
+    manager = RunManager(
         RunStore(tmp_path / "runs"), executors=Executors(), submitting_grace=0,
     )
     executor = _Executor()

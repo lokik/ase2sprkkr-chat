@@ -5,14 +5,14 @@ from dataclasses import replace
 import pytest
 
 from ase2sprkkr.execution import (
-    ExecutionManager, FileEntry, FileManifest, RunState, RunStore,
+    RunManager, FileEntry, FileManifest, RunState, RunStore,
     WorkingDirectory,
 )
 from ase2sprkkr.execution.base import FailurePhase
 
 
 def _record(tmp_path, *, files=None):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     return manager.new_record(
         task="DOS", directory=tmp_path, files=files,
     )
@@ -104,7 +104,7 @@ def test_terminal_record_ignores_late_backend_observation(tmp_path, observation)
 
 
 def test_manager_transition_commits_value_object_through_store(tmp_path):
-    manager = ExecutionManager(RunStore(tmp_path / "record-store"))
+    manager = RunManager(RunStore(tmp_path / "record-store"))
     original = manager.store.save(manager.new_record(task="DOS", directory=tmp_path))
     final = manager.transition(original, state=RunState.RUNNING)
     assert final == manager.store.get(original.id)

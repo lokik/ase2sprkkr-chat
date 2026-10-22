@@ -393,12 +393,12 @@ def test_psij_project_manifest_marks_concrete_and_wildcard_files(monkeypatch, tm
         argv=("program",), input_file=None, directory=str(tmp_path),
         output_file=str(tmp_path / "run.out"),
     ), run_id="manifest")
-    runner.job_files.replace(files)
+    runner.run_files.replace(files)
     runner.submit()
     runner.wait()
-    assert runner.job_files.manifest.stdout.availability_state == "available"
-    assert runner.job_files.manifest.outputs[0].availability_state == "available"
-    matches = [entry for entry in runner.job_files.manifest.outputs if entry.source is not None]
+    assert runner.run_files.manifest.stdout.availability_state == "available"
+    assert runner.run_files.manifest.outputs[0].availability_state == "available"
+    matches = [entry for entry in runner.run_files.manifest.outputs if entry.source is not None]
     assert len(matches) == 1
     assert matches[0].availability_state == "available"
 
@@ -412,10 +412,10 @@ def test_psij_missing_optional_output_is_skipped(monkeypatch, tmp_path):
         argv=("program",), input_file=None, directory=str(tmp_path),
         output_file=None,
     ), run_id="optional")
-    runner.job_files.replace(files)
+    runner.run_files.replace(files)
     runner.submit()
     runner.wait()
-    assert runner.job_files.manifest.outputs[0].availability_state == "skipped"
+    assert runner.run_files.manifest.outputs[0].availability_state == "skipped"
 
 
 def test_psij_mpi_process_count_becomes_resource_spec(monkeypatch, tmp_path):
@@ -712,7 +712,7 @@ def test_psij_attach_without_recorded_streams(monkeypatch, tmp_path):
     attached = executor.attach(run, start=False)
     assert attached.spec.output_file is None
     assert attached.spec.error_file is None
-    assert attached.job_files.manifest == run.files
+    assert attached.run_files.manifest == run.files
 
 
 def test_psij_recovers_live_slurm_submission_by_run_id(monkeypatch, tmp_path):
@@ -1003,7 +1003,7 @@ def test_psij_wait_terminal_status_overrides_stale_job_status(
 
 
 def test_psij_attached_new_status_does_not_resubmit(monkeypatch, tmp_path):
-    from ase2sprkkr.execution.manager import ExecutionManager
+    from ase2sprkkr.execution.run_manager import RunManager
     from ase2sprkkr.execution.run_store import RunStore
 
     class PendingAttachBackend(_Backend):
@@ -1020,7 +1020,7 @@ def test_psij_attached_new_status_does_not_resubmit(monkeypatch, tmp_path):
     output = tmp_path / "run.out"
     output.write_bytes(b"existing output")
     record = _psij_run(tmp_path, "456", executor=executor)
-    manager = ExecutionManager(RunStore(tmp_path / "history"))
+    manager = RunManager(RunStore(tmp_path / "history"))
     manager.store.save(record)
     manager.executors.register(executor)
     run = manager.attach(
@@ -1090,11 +1090,11 @@ def test_psij_terminal_wait_without_exit_does_not_use_stale_status(monkeypatch, 
 def test_psij_confirmed_completion_is_not_undone_by_unknown_refresh(
     monkeypatch, tmp_path,
 ):
-    from ase2sprkkr.execution.manager import ExecutionManager
+    from ase2sprkkr.execution.run_manager import RunManager
     from ase2sprkkr.execution.run_store import RunStore
     from ase2sprkkr.execution.base import RunStatus
     executor = _executor(monkeypatch, _Backend())
-    manager = ExecutionManager(RunStore(tmp_path / "history"))
+    manager = RunManager(RunStore(tmp_path / "history"))
     record = manager.new_record(task="DOS", directory=tmp_path, endpoint=None)
     manager.store.save(record)
     record = manager.transition(record, state=RunState.RUNNING)
@@ -1343,7 +1343,7 @@ def test_psij_status_only_cache_is_bounded(monkeypatch):
 def test_project_observer_detaches_without_stopping_other_attached_client(
     monkeypatch, tmp_path,
 ):
-    from ase2sprkkr.execution.manager import ExecutionManager
+    from ase2sprkkr.execution.run_manager import RunManager
     from ase2sprkkr.execution.run_store import RunStore
 
     class ActiveBackend(_Backend):
@@ -1355,7 +1355,7 @@ def test_project_observer_detaches_without_stopping_other_attached_client(
     executor = _executor(monkeypatch, ActiveBackend())
     record = _psij_run(tmp_path, "running-job", executor=executor)
     store = RunStore(tmp_path / "history")
-    manager = ExecutionManager(store)
+    manager = RunManager(store)
     store.save(record)
     manager.executors.register(executor)
 

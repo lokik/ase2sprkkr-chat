@@ -10,12 +10,12 @@ from ase2sprkkr.execution import (
     LaunchSpec, RemoteEndpointExecutor, RunState, RunStore, LocalTransport,
 )
 
-from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.run_manager import RunManager
 
 
 def test_prepared_manifest_is_durable_before_remote_backend_submit(tmp_path, monkeypatch):
     executor = RemoteEndpointExecutor(LocalTransport())
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     directory = tmp_path / "local"
     directory.mkdir()
     output = directory / "run.out"
@@ -133,7 +133,7 @@ def test_postprocessing_rejected_submit_preserves_error_and_does_not_monitor(
 ):
     from ase2sprkkr.execution.base import FailurePhase, SubmissionNotStarted
     from ase2sprkkr.execution.postprocessing import CalculationRun
-    from ase2sprkkr.execution.job_files import JobFiles
+    from ase2sprkkr.execution.run_files import RunFiles
 
     failure = SubmissionNotStarted("preflight refused")
 
@@ -142,7 +142,7 @@ def test_postprocessing_rejected_submit_preserves_error_and_does_not_monitor(
         callback = None
 
         def __init__(self):
-            self.job_files = JobFiles(FileManifest())
+            self.run_files = RunFiles(FileManifest())
 
         def prepare_submission(self):
             if rejection_phase == "prepare":

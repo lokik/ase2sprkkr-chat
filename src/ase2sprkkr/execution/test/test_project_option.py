@@ -1,14 +1,14 @@
 from types import SimpleNamespace
 
 from ase2sprkkr.execution import (
-    ExecutionManager,
+    RunManager,
     Executor,
     ExecutionOutcome,
     ProjectRepository,
     RunState,
     FileManifest,
 )
-from ase2sprkkr.execution.job_files import JobFiles
+from ase2sprkkr.execution.run_files import RunFiles
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from ase2sprkkr.input_parameters.task_definition import TaskDefinition
 from ase2sprkkr.sprkkr import calculation as calculation_module
@@ -23,7 +23,7 @@ class _Runner:
         self.state = RunState.NEW
         self.backend_id = None
         self.spec = spec
-        self.job_files = JobFiles(FileManifest())
+        self.run_files = RunFiles(FileManifest())
         self.failure_phase = None
         self.failure_message = None
         self.result = ExecutionOutcome(
@@ -119,7 +119,7 @@ def _parameters(monkeypatch, task="DOS"):
 def _manager(tmp_path):
     projects = ProjectRepository(tmp_path / "projects")
     project = projects.create("Calculation project")
-    return ExecutionManager(project_repository=projects), project.id
+    return RunManager(project_repository=projects), project.id
 
 
 def _runner(parameters, tmp_path, manager, executor=None):
