@@ -173,7 +173,10 @@ def validate_output_collisions(streams, *, protected=()):
     Broad output patterns retain their existing behavior: matching protected
     files are skipped by clear_declared_outputs rather than removed.
     """
-    protected_paths = tuple(_expanded_protected_paths(protected))
+    protected_paths = tuple(
+        (declaration, candidate, os.path.realpath(candidate))
+        for declaration, candidate in _expanded_protected_paths(protected)
+    )
     for stream in streams:
         if stream is None:
             continue
@@ -181,10 +184,10 @@ def validate_output_collisions(streams, *, protected=()):
         if has_file_magic(target):
             continue
         resolved_target = os.path.realpath(target)
-        for declaration, candidate in protected_paths:
-            collision = resolved_target == os.path.realpath(candidate)
+        for declaration, candidate, resolved_candidate in protected_paths:
+            collision = resolved_target == resolved_candidate
             if not collision:
-                # Only existing files can share an inode via distinct hardlinks.
+                # Existing distinct hardlinks may refer to the same inode.
                 try:
                     collision = os.path.samefile(target, candidate)
                 except (FileNotFoundError, NotADirectoryError):
