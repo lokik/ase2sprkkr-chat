@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 from ..common.file_locks import FileLock
 from .run_model import FileAvailabilityState
+from .transport import has_file_magic
 from .historical_restore import (
     HistoricalFileMismatchError, restore_historical_file,
 )
