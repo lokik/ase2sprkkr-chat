@@ -84,9 +84,25 @@ def test_reserved_tilde_root_is_used_by_staging(tmp_path, monkeypatch):
     assert directory == "/home/resolved/local"
     assert manifest.primary_input.remote_path == directory + "/primary.in"
     assert manifest.stdin.remote_path == directory + "/stdin.in"
+    checked = []
+
+    async def remote_signature(path):
+        checked.append(path)
+        if path in {manifest.primary_input.remote_path, manifest.stdin.remote_path}:
+            return (7, 123)
+        return None
+
+    async def unexpected_upload(*args, **kwargs):
+        raise AssertionError("input_sync=never must not upload files")
+
+    monkeypatch.setattr(executor.file_handler.transport, "file_signature", remote_signature)
+    monkeypatch.setattr(executor.file_handler.transport, "put_file", unexpected_upload)
     prepared = asyncio.run(
         executor.file_handler.prepare(manifest.mapping, spec, manifest),
     )
+    assert set(checked) == {
+        manifest.primary_input.remote_path, manifest.stdin.remote_path,
+    }
     assert prepared.mapping == manifest.mapping
     assert prepared.primary_input == manifest.primary_input
     assert prepared.stdin == manifest.stdin
