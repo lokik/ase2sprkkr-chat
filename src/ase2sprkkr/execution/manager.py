@@ -576,19 +576,7 @@ class ExecutionManager:
         return self.store.update(record, merge)
 
     def update_file_availability(self, record, path, state, message=None):
-        """Persist availability of one file without changing the run outcome."""
-        state = FileAvailabilityState(state)
-
-        def update(latest):
-            return replace(
-                latest,
-                updated_at=_now(),
-                files=latest.files.with_file_availability(
-                    path, state.value, message
-                ),
-            )
-
-        return self.store.update(record, update)
+        return record.job_files.update_availability(self.store, path, state, message)
 
     def _is_stale_submitting(self, record, *, now=None):
         if record.state != RunState.SUBMITTING or record.execution.backend_id is not None:
@@ -834,61 +822,14 @@ class ExecutionManager:
         record = self.store.get(run) if isinstance(run, str) else self.store.get(run.id)
         if not record.state.is_terminal:
             raise RuntimeError(f"Run {record.id} is not finished")
-
-        missing = missing_result_files(record.files)
-        if not missing or record.execution.backend_id is None:
-            return record
-
-        executor = self.executors.for_record(record)
-        if not executor.supports_result_file_retrieval:
-            return record
-
-        versions = {
-            os.path.abspath(os.fspath(version.path)): version
-            for version in record.files.all_versions
-        }
-        for path in missing:
-            path = os.path.abspath(os.fspath(path))
-            version = versions.get(path)
-            staged = (
-                Path(path).with_name(f".{Path(path).name}.{uuid4().hex}.tmp")
-                if version is not None and version.digest is not None else None
-            )
-            try:
-                if staged is None:
-                    executor.fetch_result_files(record, (path,))
-                else:
-                    executor.fetch_result_files(
-                        record, (path,), destinations={path: os.fspath(staged)},
-                    )
-                    if not staged.is_file():
-                        raise FileNotFoundError(
-                            f"Historical file was not retrieved: {path}"
-                        )
-                    if file_digest(staged) != version.digest:
-                        raise HistoricalFileMismatchError(
-                            f"Historical result files have been overwritten: {path}"
-                        )
-                    os.replace(staged, path)
-            except OSError as exc:
-                self.update_file_availability(
-                    record, path, FileAvailabilityState.FAILED, str(exc),
-                )
-                raise
-            finally:
-                if staged is not None:
-                    staged.unlink(missing_ok=True)
-            refreshed = self.store.get(record.id)
-            if path in missing_result_files(refreshed.files):
-                record = self.update_file_availability(
-                    refreshed, path, FileAvailabilityState.FAILED,
-                    "Historical file is still missing",
-                )
-            else:
-                record = self.update_file_availability(
-                    refreshed, path, FileAvailabilityState.AVAILABLE,
-                )
-        return record
+        missing = record.job_files.missing_files()
+        executor = (
+            self.executors.for_record(record)
+            if missing and record.execution.backend_id is not None else None
+        )
+        return record.job_files.retrieve(
+            self.store, executor, mismatch_error=HistoricalFileMismatchError,
+        )
 
     @staticmethod
     def _acknowledge_submission(executor, record):
