@@ -47,10 +47,9 @@ class LocalConnection:
         return await asyncio.to_thread(cancel_remote, backend_id)
 
     async def follow(self, backend_id, files, *, offsets=None, on_chunk):
-        from .remote_service import follow_remote
+        from .remote_service import follow_remote_async
         offsets = offsets or {}
-        return await asyncio.to_thread(
-            follow_remote,
+        return await follow_remote_async(
             backend_id,
             _ObserverStream(on_chunk, "out"),
             _ObserverStream(on_chunk, "err"),
