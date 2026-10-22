@@ -422,15 +422,16 @@ class LaunchSpec:
             object.__setattr__(self, "local_root", os.fspath(self.local_root))
         if self.remote_root is not None:
             object.__setattr__(self, "remote_root", os.fspath(self.remote_root))
-        for name, value in (
-            ("input_sync", self.input_sync),
-            ("output_sync", self.output_sync),
-        ):
-            try:
-                value = FileSyncPolicy(value)
-            except ValueError as exc:
-                raise ValueError(f"Invalid {name} file synchronization policy") from exc
-            object.__setattr__(self, name, value.value)
+        try:
+            input_sync = FileSyncPolicy(self.input_sync)
+        except ValueError as exc:
+            raise ValueError("Invalid input_sync file synchronization policy") from exc
+        try:
+            output_sync = FileSyncPolicy(self.output_sync)
+        except ValueError as exc:
+            raise ValueError("Invalid output_sync file synchronization policy") from exc
+        object.__setattr__(self, "input_sync", input_sync.value)
+        object.__setattr__(self, "output_sync", output_sync.value)
 
     def __bool__(self):
         return self.mpi.requested
