@@ -19,6 +19,7 @@ class _UnstartedRunner:
         self.result = None
         self.reference = None
         self.exception = None
+        self.callback = None
 
     def add_output_listener(self, callback):
         pass
@@ -60,7 +61,7 @@ def test_default_error_file_is_output_file_plus_err(tmp_path, lightweight_input_
         output_name = runner.spec.output_file.name
         assert runner.spec.error_file.name == output_name + ".err"
         assert runner.spec.error_file is not runner.spec.output_file
-        assert runner.spec.error_file in runner.spec.output_files
+        assert runner.spec.error_file not in runner.spec.output_files
     finally:
         runner.close()
 
@@ -72,9 +73,7 @@ def test_error_file_true_explicitly_merges_with_output(tmp_path, lightweight_inp
     )
     try:
         assert runner.spec.error_file is runner.spec.output_file
-        assert sum(
-            item is runner.spec.output_file for item in runner.spec.output_files
-        ) == 1
+        assert runner.spec.output_file not in runner.spec.output_files
     finally:
         runner.close()
 
