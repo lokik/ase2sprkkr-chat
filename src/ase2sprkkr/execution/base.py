@@ -545,6 +545,13 @@ class Executor:
     def supports_result_file_retrieval(cls):
         return cls.fetch_result_files is not Executor.fetch_result_files
 
+    def preflight_result_files(self, run, files):
+        """Validate the entire historical fetch request without transferring.
+
+        Executors with a remote file mapping override this hook. Restoration
+        still validates each destination immediately before publication.
+        """
+
     def fetch_result_files(self, run, files, *, destinations=None):
         """Retrieve *files*, optionally staging each canonical local path.
 
