@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+from contextlib import contextmanager
 from dataclasses import replace
 from threading import Lock
 
@@ -54,6 +55,14 @@ class RunPersistence:
             return None
         return record.execution.submitted(run.backend_id)
 
+    @contextmanager
+    def submission_owner(self):
+        """Hold the submission owner only on the actual submit call stack."""
+        with self.manager.store.submission_owner(self._record) as acquired:
+            if not acquired:
+                raise RuntimeError(f"Submission {self._record.id} already has an owner")
+            yield
+
     def before_submit(self, run: CalculationRun):
         """Reserve atomically before any backend file staging."""
         if self._record.state != RunState.NEW:
@@ -80,6 +89,11 @@ class RunPersistence:
             execution=self._execution_for(run, self._record),
             files=run.job_files.manifest,
         )
+        self._monitor_record_version = self._record.updated_at
+
+    def dispatching(self):
+        """Persist the uncertain-launch boundary before contacting the backend."""
+        self._record = self.manager.store.begin_dispatch(self._record)
         self._monitor_record_version = self._record.updated_at
 
     def submitted(self, run: CalculationRun):

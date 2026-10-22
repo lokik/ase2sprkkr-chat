@@ -340,6 +340,10 @@ class LocalExecutor(Executor):
         from .target_connection import LocalConnection
         self.connection = LocalConnection()
 
+    def abandoned_preparation_is_safe(self):
+        # Local project preparation only builds a request in the submit thread.
+        return True
+
     def create_run(self, spec: ExecutionSpec, callback=None):
         return LocalRunner(materialize_local_spec(spec), callback=callback)
 

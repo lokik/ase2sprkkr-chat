@@ -243,6 +243,16 @@ class RunState(str, Enum):
         return self in (RunState.FINISHED, RunState.FAILED, RunState.CANCELLED)
 
 
+class SubmissionRecovery(str, Enum):
+    """Conclusive absence of an attempted backend submission.
+
+    None means uncertain, never proof of absence. Backends must only return
+    ABSENT when they can prove that no job was accepted or can still launch.
+    """
+
+    ABSENT = "absent"
+
+
 class FailurePhase(str, Enum):
     """Phase in which a run entered :attr:`RunState.FAILED`."""
 
@@ -552,6 +562,10 @@ class Executor:
         still validates each destination immediately before publication.
         """
 
+    def abandoned_preparation_is_safe(self):
+        """Only True when lost owner guarantees no staging can still write."""
+        return False
+
     def fetch_result_files(self, run, files, *, destinations=None):
         """Retrieve *files*, optionally staging each canonical local path.
 
@@ -589,6 +603,9 @@ class Executor:
     def recover_submission(
         self, run_id, submission, *, submitted_at=None
     ) -> Optional[RunStatus]:
+        """Return RunStatus if found, SubmissionRecovery.ABSENT if proved
+        absent, or None if uncertain. Errors/unavailability are uncertain.
+        """
         raise NotImplementedError(
             f"{type(self).__name__} cannot recover an uncertain submission"
         )

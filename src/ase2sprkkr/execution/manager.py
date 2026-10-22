@@ -8,13 +8,13 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from .base import FailurePhase, RunState, RunStatus
+from .base import FailurePhase, RunState, RunStatus, SubmissionRecovery
 from .endpoint import ExecutorEndpoint
 from .job_files import JobFiles
 from .pool import Executors
 from .postprocessing import CalculationRun
 from .run_model import Execution, WorkingDirectory, FileManifest
-from .run_record import RunRecord, _UNCHANGED, _failure_phase, _now
+from .run_record import RunRecord, SubmissionPhase, _UNCHANGED, _failure_phase, _now
 from .run_persistence import RunPersistence
 
 
@@ -41,7 +41,7 @@ class DuplicateSubmissionError(RuntimeError):
 class ExecutionManager:
     """Persist public run lifecycle without task-specific knowledge."""
 
-    def __init__(self, store=None, *, executors=None, submitting_grace=60.0,
+    def __init__(self, store=None, *, executors=None, submitting_grace=30.0,
                  project_repository=None):
         if submitting_grace < 0:
             raise ValueError("submitting_grace must be non-negative")
@@ -108,45 +108,60 @@ class ExecutionManager:
     def _is_stale_submitting(self, record, *, now=None):
         if record.state != RunState.SUBMITTING or record.execution.backend_id is not None:
             return False
+        if record.submission_phase == SubmissionPhase.PREPARING:
+            return True  # Lock ownership, not age, decides whether it is abandoned.
+        if record.submission_phase != SubmissionPhase.DISPATCHING:
+            return False  # Unclassified historical/foreign state: fail closed.
         now = now or datetime.now(timezone.utc)
-        return (
-            now - _timestamp(record.updated_at)
-        ).total_seconds() >= self.submitting_grace
+        return (now - _timestamp(record.updated_at)).total_seconds() >= self.submitting_grace
 
     def recover_submitting(self, record):
-        record = self.store.get(record.id)
-        if not self._is_stale_submitting(record):
-            return record
-        executor = self.executors.for_endpoint(record.execution.endpoint)
-        try:
-            status = executor.recover_submission(
-                record.id,
-                record,
-                submitted_at=record.updated_at,
+        # Acquire before reading: the original submitter holds this lock from
+        # reserve through durable submission, and cannot launch after we claim it.
+        with self.store.submission_owner(record) as acquired:
+            record = self.store.get(record.id)
+            if not acquired or not self._is_stale_submitting(record):
+                return record
+
+            def mark_absent(latest):
+                if (latest != record or latest.state != RunState.SUBMITTING
+                        or latest.execution.backend_id is not None):
+                    return latest
+                return replace(
+                    latest, state=RunState.FAILED, submission_phase=None,
+                    updated_at=_now(), finished_at=_now(),
+                    message="Abandoned submission was proven not to have launched",
+                    failure_phase=FailurePhase.SUBMISSION,
+                )
+
+            executor = self.executors.for_endpoint(record.execution.endpoint)
+            if record.submission_phase == SubmissionPhase.PREPARING:
+                # Only executors with no independently surviving staging can
+                # reclaim this reservation without risking concurrent file IO.
+                if not executor.abandoned_preparation_is_safe():
+                    return record
+                return self.store.update(record, mark_absent)
+
+            try:
+                status = executor.recover_submission(
+                    record.id, record, submitted_at=record.updated_at,
+                )
+            except (NotImplementedError, OSError, subprocess.CalledProcessError):
+                # Unavailable backend is not an absent backend.
+                return record
+            if status is SubmissionRecovery.ABSENT:
+                return self.store.update(record, mark_absent)
+            if status is None:
+                # Neither an absent ticket nor empty squeue/sacct proves no job.
+                return record
+            if not isinstance(status, RunStatus):
+                raise TypeError("Invalid backend submission recovery result")
+            backend_id = status.backend_id or (
+                None if status.execution is None else status.execution.backend_id
             )
-        except NotImplementedError:
-            return record
-        if status is not None:
+            if backend_id is None:
+                raise ValueError("Recovered submission lacks backend identity")
             return self.update(record, status, expected_updated_at=record.updated_at)
-
-        def mark_absent(latest):
-            # Do not invalidate a newer submission observation while backend
-            # recovery was in progress.
-            if (latest.updated_at != record.updated_at
-                    or latest.state != RunState.SUBMITTING
-                    or latest.execution.backend_id is not None):
-                return latest
-            now = _now()
-            return replace(
-                latest,
-                state=RunState.FAILED,
-                updated_at=now,
-                finished_at=now,
-                message="Stale submission was not found by its execution backend",
-                failure_phase=FailurePhase.SUBMISSION,
-            )
-
-        return self.store.update(record, mark_absent)
 
     def reserve(self, record):
         """Reserve files and recover stale submissions before retrying."""
@@ -359,7 +374,11 @@ class ExecutionManager:
         current = {record.id: record for record in records}
         groups = {}
         for record in records:
-            if record.state.is_terminal or record.execution.backend_id is None:
+            if record.state.is_terminal:
+                continue
+            if record.execution.backend_id is None:
+                if record.state == RunState.SUBMITTING:
+                    current[record.id] = self.recover_submitting(record)
                 continue
             groups.setdefault(record.execution.endpoint, []).append(record)
 
