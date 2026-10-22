@@ -858,7 +858,7 @@ class PersistentRun:
         self._record = self.manager.transition(
             self._record,
             execution=self._execution_for(run, self._record),
-            files=run.file_snapshot() if run.file_snapshot() is not None else _UNCHANGED,
+            files=run.file_snapshot(),
         )
         self._monitor_record_version = self._record.updated_at
 
@@ -881,7 +881,7 @@ class PersistentRun:
                         self._record, state=observed, execution=self._execution_for(run, self._record),
                         failure_phase=(None if observed == RunState.SUBMITTING
                                        else _failure_phase(run.failure_phase)),
-                        files=run.file_snapshot() if run.file_snapshot() is not None else _UNCHANGED,
+                        files=run.file_snapshot(),
                     )
                     self._monitor_record_version = self._record.updated_at
             self.manager._acknowledge_submission(self.executor, self._record)
