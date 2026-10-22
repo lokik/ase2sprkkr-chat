@@ -156,7 +156,7 @@ def test_remote_executor_local_transport_streams_output(tmp_path):
     assert seen == [("HELLO\n", "out")]
     assert runner.backend_id is not None
     assert runner.executor is executor
-    assert Path(runner.file_snapshot().mapping.map_path(str(tmp_path))) == remote_root
+    assert Path(runner.job_files.manifest.mapping.map_path(str(tmp_path))) == remote_root
 
 
 def test_remote_input_file_and_stdin_staged_only_once(tmp_path):
