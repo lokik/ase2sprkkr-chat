@@ -128,8 +128,8 @@ def test_calculate_temporary_override_preserves_calculator_profile(monkeypatch):
 
 
 def test_ssh_profile_uses_direct_remote_execution_by_default():
-    executor = ExecutionManager().executors.for_profile(
-        SPRKKRProfile(executor="ssh", host="user@cluster")
+    executor = ExecutionManager().executors.for_endpoint(
+        SPRKKRProfile(executor="ssh", host="user@cluster").endpoint
     )
 
     assert isinstance(executor, RemoteExecutor)
@@ -138,13 +138,13 @@ def test_ssh_profile_uses_direct_remote_execution_by_default():
 
 
 def test_ssh_profile_can_use_psij_on_target():
-    executor = ExecutionManager().executors.for_profile(
+    executor = ExecutionManager().executors.for_endpoint(
         SPRKKRProfile(
             executor="ssh",
             host="user@cluster",
             psij_backend="slurm",
             psij_url="local://scheduler",
-        )
+        ).endpoint
     )
 
     assert isinstance(executor, RemoteExecutor)
@@ -164,7 +164,7 @@ def test_direct_psij_profile_still_defaults_to_slurm(monkeypatch):
 
     monkeypatch.setattr("ase2sprkkr.execution.psij.PsijExecutor", FakePsijExecutor)
 
-    executor = ExecutionManager().executors.for_profile(SPRKKRProfile(executor="psij"))
+    executor = ExecutionManager().executors.for_endpoint(SPRKKRProfile(executor="psij").endpoint)
 
     assert executor is not None
     assert captured == {"backend": "slurm", "url": None, "poll_interval": None}
