@@ -470,6 +470,18 @@ class FileManifest:
             caches=tuple(transform(x) for x in self.caches),
         )
 
+    def retry_failed_downloads(self):
+        """Reopen only failed deliveries, never input declarations.
+
+        A successful earlier download stays available across retry. The
+        original backend identity and all file membership remain unchanged.
+        """
+        return self._map_files(
+            lambda item: replace(
+                item, availability_state="pending", availability_message=None,
+            ) if item.availability_state == "failed" else item
+        )
+
     def with_file_availability(
         self, local_path, state, message=None, *,
         remote_path=None, kind=None,

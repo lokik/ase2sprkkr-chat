@@ -654,7 +654,7 @@ class ExecutionManager:
                 raise ValueError("Only failed downloads of successful backend jobs can be retried")
             # Keep already transferred files and all bytes on disk.
             # Only failed transfers become eligible for a fresh attempt.
-            files = latest.job_files.retry_failed_downloads()
+            files = latest.files.retry_failed_downloads()
             return replace(
                 latest, state=RunState.DOWNLOADING, finished_at=None,
                 failure_phase=None, message=None, files=files, updated_at=_now(),

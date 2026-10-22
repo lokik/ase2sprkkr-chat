@@ -209,13 +209,6 @@ class JobFiles:
         )
         return manifest, error if error is not None else stream_error
 
-    def retry_failed_downloads(self):
-        return self.manifest._map_files(
-            lambda item: replace(
-                item, availability_state="pending", availability_message=None,
-            ) if item.availability_state == "failed" else item
-        )
-
     def update_availability(self, store, path, state, message=None):
         """Update one file's availability using the latest durable record."""
         state = FileAvailabilityState(state)
