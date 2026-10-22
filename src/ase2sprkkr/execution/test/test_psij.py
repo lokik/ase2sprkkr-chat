@@ -1000,7 +1000,8 @@ def test_psij_wait_terminal_status_overrides_stale_job_status(
 
 
 def test_psij_attached_new_status_does_not_resubmit(monkeypatch, tmp_path):
-    from ase2sprkkr.execution.manager import ExecutionManager, RunStore
+    from ase2sprkkr.execution.manager import ExecutionManager
+    from ase2sprkkr.execution.run_store import RunStore
 
     class PendingAttachBackend(_Backend):
         def submit(self, job):
@@ -1086,7 +1087,8 @@ def test_psij_terminal_wait_without_exit_does_not_use_stale_status(monkeypatch, 
 def test_psij_confirmed_completion_is_not_undone_by_unknown_refresh(
     monkeypatch, tmp_path,
 ):
-    from ase2sprkkr.execution.manager import ExecutionManager, RunStore
+    from ase2sprkkr.execution.manager import ExecutionManager
+    from ase2sprkkr.execution.run_store import RunStore
     from ase2sprkkr.execution.base import RunStatus
     executor = _executor(monkeypatch, _Backend())
     manager = ExecutionManager(RunStore(tmp_path / "history"))
@@ -1326,7 +1328,8 @@ def test_psij_status_only_cache_is_bounded(monkeypatch):
 def test_project_observer_detaches_without_stopping_other_attached_client(
     monkeypatch, tmp_path,
 ):
-    from ase2sprkkr.execution.manager import ExecutionManager, RunStore
+    from ase2sprkkr.execution.manager import ExecutionManager
+    from ase2sprkkr.execution.run_store import RunStore
 
     class ActiveBackend(_Backend):
         def attach(self, job, native_id):

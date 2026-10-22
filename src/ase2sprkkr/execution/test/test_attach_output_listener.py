@@ -3,11 +3,12 @@ from types import SimpleNamespace
 
 from ase2sprkkr.execution import JobFiles
 from ase2sprkkr.execution.base import RunState
-from ase2sprkkr.execution.manager import RunRecord
+from ase2sprkkr.execution.run_record import RunRecord
 from ase2sprkkr.execution.run_model import Execution, WorkingDirectory, FileManifest, FileEntry, FileMapping
 from ase2sprkkr.execution.endpoint import ExecutorEndpoint, endpoint_for_executor
 from ase2sprkkr.execution.local import LocalExecutor
-from ase2sprkkr.execution.manager import ExecutionManager, RunStore
+from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.run_store import RunStore
 from ase2sprkkr.execution.psij import PsijExecutor, PsijRunner
 from ase2sprkkr.execution.remote import RemoteRunner
 from ase2sprkkr.execution.remote_endpoint import RemoteEndpointExecutor
