@@ -524,19 +524,21 @@ def test_publish_frames_once_for_multiple_live_followers(monkeypatch):
         return original_frame(kind, offset, data)
 
     monkeypatch.setattr(module, "frame", track_frame)
-    streams = SupervisorStreams(None, None)
-    writers = [_FakeFollowerWriter(), _FakeFollowerWriter()]
-    followers = [
-        _Follower(writer, {"out": 0, "err": 0}, replay=False)
-        for writer in writers
-    ]
-    streams._followers.update(followers)
-    streams.publish("out", b"shared")
-    expected = original_frame("out", 0, b"shared")
-    assert framed == [("out", 0, b"shared")]
-    assert [writer.frames for writer in writers] == [[expected], [expected]]
-    assert all(follower.offsets["out"] == 6 for follower in followers)
+    async def check():
+        streams = SupervisorStreams(None, None)
+        writers = [_FakeFollowerWriter(), _FakeFollowerWriter()]
+        followers = [
+            _Follower(writer, {"out": 0, "err": 0}, replay=False)
+            for writer in writers
+        ]
+        streams._followers.update(followers)
+        streams.publish("out", b"shared")
+        expected = original_frame("out", 0, b"shared")
+        assert framed == [("out", 0, b"shared")]
+        assert [writer.frames for writer in writers] == [[expected], [expected]]
+        assert all(follower.offsets["out"] == 6 for follower in followers)
 
+    asyncio.run(check())
 
 def test_publish_skips_framing_if_live_only_follower_is_backpressured(monkeypatch):
     from .. import remote_supervisor_stream as module
@@ -545,11 +547,15 @@ def test_publish_skips_framing_if_live_only_follower_is_backpressured(monkeypatc
         raise AssertionError("No recipient can accept a stream frame")
 
     monkeypatch.setattr(module, "frame", forbidden_frame)
-    streams = SupervisorStreams(None, None)
-    writer = _FakeFollowerWriter(buffered=_HIGH)
-    follower = _Follower(writer, {"out": 0, "err": 0}, replay=False)
-    streams._followers.add(follower)
-    streams.publish("out", b"unavailable")
-    assert writer.frames == []
-    assert writer.transport.aborted
-    assert follower.offsets["out"] == 0
+    async def check():
+        streams = SupervisorStreams(None, None)
+        writer = _FakeFollowerWriter(buffered=_HIGH)
+        follower = _Follower(writer, {"out": 0, "err": 0}, replay=False)
+        streams._followers.add(follower)
+        streams.publish("out", b"unavailable")
+        assert writer.frames == []
+        assert writer.transport.aborted
+        assert follower.offsets["out"] == 0
+
+    asyncio.run(check())
+
