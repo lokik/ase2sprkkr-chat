@@ -784,15 +784,14 @@ def test_psij_recovers_completed_slurm_submission_from_accounting(
 
 
 @pytest.mark.parametrize(
-    "accounting_flags, accounting_available, run_id, expected_error",
+    "accounting_flags, accounting_available, run_id",
     [
-        ("job_comment", True, "missing", "still uncertain"),
-        ("job_env", False, "uncertain", "comments are unavailable"),
+        ("job_comment", True, "missing"),
+        ("job_env", False, "uncertain"),
     ],
 )
-def test_psij_unavailable_accounting_keeps_submission_uncertain(
-    monkeypatch, tmp_path, accounting_flags, accounting_available,
-    run_id, expected_error,
+def test_psij_unavailable_accounting_reports_no_match(
+    monkeypatch, tmp_path, accounting_flags, accounting_available, run_id,
 ):
     executor = _executor(monkeypatch, _Backend())
 
@@ -806,11 +805,10 @@ def test_psij_unavailable_accounting_keeps_submission_uncertain(
         raise AssertionError(argv)
 
     monkeypatch.setattr(psij_backend, "_scheduler_output", scheduler_output)
-    with pytest.raises(NotImplementedError, match=expected_error):
-        executor.recover_submission(
-            run_id, _psij_run(tmp_path),
-            submitted_at="2026-10-13T08:00:00+02:00",
-        )
+    assert executor.recover_submission(
+        run_id, _psij_run(tmp_path),
+        submitted_at="2026-10-13T08:00:00+02:00",
+    ) is psij_backend.SubmissionRecovery.NOT_FOUND
 
 
 def test_psij_remote_url_does_not_search_local_scheduler(monkeypatch, tmp_path):
@@ -964,9 +962,9 @@ def test_psij_preparation_closes_each_output_handle_once(monkeypatch, tmp_path, 
     assert error.close_calls == 1
     assert output.flush_calls >= 1
     assert error.flush_calls >= 1
-    assert (tmp_path / "run.out").exists()
+    assert not (tmp_path / "run.out").exists()
     if not merged:
-        assert (tmp_path / "run.err").exists()
+        assert not (tmp_path / "run.err").exists()
 
 def test_psij_active_job_stays_active_without_blocking_wait(monkeypatch, tmp_path):
     executor = _executor(monkeypatch, _Backend())

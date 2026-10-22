@@ -193,6 +193,60 @@ def validate_output_collisions(streams, *, protected=()):
                 )
 
 
+async def probe_submission_outputs(manifest, transport, submitted_at, *, remote=False):
+    """Read-only tri-state evidence from declared outputs, including streams.
+
+    True means all required outputs are newer than dispatch, False means no
+    outputs exist, and None means partial/old results or inconclusive evidence.
+    """
+    from datetime import datetime, timezone
+    from .transport import has_file_magic
+
+    when = datetime.fromisoformat(submitted_at)
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    since_ns = int(when.timestamp() * 1_000_000_000)
+    entries = (manifest.stdout, manifest.stderr, *manifest.outputs)
+    required = tuple(entry for entry in entries if entry is not None and not entry.optional)
+    if not required:
+        return None
+
+    inspected = set()
+    fresh = missing = old = 0
+    for entry in required:
+        path = entry.remote_path if remote else entry.local_path
+        if path is None:
+            return None
+        if has_file_magic(path):
+            root = manifest.mapping.remote_root if remote and manifest.mapping else (
+                None if remote else _pattern_root(path)
+            )
+            if root is None:
+                return None
+            matches = await transport.expand_files(path, root)
+            if not matches:
+                missing += 1
+                continue
+        else:
+            matches = (path,)
+        for match in matches:
+            if match in inspected:
+                continue
+            inspected.add(match)
+            signature = await transport.file_signature(match)
+            if signature is None:
+                missing += 1
+            elif signature[1] >= since_ns:
+                fresh += 1
+            else:
+                old += 1
+    if fresh and not (missing or old):
+        return True
+    if not (fresh or old):
+        return False
+    return None
+
+
 def clear_declared_outputs(paths, *, protected=()):
     """Remove old declared results without destroying inputs or restart caches.
 
