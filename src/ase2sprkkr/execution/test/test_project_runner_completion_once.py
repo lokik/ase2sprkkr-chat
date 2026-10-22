@@ -4,7 +4,13 @@ from threading import Event, Thread
 from types import SimpleNamespace
 
 from ..base import RunState
+from ..endpoint import ExecutorEndpoint
+from ..run_model import Execution, WorkingDirectory
 from ..manager import PersistentRun
+
+
+def _execution():
+    return Execution(ExecutorEndpoint(), WorkingDirectory("/virtual/run"), "backend-id")
 
 
 class _Manager:
@@ -55,7 +61,7 @@ def test_reading_state_does_not_write_to_store():
     manager, raw, executor = _Manager(), _Runner(), _Executor()
     record = SimpleNamespace(id="run", state=RunState.RUNNING,
                              updated_at="2026-10-20T10:00:00+00:00",
-                             execution=SimpleNamespace(submitted=lambda x: x))
+                             execution=_execution()
     run = PersistentRun(manager, executor, record)
     assert run.record.state == RunState.RUNNING
     assert manager.transitions == 0
@@ -65,7 +71,7 @@ def test_finalization_is_once_even_if_wait_and_callback_both_request_it():
     manager, raw, executor = _Manager(), _Runner(), _Executor()
     record = SimpleNamespace(id="run", state=RunState.RUNNING,
                              updated_at="2026-10-20T10:00:00+00:00",
-                             execution=SimpleNamespace(submitted=lambda x: x))
+                             execution=_execution()
     run = PersistentRun(manager, executor, record)
     raw.state = RunState.FINISHED
     run.completed(raw)
@@ -78,7 +84,7 @@ def test_unknown_observation_is_written_once_but_not_finalized():
     manager, raw, executor = _Manager(), _Runner(), _Executor()
     record = SimpleNamespace(id="run", state=RunState.RUNNING,
                              updated_at="2026-10-20T10:00:00+00:00",
-                             execution=SimpleNamespace(submitted=lambda x: x))
+                             execution=_execution()
     run = PersistentRun(manager, executor, record)
     raw.state = RunState.UNKNOWN
     raw.failure_message = "scheduler disconnected"
@@ -95,7 +101,7 @@ def test_unknown_observation_does_not_fire_completion_callback():
     manager, raw, executor = _Manager(), _Runner(), _Executor()
     record = SimpleNamespace(id="run", state=RunState.RUNNING,
                              updated_at="2026-10-20T10:00:00+00:00",
-                             execution=SimpleNamespace(submitted=lambda x: x))
+                             execution=_execution()
     run = PersistentRun(manager, executor, record)
     delivered = []
     raw.state = RunState.UNKNOWN
@@ -128,7 +134,7 @@ def test_concurrent_wait_and_completion_callback_persist_and_ack_once():
     record = SimpleNamespace(
         id="run", state=RunState.RUNNING,
         updated_at="2026-10-20T10:00:00+00:00",
-        execution=SimpleNamespace(submitted=lambda native_id: native_id),
+        execution=_execution(),
     )
     run = PersistentRun(manager, executor, record)
     raw.state = RunState.FINISHED
@@ -174,7 +180,7 @@ def test_terminal_record_deduplicates_after_recreating_persistence():
     record = SimpleNamespace(
         id="run", state=RunState.RUNNING,
         updated_at="2026-10-20T10:00:00+00:00",
-        execution=SimpleNamespace(submitted=lambda value: value),
+        execution=_execution(),
     )
     raw.state = RunState.FINISHED
     first = PersistentRun(manager, executor, record)
@@ -192,7 +198,7 @@ def test_unknown_is_observation_not_terminal_state():
     record = SimpleNamespace(
         id="run", state=RunState.RUNNING,
         updated_at="2026-10-20T10:00:00+00:00",
-        execution=SimpleNamespace(submitted=lambda value: value),
+        execution=_execution(),
     )
     raw.state = RunState.UNKNOWN
     first = PersistentRun(manager, executor, record)
@@ -212,7 +218,7 @@ def test_restart_retries_ack_without_repeating_terminal_commit():
     record = SimpleNamespace(
         id="run", state=RunState.FINISHED,
         updated_at="2026-10-20T10:00:00+00:00",
-        execution=SimpleNamespace(submitted=lambda value: value),
+        execution=_execution(),
     )
     recovered = PersistentRun(manager, executor, record)
     raw.state = RunState.FINISHED
@@ -227,7 +233,7 @@ def test_failed_ack_is_retryable_without_rewriting_completion():
     record = SimpleNamespace(
         id="run", state=RunState.FINISHED,
         updated_at="2026-10-20T10:00:00+00:00",
-        execution=SimpleNamespace(submitted=lambda value: value),
+        execution=_execution(),
     )
 
     class FlakyExecutor:
@@ -273,7 +279,7 @@ def test_lost_ack_reply_after_receipt_deletion_is_safe_on_retry(tmp_path, monkey
     record = SimpleNamespace(
         id="run", state=RunState.RUNNING,
         updated_at="2026-10-20T10:00:00+00:00",
-        execution=SimpleNamespace(submitted=lambda value: value),
+        execution=_execution(),
     )
     raw.state = RunState.FINISHED
     persistence = PersistentRun(manager, executor, record)
