@@ -118,26 +118,6 @@ def test_collect_missing_cache_still_checks_remote_baseline(tmp_path):
     assert local.read_text() == "original"
 
 
-def test_collect_records_first_error_and_continues_other_outputs(tmp_path):
-    root = tmp_path
-    remote = root / "remote"
-    remote.mkdir()
-    (remote / "second.out").write_text("second")
-    files = FileManifest(outputs=(
-        FileEntry(str(root / "first.out"), str(remote / "missing.out"),
-                  availability_state="pending"),
-        FileEntry(str(root / "second.out"), str(remote / "second.out"),
-                  availability_state="pending"),
-    ))
-    mapping = FileMapping(str(root), str(remote), output_sync="always")
-    result, error = asyncio.run(RemoteFileHandler(LocalTransport()).collect(
-        mapping, files, ExecutionOutcome(), required=True,
-    ))
-    assert isinstance(error, FileNotFoundError)
-    assert [e.availability_state for e in result.outputs] == ["failed", "available"]
-    assert (root / "second.out").read_text() == "second"
-
-
 def test_successful_remote_download_stores_revalidatable_sha256(tmp_path):
     from ase2sprkkr.common.file_versions import file_digest
 

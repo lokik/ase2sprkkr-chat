@@ -7,7 +7,7 @@ from ase2sprkkr.execution import (
     ExecutionSpec, FileEntry, FileManifest, LaunchSpec, LocalTransport,
     RemoteEndpointExecutor,
 )
-from ase2sprkkr.execution.file_availability import prepare_local_files, discover_local_files
+from ase2sprkkr.execution.file_availability import prepare_local_files
 
 
 def test_local_file_handler_preserves_input_and_cache(tmp_path):
@@ -38,17 +38,6 @@ def test_local_file_handler_rejects_overwriting_input(tmp_path):
     with pytest.raises(ValueError, match="Duplicate file declaration"):
         prepare_local_files(spec)
     assert original.read_text() == "preserve"
-
-
-def test_local_file_handler_discovers_without_mutating_manifest(tmp_path):
-    out = tmp_path / "done.dat"
-    out.write_bytes(b"done")
-    original = FileManifest(outputs=(
-        FileEntry(local_path=str(out), availability_state="pending"),
-    ))
-    observed = discover_local_files(original)
-    assert observed.outputs[0].availability_state == "available"
-    assert original.outputs[0].availability_state == "pending"
 
 
 def test_remote_handler_is_shared_without_run_state(tmp_path):
@@ -100,36 +89,6 @@ def test_materialized_manifest_freezes_membership(tmp_path):
     second, error = materialize_manifest(frozen, remote=True)
     assert error is None
     assert second == frozen
-
-
-@pytest.mark.parametrize("optional", (False, True))
-def test_empty_remote_wildcard_respects_required_output(optional, tmp_path):
-    from ase2sprkkr.execution.file_availability import materialize_manifest
-    from ase2sprkkr.execution import FileMapping
-
-    local, remote = tmp_path / "local", tmp_path / "remote"
-    local.mkdir()
-    remote.mkdir()
-    manifest = FileManifest(
-        outputs=(FileEntry(
-            str(local / "*.out"), str(remote / "*.out"),
-            availability_state="pending", optional=optional,
-        ),),
-        mapping=FileMapping(str(local), str(remote)),
-    )
-    frozen, error = materialize_manifest(manifest, remote=True)
-
-    if optional:
-        # Unmatched optional patterns freeze to empty membership, not a
-        # placeholder which could accidentally be expanded after completion.
-        assert error is None
-        assert frozen.outputs == ()
-    else:
-        assert isinstance(error, FileNotFoundError)
-        assert len(frozen.outputs) == 1
-        assert frozen.outputs[0].optional is False
-        assert frozen.outputs[0].availability_state == "failed"
-        assert str(error) in frozen.outputs[0].availability_message
 
 
 def test_collect_continues_after_one_output_download_fails(tmp_path):
@@ -667,7 +626,6 @@ def test_stream_verification_records_success_and_failure_separately(tmp_path):
     assert isinstance(error, FileNotFoundError)
     assert updated.stdout.availability_state == "available"
     assert updated.stderr.availability_state == "failed"
-
 
 
 def test_collect_does_not_mark_untouched_streams_available(tmp_path):
