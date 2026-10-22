@@ -36,3 +36,18 @@ def test_missing_uncaptured_patterns_are_not_treated_as_empty_history(tmp_path):
     assert missing_result_files(None) == ()
     (tmp_path / "results-1.dat").write_text("data")
     assert missing_result_files(manifest) == ()
+
+
+def test_uncaptured_wildcard_requires_regular_file(tmp_path):
+    """A directory or broken symlink cannot satisfy a file declaration."""
+    declaration = str(tmp_path / "result-*")
+    (tmp_path / "result-dir").mkdir()
+    (tmp_path / "result-link").symlink_to(tmp_path / "absent")
+    files = FileManifest(outputs=(FileEntry(local_path=declaration),))
+    assert missing_result_files(files) == (declaration,)
+
+    result = tmp_path / "result-file"
+    result.write_text("done")
+    assert missing_result_files(files) == ()
+    result.unlink()
+    assert missing_result_files(files) == (declaration,)
