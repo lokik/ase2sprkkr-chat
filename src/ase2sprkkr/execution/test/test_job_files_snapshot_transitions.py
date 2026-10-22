@@ -5,6 +5,7 @@ from dataclasses import replace
 import pytest
 
 from ase2sprkkr.execution.manager import ExecutionManager, RunStore
+from ase2sprkkr.execution.job_files import JobFiles
 from ase2sprkkr.execution.run_model import FileManifest
 
 
