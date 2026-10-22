@@ -157,3 +157,15 @@ def test_job_files_verifies_streams_after_collection_preflight_error(tmp_path):
     assert error is cause
     assert actual.stdout.availability_state == "available"
     assert actual.outputs[0].availability_state == "pending"
+
+
+def test_captured_snapshot_rejects_conflicting_update():
+    import pytest
+    from ase2sprkkr.execution.run_model import FileManifest
+
+    captured = FileManifest(captured_at="2026-10-22T00:00:00+00:00")
+    fresh = FileManifest()
+    assert JobFiles.merge_snapshot(captured, captured) is captured
+    with pytest.raises(ValueError, match="Cannot replace a captured"):
+        JobFiles.merge_snapshot(captured, fresh)
+    assert JobFiles.merge_snapshot(fresh, captured) is captured
