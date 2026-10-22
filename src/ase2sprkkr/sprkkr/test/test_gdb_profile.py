@@ -1,0 +1,72 @@
+from types import SimpleNamespace
+
+from ase2sprkkr.execution import LaunchSpec, MpiSpec
+from ase2sprkkr.sprkkr.profile import SPRKKRProfile
+
+
+def _create_spec(tmp_path, *, mpi, mpi_supported=True, gdb=True):
+    profile = SPRKKRProfile(mpi=mpi, mpi_warning=False)
+    # Command construction only needs the input pathname, not an open file.
+    input_file = SimpleNamespace(name=str(tmp_path / "run.inp"))
+    return profile.create_execution(
+        "kkrscf",
+        input_file,
+        None,
+        str(tmp_path),
+        mpi_supported=mpi_supported,
+        gdb=gdb,
+    )
+
+
+def test_serial_gdb_execution(tmp_path):
+    spec = _create_spec(tmp_path, mpi=False)
+
+    assert spec.argv == ("gdb", "kkrscf")
+    assert spec.mpi_argv is None
+    assert spec.launch == LaunchSpec(
+        mpi=MpiSpec(warning=False),
+        input_sync="changed",
+        output_sync="changed",
+    )
+    assert spec.stdin is False
+
+
+def test_mpi_gdb_execution_uses_xterm_per_rank(tmp_path):
+    spec = _create_spec(tmp_path, mpi=4)
+
+    assert spec.argv == ("gdb", "kkrscf")
+    assert spec.mpi_argv == (
+        "xterm",
+        "-e",
+        "gdb",
+        "--args",
+        "kkrscfMPI",
+        str(tmp_path / "run.inp"),
+    )
+    assert spec.launch == LaunchSpec(
+        mpi=MpiSpec(
+            required=True,
+            autodetect=True,
+            process_count=4,
+            warning=False,
+        ),
+        input_sync="changed",
+        output_sync="changed",
+    )
+    assert spec.stdin is False
+
+
+def test_auto_gdb_keeps_serial_fallback_command(tmp_path):
+    spec = _create_spec(tmp_path, mpi="auto")
+
+    assert spec.argv == ("gdb", "kkrscf")
+    assert spec.mpi_argv == (
+        "xterm",
+        "-e",
+        "gdb",
+        "--args",
+        "kkrscfMPI",
+        str(tmp_path / "run.inp"),
+    )
+    assert spec.launch.mpi == MpiSpec(autodetect=True, warning=False)
+    assert spec.stdin is False

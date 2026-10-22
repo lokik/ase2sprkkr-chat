@@ -33,9 +33,10 @@ class ConfigurationSectionTrait:
           :func:`GrammarType.validate<ase2sprkkr.common.grammar_types.GrammarType.validate>`
           True (default) means full validation: i.e. the same as ``save``.
         """
-        if atoms:
+        if atoms is not None:
             atoms = SPRKKRAtoms.promote_ase_atoms(atoms)
-        io_data = io_data or WriteIoData(atoms)
+        if io_data is None:
+            io_data = WriteIoData(atoms)
         self._set_from_atoms(atoms, io_data)
         return io_data
 
@@ -43,8 +44,13 @@ class ConfigurationSectionTrait:
         """Set the sections' values of the potential according to the given ASE atoms object.
         Unlike the non_underscored routine, this one requires the io_data to be set.
         """
-        for i in self:
-            i._set_from_atoms(atoms, io_data)
+        for item in self.values():
+            # Configuration trees also contain grammar-only Dummy objects
+            # (for example separators and switch stubs), which have no atoms
+            # state to update and therefore do not implement this hook.
+            setter = getattr(item, "_set_from_atoms", None)
+            if setter is not None:
+                setter(atoms, io_data)
 
         if hasattr(self._definition, "set_from_atoms"):
             self._definition.set_from_atoms(self, atoms, io_data)
@@ -122,6 +128,9 @@ class ConfigurationSectionDefinition(SectionDefinition):
 
     result_class = ConfigurationSection
     """ The sections should have this class (if not stated otherwise) """
+
+    repeated_class = RepeatedConfigurationSection
+    """Repeated sections retain the SPR-KKR configuration behavior."""
 
 
 class ConfigurationFileDefinition(ConfigurationRootDefinition):
