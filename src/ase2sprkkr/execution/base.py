@@ -471,14 +471,19 @@ class ExecutionSpec:
 
     def __post_init__(self):
         object.__setattr__(self, "directory", os.fspath(self.directory))
-        for name in ("input_file", "output_file", "stdin", "error_file"):
-            object.__setattr__(self, name, _pathlike(getattr(self, name)))
-        for name in ("input_files", "output_files", "cache_files"):
-            object.__setattr__(
-                self,
-                name,
-                tuple(_pathlike(value) for value in getattr(self, name)),
-            )
+        object.__setattr__(self, "input_file", _pathlike(self.input_file))
+        object.__setattr__(self, "output_file", _pathlike(self.output_file))
+        object.__setattr__(self, "stdin", _pathlike(self.stdin))
+        object.__setattr__(self, "error_file", _pathlike(self.error_file))
+        object.__setattr__(
+            self, "input_files", tuple(_pathlike(value) for value in self.input_files),
+        )
+        object.__setattr__(
+            self, "output_files", tuple(_pathlike(value) for value in self.output_files),
+        )
+        object.__setattr__(
+            self, "cache_files", tuple(_pathlike(value) for value in self.cache_files),
+        )
         object.__setattr__(self, "argv", tuple(os.fspath(value) for value in self.argv))
         if self.mpi_argv is not None:
             object.__setattr__(
