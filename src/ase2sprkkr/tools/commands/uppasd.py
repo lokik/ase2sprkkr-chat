@@ -63,18 +63,24 @@ def parser(parser):
     group.add_argument(
         "--include-vacuum", action="store_true", help="Include vacuum sites in selector matching and exported outputs"
     )
+    parser.add_argument('-q', '--quiet', default=False, help='Suppress all messages during writing')
 
 
 def run(args, global_args):
     import glob
 
     from ...bindings.uppasd import Coordinates, write_mom_file, write_pos_file, write_inpsd_file  # NOQA
-    from ...output_files.output_files import OutputFile  # NOQA
-    from ...output_files.definitions.jxc import JXCOutputFile  # NOQA
+    from ...result_files import ResultFile  # NOQA
+    from ...result_files.definitions.jxc import JXCResultFile  # NOQA
     from ...potentials.potentials import Potential  # NOQA
 
+    if args.quiet:
+
+        def print(*x):
+            pass
+
     def _load_jxc_output(filename, potential):
-        output = OutputFile.from_file(filename, try_only="jxc", unknown=False)
+        output = ResultFile.from_file(filename, try_only="jxc", unknown=False)
         output.potential = potential
         return output
 
@@ -175,7 +181,7 @@ def run(args, global_args):
             print("No DMI file found - skipping DMI export")
             dmi_output = None
 
-        selector_obj = jxc_output or dmi_output or JXCOutputFile.from_atoms(atoms)
+        selector_obj = jxc_output or dmi_output or JXCResultFile.from_atoms(atoms)
         selector = selector_obj.create_selector(
             iq=args.include, it=args.include, exclude_it=args.exclude, exclude_vc=not args.include_vacuum
         )

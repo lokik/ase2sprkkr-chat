@@ -66,7 +66,15 @@ def create_rc_context(latex: Optional[bool] = None):
 
 @contextmanager
 def single_plot(
-    filename: Optional[str] = None, show: Optional[bool] = None, window_title=None, dpi=600, latex=None, figsize=(6, 4), **kwargs
+    filename: Optional[str] = None,
+    show: Optional[bool] = None,
+    window_title=None,
+    dpi=600,
+    latex=None,
+    figsize=(6, 4),
+    axis=None,
+    projection=None,
+    **kwargs,
 ):
     """
     Creates single plot according to the given function a either show it or save it.
@@ -83,13 +91,28 @@ def single_plot(
       If True, always show the plot.
       If False, never.
       If None, show it, if the filename is not set.
+
+    axis
+      An existing Matplotlib axis to draw into.  If supplied, no figure is
+      created, shown, or saved by this context manager.
+
+    projection
+      Projection used when creating a new axis, for example ``"3d"``.
     """
+    if axis is not None:
+        yield axis, kwargs
+        return
+
     with create_rc_context(latex):
-        fig, ax = plt.subplots(figsize=figsize)
+        if projection is None:
+            fig, axis = plt.subplots(figsize=figsize)
+        else:
+            fig = plt.figure(figsize=figsize)
+            axis = fig.add_subplot(111, projection=projection)
         if window_title:
             fig.canvas.manager.set_window_title(window_title)
         plt.subplots_adjust(left=0.15, right=0.95, bottom=0.17, top=0.93)
-        yield ax, kwargs
+        yield axis, kwargs
         finish_plot(fig, filename, show, dpi)
 
 
@@ -151,6 +174,121 @@ def auto_range(rng, data, eps=1e-4):
     return out
 
 
+
+class PlotControls:
+    """One figure-owned set of simple controls sharing a single state."""
+
+    def __init__(self, figure, specs, live=True):
+        from matplotlib.widgets import RadioButtons, Slider
+
+        self.figure = figure
+        self.specs = specs
+        self.state = {}
+        self.widgets = {}
+        self.callbacks = []
+        self._slider_values = {}
+        self._changing = False
+        self.live = live
+
+        # Resolve all options first: dependent sliders must not rely on the
+        # dictionary insertion order of live_options.
+        for name, spec in specs.items():
+            if "options" in spec:
+                values = tuple(spec["options"])
+                if not values:
+                    raise ValueError(f"Empty options for {name}")
+                self.state[name] = values[0]
+            elif "slider" not in spec:
+                raise ValueError(f"Unknown plot control: {name}")
+
+        for name, spec in specs.items():
+            if "slider" in spec:
+                values = self._values(spec)
+                self._slider_values[name] = values
+                self.state[name] = values[0]
+
+        if not live or not specs:
+            return
+        figure.set_layout_engine(None)
+        figure.subplots_adjust(bottom=min(0.5, 0.13 * len(specs) + 0.12))
+        for index, (name, spec) in enumerate(reversed(tuple(specs.items()))):
+            y = 0.04 + 0.13 * index
+            if "options" in spec:
+                ax = figure.add_axes((0.22, y, 0.46, 0.105))
+                widget = RadioButtons(ax, tuple(spec["options"]))
+                widget.on_clicked(lambda value, name=name: self._option_changed(name, value))
+            else:
+                values = self._slider_values[name]
+                ax = figure.add_axes((0.22, y + 0.03, 0.60, 0.04))
+                widget = Slider(
+                    ax, spec.get("label", name),
+                    0, max(1, len(values) - 1), valinit=0, valstep=1,
+                )
+                widget.set_active(len(values) > 1)
+                widget.on_changed(
+                    lambda position, name=name: self._slider_changed(name, position)
+                )
+                widget.valtext.set_text(self._slider_text(name))
+            self.widgets[name] = widget
+        # Matplotlib widgets need a surviving reference while the figure lives.
+        figure._ase2sprkkr_controls = self
+
+    def _values(self, spec):
+        source = spec["slider"]
+        values = tuple(source(self.state) if callable(source) else source)
+        if not values:
+            raise ValueError("A plot slider needs at least one value")
+        return values
+
+    def _slider_text(self, name):
+        """Only the display text is formatted; state keeps the native value."""
+        value = self.state[name]
+        formatter = self.specs[name].get("format")
+        return str(formatter(value, self.state) if formatter else value)
+
+    def connect(self, callback):
+        self.callbacks.append(callback)
+
+    def _notify(self):
+        state = self.state.copy()
+        for callback in self.callbacks:
+            callback(state)
+        if self.live:
+            self.figure.canvas.draw_idle()
+
+    def _option_changed(self, name, value):
+        if self._changing:
+            return
+        self.state[name] = value
+        self._changing = True
+        try:
+            for slider_name, spec in self.specs.items():
+                if "slider" not in spec:
+                    continue
+                values = self._values(spec)
+                old = self.state[slider_name]
+                self._slider_values[slider_name] = values
+                self.state[slider_name] = old if old in values else values[0]
+                widget = self.widgets.get(slider_name)
+                if widget is not None:
+                    widget.valmax = max(1, len(values) - 1)
+                    widget.ax.set_xlim(0, widget.valmax)
+                    widget.set_active(len(values) > 1)
+                    widget.set_val(values.index(self.state[slider_name]))
+                    widget.valtext.set_text(self._slider_text(slider_name))
+        finally:
+            self._changing = False
+        self._notify()
+
+    def _slider_changed(self, name, position):
+        if self._changing:
+            return
+        values = self._slider_values[name]
+        self.state[name] = values[min(int(position), len(values) - 1)]
+        self.widgets[name].valtext.set_text(self._slider_text(name))
+        self._notify()
+
+
 def plotting_function(func):
     """Decorator, that 'completes' the given function that just draw into a
     matplolib axis.
@@ -164,23 +302,33 @@ def plotting_function(func):
     @add_to_signature(func)
     @functools.wraps(func)
     def plot_function(
-        *args, filename=None, show=None, dpi=600, latex=None, figsize=(6, 4), callback=None, axis=None, **kwargs
+        *args, filename=None, show=None, dpi=600, latex=None, figsize=(6, 4),
+        callback=None, axis=None, controls=None, live_options=None,
+        live=False, **kwargs
     ):
-        if axis:
-            func(*args, axis=axis, **kwargs)
+        provided_axis = axis is not None
+        with single_plot(
+            filename=filename,
+            show=show,
+            dpi=dpi,
+            latex=latex,
+            figsize=figsize,
+            axis=axis,
+        ) as (axis, _):
+            if controls is None and live_options is not None:
+                if provided_axis:
+                    raise ValueError("Use Multiplot for live controls on existing axes")
+                controls = PlotControls(axis.figure, live_options, live=live)
+            func(*args, axis=axis, controls=controls, **kwargs)
             if callback:
                 callback(axis)
-        else:
-            with single_plot(filename=filename, show=show, dpi=dpi, latex=latex, figsize=figsize) as (axis, _):
-                func(*args, axis=axis, **kwargs)
-                if callback:
-                    callback(axis)
 
     return plot_function
 
 
 def set_up_common_plot(
-    axis, title=None, xlabel=None, ylabel=None, xticklabels=None, yticklabels=None, xticks=None, yticks=None, **kwargs
+    axis, title=None, xlabel=None, ylabel=None, xticklabels=None, yticklabels=None,
+    xticks=None, yticks=None, controls=None, **kwargs
 ):
     loc = locals()
     """
@@ -214,11 +362,20 @@ def colormesh(
     vmin=None,
     vmax=None,
     colorbar=False,
+    controls=None,
     **kwargs,
 ):
-    """
-    Plot 3D data by assigning colors to 2D grid. See matplotlib.pyplot.pcolormesh
-    """
+    """Plot a 2D map; callable x/y/c receive the shared control state."""
+    if controls is None and any(callable(value) for value in (x, y, c)):
+        raise ValueError("Callable plot data require controls")
+
+    def selected(data, value):
+        return data(value) if callable(data) else data
+
+    current = controls.state.copy() if controls is not None else None
+    initial_x, initial_y, initial_c = (
+        selected(data, current) for data in (x, y, c)
+    )
     set_up_common_plot(axis, **kwargs)
     if "cmap" in kwargs:
         colormap = kwargs["cmap"]
@@ -230,7 +387,7 @@ def colormesh(
             vmax = None
         elif norm == "lin":
             colormap = colormap or "seismic"
-            norm = CenteredNorm(vmax=vmax)
+            norm = CenteredNorm(halfrange=vmax)
             vmax = None
     else:
         colormap = colormap or "BuPu"
@@ -250,9 +407,32 @@ def colormesh(
             vmax = None
             vmin = None
 
-    axis.set_xlim(auto_range(xrange, x))
-    axis.set_ylim(auto_range(yrange, y))
-    axis.pcolormesh(x, y, c, cmap=colormap, shading="gouraud", norm=norm, vmin=vmin, vmax=vmax)
+    axis.set_xlim(auto_range(xrange, initial_x))
+    axis.set_ylim(auto_range(yrange, initial_y))
+
+    def make_mesh(xdata, ydata, intensity):
+        return axis.pcolormesh(
+            xdata, ydata, intensity, cmap=colormap,
+            shading="gouraud", norm=norm, vmin=vmin, vmax=vmax,
+        )
+
+    mesh = make_mesh(initial_x, initial_y, initial_c)
+    if controls is not None and any(callable(data) for data in (x, y, c)):
+
+        def update(value):
+            nonlocal mesh
+            xdata, ydata, intensity = (
+                selected(data, value) for data in (x, y, c)
+            )
+            if callable(x) or callable(y):
+                mesh.remove()
+                mesh = make_mesh(xdata, ydata, intensity)
+                axis.set_xlim(auto_range(xrange, xdata))
+                axis.set_ylim(auto_range(yrange, ydata))
+            else:
+                mesh.set_array(np.asarray(intensity))
+
+        controls.connect(update)
     if show_zero_line:
         opts = {"lw": 1.0, "color": "black"}
         if isinstance(show_zero_line, dict):
@@ -267,12 +447,35 @@ def colormesh(
         )
 
 
+@plotting_function
+def lineplot(x, y, axis=None, controls=None, **kwargs):
+    """Plot a one-dimensional scan, optionally updated by shared controls."""
+    if controls is None and (callable(x) or callable(y)):
+        raise ValueError("Callable line data require controls")
+
+    def values(data, index):
+        return np.asarray(data(index) if callable(data) else data).ravel()
+
+    index = controls.state.copy() if controls is not None else None
+    set_up_common_plot(axis, **kwargs)
+    (line,) = axis.plot(values(x, index), values(y, index))
+    axis.relim()
+    axis.autoscale_view()
+
+    if controls is not None and (callable(x) or callable(y)):
+        def update(index):
+            line.set_data(values(x, index), values(y, index))
+            axis.relim()
+            axis.autoscale_view()
+        controls.connect(update)
+
+
 class Multiplot:
     """This class can be used for plotting more plots into one resulting image/window."""
 
     def __init__(
         self,
-        layout,
+        layout=None,
         figsize=(6, 4),
         latex=None,
         updown_layout=False,
@@ -282,15 +485,24 @@ class Multiplot:
         separate_plots=False,
         layout_kind="constrained",
         number_of_plots=None,
+        projection=None,
+        live=False,
+        live_options=None,
         **kwargs,
     ):
+        self.controls = None
+        self.live = live
+        self.live_options = live_options
         self.separate_plots = separate_plots
         self.filename = filename
         self.show = show
         self.dpi = dpi
         self.latex = latex
         self.layout_kind = layout_kind  #'constrained', 'tight', 'adjust', {dict for adjust}
+        self.projection = projection
 
+        if layout is None:
+            layout = 2
         if isinstance(layout, numbers.Integral):
             layout = min(layout, number_of_plots)
             layout = max(layout, 1)
@@ -302,7 +514,13 @@ class Multiplot:
             layout = (layout[0], (number_of_plots -1) // layout[0] + 1)
 
         if callable(figsize):
-            figsize = figsize(layout)
+            figsize = figsize((1, 1) if separate_plots else layout)
+
+        if separate_plots and live and self.live_options:
+            raise ValueError("Live controls require a single figure")
+        if live and self.live_options and layout_kind == "constrained":
+            layout_kind = "adjust"
+            self.layout_kind = layout_kind
 
         if separate_plots:
             self.figsize = figsize
@@ -310,7 +528,11 @@ class Multiplot:
             self.figure = None
         else:
             self.figure, self.axes = plt.subplots(
-                figsize=figsize, nrows=layout[0], ncols=layout[1], constrained_layout=layout_kind == "constrained"
+                figsize=figsize,
+                nrows=layout[0],
+                ncols=layout[1],
+                constrained_layout=layout_kind == "constrained",
+                subplot_kw={"projection": projection} if projection else None,
             )
             if layout_kind == "adjust" or isinstance(layout_kind, dict):
                 adj = {"left": 0.12, "right": 0.95, "bottom": 0.17, "top": 0.90, "hspace": 0.75, "wspace": 0.4}
@@ -329,6 +551,10 @@ class Multiplot:
         self.index = 0
 
     def __enter__(self):
+        if self.live_options is not None:
+            # Static separate plots still need the same initial state for
+            # callable datasets, but no figure or widgets are created.
+            self.controls = PlotControls(self.figure, self.live_options, live=self.live)
         if not self.separate_plots:
             self.context = create_rc_context(latex=self.latex)
             self.context.__enter__()
@@ -363,6 +589,8 @@ class Multiplot:
 
     @contextmanager
     def new_axis(self, name=None, filename=None, **kwargs):
+        if self.controls is not None:
+            kwargs.setdefault("controls", self.controls)
         for k, v in self.kwargs.items():
              kwargs.setdefault(k, v)
         for k, v in self.specific_kwargs.get(self.index, {}).items():
@@ -382,6 +610,7 @@ class Multiplot:
             if filename is None:
                 filename = self.filename
                 if filename:
+                    filename = os.fspath(filename)
                     if name is None:
                         fname = str(self.index + 1)
                     else:
@@ -400,6 +629,7 @@ class Multiplot:
                 self.dpi,
                 self.latex,
                 self.figsize,
+                projection=self.projection,
             ) as (axis, _):
                 yield axis, kwargs
         else:
