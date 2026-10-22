@@ -6,12 +6,19 @@ import asyncio
 from dataclasses import replace
 from datetime import datetime, timezone
 from threading import Event, Lock
+from typing import Protocol
 
 from ..common.file_versions import FileState
 from .base import (ExecutionOutcome, FailurePhase, RunState,
                    SubmissionNotStarted, finish_monitor)
 from .file_history import file_is_current
 from .run_hooks import PersistenceError, RunPersistenceHooks
+
+
+class ProcessedResult(Protocol):
+    """Result-processing output exposes the process return code explicitly."""
+
+    return_code: int | None
 
 
 class CalculationRun:
@@ -115,7 +122,7 @@ class CalculationRun:
 
     @property
     def return_code(self):
-        value = getattr(self.result, "return_code", None)
+        value = None if self.result is None else self.result.return_code
         if value is not None:
             return value
         return self._runner.return_code
