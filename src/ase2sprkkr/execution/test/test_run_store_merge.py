@@ -173,7 +173,7 @@ def test_terminal_refresh_cannot_replace_manifest_or_execution(tmp_path):
 
 
 def test_terminal_persistent_run_state_does_not_query_backend(tmp_path):
-    from ase2sprkkr.execution.manager import PersistentRun
+    from ase2sprkkr.execution.manager import RunPersistence
     from ase2sprkkr.execution.postprocessing import CalculationRun
 
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
@@ -188,7 +188,7 @@ def test_terminal_persistent_run_state_does_not_query_backend(tmp_path):
             raise AssertionError("Terminal state must not query backend")
 
     run = CalculationRun(Backend(), lambda outcome: outcome)
-    run.hooks = PersistentRun(manager, object(), finished)
+    run.persistence = RunPersistence(manager, object(), finished)
     assert run.state is RunState.FINISHED
 
 
@@ -203,7 +203,8 @@ def test_explicit_availability_update_preserves_terminal_snapshot(tmp_path):
         files=FileManifest(outputs=(FileEntry(local_path=output),)),
     )
     terminal = manager.transition(original, state=RunState.FINISHED)
-    updated = terminal.job_files.update_availability(manager.store, output, "skipped")
+    from ase2sprkkr.execution import JobFiles
+    updated = JobFiles(terminal.files).update_availability(terminal, manager.store, output, "skipped")
 
     assert updated.state is RunState.FINISHED
     assert updated.finished_at == terminal.finished_at

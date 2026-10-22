@@ -78,7 +78,7 @@ def test_remote_submission_uses_reserved_primary_input_and_stdin(tmp_path):
     mapping = FileMapping(str(tmp_path), str(tmp_path / "remote"),
                           input_sync="never")
     reserved = FileManifest.from_spec(spec).with_mapping(mapping)
-    runner.set_manifest(reserved)
+    runner.job_files.replace(reserved)
     # A stale or independently modified spec cannot change file membership.
     runner.spec = replace(spec, input_file="wrong.in", stdin="wrong.stdin",
                           input_files=("unreserved.in",))
@@ -95,7 +95,7 @@ def test_local_submission_uses_reserved_file_declarations(tmp_path):
     spec = _spec(tmp_path)
     reserved = FileManifest.from_spec(spec)
     runner = LocalProjectRunner(LocalExecutor(), spec, run_id="reserved-job")
-    runner.set_manifest(reserved)
+    runner.job_files.replace(reserved)
     runner.spec = replace(spec, input_file="wrong.in", stdin="wrong.stdin",
                           output_file="wrong.out", error_file="wrong.err")
     request = runner._request()
