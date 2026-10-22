@@ -77,3 +77,40 @@ def test_terminal_ack_retries_transport_error_without_overwriting_record(manager
     assert manager.acknowledge_terminal(backend, record, backend_id="backend-1") is True
     assert backend.calls == 2
     assert manager.store.get(record.id) == record
+
+def test_reservation_commits_executor_placement_before_staging(manager, tmp_path):
+    class Backend:
+        def reservation_context(self, spec, files):
+            assert spec == "launch"
+            return files, "/remote/scratch/job"
+
+    record = manager.new_record(task="DOS", directory=tmp_path)
+    reserved = manager.reserve(record, spec="launch", executor=Backend())
+
+    assert reserved.state == RunState.SUBMITTING
+    assert reserved.execution.directory.remote == "/remote/scratch/job"
+    assert manager.store.get(record.id) == reserved
+
+
+def test_uncertain_submission_without_backend_id_remains_recoverable(manager, tmp_path):
+    record = manager.reserve(manager.new_record(task="DOS", directory=tmp_path))
+    updated = manager.record_submission_failure(
+        record, error=OSError("SSH response lost"), uncertain=True,
+        state=RunState.SUBMITTING, backend_id=None,
+    )
+    assert updated == record
+    assert manager.store.get(record.id).state == RunState.SUBMITTING
+    assert manager.store.get(record.id).finished_at is None
+
+
+def test_failed_backend_observation_uses_execution_failure_phase(manager, tmp_path):
+    record = manager.reserve(manager.new_record(task="DOS", directory=tmp_path))
+    updated = manager.record_observation(
+        record, state=RunState.FAILED, execution=None,
+        return_code=2, message="solver exited",
+        failure_phase=None, files=record.files,
+        expected_updated_at=record.updated_at,
+    )
+    assert updated.state == RunState.FAILED
+    assert updated.failure_phase == FailurePhase.EXECUTION
+    assert manager.store.get(record.id) == updated
