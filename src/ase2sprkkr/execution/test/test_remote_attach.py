@@ -108,8 +108,7 @@ def test_remote_executor_attach_reconnects_running_run_and_restores_stage_out(tm
         output_file=output_file,
         directory=str(workdir),
         stdin=input_file,
-        input_files=(input_file,),
-        output_files=(output_file, generated),
+        output_files=(generated,),
         cache_files=(cache,),
         launch=_launch(local_root, remote_root),
     )
@@ -167,8 +166,6 @@ def test_remote_executor_attach_replays_finished_run(tmp_path):
         output_file=output_file,
         directory=str(workdir),
         stdin=input_file,
-        input_files=(input_file,),
-        output_files=(output_file,),
         launch=_launch(local_root, remote_root),
     )
     original = first_executor.create_run(spec)
