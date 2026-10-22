@@ -217,7 +217,11 @@ class JobFiles:
             and record.execution.backend_id is not None
         )
         missing = self.missing_files() if can_fetch else ()
-        paths = tuple(dict.fromkeys((*missing, *recoverable)))
+        # A symlink can point at unchanged historical contents while having
+        # replaced the recorded regular file. Inspect it explicitly because
+        # FileVersion.state() follows the link and may call it CURRENT.
+        linked = tuple(path for path in versions if os.path.islink(path))
+        paths = tuple(dict.fromkeys((*missing, *recoverable, *linked)))
         if not paths:
             return record
 
@@ -232,7 +236,8 @@ class JobFiles:
                 version = versions.get(path)
                 # The file may disappear while waiting for the lock. Without
                 # an executor, leave the recorded failed state untouched.
-                if not can_fetch and (version is None or not version.is_current()):
+                if (not can_fetch and not os.path.islink(path)
+                        and (version is None or not version.is_current())):
                     continue
                 try:
                     restore_historical_file(record, path, version, executor)
