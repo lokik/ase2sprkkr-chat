@@ -40,6 +40,8 @@ class LocalRunner:
     """
 
     def __init__(self, spec: ExecutionSpec, callback=None):
+        # Direct construction has the same pre-manifest contract as the factory.
+        spec = materialize_local_spec(spec)
         self.spec = spec
         self.job_files = JobFiles(FileManifest.from_spec(spec))
         self.callback = callback
@@ -200,7 +202,7 @@ class LocalRunner:
                 self.spec, preserve_open_streams=True,
             )
             try:
-                runtime_spec = materialize_local_spec(self.spec)
+                runtime_spec = self.spec
                 stdin = self._open_streams(stdin=runtime_spec.stdin)
                 self._process = await start_local_process(runtime_spec, stdin=stdin)
             except BaseException as exc:

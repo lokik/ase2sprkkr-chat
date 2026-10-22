@@ -41,6 +41,10 @@ class RemoteRunner(ManagedRunner):
         state=RunState.NEW,
         run_id=None,
     ):
+        # Attached runs already have a frozen manifest and launch choice.
+        # Direct, new runs must select a variant before deriving JobFiles.
+        if backend_id is None and state == RunState.NEW and files is None:
+            spec = executor.resolve_spec(spec)
         super().__init__(
             executor, spec, callback, output_listener=output_listener,
             backend_id=backend_id, state=state, files=files,

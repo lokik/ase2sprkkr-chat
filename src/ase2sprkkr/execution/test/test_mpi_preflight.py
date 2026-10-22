@@ -103,3 +103,48 @@ def test_auto_serial_fallback_preserves_serial_input(tmp_path):
     assert selected.argv == ("serial",)
     assert selected.stdin == "only-serial.in"
     assert selected.mpi_stdin is None
+
+
+def test_direct_local_runner_resolves_before_creating_manifest(tmp_path, monkeypatch):
+    from ase2sprkkr.execution import LocalRunner
+
+    monkeypatch.setattr(
+        "ase2sprkkr.execution.local_process.resolve_mpi_command",
+        lambda _: ("mpiexec",),
+    )
+    runner = LocalRunner(spec(tmp_path))
+    assert runner.spec.argv == ("mpiexec", "parallel")
+    assert runner.job_files.manifest.input_files == (
+        str(tmp_path / "only-mpi.in"),
+    )
+    assert runner.job_files.manifest.stdin is True
+
+
+def test_direct_local_project_runner_resolves_before_manifest(tmp_path, monkeypatch):
+    from ase2sprkkr.execution.local_project import LocalProjectRunner
+
+    monkeypatch.setattr(
+        "ase2sprkkr.execution.local_process.resolve_mpi_command",
+        lambda _: ("mpiexec",),
+    )
+    runner = LocalProjectRunner(LocalExecutor(), spec(tmp_path), run_id="direct")
+    assert runner.spec.argv == ("mpiexec", "parallel")
+    assert runner.job_files.manifest.input_files == (
+        str(tmp_path / "only-mpi.in"),
+    )
+
+
+def test_direct_remote_runner_resolves_before_manifest(tmp_path, monkeypatch):
+    from ase2sprkkr.execution import LocalTransport, RemoteExecutor, RemoteRunner
+
+    executor = RemoteExecutor(LocalTransport())
+
+    async def resolve_mpi(mpi):
+        return ("mpiexec",)
+
+    monkeypatch.setattr(executor.connection, "resolve_mpi", resolve_mpi)
+    runner = RemoteRunner(executor, spec(tmp_path))
+    assert runner.spec.argv == ("mpiexec", "parallel")
+    assert runner.job_files.manifest.input_files == (
+        str(tmp_path / "only-mpi.in"),
+    )
