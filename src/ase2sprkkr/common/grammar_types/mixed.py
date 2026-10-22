@@ -8,7 +8,7 @@ from .grammar_type import GrammarType, compare_numpy_values, recognized_set_type
 from ..decorators import cached_property, add_to_signature
 
 from .basic import Energy, Real, Integer, QString, LineString, Flag, Bool, Boolean
-from .arrays import SetOf, set_of_integers, set_of_reals
+from .arrays import SetOf, set_of_integers, set_of_reals, set_of_strings
 
 
 class BaseMixed(GrammarType):
@@ -80,6 +80,8 @@ class Range(BaseMixed):
 def VariantGenerator(name, bool_type=Boolean.I, string_type=QString.I, add_types=None, doc=None):
 
     base_types = [Energy.I, Real.I, Integer.I, set_of_integers, set_of_reals, bool_type, string_type]
+    if isinstance(string_type, QString):
+        base_types.append(set_of_strings)
     if add_types:
         base_types += add_types
 
