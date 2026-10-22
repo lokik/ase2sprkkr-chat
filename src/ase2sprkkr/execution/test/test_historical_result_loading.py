@@ -319,3 +319,30 @@ def test_simultaneous_historical_restores_download_once(tmp_path):
     assert all(value.state is RunState.FINISHED for value in results)
     stored = manager.store.get(record.id)
     assert stored.files.availability_state == FileAvailabilityState.AVAILABLE
+
+
+def test_uncaptured_missing_output_after_fetch_raises_and_marks_failed(tmp_path):
+    """A no-op backend retrieval is never considered a successful restore."""
+    from ase2sprkkr.execution.run_model import FileEntry
+
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    executor = _HistoryExecutor()
+    endpoint = endpoint_for_executor(executor)
+    manager.executors.register(executor, endpoint)
+    output = tmp_path / "missing.out"
+    record = manager.new_record(
+        task="DOS", directory=tmp_path, endpoint=endpoint,
+        files=FileManifest(outputs=(
+            FileEntry(local_path=str(output), availability_state="pending"),
+        )),
+    )
+    record = manager.transition(
+        record, state=RunState.FINISHED,
+        execution=record.execution.submitted("job-1"),
+    )
+    with pytest.raises(FileNotFoundError, match="still missing after retrieval"):
+        manager.retrieve_result_files(record.id)
+    saved = manager.store.get(record.id)
+    assert saved.state is RunState.FINISHED
+    assert saved.files.outputs[0].availability_state == "failed"
+    assert executor.fetch_calls == [(record.id, (str(output),))]
