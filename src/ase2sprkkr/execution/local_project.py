@@ -112,7 +112,7 @@ class LocalProjectRunner(ManagedRunner):
         if (self._backend_id is None or self._state.is_terminal
                 or self._thread is not None):
             return self._state
-        status = local_status(self._backend_id, self.job_files.manifest)
+        status = local_status(self._backend_id, self.job_files.snapshot())
         return self._apply_status(status)
 
     @property
@@ -127,15 +127,15 @@ class LocalProjectRunner(ManagedRunner):
 
     async def _follow_once(self):
         return await self.executor.connection.follow(
-            self._backend_id, self.job_files.manifest,
+            self._backend_id, self.job_files.snapshot(),
             on_chunk=lambda kind, data: self._output_observers.emit_bytes(data, kind),
         )
 
     async def _backend_status(self):
-        return await self.executor.connection.status(self._backend_id, self.job_files.manifest)
+        return await self.executor.connection.status(self._backend_id, self.job_files.snapshot())
 
     async def _complete_terminal(self, facts, state):
-        status = _local_status_from_facts(self._backend_id, facts, self.job_files.manifest)
+        status = _local_status_from_facts(self._backend_id, facts, self.job_files.snapshot())
         self._apply_status(status)
 
     def _request(self):
@@ -145,7 +145,7 @@ class LocalProjectRunner(ManagedRunner):
             *self.spec.output_files, *self.spec.cache_files,
         ):
             file_path(value, self.spec.directory, flush=True)
-        files = self.job_files.manifest
+        files = self.job_files.snapshot()
         return {
             "executor": "local",
             "id": self._run_id,

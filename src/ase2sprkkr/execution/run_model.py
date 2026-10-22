@@ -74,6 +74,17 @@ class FileAvailabilityState(str, Enum):
 
 
 @dataclass(frozen=True)
+class FileAvailabilityUpdate:
+    """One change to a declared local file's delivery status."""
+
+    path: str
+    state: FileAvailabilityState
+    message: Optional[str] = None
+    remote_path: Optional[str] = None
+    kind: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class FileEntry:
     """Location of one file, with no assumptions about its content."""
 
@@ -494,51 +505,77 @@ class FileManifest:
             ) if item.availability_state == "failed" else item
         )
 
-    def with_file_availability(
-        self, local_path, state, message=None, *,
-        remote_path=None, kind=None,
-    ):
-        """Update one declared file identity; never register new members.
+    def with_file_availabilities(self, updates):
+        """Apply an entire validated batch in a single immutable snapshot.
 
-        A shared stdout/stderr destination is one output identity when both
-        entries name the same remote file. Ambiguous output/cache destinations
-        or distinct remote sources require an explicit kind or remote path.
+        No partial changes escape on invalid or ambiguous file identities.
+        Shared stdout/stderr entries representing one physical file change
+        together. Conflicting changes to one identity are rejected.
         """
         import os
 
-        if kind not in (None, "output", "cache"):
-            raise ValueError(f"Unknown file kind: {kind!r}")
-        path = os.fspath(local_path)
         groups = (
             ("output", (self.stdout, self.stderr, *self.outputs)),
             ("cache", self.caches),
         )
-        identities = {
-            (category, entry.remote_path)
-            for category, entries in groups if kind is None or kind == category
-            for entry in entries
-            if entry is not None and entry.local_path == path
-            and (remote_path is None or entry.remote_path == remote_path)
-        }
-        if len(identities) > 1:
-            raise ValueError(
-                f"Ambiguous file destination {path}: specify kind or remote_path"
-            )
-        if identities:
-            selected_kind, selected_remote = next(iter(identities))
+        selected = {}
+        for change in updates:
+            if not isinstance(change, FileAvailabilityUpdate):
+                raise TypeError("Expected FileAvailabilityUpdate")
+            state = FileAvailabilityState(change.state).value
+            if change.message is not None and state != "failed":
+                raise ValueError("An availability error belongs to a failed file")
+            if change.kind not in (None, "output", "cache"):
+                raise ValueError(f"Unknown file kind: {change.kind!r}")
+            path = os.fspath(change.path)
+            identities = {
+                (category, entry.remote_path)
+                for category, entries in groups
+                if change.kind is None or change.kind == category
+                for entry in entries
+                if entry is not None and entry.local_path == path
+                and (change.remote_path is None
+                     or entry.remote_path == change.remote_path)
+            }
+            if len(identities) > 1:
+                raise ValueError(
+                    f"Ambiguous file destination {path}: specify kind or remote_path"
+                )
+            if not identities:
+                raise KeyError(f"File is not declared in manifest: {path}")
+            _, remote_path = next(iter(identities))
+            identity = (path, remote_path)
+            value = (state, change.message)
+            if identity in selected and selected[identity] != value:
+                raise ValueError(f"Conflicting file availability updates: {path}")
+            selected[identity] = value
 
-            def update(entry):
-                if (entry is not None and entry.local_path == path
-                        and entry.remote_path == selected_remote):
-                    return replace(
-                        entry, availability_state=state,
-                        availability_message=message,
-                    )
+        if not selected:
+            return self
+
+        def update(entry):
+            if entry is None:
+                return None
+            requested = selected.get((entry.local_path, entry.remote_path))
+            if requested is None or requested == (
+                entry.availability_state, entry.availability_message,
+            ):
                 return entry
+            state, message = requested
+            return replace(
+                entry, availability_state=state, availability_message=message,
+            )
 
-            return self._map_files(update, kind=selected_kind)
+        return self._map_files(update)
 
-        raise KeyError(f"File is not declared in manifest: {path}")
+    def with_file_availability(
+        self, local_path, state, message=None, *,
+        remote_path=None, kind=None,
+    ):
+        """Update one declared file; preserve all other immutable entries."""
+        return self.with_file_availabilities((
+            FileAvailabilityUpdate(local_path, state, message, remote_path, kind),
+        ))
 
     def has_wildcards(self):
         """Whether any declared output/cache path still needs materializing."""

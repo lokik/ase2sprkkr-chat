@@ -67,9 +67,11 @@ def test_job_files_coordinates_remote_collection_and_verification():
             return manifest, None
 
     handler = Handler()
-    out, error = asyncio.run(JobFiles.collect_remote(
-        None, pending, handler, SimpleNamespace(), SimpleNamespace(), required=True,
+    owner = JobFiles(pending)
+    error = asyncio.run(owner.collect_remote(
+        pending, handler, SimpleNamespace(), SimpleNamespace(), required=True,
     ))
+    out = owner.snapshot()
     assert error is None
     assert out.outputs[0].availability_state == "available"
     assert handler.calls == [("collect", True), ("verify",)]
@@ -94,9 +96,11 @@ def test_job_files_verifies_streams_after_failed_transfer():
             assert manifest.outputs[0].availability_state == "failed"
             return manifest, None
 
-    updated, error = asyncio.run(JobFiles.collect_remote(
-        None, files, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
+    owner = JobFiles(files)
+    error = asyncio.run(owner.collect_remote(
+        files, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
     ))
+    updated = owner.snapshot()
     assert error is cause
     assert updated.outputs[0].availability_state == "failed"
 
@@ -123,9 +127,11 @@ def test_job_files_preserves_transfer_error_and_verified_stream(tmp_path):
                 stream.local_path, "available", remote_path=stream.remote_path,
             ), None
 
-    final, error = asyncio.run(JobFiles.collect_remote(
-        None, files, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
+    owner = JobFiles(files)
+    error = asyncio.run(owner.collect_remote(
+        files, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
     ))
+    final = owner.snapshot()
     assert error is cause
     assert final.outputs[0].availability_state == "failed"
     assert final.stdout.availability_state == "available"
@@ -151,9 +157,11 @@ def test_job_files_verifies_streams_after_collection_preflight_error(tmp_path):
                 stream.local_path, "available", remote_path=stream.remote_path,
             ), None
 
-    actual, error = asyncio.run(JobFiles.collect_remote(
-        None, initial, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
+    owner = JobFiles(initial)
+    error = asyncio.run(owner.collect_remote(
+        initial, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
     ))
+    actual = owner.snapshot()
     assert error is cause
     assert actual.stdout.availability_state == "available"
     assert actual.outputs[0].availability_state == "pending"
@@ -275,9 +283,11 @@ def test_stream_verification_exception_preserves_partial_download(tmp_path):
         async def verify_stream_availability(self, manifest, spec):
             raise OSError("stream verification unavailable")
 
-    saved, error = asyncio.run(JobFiles.collect_remote(
-        None, initial, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
+    owner = JobFiles(initial)
+    error = asyncio.run(owner.collect_remote(
+        initial, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
     ))
+    saved = owner.snapshot()
     assert isinstance(error, OSError)
     assert str(error) == "stream verification unavailable"
     assert saved.outputs[0].availability_state == "available"
