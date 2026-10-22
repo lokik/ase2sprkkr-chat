@@ -88,9 +88,9 @@ class CalculationRun:
     def backend_id(self):
         return self._runner.backend_id
 
-    @property
-    def files(self):
-        return self._runner.files
+    def file_snapshot(self):
+        """Read the backend file snapshot at a persistence boundary."""
+        return self._runner.file_snapshot()
 
     @property
     def exception(self):
