@@ -513,14 +513,13 @@ class RemoteRunner:
             out.append(replacement or value)
         return out
 
-    async def _prepare_request(self, run_id, remote_directory):
+    async def _prepare_request(self, run_id, remote_directory, manifest):
         used = {}
         # The declared manifest merges aliases with required-wins semantics.
         # Stage the primary input and stdin first: an optional auxiliary alias
         # must never weaken a mandatory stream.
         input_requirements = {
-            entry.local_path: not entry.optional
-            for entry in FileManifest.from_spec(self.spec).inputs
+            entry.local_path: not entry.optional for entry in manifest.inputs
         }
         input_target = await self._stage_file(self.spec.input_file, used)
         stdin_target = await self._stage_file(self.spec.stdin, used)

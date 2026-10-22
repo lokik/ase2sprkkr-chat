@@ -177,3 +177,52 @@ def test_postprocessing_rejected_submit_preserves_error_and_does_not_monitor(met
     assert caught.value is failure
     assert runner._started is False
     assert runner._thread is None
+
+
+@pytest.mark.parametrize("conflict", ["mixed_input_optionality", "duplicate_output", "duplicate_cache"])
+def test_invalid_manifest_rejected_before_remote_side_effects(tmp_path, conflict):
+    """Preflight must not create target directories or upload any inputs."""
+    from ase2sprkkr.execution.base import SubmissionNotStarted
+    from ase2sprkkr.input_parameters.task_definition import TaskFile
+
+    class NoSideEffectTransport(LocalTransport):
+        async def run(self, *args, **kwargs):
+            raise AssertionError("Remote command executed before manifest validation")
+
+        async def put_file(self, *args, **kwargs):
+            raise AssertionError("Input uploaded before manifest validation")
+
+        async def file_digest(self, *args, **kwargs):
+            raise AssertionError("Transport probed before manifest validation")
+
+    local = tmp_path / "local"
+    local.mkdir()
+    input_path = local / "main.inp"
+    input_path.write_text("TASK SCF")
+    shared = local / "shared.dat"
+    input_files = (input_path,)
+    output_files = ()
+    cache_files = ()
+    if conflict == "mixed_input_optionality":
+        input_files += (TaskFile(input_path, optional=True),)
+    elif conflict == "duplicate_output":
+        output_files = (shared, shared)
+    else:
+        cache_files = (shared, shared)
+
+    spec = ExecutionSpec(
+        argv=("ignored",),
+        directory=str(local),
+        input_file=input_path,
+        input_files=input_files,
+        output_file=str(local / "stdout.out"),
+        output_files=output_files,
+        cache_files=cache_files,
+        launch=LaunchSpec(
+            local_root=str(tmp_path),
+            remote_root=str(tmp_path / "remote"),
+        ),
+    )
+    runner = RemoteEndpointExecutor(NoSideEffectTransport()).create_run(spec)
+    with pytest.raises(SubmissionNotStarted, match="Conflicting optionality|Duplicate file declaration"):
+        runner.prepare_submission()
