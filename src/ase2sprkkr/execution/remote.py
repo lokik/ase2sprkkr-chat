@@ -177,7 +177,7 @@ class RemoteRunner(ManagedRunner):
 
     async def _prepare_async(self):
         try:
-            files = self._job_files.snapshot()
+            files = self._job_files.manifest
             mapping = files.mapping
             if mapping is None:
                 mapping = await self.executor.resolve_mapping(self.spec.launch)

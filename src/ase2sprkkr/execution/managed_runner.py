@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from threading import Event, Lock
 
-from .job_files import JobFilesOwner
+from .job_files import JobFiles, JobFilesOwner
 from .run_model import FileManifest
 from .base import (
     ExecutionOutcome, FailurePhase, OutputObservers, RunState,
@@ -35,7 +35,7 @@ class ManagedRunner(JobFilesOwner):
         self._return_code = None
         self._failure_phase = None
         self._failure_message = None
-        self._initialize_job_files(files if files is not None else FileManifest.from_spec(spec))
+        self._job_files = JobFiles(files if files is not None else FileManifest.from_spec(spec))
         self._output_observers = OutputObservers(output_listener)
         self._lock = Lock()
         self._done = Event()

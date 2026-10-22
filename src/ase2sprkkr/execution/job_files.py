@@ -43,10 +43,6 @@ class JobFiles:
         with self._lock:
             return self._manifest
 
-    def snapshot(self) -> FileManifest:
-        """Return a stable immutable value; subsequent changes cannot mutate it."""
-        return self.manifest
-
     def replace(self, manifest: FileManifest) -> FileManifest:
         """Install a reserved or recovered authoritative file state."""
         if not isinstance(manifest, FileManifest):
@@ -311,11 +307,9 @@ class JobFiles:
 class JobFilesOwner:
     """Expose file-state operations without leaking the mutable JobFiles owner."""
 
-    def _initialize_job_files(self, manifest: FileManifest):
-        self._job_files = JobFiles(manifest)
-
     def file_snapshot(self) -> FileManifest:
-        return self._job_files.snapshot()
+        """Return a stable immutable manifest snapshot."""
+        return self._job_files.manifest
 
     def replace_file_manifest(self, manifest: FileManifest) -> FileManifest:
         return self._job_files.replace(manifest)

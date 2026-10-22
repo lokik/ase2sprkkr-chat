@@ -418,15 +418,15 @@ def test_job_files_working_updates_do_not_modify_old_snapshots(tmp_path):
     path = str(tmp_path / "output.dat")
     initial = FileManifest(outputs=(FileEntry(path, availability_state="pending"),))
     files = JobFiles(initial)
-    first = files.snapshot()
+    first = files.manifest
     files.mark_availability(path, "available")
-    second = files.snapshot()
+    second = files.manifest
 
     assert first is initial
     assert second is not first
     assert first.outputs[0].availability_state == "pending"
     assert second.outputs[0].availability_state == "available"
-    assert files.snapshot() is second
+    assert files.manifest is second
 
 
 def test_job_files_reconciles_stale_observation_with_working_changes(tmp_path):

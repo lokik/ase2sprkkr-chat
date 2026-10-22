@@ -144,7 +144,7 @@ class LocalProjectRunner(ManagedRunner):
             *self.spec.output_files, *self.spec.cache_files,
         ):
             file_path(value, self.spec.directory, flush=True)
-        files = self._job_files.snapshot()
+        files = self._job_files.manifest
         return {
             "executor": "local",
             "id": self._run_id,

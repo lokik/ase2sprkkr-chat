@@ -358,7 +358,7 @@ class PsijRunner(ManagedRunner):
         return None if status is None else status.exit_code
 
     def _update_files(self):
-        self._job_files.merge(discover_local_files(self._job_files.snapshot()))
+        self._job_files.merge(discover_local_files(self._job_files.manifest))
 
     @property
     def backend_id(self):
