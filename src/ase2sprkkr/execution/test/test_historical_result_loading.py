@@ -683,3 +683,22 @@ def test_historical_restore_rejects_symlink_to_captured_contents(tmp_path):
     assert output.is_symlink()
     assert original.read_text() == "original output"
     assert manager.store.get(record.id).state is RunState.FINISHED
+
+def test_historical_batch_preflights_later_unsafe_destination(tmp_path):
+    """A later symlink must block restoration of an earlier missing input."""
+    manager, executor, record = _terminal_run(tmp_path)
+    missing_input = tmp_path / "run.inp"
+    missing_input.unlink()
+    output = tmp_path / "run.out"
+    preserved = tmp_path / "preserved.out"
+    output.rename(preserved)
+    output.symlink_to(preserved)
+
+    with pytest.raises(HistoricalFileMismatchError, match="symlink"):
+        manager.retrieve_result_files(record.id)
+
+    assert executor.fetch_calls == []
+    assert not missing_input.exists()
+    assert output.is_symlink()
+    assert preserved.read_text() == "original output"
+    assert manager.store.get(record.id).state is RunState.FINISHED
