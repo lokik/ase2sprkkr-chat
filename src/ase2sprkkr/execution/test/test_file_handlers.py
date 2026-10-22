@@ -737,3 +737,29 @@ def test_preparation_protects_stdin_matched_by_output_wildcard(tmp_path):
 
     assert stdin.read_text() == "command"
     assert not old_output.exists()
+
+
+def test_stream_verification_respects_frozen_failed_and_skipped(tmp_path):
+    import asyncio
+    from types import SimpleNamespace
+    from ase2sprkkr.execution.remote_file_handler import RemoteFileHandler
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+
+    class Transport:
+        async def file_signature(self, path):
+            raise AssertionError("Frozen terminal streams must not be reverified")
+
+    original = FileManifest(
+        stdout=FileEntry(str(tmp_path / "out"), "/remote/out",
+                         availability_state="failed",
+                         availability_message="backend publication failed"),
+        stderr=FileEntry(str(tmp_path / "err"), "/remote/err",
+                         availability_state="skipped"),
+    )
+    updated, error = asyncio.run(
+        RemoteFileHandler(Transport()).verify_stream_availability(
+            original, SimpleNamespace(output_file=None, error_file=None),
+        )
+    )
+    assert error is None
+    assert updated == original

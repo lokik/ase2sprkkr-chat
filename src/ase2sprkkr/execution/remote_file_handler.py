@@ -373,6 +373,10 @@ class RemoteFileHandler:
             entry = getattr(manifest, name)
             if entry is None or entry.local_path is None:
                 continue
+            # The frozen receipt already decided these states. A local
+            # verification must never turn them into successful delivery.
+            if entry.availability_state in ("failed", "skipped"):
+                continue
             identity = (entry.local_path, entry.remote_path)
             if identity in checked:
                 continue
