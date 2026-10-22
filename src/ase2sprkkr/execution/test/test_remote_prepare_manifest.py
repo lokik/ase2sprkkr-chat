@@ -106,8 +106,8 @@ def test_never_checks_mandatory_input_roles_without_upload(tmp_path, role):
         "extra": {"input_files": (source,)},
     }
     spec = ExecutionSpec(
-        argv=("true",), directory=str(local), input_file=None,
-        output_file=None, **roles[role],
+        argv=("true",), directory=str(local), output_file=None,
+        **roles[role],
     )
     mapping = FileMapping(str(local), str(remote), input_sync="never")
 
