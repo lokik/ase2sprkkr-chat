@@ -6,6 +6,7 @@ from ase.build import bulk
 import pytest
 
 from ...execution.base import RunState
+from ...execution import JobFiles, FileManifest
 from ...input_parameters.input_parameters import InputParameters
 from ...input_parameters.task_definition import TaskDefinition
 from ...potentials.potentials import Potential
@@ -23,18 +24,20 @@ def fe_bulk():
 class _UnstartedRunner:
     def __init__(self, spec):
         self.spec = spec
+        self.job_files = JobFiles(FileManifest.from_spec(spec))
         self.state = RunState.NEW
         self.result = None
         self.reference = None
         self.exception = None
+        self.callback = None
 
     def add_output_listener(self, callback):
         pass
 
 
 class _Executor:
-    def resolve_mpi(self, mpi):
-        return mpi
+    def resolve_spec(self, spec):
+        return spec
 
     def create_run(self, spec, callback=None):
         return _UnstartedRunner(spec)
@@ -192,6 +195,38 @@ def test_preparation_requires_task_definition(monkeypatch, tmp_path, fe_bulk):
         calculator.prepare(output_file=False, allow_temporary_files=True)
 
 
+def test_nonproject_run_without_explicit_executor_uses_shared_registry(
+    tmp_path, fe_bulk, monkeypatch,
+):
+    """Untracked runs do not need an ExecutionManager or a RunStore."""
+    class Registry:
+        def __init__(self):
+            self.endpoints = []
+
+        def for_endpoint(self, endpoint):
+            self.endpoints.append(endpoint)
+            return _Executor()
+
+    registry = Registry()
+    monkeypatch.setattr(
+        "ase2sprkkr.execution.persistence.default_executors",
+        lambda: registry,
+    )
+    calculator = SPRKKR(
+        atoms=fe_bulk.copy(),
+        directory=tmp_path,
+        profile=SPRKKRProfile(mpi=False),
+        empty_spheres=False,
+    )
+    runner = calculator.create_run(output_file=False)
+    try:
+        assert registry.endpoints == [calculator.profile.endpoint]
+        assert runner.spec.directory == str(tmp_path)
+        assert runner.persistence is None
+    finally:
+        runner.close()
+
+
 def test_prepared_calculation_constructs_its_runner(tmp_path, fe_bulk):
     calculator = SPRKKR(
         atoms=fe_bulk.copy(),
@@ -275,3 +310,42 @@ def test_reader_file_not_found_is_not_relabelled_as_missing_executable(
 
     assert prepared.closed
     assert prepared.input_file.closed
+
+
+
+def test_anonymous_temporary_input_materializes_without_taking_ownership(tmp_path):
+    import tempfile
+    from ase2sprkkr.sprkkr.calculation import _materialize_anonymous_input
+
+    with tempfile.TemporaryFile(mode="w+b") as original:
+        original.write(b"original input data")
+        original.seek(4)
+        materialized = _materialize_anonymous_input(
+            original, directory=str(tmp_path), save_input=False,
+        )
+        try:
+            assert materialized.name
+            assert materialized.read() == b"original input data"
+            assert original.tell() == 4
+            assert not original.closed
+        finally:
+            name = materialized.name
+            materialized.close()
+        assert not __import__("os").path.exists(name)
+
+
+def test_anonymous_generated_input_uses_named_temporary_file(tmp_path):
+    import tempfile
+    from ase2sprkkr.sprkkr.calculation import _materialize_anonymous_input
+
+    with tempfile.TemporaryFile(mode="w+") as original:
+        materialized = _materialize_anonymous_input(
+            original, directory=str(tmp_path), save_input=True,
+        )
+        try:
+            materialized.write("INPUT\n")
+            materialized.seek(0)
+            assert materialized.read() == "INPUT\n"
+        finally:
+            materialized.close()
+        assert not original.closed
