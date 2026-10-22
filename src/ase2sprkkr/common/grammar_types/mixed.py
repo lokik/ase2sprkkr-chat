@@ -8,7 +8,7 @@ from .grammar_type import GrammarType, compare_numpy_values, recognized_set_type
 from ..decorators import cached_property, add_to_signature
 
 from .basic import Energy, Real, Integer, QString, LineString, Flag, Bool, Boolean
-from .arrays import SetOf, set_of_integers, set_of_reals
+from .arrays import SetOf, set_of_integers, set_of_reals, set_of_strings
 
 
 class BaseMixed(GrammarType):
@@ -21,6 +21,8 @@ class BaseMixed(GrammarType):
 
     string_type = None
     """ Type of string grammar_type to be used.  To be redefined in the descendants. """
+
+    is_the_same_value = staticmethod(compare_numpy_values)
 
     def _grammar(self, param_name=False):
         return pp.Or((i.grammar(param_name) for i in self.types))
@@ -78,21 +80,26 @@ class Range(BaseMixed):
 def VariantGenerator(name, bool_type=Boolean.I, string_type=QString.I, add_types=None, doc=None):
 
     base_types = [Energy.I, Real.I, Integer.I, set_of_integers, set_of_reals, bool_type, string_type]
+    if isinstance(string_type, QString):
+        base_types.append(set_of_strings)
     if add_types:
         base_types += add_types
 
     def _string(self, val):
         if isinstance(val, bool):
             return Bool._string(self, val)
-        else:
-            return super()._string(val)
+        if isinstance(val, recognized_set_types):
+            # The dynamically generated class has no __class__ cell for
+            # zero-argument super().  Arrays also need their own SetOf
+            # formatter so bracketed string sets can round-trip.
+            return self.get_type(val)._string(val)
+        return GrammarType._string(self, val)
 
     return type(
         name,
         (BaseMixed,),
         {
             "string_type": string_type,
-            "is_the_same_value": staticmethod(compare_numpy_values),
             "types": base_types,
             "_string": _string,
             "__doc__": doc,
@@ -111,15 +118,55 @@ PotMixed = VariantGenerator(
     LineString.I,
     doc=""" A variant value to be used in potential files (in unknown - custom - options) """,
 )
-Variant = VariantGenerator("PotMixed", Boolean.I, QString.I, doc=""" Variant type for configuration """)
+Variant = VariantGenerator("Variant", Boolean.I, QString.I, doc=""" Variant type for configuration """)
 
 
 class CustomMixed(BaseMixed):
+    """Mixed type restricted to an explicit set of grammar types.
+
+    Unlike :class:`BaseMixed`, Python values must be dispatched only to one of
+    the configured alternatives. In particular, the string alternative is
+    used only for actual strings; it must not silently stringify mappings or
+    other unsupported objects.
+    """
+
     @add_to_signature(BaseMixed.__init__, prepend=True)
     def __init__(self, types, string_type=LineString.I, *args, **kwargs):
-        self.types = types
+        self.types = tuple(types)
         self.string_type = string_type
         super().__init__(*args, **kwargs)
+
+    def get_type(self, value):
+        if isinstance(value, str):
+            if not any(
+                candidate is self.string_type
+                or type(candidate) is type(self.string_type)
+                for candidate in self.types
+            ):
+                raise ValueError(f"String values are not allowed for {self}")
+            return self.string_type
+
+        if isinstance(value, recognized_set_types):
+            for candidate in self.types:
+                if not getattr(candidate, "array_access", False):
+                    continue
+                try:
+                    converted = candidate.convert(value)
+                    candidate.validate(converted)
+                except (TypeError, ValueError, KeyError):
+                    continue
+                return candidate
+            raise ValueError(f"Unsupported sequence value {value!r} for {self}")
+
+        try:
+            inferred = type_from_value(value)
+        except (TypeError, ValueError, KeyError) as exc:
+            raise ValueError(f"Unsupported value {value!r} for {self}") from exc
+
+        for candidate in self.types:
+            if candidate is inferred or candidate.__class__ is inferred.__class__:
+                return candidate
+        raise ValueError(f"Value {value!r} has a type not allowed for {self}")
 
 
 mixed = Mixed.I = Mixed()  # NOQA: E741

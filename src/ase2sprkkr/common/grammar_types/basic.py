@@ -264,9 +264,11 @@ class BaseRealWithUnits(Real):
             return value
         if isinstance(value, tuple) and len(value) == 2 and value[1] in self.units:
             return super().convert(value[0]) * self.units[value[1]]
+        if isinstance(value, tuple) and len(value) == 2:
+            return value
         if self.default_unit and isinstance(value, numbers.Real):
             return super().convert(value) * self.units[self.default_unit]
-        return value
+        return super().convert(value)
 
     def _validate(self, value, why="set"):
         if not isinstance(value, unyt_quantity):
@@ -489,7 +491,7 @@ class Keyword(GrammarType):
             return f"{str(name):<16} {v}"
 
         ali = ' (aliases in parentheses)' if self.aliases else ''
-        out = f"\n{prefix}Possible values {ali}:\n"
+        out = f"\n{prefix}Possible values{ali}:\n"
         out += "\n".join((f"{prefix}  {value(k,v)}" for k, v in self.choices.items()))
         if ad:
             out += f"\n\n{prefix}" + ad

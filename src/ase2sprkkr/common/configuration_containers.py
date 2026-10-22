@@ -6,12 +6,21 @@ and other containers, and are able to write them to a configuration file,
 and that are results of parsing of a configuration file.
 """
 
-from .configuration import Configuration
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from .configuration import Configuration, UnknownMemberPolicy
 from .file_utils import filename_from_file
+import copy
 import itertools
-from typing import Union, Any, Dict
-from .warnings import warnings, DataValidityError
-from .section_adaptors import SectionAdaptor, MergeSectionAdaptor
+from typing import Callable, Iterator, Mapping, Optional, Union, Any
+from .configuration_transaction import ConfigurationTransaction
+from .warnings import (
+    DataValidityError,
+    ReportInvalidPolicy,
+    RetainInvalidPolicy,
+    ValidationReason,
+)
 
 
 class DisabledAttributeError(AttributeError):
@@ -20,7 +29,7 @@ class DisabledAttributeError(AttributeError):
     """
 
 
-class BaseConfigurationContainer(Configuration):
+class BaseConfigurationContainer(Configuration, ABC):
     """Configuration container, that holds members, either in classical way
     (see :class:ConfigurationContainer) or treat them in a special way
     """
@@ -35,10 +44,19 @@ class BaseConfigurationContainer(Configuration):
           (e.g. for numpy arrays)
         """
         d = self._definition
-        vals = self.as_dict(copy=copy_values, only_changed=True)
+        values = self.as_dict(copy=copy_values, only_changed=True)
         out = d.result_class(definition=d)
-        out.set(vals, unknown="add")
+        out.set(
+            values,
+            unknown="add",
+            retain_invalid="all",
+            report_invalid="ignore",
+        )
         return out
+
+    @abstractmethod
+    def values(self):
+        """Return the configuration objects contained by this container."""
 
     def has_any_value(self) -> bool:
         """
@@ -49,10 +67,95 @@ class BaseConfigurationContainer(Configuration):
           has_any_value: bool
               True, if no value in the container is set, False otherwise
         """
-        for i in self._values():
+        for i in self.values():
             if i.has_any_value():
                 return True
         return False
+
+    def get_members(
+        self,
+        name: Any = None,
+        unknown: UnknownMemberPolicy = "find",
+        is_option: Optional[bool] = None,
+        lower_case: bool = True,
+        *,
+        accept: Optional[Callable[[Configuration], bool]] = None,
+    ) -> Iterator[Configuration]:
+        """Return members selected by a path.
+
+        ``None`` and leading parent operators are common to all containers;
+        each concrete container implements lookup of its own members in
+        :meth:`_get_members`.
+        """
+        if name is None:
+            yield self
+            return
+        if isinstance(name, str) and name.startswith(".."):
+            parent = self._container
+            # A concrete item of a repeated section is held in a technical
+            # collection carrying the same definition.  It must not add a
+            # level to explicit paths, because no such level exists in the
+            # definition tree.
+            if (
+                parent is not None
+                and parent._definition is self._definition
+            ):
+                parent = parent._container
+            if parent is not None:
+                yield from parent.get_members(
+                    name[2:],
+                    unknown,
+                    is_option,
+                    lower_case,
+                    accept=accept,
+                )
+            return
+        yield from self._get_members(
+            name,
+            unknown,
+            is_option,
+            lower_case,
+            accept=accept,
+        )
+
+    @abstractmethod
+    def _get_members(
+        self,
+        name: Any,
+        unknown: UnknownMemberPolicy,
+        is_option: Optional[bool],
+        lower_case: bool,
+        *,
+        accept: Optional[Callable[[Configuration], bool]],
+    ) -> Iterator[Configuration]:
+        """Return members owned directly or indirectly by this container."""
+        raise NotImplementedError
+
+    def get_member(
+        self,
+        name: Any,
+        *,
+        unknown: UnknownMemberPolicy = "find",
+        is_option: Optional[bool] = None,
+        lower_case: bool = True,
+        accept: Optional[Callable[[Configuration], bool]] = None,
+    ) -> Configuration:
+        """Return the first matching member, raising ``KeyError`` if absent.
+
+        ``unknown``, ``is_option``, ``lower_case`` and ``accept`` have the same
+        meaning as in :meth:`get_members`.
+        """
+        members = self.get_members(
+            name,
+            unknown,
+            is_option,
+            lower_case,
+            accept=accept,
+        )
+        try:
+            return next(members)
+        except StopIteration:
+            raise KeyError(f"No member with name {name} in {self}") from None
 
     @property
     def definition(self):
@@ -75,6 +178,49 @@ class ConfigurationContainer(BaseConfigurationContainer):
     This is a base class for these containers.
 
     """
+
+    class MemberChange:
+        """Attachment of a custom member staged on a container."""
+
+        def __init__(
+            self, container: "ConfigurationContainer", member: Configuration
+        ) -> None:
+            """Record the custom ``member`` attached to ``container``."""
+            self.container = container
+            self.member = member
+
+        def commit(self) -> None:
+            pass
+
+        def rollback(self) -> None:
+            self.container.remove_member(self.member.name)
+
+    class ParsedValuesChange:
+        """Temporary record of the values explicitly present in parsed input."""
+
+        _MISSING = object()
+
+        def __init__(
+            self, container: "ConfigurationContainer", values: Mapping[str, Any]
+        ) -> None:
+            """Expose parsed ``values`` temporarily on ``container``."""
+            self.container = container
+            self.old_values = getattr(
+                container, "_parsed_values", self._MISSING
+            )
+            container._parsed_values = values
+
+        def commit(self) -> None:
+            self._restore()
+
+        def rollback(self) -> None:
+            self._restore()
+
+        def _restore(self) -> None:
+            if self.old_values is self._MISSING:
+                self.container.__dict__.pop("_parsed_values", None)
+            else:
+                self.container._parsed_values = self.old_values
 
     def __init__(self, definition, container=None):
         """Create the container and its members, according to the definition"""
@@ -110,10 +256,12 @@ class ConfigurationContainer(BaseConfigurationContainer):
         """
         return self._members
 
-    def _get_member(self, name):
+    def _get_attribute_member(self, name: str) -> Configuration:
         """
-        Return the member of the container of a given name.
-        It search either the members and interactive_members containers
+        Return a directly accessible member for attribute access.
+
+        Search both the original and sanitized interactive names, and reject
+        members which are hidden or disabled by their condition.
         """
         members = self.__dict__.get("_members")
         if members is None:
@@ -159,7 +307,7 @@ class ConfigurationContainer(BaseConfigurationContainer):
         if name.startswith("_"):
             raise AttributeError(name)
         try:
-            out = self._get_member(name)
+            out = self._get_attribute_member(name)
         except AttributeError as e:
             if isinstance(e, DisabledAttributeError):
                 msg = str(e)
@@ -222,38 +370,43 @@ class ConfigurationContainer(BaseConfigurationContainer):
                 return name[1:] in member
         return name in self._members
 
-    def clear(self, do_not_check_required=False, call_hooks=True, generated=None):
+    def stage_clear(
+        self,
+        transaction: ConfigurationTransaction,
+        *,
+        check_required: bool = True,
+    ) -> bool:
+        """Stage descendant clearing in ``transaction`` without validation.
+
+        ``check_required`` is forwarded to descendant options.
         """
-        Erase all values (or reset to default) from all options in the container
-        (ad subcontainers)
+        changed = False
+        for member in self._members.values():
+            if member._definition.is_generated:
+                continue
+            changed = member.stage_clear(
+                transaction,
+                check_required=check_required,
+            ) or changed
+        return changed
 
-        Parameters
-        ----------
-        do_not_check_required: bool
-          Do not check validity of the values after clearing. If ``False`` (default)
-          is passed as this argument, the required option without a default value
-          (or a section containing such value) throw an exception, which prevents the
-          clearing (neverthenless, previous values in the section will be cleared anyway).
-
-        call_hooks: bool
-          If False, the cleared values do not raise theirs hooks
-
-        generated: bool
-          If True
-        """
-        for i in self._members.values():
-            i.clear(do_not_check_required, call_hooks=call_hooks, generated=False if generated is None else generated)
-
-    def get_members(self, name=None, unknown="find", is_option=None, lower_case=True):
+    def _get_members(
+        self,
+        name: str,
+        unknown: UnknownMemberPolicy,
+        is_option: Optional[bool],
+        lower_case: bool,
+        *,
+        accept: Optional[Callable[[Configuration], bool]],
+    ) -> Iterator[Configuration]:
         """
         Get all the members of given name. According to ``unknown`` parameter,
         either only from self, or from any child containers, too.
 
         Parameters
         ----------
-        name: None or str
-          If None, return contained values as a dictionary.
-          Otherwise, return the value of the member with the given name.
+        name: str
+          Name or dotted path of the requested member.
 
         unknown: str or None
           If unknown == 'find' and there is no member with a given name,
@@ -266,35 +419,52 @@ class ConfigurationContainer(BaseConfigurationContainer):
         lower_case: bool
           If true, try to search for the lower-cased name
 
+        accept: callable
+          If given, return only members for which this predicate is true.
+          A rejected direct member does not prevent searching descendants.
+
         Return
         ------
         value: mixed
         """
-        if name is None:
-            yield self
-            return
         if "." in name:
-            name, child = name.split(".")
-        else:
-            child = None
+            section_name, child_name = name.split(".", 1)
+            members = self.get_members(
+                section_name,
+                unknown,
+                lower_case=lower_case,
+            )
+            for member in members:
+                if member._definition.is_option:
+                    continue
+                yield from member.get_members(
+                    child_name,
+                    unknown,
+                    is_option,
+                    lower_case,
+                    accept=accept,
+                )
+            return
 
-        def values():
-            n = name
-            out = self._members.get(n)
-            if not out and lower_case:
-                n = n.lower()
-                out = self._lowercase_members.get(name)
-            if out:
-                yield out
-            elif unknown == "find":
-                 for i in self:
-                     yield from i._find_members(n, is_option, lower_case)
+        member = self._members.get(name)
+        if member is None and lower_case:
+            member = self._lowercase_members.get(name.lower())
 
-        if child:
-            for v in values():
-                yield from v.get_members(child, unknown, is_option, lower_case)
-        else:
-            yield from values()
+        if (
+            member is not None
+            and (is_option is None or member._definition.is_option is is_option)
+            and (accept is None or accept(member))
+        ):
+            yield member
+            return
+        elif unknown == "find":
+            search_name = name.lower() if lower_case else name
+            for child in self:
+                for found_member in child._find_members(
+                    search_name, is_option, lower_case
+                ):
+                    if accept is None or accept(found_member):
+                        yield found_member
 
     def get(self, name=None, unknown="find", is_option=True):
         """
@@ -316,21 +486,59 @@ class ConfigurationContainer(BaseConfigurationContainer):
         ------
         value: mixed
         """
-        item = self.get_members(name, unknown, is_option)
-        try:
-            item = next(item)
-        except StopIteration:
-            raise ValueError(f"No {name} member of {self}")
+        if name is None:
+            return self.as_dict(only_changed=False, generated=True)
+        item = self.get_member(name, unknown=unknown, is_option=is_option)
         return item.as_dict(only_changed=False, generated=True)
 
-    def set(self, values: Union[Dict[str, Any], str, None] = {}, value=None, *, unknown="find", error=None, **kwargs):
-        error = error or "section"
-        self._set(values, value, unknown=unknown, error=error, **kwargs)
-        self.validate(why="warning")
+    def set(
+        self,
+        values: Optional[Union[Mapping[str, Any], str]] = None,
+        value: Any = None,
+        *,
+        unknown: UnknownMemberPolicy = "find",
+        validation_reason: ValidationReason = "set",
+        retain_invalid: Optional[RetainInvalidPolicy] = None,
+        report_invalid: Optional[ReportInvalidPolicy] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Set values using independent retention and reporting policies.
 
-    def _set(self, values: Union[Dict[str, Any], str, None] = {}, value=None, *, unknown="find", error=None, **kwargs):
+        ``retain_invalid`` accepts ``"none"``, ``"typed"`` or ``"all"``;
+        ``report_invalid`` accepts ``"raise"``, ``"warn"`` or ``"ignore"``.
+        Parsing defaults to retaining typed invalid values and warning. Other
+        assignments default to discarding invalid values and raising.
+
+        ``values`` is a mapping or one member name paired with ``value``;
+        ``unknown`` selects lookup, addition, ignoring or failure behavior.
+        ``validation_reason`` is ``"set"`` or ``"parse"``. Additional keyword
+        arguments are treated as member assignments.
         """
-        Set the value(s) of parameter(s). Usage:
+        with self._mutation(
+            validation_reason, retain_invalid, report_invalid
+        ) as (transaction, _policy):
+            self.stage(
+                transaction,
+                values,
+                value,
+                unknown=unknown,
+                **kwargs,
+            )
+
+    def stage(
+        self,
+        transaction: ConfigurationTransaction,
+        values: Optional[Union[Mapping[str, Any], str]] = None,
+        value: Any = None,
+        *,
+        unknown: UnknownMemberPolicy = "find",
+        **kwargs: Any,
+    ) -> bool:
+        """
+        Stage values in a transaction. This is the sole assignment-routing
+        implementation for configuration containers.
+
+        Usage:
 
         > input_parameters.set({'NITER': 5, 'NE': [10]})
         or
@@ -345,63 +553,101 @@ class ConfigurationContainer(BaseConfigurationContainer):
         value:
           Value to be set. Setting this argument require to pass string name to the values argument.
 
-        unkwnown: 'add', 'find' or None
+        unknown: 'add', 'find' or None
           How to handle unknown (not known by the definition) parameters.
           If 'find', try to find the values in descendant containers.
           If 'add', add unknown values as custom values.
           If None, throw an exception.
           Keyword only argument.
 
+        transaction: ConfigurationTransaction
+          Transaction receiving the staged changes.
+
         **kwargs: dict
           The values to be set (an alternative syntax as syntactical sugar)
         """
-        if values.__class__ is str:
-            values = {values: value}
+        if isinstance(values, str):
+            assignments = {values: value}
         elif value is not None:
             raise ValueError(
                 "If value argument of Container.set method is given, the values have to be string name of the value"
             )
-
-        def set_value(name, value):
-            if "." in name:
-                section, name = name.split(".", 1)
-                if section not in self:
-                    if unknown == "add":
-                        self.add(section)
-                    else:
-                        raise KeyError(f"There is no section {section} in {self} to set{section}.{name} to {value}")
-                self._members[section]._set(
-                    {name: value}, unknown="fail" if unknown == "find" else unknown, error=error
-                )
-                return
-            option = self._members.get(name, None)
-            if not option or not option._definition.accept_value(value):
-                if unknown == "find":
-                    option = self._find_member(name.lower(), True, True)
-                    if option:
-                        option._set(value, error=error)
-                        return
-                if unknown == "ignore":
-                    return
-                if not unknown == "add":
-                    raise KeyError("No option with name {} in {}".format(name, str(self)))
-                    return
-                self.add(name, value)
-            else:
-                option._set(value, unknown=unknown, error=error)
-
-        if values:
+        elif values is None:
+            assignments = {}
+        else:
             try:
-                items = values.items()
+                values.items()
             except AttributeError:
-                raise ValueError("Only a dictionary can be assigned to a section.")
-            for i, v in items:
-                set_value(i, v)
+                raise ValueError(
+                    "Only a mapping can be assigned to a section."
+                ) from None
+            assignments = values
 
         if kwargs:
-            self.validate_section(why="set", section_adaptor=MergeSectionAdaptor(kwargs, self))
-            for i, v in kwargs.items():
-                set_value(i, v)
+            try:
+                assignments = copy.copy(assignments)
+                assignments.update(kwargs)
+            except (AttributeError, TypeError):
+                assignments = dict(assignments)
+                assignments.update(kwargs)
+
+        policy = transaction.policy
+        if policy.why == "parse":
+            transaction.push(self.ParsedValuesChange(self, assignments))
+
+        changed = False
+        for name, assignment in assignments.items():
+            changed = self.stage_value(
+                transaction,
+                name,
+                assignment,
+                unknown=unknown,
+            ) or changed
+        return changed
+
+    def stage_value(
+        self,
+        transaction: ConfigurationTransaction,
+        name: str,
+        value: Any,
+        *,
+        unknown: UnknownMemberPolicy = "find",
+    ) -> bool:
+        """Resolve ``name`` and stage ``value`` using the supplied policies."""
+
+        def accepts_value(member: Configuration) -> bool:
+            """Return whether ``member`` accepts the proposed value."""
+            return member._definition.accept_value(value)
+
+        try:
+            member = self.get_member(
+                name,
+                unknown=unknown,
+                accept=accepts_value,
+            )
+        except KeyError:
+            if unknown == "ignore":
+                return False
+            if unknown != "add":
+                raise
+            if "." in name:
+                raise KeyError(
+                    f"Cannot add dotted path {name} to {self}; "
+                    "set the value through its containing section"
+                ) from None
+        else:
+            return member.stage(
+                transaction, value, unknown=unknown
+            )
+
+        with transaction.savepoint() as savepoint:
+            change = transaction.push(self.stage_member(name))
+            changed = change.member.stage(
+                transaction, value, unknown="add"
+            )
+            if not changed:
+                savepoint.rollback()
+        return changed
 
     def add(self, name: str, value=None):
         """
@@ -415,14 +661,30 @@ class ConfigurationContainer(BaseConfigurationContainer):
         value: value
           Value of the added value
         """
-        if not getattr(self._definition, "custom_class", False):
-            raise TypeError(f"Can not add custom members to a configuration class {self._definition}")
+        with self._mutation("set") as (transaction, _policy):
+            change = transaction.push(self.stage_member(name))
+            if value is not None:
+                change.member.stage(
+                    transaction, value, unknown="add"
+                )
+
+    def stage_member(self, name: str) -> "ConfigurationContainer.MemberChange":
+        """Attach custom member ``name`` and return its rollback change."""
+        custom_class = getattr(self._definition, "custom_class", None)
+        if not custom_class:
+            raise TypeError(
+                f"Can not add custom members to a configuration class "
+                f"{self._definition}"
+            )
         if name in self._members:
-            raise TypeError(f"Section member {name} is already in the section {self._definition}")
-        cc = self._definition.custom_class
-        self._add(cc(name, self))
-        if value is not None:
-            self._members[name].set(value, unknown="add")
+            raise TypeError(
+                f"Section member {name} is already in the section "
+                f"{self._definition}"
+            )
+        member = custom_class(name, self)
+        change = self.MemberChange(self, member)
+        self._add(member)
+        return change
 
     def remove_member(self, name: str):
         """
@@ -453,9 +715,13 @@ class ConfigurationContainer(BaseConfigurationContainer):
         """Iterate over all members of the container"""
         yield from self._members.values()
 
+    def values(self):
+        """Return the contained configuration values."""
+        return self._members.values()
+
     def _values(self):
         """Iterate over all members of the container"""
-        yield from self._members.values()
+        yield from self.values()
 
     def _as_dict(self, get):
         """
@@ -551,10 +817,10 @@ class ConfigurationContainer(BaseConfigurationContainer):
         if name[0] == "_" or name in self.__dict__ or hasattr(getattr(self.__class__, name, None), "__set__"):
             super().__setattr__(name, value)
         else:
-            val = self._get_member(name)
+            val = self._get_attribute_member(name)
             val.set(value)
 
-    def _validate(self, why: str = "save"):
+    def _validate(self, why: str):
         """Validate the configuration data. Raise an exception, if the validation fail.
 
         Parameters
@@ -565,47 +831,16 @@ class ConfigurationContainer(BaseConfigurationContainer):
           ``set`` - Validation on user input. Allow required values not to be set.
           ``parse`` - Validation during parsing - some check, that are enforced by the parser, can be skipped.
         """
-        sa = SectionAdaptor(self)
-        self._definition.validate(sa, why)
         if why == "save" and not self._definition.is_optional and not self.has_any_value():
-            raise ValueError(f"Non-optional section {self._definition.name} has no value to save")
-        for o in self._values():
-            d = o._definition
-            if d.allowed(self):
-                o._validate(why)
-        self.validate_section(why, sa)
-
-    def validate_section(self, why: str = "save", section_adaptor=None):
-        if why == "warning":
-            self._validate_section("save", section_adaptor)
-        else:
-            with warnings.catch_warnings():
-                warnings.simplefilter("error", DataValidityError)
-                self._validate_section(why, section_adaptor)
-
-    def _validate_section(self, why: str = "save", section_adaptor=None):
-        if section_adaptor is None:
-            section_adaptor = SectionAdaptor(self)
-
-        for o in self._values():
-            d = o._definition
-            if d.allowed(section_adaptor) and d.validate_section:
-                d.validate_section(section_adaptor, why)
-
-    def has_any_value(self) -> bool:
-        """
-        Return True if any member of the section has value.
-
-        Return
-        ------
-          has_any_value: bool
-              True, if no value in the container is set, False otherwise
-        """
-        for i in self._values():
-            if i.has_any_value():
-                return True
-        return False
-
+            DataValidityError.warn(f"Non-optional section {self._definition.name} has no value to save")
+        for item in self._values():
+            if (
+                not item._definition.is_option
+                and not item._definition.allowed(self)
+            ):
+                continue
+            item._validate(why)
+        self._definition.run_validators(self, self, why)
 
 class BaseSection(ConfigurationContainer):
     """A section of SPRKKR configuration - i.e. part of the configuration file."""
@@ -668,6 +903,8 @@ class RootConfigurationContainer(ConfigurationContainer):
 
     name_in_grammar = False
 
+    _filename = None
+
     def read_from_file(self, file, clear_first: bool = True, allow_dangerous: bool = False):
         """Read data from a file
 
@@ -684,18 +921,27 @@ class RootConfigurationContainer(ConfigurationContainer):
           Allow to load dangerous_values, i.e. the values that do not pass the requirements for the input values (e.g. of a different type or constraint-violating)
         """
         values = self._definition.parse_file(file, allow_dangerous=allow_dangerous)
-        if clear_first:
-            self.clear(True)
-        self.set(values, unknown="add")
+        with self._mutation("parse") as (transaction, _policy):
+            if clear_first:
+                self.stage_clear(transaction, check_required=False)
+            self.stage(
+                transaction,
+                values,
+                unknown="add",
+            )
         self._filename = filename_from_file(file, None)
+
+    @property
+    def original_filename(self):
+        return self._filename
 
     def find(self, name, unknown="find", is_option=True, lower_case=True, first=True):
         """Find a configuration value of a given name in the owned sections"""
-        out = self.get_members(name, unknown, is_option, lower_case)
         if first:
-            try:
-                return next(out)
-            except StopIteration:
-                raise ValueError(f"No {name} member of {self}")
-        else:
-            return out
+            return self.get_member(
+                name,
+                unknown=unknown,
+                is_option=is_option,
+                lower_case=lower_case,
+            )
+        return self.get_members(name, unknown, is_option, lower_case)

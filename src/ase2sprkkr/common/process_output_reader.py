@@ -1,191 +1,56 @@
-"""Readers for processes outputs.
-
-They employ asyncio to makes possible read stdio and stderr concurently.
-"""
+"""Parsers and stream helpers for calculation output."""
 
 import asyncio
 import functools
-import subprocess
 import os
-import sys
 import numpy as np
-from threading import Thread
+from .async_utils import run_coro_sync
 from .decorators import maybeclassmethod
 from .file_utils import filename_from_file
 
 
 class ProcessOutputParser:
-    """
-    Class, that run a process, optionally saves all the output of the process to a file,
-    and pass the stdout and stderr of the process to its two async routines, read_error
-    and read_output.
+    """Parse asynchronous stdout/stderr streams.
 
-    The descendant can redefine the routines to parse the output (or its parts).
+    Process creation, cancellation, file writing and raw-output delivery belong
+    to the execution backend. Descendants only interpret the supplied streams.
     """
 
-    def __init__(self, print_output=False, read_callback=None):
+    def __init__(self, print_output=False):
         self.set_print_output(print_output)
-        self.read_callback = read_callback
-        self._stopped = False
 
-    def stop_the_process(self):
-        self._stopped = True
-        self._kill()
-
-    def _kill(self):
-        if self.proc and self.proc.returncode is None:
-            self.proc.kill()  # SIGKILL on Unix, TerminateProcess on Windows
-        self.proc.terminate()  # SIGTERM on Unix, CTRL-BREAK-ish on Windows
-
-        try:
-            # 2) Give it time to clean up
-            run_coro_sync(asyncio.wait_for(self.proc.wait(), 0.1))
-            return
-        except asyncio.TimeoutError:
-            pass
-        self.proc.kill()  # SIGKILL / TerminateProcess
-
-    async def run_subprocess(self, read_args=[]):
-
-        if self.directory:
-            dr = os.getcwd()
-            os.chdir(self.directory)
-        else:
-            dr = None
-        if self._stopped:
-            raise asyncio.CancelledError()
-
-        self.proc = await asyncio.create_subprocess_exec(
-            *self.cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **self.kwargs
-        )
-        if self._stopped:
-            self._kill()
-
-        if dr:
-            os.chdir(dr)
-
-        exception = None
-
-        def process(data, kind):
-            utf8 = None
-            if self.print_output:
-                utf8 = data.decode("utf8")
-                print(utf8, end="")
-            if self.outfile:
-                self.outfile.write(data)
-            if self.read_callback:
-                if utf8 is None:
-                    utf8 = data.decode("utf8")
-                self.read_callback(utf8, kind)
-
-        def replace_feed_data(stream_reader, kind):
-            nonlocal exception
-            if stream_reader._buffer:
-                process(stream_reader._buffer, kind)
-
-            def feed_data(data):
-                nonlocal exception
-                try:
-                    process(data, kind)
-                except Exception as e:
-                    if not exception:
-                        exception = e
-                    raise
-                fd(data)
-
-            fd = stream_reader.feed_data
-            stream_reader.feed_data = feed_data
-
-        if self.outfile:
-            replace_feed_data(self.proc.stdout, "out")
-            replace_feed_data(self.proc.stderr, "err")
-
-        try:
-            out = await asyncio.gather(
-                self.read_output(self.proc.stdout, *read_args),
-                self.read_error(self.proc.stderr, *read_args),
-                self.proc.wait(),
-            )
-        finally:
-            if self.outfile:
-                self.outfile.close()
-
-        if exception:
-            raise exception
-
-        return self.result(*out)
-
-    def result(self, output, error, wait):
-        """This function is for postprocessing the results.
-
-        It is intended to be predefined in the descendants
-
-        Parameters
-        ----------
-
-        output: mixed
-          Result of the self.read_output
-
-        error: mixed
-          Result of the self.read_error
-
-        wait: int
-          The process return value
-
-        Return
-        ------
-
-        out: mixed
-          Currently, the tuple (output, error, return_code) is returned, however,
-          subclasses can return anything they want.
-        """
-
-        if wait != 0:
-            e = ValueError(f"The process ended with return value {wait}")
-            e.output = output
-            e.error = error
-            raise e
-        return output, error, wait
-
-    def run_async(self, cmd, outfile, directory=None, read_args=[], **kwargs):
-        self.cmd = cmd
-        self.outfile = outfile
-        self.directory = directory
-        self.kwargs = kwargs
-        return self.run_subprocess(read_args)
-
-    def _run(self, cmd, outfile, directory=None, read_args=[], **kwargs):
-        coro = self.run_async(cmd, outfile, directory, read_args, **kwargs)
-        return run_coro_sync(coro)
+    def result(self, output, error, return_code):
+        """Postprocess parsed stdout/stderr after execution completes."""
+        # Missing exit status is not evidence of process failure. Preserve
+        # the unknown code instead of converting it to either zero or an error.
+        if return_code is not None and return_code != 0:
+            exc = ValueError(f"The process ended with return value {return_code}")
+            exc.output = output
+            exc.error = error
+            raise exc
+        return output, error, return_code
 
     async def read_error(self, stderr, *args):
         while True:
-            line=await stderr.readline()
+            line = await stderr.readline()
             if not line:
-               return
-            if self.print_output is True:
-               print(line.decode('utf8'), end='', file=sys.stderr)
+                return
 
     async def read_output(self, stdout, *args):
-        raise NotImplementedError("Please, redefine ProcessOuputParser.read_output coroutine")
+        raise NotImplementedError("Please, redefine ProcessOutputParser.read_output coroutine")
 
     def set_print_output(self, print_output):
         self.print_output = print_output
 
     @maybeclassmethod
     def read_from_file(self, cls, output, error=None, read_args=[], return_code=0):
-        """
-        Synchronous wrapper for reading output/error from files.
-        """
+        """Synchronous wrapper for reading output/error from files."""
         if not self:
             self = cls()
-
         return run_coro_sync(self.read_output_file(output, error, read_args, return_code))
 
     async def read_output_file(self, output, error=None, read_args=[], return_code=0):
-        """
-        Async version: reads output and error from files using AsyncioFileReader.
-        """
+        """Read output and error files through the same async parser API."""
 
         async def read_output_file():
             with AsyncioFileReader(output) as air:
@@ -198,32 +63,32 @@ class ProcessOutputParser:
                 return await self.read_error(air, *read_args)
 
         out_result, err_result = await asyncio.gather(read_output_file(), read_error_file())
-
         return self.result(out_result, err_result, return_code)
 
 
 class AsyncioFileReader:
     """File reader that mimics asyncio StreamReader.
-    In fact, it is synchronous, but it offers the
-    same interface as the asyncio StreamReader.
+
+    It is synchronous internally, but exposes the async methods used by output
+    parsers so the same parser can consume a subprocess stream or a saved file.
     """
 
     def __init__(self, filename, buffersize=8192):
-        self.file = None  # just to set it in case the open fail
-        self.file = open(os.fspath(filename), "rb") if isinstance(filename, (str, bytes, os.PathLike)) else filename
+        self._owns_file = isinstance(filename, (str, bytes, os.PathLike))
+        self.file = None
+        self.file = open(os.fspath(filename), "rb") if self._owns_file else filename
         self.buffersize = buffersize
 
     def __fspath__(self):
-        """Return the path of the underlying file."""
         filename = filename_from_file(self.file, None)
         if filename is None:
             raise TypeError("The underlying stream has no filesystem path")
         return filename
 
     def close(self):
-        if self.file:
-            self.file.close()
-            self.file = None
+        file, self.file = self.file, None
+        if file is not None and self._owns_file:
+            file.close()
 
     def __del__(self):
         self.close()
@@ -260,11 +125,8 @@ class AsyncioFileReader:
         if lsep == 0:
             return b""
 
-        # https://stackoverflow.com/questions/14128763/how-to-find-the-overlap-between-2-sequences-and-return-it
         shifts = self.separator_shifts(sep)
 
-        # do the actual search
-        # read the bytes into the array to avoid incrementing the array one by one
         out = b""
         buffer = bytearray(self.buffersize + lsep)
         bufEnd = 0
@@ -317,38 +179,3 @@ async def readline_until(stdout, cond, can_end=True):
             return line.decode("utf8")
 
 
-def run_coro_sync(coro_func):
-    """
-    Run an async coroutine from a synchronous context,
-    even if an event loop is already running.
-    `coro_func` must be an async function, not a coroutine object.
-    """
-
-    # Is there a running event loop?
-    try:
-        asyncio.get_running_loop()
-        in_thread = True
-    except RuntimeError:
-        in_thread = False
-
-    if not in_thread:
-        return asyncio.run(coro_func)
-
-    # YES → must run in another thread
-    result = None
-    exc = None
-
-    def runner():
-        nonlocal result, exc
-        try:
-            result = asyncio.run(coro_func)
-        except Exception as e:
-            exc = e
-
-    t = Thread(target=runner)
-    t.start()
-    t.join()
-
-    if exc:
-        raise exc
-    return result

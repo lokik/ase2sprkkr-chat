@@ -1,0 +1,125 @@
+import asyncio
+import io
+import threading
+
+import pytest
+
+from ..async_utils import run_coro_sync
+from ..process_output_reader import AsyncioFileReader, ProcessOutputParser
+
+
+class _OutputParser(ProcessOutputParser):
+    async def read_output(self, stdout, *args):
+        out = b""
+        while line := await stdout.readline():
+            out += line
+        return out
+
+    async def read_error(self, stderr, *args):
+        out = b""
+        while line := await stderr.readline():
+            out += line
+        return out
+
+
+def test_read_output_file(tmp_path):
+    output = tmp_path / "stdout"
+    error = tmp_path / "stderr"
+    output.write_bytes(b"one\ntwo\n")
+    error.write_bytes(b"warning\n")
+
+    out, err, return_code = _OutputParser().read_from_file(output, error)
+
+    assert out == b"one\ntwo\n"
+    assert err == b"warning\n"
+    assert return_code == 0
+
+
+def test_run_coro_sync_outside_event_loop():
+    async def operation():
+        return 42
+
+    assert run_coro_sync(operation()) == 42
+
+
+def test_run_coro_sync_inside_event_loop_returns_and_propagates_worker_errors():
+    async def check():
+        event_loop_thread = threading.get_ident()
+
+        async def operation():
+            return threading.get_ident()
+
+        assert run_coro_sync(operation()) != event_loop_thread
+
+        # Reuse the same running event loop for independent error types.
+        for error in (ValueError("failed"), KeyboardInterrupt("interrupted")):
+            async def fail(error=error):
+                raise error
+
+            with pytest.raises(type(error)) as raised:
+                run_coro_sync(fail())
+            assert raised.value is error
+
+    asyncio.run(check())
+
+
+def test_process_parser_can_read_from_an_existing_event_loop(tmp_path):
+    output = tmp_path / "stdout"
+    error = tmp_path / "stderr"
+    output.write_bytes(b"out\n")
+    error.write_bytes(b"err\n")
+
+    async def check():
+        assert _OutputParser().read_from_file(output, error) == (
+            b"out\n", b"err\n", 0,
+        )
+
+    asyncio.run(check())
+
+
+def test_read_output_file_does_not_close_caller_streams():
+    output = io.BytesIO(b"output\n")
+    error = io.BytesIO(b"warning\n")
+
+    parsed = _OutputParser().read_from_file(output, error)
+
+    assert parsed == (b"output\n", b"warning\n", 0)
+    assert not output.closed and not error.closed
+    output.seek(0)
+    error.seek(0)
+    assert output.read() == b"output\n"
+    assert error.read() == b"warning\n"
+
+
+def test_reader_only_closes_streams_that_it_opens(tmp_path):
+    source = tmp_path / "output"
+    source.write_bytes(b"data")
+
+    with AsyncioFileReader(source) as reader:
+        owned = reader.file
+        assert not owned.closed
+    assert owned.closed
+
+    with source.open("rb") as borrowed:
+        with AsyncioFileReader(borrowed) as reader:
+            assert reader.file is borrowed
+            assert borrowed.read() == b"data"
+        assert reader.file is None
+        assert not borrowed.closed
+
+
+@pytest.mark.parametrize("return_code", [None, 0, 7], ids=["unknown", "success", "failed"])
+def test_saved_stream_parser_preserves_unknown_exit_status(return_code):
+    output = io.BytesIO(b"parsed output\n")
+    error = io.BytesIO(b"parsed error\n")
+    if return_code == 7:
+        with pytest.raises(ValueError, match="return value 7") as failure:
+            _OutputParser().read_from_file(
+                output, error, return_code=return_code,
+            )
+        assert failure.value.output == b"parsed output\n"
+        assert failure.value.error == b"parsed error\n"
+    else:
+        assert _OutputParser().read_from_file(
+            output, error, return_code=return_code,
+        ) == (b"parsed output\n", b"parsed error\n", return_code)

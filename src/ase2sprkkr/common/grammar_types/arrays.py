@@ -1,6 +1,6 @@
 """Grammar types for array, sequences and tables"""
 
-from collections import namedtuple
+from collections import namedtuple, abc
 import numpy as np
 import pyparsing as pp
 import itertools
@@ -8,10 +8,31 @@ import copy
 from typing import List, Optional, Union
 from ..alternative_types import numpy_types
 
-from ..grammar import generate_grammar, delimitedList, line_end, White
+from ..grammar import generate_grammar, delimitedList, line_end, White, Forward
 from .grammar_type import GrammarType, compare_numpy_values, type_from_type, type_from_default_value, TypedGrammarType
 from ..decorators import add_to_signature, cached_property
-from .basic import Integer, Real, Unsigned, real
+from .basic import Integer, Real, Unsigned, QString, real
+
+
+_named_sequence_types = {}
+
+
+def _restore_named_sequence(names, values):
+    return _named_sequence_type(names)(*values)
+
+
+def _named_sequence_type(names):
+    names = tuple(names)
+    value_type = _named_sequence_types.get(names)
+    if value_type is None:
+        value_type = namedtuple("_".join(names), names)
+
+        def _reduce(value):
+            return _restore_named_sequence, (names, tuple(value))
+
+        value_type.__reduce__ = _reduce
+        _named_sequence_types[names] = value_type
+    return value_type
 
 
 def _array_dtype_condition_always_true(_type, _shape):
@@ -92,36 +113,38 @@ class Array(GrammarType):
         self._build_grammar()
 
     def _build_grammar(self):
+        with generate_grammar():
+            self._grammar = self._do_build_grammar()
+
+    def _do_build_grammar(self):
         delimiter = self.delimiter
 
-        with generate_grammar():
-            if self._delimiter_spec is not None:
-                self.delimiter_str = self._delimiter_spec
-                delimiter = pp.Suppress(self._delimiter_spec)
+        if self._delimiter_spec is not None:
+            self.delimiter_str = self._delimiter_spec
+            delimiter = pp.Suppress(self._delimiter_spec)
 
-            grammar = self.type.grammar()
-            if self.write_length:
-                grammar = pp.Word(pp.nums).set_parse_action(lambda t: int(t[0])) + pp.ZeroOrMore(delimiter + grammar)
+        grammar = self.type.grammar()
+        if self.write_length:
+            grammar = pp.Word(pp.nums).set_parse_action(lambda t: int(t[0])) + pp.ZeroOrMore(delimiter + grammar)
 
-                def check(x):
-                    if len(x) != x[0] + 1:
-                        raise ValueError("Wrong number of list items")
-                    return x[1:]
+            def check(x):
+                if len(x) != x[0] + 1:
+                    raise ValueError("Wrong number of list items")
+                return x[1:]
 
-                grammar.set_parse_action(check)
-            elif self.min_length and self.min_length == self.max_length:
-                if delimiter:
-                    g2 = delimiter + grammar
-                    grammar = grammar + g2 * (self.max_length - 1)
-                else:
-                    grammar = grammar * self.max_length
+            grammar.set_parse_action(check)
+        elif self.min_length and self.min_length == self.max_length:
+            if delimiter:
+                g2 = delimiter + grammar
+                grammar = grammar + g2 * (self.max_length - 1)
             else:
-                grammar = delimitedList(grammar, delimiter)
+                grammar = grammar * self.max_length
+        else:
+            grammar = delimitedList(grammar, delimiter)
 
-            self._set_convert_action(grammar)
-            grammar.set_name(self.grammar_name())
-
-        self._grammar = grammar
+        self._set_convert_action(grammar)
+        grammar.set_name(self.grammar_name())
+        return grammar
 
     def __getstate__(self):
         state = self.__dict__.copy()
@@ -207,11 +230,19 @@ class Array(GrammarType):
             return _array_dtype_condition_not_object_and_scalar
 
     def convert(self, value):
+        if isinstance(value, abc.Mapping):
+            raise ValueError(
+                f"An array-like value is required, mapping "
+                f"{type(value).__name__} is not allowed"
+            )
+
         if self.as_list:
             if callable(self.as_list):
-                return value if isinstance(value, self.as_list) else self.as_list(value)
+                value = value if isinstance(value, self.as_list) else self.as_list(value)
+                return self.as_list(self.type.convert(item) for item in value)
             else:
-                return list(value) if isinstance(value, tuple) else value
+                value = list(value) if isinstance(value, tuple) else value
+                return [self.type.convert(item) for item in value]
 
         type, shape = self.type.numpy_dtype()
         type = numpy_types.get(type, type)
@@ -225,21 +256,13 @@ class Array(GrammarType):
 
             if self._dtype_condition(type, shape):
 
-                def validate(v):
-                    self.type.validate(v)
-                    return v
-
-                value = (validate(self.type.convert(i)) for i in value)
+                value = (self.type.convert(i) for i in value)
                 out = np.fromiter(value, dtype=(type, shape), count=ln)
             else:
                 value = [self.type.convert(i) for i in value]
                 out = np.asarray(value)
             return out
         elif type is not value.dtype and np.dtype(type) is not value.dtype:
-            for i in value:
-                self.type.validate(self.type.convert(i))
-                # check conversion of only first row is sufficient
-                break
             value = value.astype((type, shape))
         return value
 
@@ -259,6 +282,7 @@ class Array(GrammarType):
         if self.type:
             return self.type.additional_description(prefix)
 
+
 class SetOf(Array):
     """Set of values of the same type. E.g. {1,2,3}"""
 
@@ -266,13 +290,53 @@ class SetOf(Array):
     delimiter_str = ","
 
     @add_to_signature(Array.__init__)
-    def __init__(self, type, *args, **kwargs):
-        kwargs.setdefault("prefix", "{")
-        kwargs.setdefault("postfix", "}")
+    def __init__(self, type, *args, require_brackets=False, **kwargs):
+        if 'prefix' in kwargs or 'postfix' in kwargs:
+            raise ValueError("For a custom prefix/postfix use Array, not SetOf")
+        self.require_brackets = require_brackets
         super().__init__(type, *args, **kwargs)
 
-    def transform_grammar(self, grammar, param_name=False):
-        return grammar | self.type.grammar(param_name).copy().add_parse_action(lambda x: np.atleast_1d(x.asList()))
+    def _suppress(x):
+        return []
+
+    with generate_grammar():
+        _prefixes =  {
+              '{': pp.Literal('{').set_parse_action(_suppress),
+              '[': pp.Literal('[').set_parse_action(_suppress),
+              '(': pp.Literal('(').set_parse_action(_suppress),
+        }
+
+        _postfixes =  {
+              '{': pp.Literal('}').set_parse_action(_suppress),
+              '[': pp.Literal(']').set_parse_action(_suppress),
+              '(': pp.Literal(')').set_parse_action(_suppress),
+        }
+
+    def _do_build_grammar(self):
+        if self.require_brackets and isinstance(self.type, QString):
+            # QString's generic word grammar accepts '[' and '('; inside a
+            # bracketed set these characters are structural delimiters.
+            # Keep the restriction local to this SetOf rather than changing
+            # scalar QString parsing throughout the application.
+            item = pp.Word(pp.printables, exclude_chars='",;{}[]()') | pp.QuotedString('"')
+            g = delimitedList(item, self.delimiter)
+            self._set_convert_action(g)
+        else:
+            g = super()._do_build_grammar()
+        out = []
+        for i in ( '{', '[', '(' ):
+            out.append(self._prefixes[i] + g + self._postfixes[i])
+        if not self.require_brackets:
+            out.append(g)
+        out = pp.MatchFirst(out).set_name(
+            f"bracketed {g}" if self.require_brackets
+            else f"[{{([]]?{g}[}}])]?"
+        )
+        return out
+        #out | self.type.grammar(param_name).copy().add_parse_action(lambda x: np.atleast_1d(x.asList()))
+
+    def _string(self, val):
+        return '{' + super()._string(val) + '}'
 
     def copy_value(self, value):
         return copy.deepcopy(value)
@@ -311,11 +375,6 @@ class Complex(TypedGrammarType):
     def _grammar_name(self):
         return "{complex (as 2 reals)}"
 
-    def transform_grammar(self, grammar, param_name=False):
-        if self.just_one:
-            return super().transform_grammar(grammar, param_name)
-        return grammar
-
     def _string(self, val):
         return real._string(val.real) + " " + real._string(val.imag)
 
@@ -324,6 +383,8 @@ class Complex(TypedGrammarType):
 
 class Sequence(GrammarType):
     """A sequence of values of given types"""
+
+    array_access = True
 
     def __init__(
         self,
@@ -337,19 +398,12 @@ class Sequence(GrammarType):
         **kwargs,
     ):
         super().__init__(**kwargs)
-        if names:
-            self.names = names if isinstance(names, dict) else {name: i for i, name in enumerate(names)}
-            self.value_type = namedtuple("_".join(names), names)
-            self.value_constructor = self.value_type
-            self.value_constructor = self.value_type
-        else:
-            self.names = None
-            if as_list:
-                self.value_type = list
-                self.value_constructor = lambda *x: [[*x]]
-            else:
-                self.value_type = tuple
-                self.value_constructor = lambda *x: [tuple(x)]
+        self.names = (
+            names if isinstance(names, dict)
+            else {name: i for i, name in enumerate(names)} if names
+            else None
+        )
+        self.as_list = as_list
         if isinstance(format, dict):
             format = {type_from_type(k): v for k, v in format.items()}
         if isinstance(format, (str, dict)):
@@ -359,6 +413,19 @@ class Sequence(GrammarType):
             allowed_values = set(allowed_values)
         self.allowed_values = allowed_values
         self.default_values = default_values
+
+    @property
+    def value_type(self):
+        if self.names:
+            return _named_sequence_type(self.names)
+        return list if self.as_list else tuple
+
+    def value_constructor(self, *values):
+        if self.names:
+            return self.value_type(*values)
+        if self.as_list:
+            return [[*values]]
+        return [tuple(values)]
 
     def __len__(self):
         return len(self.types)
@@ -407,29 +474,23 @@ class Sequence(GrammarType):
             out.append(i.string(v))
         return "".join(out)
 
-    def enrich(self, option):
+    def _option_index(self, key):
+        if self.names and isinstance(key, str):
+            return self.names[key]
+        return key
 
-        class cls(option.__class__):
-            def _get_index(sulf, name):
-                if self.names and isinstance(name, str):
-                    return self.names[name]
-                return name
+    def get_option_index(self, option, key):
+        return option()[self._option_index(key)]
 
-            def __getitem__(self, key):
-                key = self._get_index(key)
-                return self()[key]
+    def set_option_index(self, option, key, value):
+        values = list(option())
+        values[self._option_index(key)] = value
+        option.set(values)
 
-            def __setitem__(self, key, value):
-                key = self._get_index(key)
-                v = list(self())
-                v[key] = value
-                self.set(v)
-
+    def option_attribute_index(self, name):
         if self.names:
-            for n, i in self.names.items():
-                (lambda i: setattr(cls, n, property(lambda self: self[i], lambda self, v: self.__setitem__(i, v))))(i)
-
-        option.__class__ = cls
+            return self.names.get(name)
+        return None
 
     is_the_same_value = staticmethod(compare_numpy_values)
 
@@ -473,7 +534,7 @@ class SpecialColumn:
 
     def __repr__(self):
         if not self.column:
-            return "<Special column not present>"
+            return "<No>"
         return f"<Special column{' ' if self.label else ''}{self.label} of type {self.column}>"
 
 
@@ -796,7 +857,6 @@ class Table(GrammarType):
             grammar.add_parse_action(data_grouping)
         else:
             grammar.add_parse_action(tabelize)
-
         return grammar
 
     def _string(self, data):
@@ -930,6 +990,9 @@ set_of_integers = SetOf(Integer.I)
 
 set_of_reals = SetOf(Real.I)
 """ A standard grammar type instance for array of reals (of any length, used by variant types) """
+
+set_of_strings = SetOf(QString.I, min_length=1, require_brackets=True)
+"""Bracketed string arrays in mixed input values; scalar strings remain scalars."""
 
 complex_number = Complex.I = Complex()  # NOQA E741
 """ A standard grammar type instance for complex numbers """

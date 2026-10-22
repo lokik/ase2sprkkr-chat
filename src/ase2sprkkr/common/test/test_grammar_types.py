@@ -1,63 +1,71 @@
-import warnings
-import pyparsing
-import numpy as np
 import datetime
+import warnings
+
+import numpy as np
+import pyparsing
 import unyt
 
-if __package__:
-    from .init_tests import TestCase, patch_package
-else:
-    from init_tests import TestCase, patch_package
-__package__, __name__ = patch_package(__package__, __name__)
-
-from .. import grammar_types as gt  # NOQA: E402
-from ..grammar import generate_grammar  # NOQA: E402
+from .. import grammar_types as gt
+from ..grammar import generate_grammar
 
 
-class TestGrammar(TestCase):
+def _assert_equal(actual, expected, message=None):
+    try:
+        np.testing.assert_equal(actual, expected)
+    except AssertionError as exc:
+        if message:
+            raise AssertionError(f"{message}\n{exc}") from exc
+        raise
+
+
+class TestGrammar:
     def test_is_the_same_value(self):
-        self.assertTrue(gt.Integer.is_the_same_value(1, 1))
-        self.assertFalse(gt.Integer.is_the_same_value(1, 0))
-        self.assertTrue(gt.Real.is_the_same_value(1.0, 1.0))
-        self.assertFalse(gt.Real.is_the_same_value(1.0, 0.0))
-        self.assertTrue(gt.String.is_the_same_value("1111", "1111"))
-        self.assertFalse(gt.String.is_the_same_value("1112", "1111"))
-        self.assertTrue(gt.Array.is_the_same_value(np.array([1, 2, 3]), np.array([1, 2, 3])))
-        self.assertFalse(gt.Array.is_the_same_value(np.array([1, 2, 3]), np.array([1, 2, 4])))
-        self.assertTrue(gt.Array.is_the_same_value([1, 2, 3], [1, 2, 3]))
-        self.assertFalse(gt.Array.is_the_same_value([1, 2, 3], [1, 2, 4]))
-        # TODO this is not working. However, it should not be needed, so i let it as it for now
-        # self.assertTrue(gt.Array.is_the_same_value(np.array([1,2,np.array([1,2])]),np.array([1,2,np.array([1,2])])))
-        # self.assertFalse(gt.Array.is_the_same_value(np.array([1,2,np.array([1,2])]),np.array([1,2,np.array([1,3])])))
-        # self.assertTrue(gt.Array.is_the_same_value(np.array([1,2,(np.array([1,2]),1)]),np.array([1,2,(np.array([1,2]),1)])))
-        # self.assertFalse(gt.Array.is_the_same_value(np.array([1,2,(np.array([1,2]),1)]),np.array([1,2,(np.array([1,3]),1)])))
+        assert gt.Integer.is_the_same_value(1, 1)
+        assert not gt.Integer.is_the_same_value(1, 0)
+        assert gt.Real.is_the_same_value(1.0, 1.0)
+        assert not gt.Real.is_the_same_value(1.0, 0.0)
+        assert gt.String.is_the_same_value("1111", "1111")
+        assert not gt.String.is_the_same_value("1112", "1111")
+        assert gt.Array.is_the_same_value(np.array([1, 2, 3]), np.array([1, 2, 3]))
+        assert not gt.Array.is_the_same_value(np.array([1, 2, 3]), np.array([1, 2, 4]))
+        assert gt.Array.is_the_same_value([1, 2, 3], [1, 2, 3])
+        assert not gt.Array.is_the_same_value([1, 2, 3], [1, 2, 4])
 
     def test_types(self):
         with generate_grammar():
             self._test_types()
 
     def _test_types(self):
-        Error = object()  # both parse and attempt to set should fail
-        ParseError = object()  # just parse fail, attempt to set is ok
-
-        class Invalid:
-            def __init__(self, v):
-                self.value = v
+        Error = object()
+        ParseError = object()
+        grammar_type = None
+        cached_grammar = None
 
         def test(val, res):
-            # try:
-            g = type.grammar()
+            nonlocal grammar_type, cached_grammar
+            # Creating a pyparsing grammar is much more expensive than
+            # checking one more input value. Each type instance is used
+            # for a series of cases without modifying its definition.
+            if grammar_type is not type:
+                cached_grammar = type.grammar()
+                grammar_type = type
+            grammar = cached_grammar
+            input_text = str(val)
             try:
-                out = g.parse_string(str(val), True)
+                out = grammar.parse_string(input_text, True)
                 assert len(out) == 1
                 out = out[0]
-                self.assertEqual(
-                    out, res, "{} should be {} and is {} for type {}".format(val, res, out, type.__class__.__name__)
+                _assert_equal(
+                    out,
+                    res,
+                    "{} should be {} and is {} for type {}".format(
+                        val, res, out, type.__class__.__name__
+                    ),
                 )
-            except (ValueError, pyparsing.ParseException) as e:
+            except (ValueError, pyparsing.ParseException) as exc:
                 assert res is Error or res is ParseError, (
                     f"'{val}' should be validated as '{res}'"
-                    f" for type {type.__class__.__name__}, an error {e} have been given"
+                    f" for type {type.__class__.__name__}, an error {exc} have been given"
                 )
                 if res is Error:
                     test_invalid(val)
@@ -65,10 +73,12 @@ class TestGrammar(TestCase):
                     assert type.validate(val)
                 return
             assert type.validate(out)
-            out = g.parse_string(val, True)
+            # Parsing the same input twice checks repeatability of the
+            # same grammar instance; this is not a serialization round trip.
+            out = grammar.parse_string(input_text, True)
             assert len(out) == 1
             out = out[0]
-            self.assertEqual(
+            _assert_equal(
                 out,
                 res,
                 "{} should be {} and is {} for type {} after input and output".format(
@@ -76,32 +86,26 @@ class TestGrammar(TestCase):
                 ),
             )
 
-        # except Exception as e:
-        #  if isinstance(e, AssertionError):
-        #    raise
-        #  raise AssertionError(f"Error '{val}' should be validated to '{res}', {str(e)} occurs")
-
         def test_invalid(val):
             try:
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
-                    val = type.convert(val)
-                    self.assertTrue(type.validate(val) is not True)
+                    converted = type.convert(val)
+                    assert type.validate(converted) is not True
             except ValueError:
-                pass
-            else:
-                self.assertTrue(False)
+                return
+            raise AssertionError(f"{val!r} should be invalid for {type.__class__.__name__}")
 
         def test_warning(val, res):
             with warnings.catch_warnings(record=True) as warning_list:
-                val = type.convert(val)
-                self.assertEqual(val, res)
-                self.assertTrue(type.validate(val))
-            self.assertEqual(True, bool(warning_list))
+                converted = type.convert(val)
+                _assert_equal(converted, res)
+                assert type.validate(converted)
+            assert warning_list
 
         def test_valid(val):
-            val = type.convert(val)
-            self.assertTrue(type.validate(val) is True)
+            converted = type.convert(val)
+            assert type.validate(converted) is True
 
         type = gt.Integer()
         for val, res in [("1", 1)]:
@@ -188,6 +192,11 @@ class TestGrammar(TestCase):
         type = gt.SetOf(int)
         for val, res in [("a{}", Error), ("{a}", Error), ("{1,2}", np.array([1, 2])), ("{1,a}", Error)]:
             test(val, res)
+        for val, res in [("{1,2)", Error), ("{1,2", Error), ("(1,2)", np.array([1, 2])), ("[1,2]", np.array([1, 2]))]:
+            test(val, res)
+        for val, res in [("1,2)", Error), ("{1,2]", Error), ("[1,2]]", Error), ("1,2", np.array([1, 2]))]:
+            test(val, res)
+
         for v in [[1.5, 2, 3], "asasd"]:
             test_invalid(v)
         for v, r in [([1.0, 2, 3], np.asarray([1, 2, 3]))]:
@@ -475,16 +484,15 @@ class TestGrammar(TestCase):
         1 2 dog 2.5"""
         parsed = type.parse(data)
         data2 = type.string(parsed)
-        # propper column widths: numbering + 3 columns + newline, no newline on the end of the string
-        self.assertEqual(len(data2), 2 * (4 + 3 * 21 + 1) - 1)
+        assert len(data2) == 2 * (4 + 3 * 21 + 1) - 1
 
         type = gt.Range(float)
         for val, res in [("{40,50}", np.array([40.0, 50.0])), ("40", 40.0), ("{40,50,60}", Error), ("{40}", Error)]:
             test(val, res)
         for v in [[1.0, 2, 3], "asasd"]:
             test_invalid(v)
-        a = lambda *args: np.asarray(args)  # noqa E731
-        for v, r in [(3, 3.0), ((5, 1.0), a(5.0, 1.0)), ((7.0, 3), a(7.0, 3.0))]:
+        array = lambda *args: np.asarray(args)  # noqa: E731
+        for v, r in [(3, 3.0), ((5, 1.0), array(5.0, 1.0)), ((7.0, 3), array(7.0, 3.0))]:
             test_warning(v, r)
         for v in [[1.0, 3.0], 8.0]:
             test_valid(v)
@@ -492,3 +500,79 @@ class TestGrammar(TestCase):
         type = gt.Date()
         for val, res in [("{40,50}", Error), ("23.01.2020", datetime.date(2020, 1, 23)), ("40", Error)]:
             test(val, res)
+
+
+def test_bracketed_string_sets_in_input_mixed():
+    """Unknown input values may have string arrays without consuming scalars."""
+    import pyparsing as pp
+
+    for opener, closer in (("{", "}"), ("[", "]"), ("(", ")")):
+        result = gt.mixed.grammar().parse_string(f"{opener}Fe,Co{closer}", parse_all=True)
+        _assert_equal(result[0], np.array(["Fe", "Co"]))
+
+    for invalid in ("Fe,Co", "{ }", "{}", "[ ]", "( )"):
+        # The unbracketed case must not be parsed as a string *array*.
+        if invalid == "Fe,Co":
+            try:
+                parsed = gt.mixed.grammar().parse_string(invalid, parse_all=True)[0]
+            except pp.ParseBaseException:
+                continue
+            assert not isinstance(parsed, np.ndarray)
+        else:
+            try:
+                parsed = gt.mixed.grammar().parse_string(invalid, parse_all=True)[0]
+            except pp.ParseBaseException:
+                continue
+            assert not (isinstance(parsed, np.ndarray) and len(parsed) == 0)
+
+
+def test_generated_variant_classes_have_unique_pickle_identity():
+    import pickle
+
+    assert gt.PotMixed is not gt.Variant
+    assert gt.PotMixed.__name__ == "PotMixed"
+    assert gt.Variant.__name__ == "Variant"
+    assert pickle.loads(pickle.dumps(gt.Variant())).__class__ is gt.Variant
+    assert pickle.loads(pickle.dumps(gt.pot_mixed)).__class__ is gt.PotMixed
+
+
+def test_variant_and_potential_mixed_are_distinct_pickleable_types():
+    import pickle
+
+    assert gt.Variant is not gt.PotMixed
+    assert gt.Variant.__name__ == "Variant"
+    assert gt.PotMixed.__name__ == "PotMixed"
+    for kind in (gt.Variant, gt.PotMixed):
+        assert pickle.loads(pickle.dumps(kind)) is kind
+        assert isinstance(pickle.loads(pickle.dumps(kind())), kind)
+
+
+def test_mixed_string_sets_can_be_assigned_and_pickled():
+    import pickle
+
+    for grammar_type in (gt.mixed, gt.Variant()):
+        value = grammar_type.convert(["Fe", "Co"])
+        _assert_equal(value, np.array(["Fe", "Co"]))
+        assert grammar_type.validate(value)
+        assert pickle.loads(pickle.dumps(grammar_type)).validate(value)
+        reparsed = grammar_type.grammar().parse_string(grammar_type.string(value), parse_all=True)[0]
+        _assert_equal(reparsed, value)
+
+
+def test_generated_mixed_string_formatter_round_trips_bracketed_sets():
+    import pickle
+
+    for instance in (gt.mixed, gt.Variant()):
+        text = instance.string(np.asarray(["Fe", "Co"]))
+        assert text == "{Fe,Co}"
+        parsed = instance.grammar().parse_string(text, parse_all=True)[0]
+        _assert_equal(parsed, np.asarray(["Fe", "Co"]))
+        restored = pickle.loads(pickle.dumps(instance))
+        assert restored.string(np.asarray(["Fe", "Co"])) == text
+
+
+def test_mixed_other_types_and_potential_line_strings_are_unchanged():
+    _assert_equal(gt.mixed.convert([2, 3]), np.array([2, 3]))
+    _assert_equal(gt.mixed.convert([2.0, 3.0]), np.array([2.0, 3.0]))
+    assert gt.mixed.grammar().parse_string("Fe", parse_all=True)[0] == "Fe"
+    assert gt.pot_mixed.grammar().parse_string("Fe Co", parse_all=True)[0] == "Fe Co"

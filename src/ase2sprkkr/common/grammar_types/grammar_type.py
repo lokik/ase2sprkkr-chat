@@ -12,8 +12,13 @@ import inspect
 from .. import grammar_types
 from ..decorators import cached_class_property, cache, add_called_class_as_argument, cached_property
 from ..alternative_types import normalize_type, allowed_types
-from ..grammar import generate_grammar
+from ..grammar import generate_grammar, Forward
 from ..formats import full_format_for_string
+
+
+def _apply_after_convert(grammar_type, convert, after_convert, value):
+    """Apply an instance's post-conversion hook without a local closure."""
+    return after_convert(grammar_type, convert(grammar_type, value))
 
 
 class GrammarType:
@@ -118,7 +123,12 @@ class GrammarType:
         The format is passed as format argument to ``str.format`` routine.  """
         self.condition = condition
         if after_convert is not None:
-            self.convert = lambda v: after_convert(self, self.__class__.convert(self, v))
+            self.convert = functools.partial(
+                _apply_after_convert,
+                self,
+                self.__class__.convert,
+                after_convert,
+            )
 
         """ Some subclasses has default_value defined via read-only property. """
         if default_value is not None:
@@ -174,8 +184,7 @@ class GrammarType:
         grammar = self._grammar
 
         if isinstance(self._grammar, pp.ParserElement):
-            grammar = pp.Forward()
-            grammar << self._grammar
+            grammar = Forward(self._grammar)
         else:
             grammar = grammar(param_name)
 
@@ -185,7 +194,6 @@ class GrammarType:
                     grammar = pp.Literal(self.prefix.strip()).suppress().set_name(self.prefix) + grammar
                 if self.postfix:
                     grammar += pp.Literal(self.postfix.strip()).suppress().set_name(self.postfix)
-                grammar = self.transform_grammar(grammar, param_name)
 
         if self.has_value:
 
@@ -240,11 +248,17 @@ class GrammarType:
         """
         return False, None, None
 
-    def validate(self, value, param_name="<Unknown>", why: str = "set"):
+    def validate(
+        self,
+        value,
+        param_name="<Unknown>",
+        why: str = "set",
+        option=None,
+    ):
         """Validate either the pyparsing result or a user given value.
 
-        Do not override this method in subclasses for the validation implementation,
-        this method calls :meth:`_validate`, which should contain the actual validation
+        Subclasses should normally implement :meth:`_validate`. They may extend
+        this method when validation requires the runtime ``option``.
 
         Parameters
         ---------
@@ -254,6 +268,11 @@ class GrammarType:
         param_name : str or callable
           Parameter name to be used in possible throwed exception (Optional).
           If it is callable, it should be a function that returns the param_name.
+          When ``option`` is supplied, its runtime path is used instead.
+
+        option
+          Runtime option containing ``value``. It is unavailable during the
+          grammar's parse action, where ``param_name`` remains necessary.
 
         why
           Possible values are:
@@ -267,6 +286,9 @@ class GrammarType:
           ``save``
              validation before saving the values
         """
+        if option is not None:
+            param_name = option._get_path
+
         try:
             err = self._validate(value, why)
         except ValueError as err:
@@ -357,10 +379,20 @@ class GrammarType:
     def copy(self):
         return copy.copy(self)
 
+    def get_option_index(self, option, key):
+        """Return one indexed value from an option of this type."""
+        return option()[key]
+
+    def set_option_index(self, option, key, value):
+        """Set one indexed value on an option of this type."""
+        option._set_indexed_value(key, value)
+
+    def option_attribute_index(self, name):
+        """Return the index exposed as ``option.<name>``, or ``None``."""
+        return None
+
     def enrich(self, option):
-        """Some types can add properties to the options that have
-        the type, e.g. see Sequence.enrich, which adds the ability to
-        access the items of the sequence using []"""
+        """Allow a grammar type to customize an option instance."""
         pass
 
     def __repr__(self):
@@ -447,12 +479,16 @@ class TypedGrammarType(GrammarType):
         return allowed_types.get(dt, (dt,))
 
     def convert(self, value):
+        if value is None:
+            return None
         if isinstance(value, self.datatype):
             return value
         for i in self.allowed_types:
             if isinstance(value, i):
                 return self.datatype(value)
-        return value
+        raise ValueError(
+            self.type_validation(value, self.allowed_types, self.datatype_name)
+        )
 
     @cached_class_property
     def datatype_name(cls):
