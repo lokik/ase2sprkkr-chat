@@ -88,8 +88,12 @@ def VariantGenerator(name, bool_type=Boolean.I, string_type=QString.I, add_types
     def _string(self, val):
         if isinstance(val, bool):
             return Bool._string(self, val)
-        else:
-            return super()._string(val)
+        if isinstance(val, recognized_set_types):
+            # The dynamically generated class has no __class__ cell for
+            # zero-argument super().  Arrays also need their own SetOf
+            # formatter so bracketed string sets can round-trip.
+            return self.get_type(val)._string(val)
+        return GrammarType._string(self, val)
 
     return type(
         name,

@@ -538,6 +538,18 @@ def test_mixed_string_sets_can_be_assigned_and_pickled():
         _assert_equal(reparsed, value)
 
 
+def test_generated_mixed_string_formatter_round_trips_bracketed_sets():
+    import pickle
+
+    for instance in (gt.mixed, gt.Variant()):
+        text = instance.string(np.asarray(["Fe", "Co"]))
+        assert text == "{Fe,Co}"
+        parsed = instance.grammar().parse_string(text, parse_all=True)[0]
+        _assert_equal(parsed, np.asarray(["Fe", "Co"]))
+        restored = pickle.loads(pickle.dumps(instance))
+        assert restored.string(np.asarray(["Fe", "Co"])) == text
+
+
 def test_mixed_other_types_and_potential_line_strings_are_unchanged():
     _assert_equal(gt.mixed.convert([2, 3]), np.array([2, 3]))
     _assert_equal(gt.mixed.convert([2.0, 3.0]), np.array([2.0, 3.0]))
