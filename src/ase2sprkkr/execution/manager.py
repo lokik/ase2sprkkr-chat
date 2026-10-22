@@ -1015,10 +1015,7 @@ class PersistentRun:
 
     @staticmethod
     def _execution_for(run, record):
-        """Derive execution from the observation and durable path mapping."""
-        proposed = run.execution
-        if proposed is not None:
-            return proposed
+        """Preserve reserved placement; only backend identity comes from the runner."""
         if run.backend_id is None:
             return None
         return record.execution.submitted(run.backend_id)
