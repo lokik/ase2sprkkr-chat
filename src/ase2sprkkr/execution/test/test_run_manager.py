@@ -106,8 +106,7 @@ def test_submit_persists_submitting_before_backend_call(tmp_path):
     manager = _manager(tmp_path)
     executor = _Executor()
     run = manager.create_run(
-        executor,
-        _spec(tmp_path),
+        _spec(tmp_path), endpoint=manager.register_executor(executor),
         process_result=lambda outcome: outcome,
         task="ARPES",
         dataset="case",
@@ -143,8 +142,7 @@ def test_completion_postprocesses_only_successful_execution(
     executor = _Executor()
     processed = []
     run = manager.create_run(
-        executor,
-        _spec(tmp_path),
+        _spec(tmp_path), endpoint=manager.register_executor(executor),
         process_result=lambda outcome: processed.append(outcome) or outcome,
         task="DOS",
     )
@@ -195,8 +193,7 @@ def test_duplicate_submission_is_blocked_by_persisted_namespace(tmp_path):
     manager = _manager(tmp_path)
     executor = _Executor()
     first = manager.create_run(
-        executor,
-        _spec(tmp_path),
+        _spec(tmp_path), endpoint=manager.register_executor(executor),
         process_result=lambda outcome: outcome,
         task="DOS",
         dataset="case",
@@ -204,8 +201,7 @@ def test_duplicate_submission_is_blocked_by_persisted_namespace(tmp_path):
     first.submit()
 
     second = manager.create_run(
-        executor,
-        _spec(tmp_path),
+        _spec(tmp_path), endpoint=manager.register_executor(executor),
         process_result=lambda outcome: outcome,
         task="DOS",
         dataset="case",
@@ -220,7 +216,7 @@ def test_project_manager_returns_one_public_calculation_runner(tmp_path):
 
     manager = _manager(tmp_path)
     run = manager.create_run(
-        _Executor(), _spec(tmp_path), task="DOS",
+        _spec(tmp_path), endpoint=manager.register_executor(_Executor()), task="DOS",
         process_result=lambda value: value,
     )
 
@@ -294,6 +290,6 @@ def test_explicit_executor_for_run_is_the_registered_instance(tmp_path):
     manager = _manager(tmp_path)
     executor = _Executor()
     run = manager.create_run(
-        executor, _spec(tmp_path), process_result=lambda value: value, task="DOS",
+        _spec(tmp_path), endpoint=manager.register_executor(executor), process_result=lambda value: value, task="DOS",
     )
     assert run.hooks.executor is manager.executor_for(run.record)

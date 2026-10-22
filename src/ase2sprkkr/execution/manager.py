@@ -926,9 +926,9 @@ class ExecutionManager:
 
     def create_run(
         self,
-        executor,
         spec,
         *,
+        endpoint,
         process_result,
         task,
         input_definition=None,
@@ -939,7 +939,7 @@ class ExecutionManager:
         resources=None,
     ):
         """Create a project run from raw execution plus generic processing."""
-        endpoint = endpoint_for_executor(executor)
+        executor = self.executors.for_endpoint(endpoint)
         record = self.new_record(
             task=task,
             input_definition=input_definition,
@@ -950,9 +950,6 @@ class ExecutionManager:
             run_id=run_id,
             project_id=project_id,
         )
-        self.register_executor(executor, endpoint)
-        executor = self.executors.for_endpoint(endpoint)
-
         raw = executor.create_project_run(spec, run_id=record.id)
         # The manifest is owned by RunRecord. Local execution observes its
         # publication outcomes, without persisting an independent file list.

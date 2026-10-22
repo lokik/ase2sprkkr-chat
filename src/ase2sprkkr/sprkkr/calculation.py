@@ -868,12 +868,14 @@ def _create_sprkkr_run(
             directory=prepared.directory,
         )
         project_context = resolve_project_manager(project)
+        manager = (
+            project_context[0] if project_context is not None
+            else default_execution_manager()
+        )
         if executor is None:
-            manager = (
-                project_context[0] if project_context is not None
-                else default_execution_manager()
-            )
             executor = manager.executors.for_profile(profile)
+        elif project_context is not None:
+            manager.executors.register(executor, profile.endpoint)
 
         execution_profile = profile
         if task.mpi:
@@ -934,8 +936,8 @@ def _create_sprkkr_run(
         else:
             manager, project_id = project_context
             runner = manager.create_run(
-                executor,
                 spec,
+                endpoint=profile.endpoint,
                 process_result=process_result,
                 task=task.name,
                 input_definition=input_parameters.definition_name,
