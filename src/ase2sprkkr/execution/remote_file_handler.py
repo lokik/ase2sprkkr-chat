@@ -213,26 +213,29 @@ class RemoteFileHandler:
 
 
     async def _sync_file(self, mapping, entry, *, is_cache, before=None, required=False):
-        """Apply one output policy; cache changes use the pre-run signature."""
+        """Apply one output policy; return state and its validated local version."""
         policy = FileSyncPolicy(mapping.output_sync)
         if policy == FileSyncPolicy.NEVER:
-            return "skipped"
+            return "skipped", None
 
         remote, local = entry.remote_path, entry.local_path
         local_exists = os.path.isfile(local)
 
-        # MISSING governs transfer only. An existing local copy is never
-        # overwritten or newly blessed as this run's delivered output.
-        # Do not require remote access merely to preserve that local copy.
+        # MISSING never overwrites or blesses an existing local copy. Still
+        # require an actual remote output for mandatory declarations.
         if not is_cache and policy == FileSyncPolicy.MISSING and local_exists:
-            return "skipped"
+            if required and await self.transport.file_signature(remote) is None:
+                raise FileNotFoundError(
+                    f"Declared remote output was not created: {remote}"
+                )
+            return "skipped", None
 
         if is_cache:
             after = await self.transport.file_signature(remote)
             if after is None or after == before:
-                return "skipped"
+                return "skipped", None
             if policy == FileSyncPolicy.MISSING and local_exists:
-                return "skipped"
+                return "skipped", None
         elif policy == FileSyncPolicy.CHANGED and local_exists:
             remote_digest = await self.transport.file_digest(remote)
             if remote_digest is None:
@@ -240,18 +243,28 @@ class RemoteFileHandler:
                     raise FileNotFoundError(
                         f"Declared remote output was not created: {remote}"
                     )
-                return "skipped"
-            if remote_digest == await asyncio.to_thread(file_digest, local, missing_ok=True):
-                return "available"
+                return "skipped", None
+            try:
+                version = await asyncio.to_thread(
+                    FileVersion.capture, local, require_digest=True,
+                )
+            except FileNotFoundError:
+                # The existing local copy vanished before it could be hashed.
+                pass
+            else:
+                if version.digest == remote_digest:
+                    return "available", version
         elif await self.transport.file_signature(remote) is None:
             if required:
                 raise FileNotFoundError(
                     f"Declared remote output was not created: {remote}"
                 )
-            return "skipped"
+            return "skipped", None
 
         await self.transport.get_file(remote, local)
-        return "available"
+        return "available", await asyncio.to_thread(
+            FileVersion.capture, local, require_digest=True,
+        )
 
     async def collect(self, mapping, manifest, result, *, required=False):
         """Collect independent file results; retain successes after a failure."""
@@ -283,9 +296,7 @@ class RemoteFileHandler:
                         and not (mapping.output_sync == FileSyncPolicy.MISSING
                                  and not os.path.isfile(entry.local_path))):
                     continue
-                if (entry.availability_state == "available"
-                        and entry.verified_local_version is not None
-                        and await asyncio.to_thread(entry.verified_local_version.is_current)):
+                if await asyncio.to_thread(entry.verified_delivery_is_current):
                     continue
 
                 identity = (kind, entry.remote_path, entry.local_path)
@@ -306,7 +317,7 @@ class RemoteFileHandler:
                         not entry.optional if is_cache else
                         (entry.local_path, entry.remote_path) in mandatory_outputs
                     )
-                    state = await self._sync_file(
+                    state, version = await self._sync_file(
                         mapping, entry, is_cache=is_cache, before=before,
                         required=mandatory,
                     )
@@ -318,24 +329,8 @@ class RemoteFileHandler:
                     if first_error is None:
                         first_error = exc
                 else:
-                    try:
-                        version = (
-                            await asyncio.to_thread(
-                                FileVersion.capture, entry.local_path,
-                                require_digest=True,
-                            )
-                            if state == "available" else None
-                        )
-                    except OSError as exc:
-                        state = "failed"
-                        version = None
-                        if first_error is None:
-                            first_error = exc
-                        message = str(exc)
-                    else:
-                        message = None
                     manifest = manifest.with_file_availability(
-                        entry.local_path, state, message, kind=kind,
+                        entry.local_path, state, kind=kind,
                         remote_path=entry.remote_path,
                         verified_local_version=version,
                     )

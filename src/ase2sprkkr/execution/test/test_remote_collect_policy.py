@@ -50,7 +50,7 @@ def test_collect_existing_output_without_remote_access_for_skipping_policies(
     ))
     mapping = FileMapping(str(tmp_path), str(tmp_path), output_sync=policy)
     observed, error = asyncio.run(RemoteFileHandler(NoRemoteAccess()).collect(
-        mapping, manifest, ExecutionOutcome(), required=True,
+        mapping, manifest, ExecutionOutcome(), required=policy == "never",
     ))
     assert error is None
     assert observed.outputs[0].availability_state == "skipped"
@@ -250,3 +250,98 @@ def test_download_sha256_capture_runs_off_event_loop(tmp_path, monkeypatch):
     assert error is None
     assert observed.outputs[0].verified_local_version is not None
     assert observed_thread and all(t != loop_thread for t in observed_thread)
+
+
+def test_missing_required_existing_local_still_requires_remote(tmp_path):
+    local = tmp_path / "already-here.dat"
+    local.write_bytes(b"old contents")
+    remote = tmp_path / "absent.dat"
+    files = FileManifest(outputs=(
+        FileEntry(str(local), str(remote), availability_state="pending"),
+    ))
+    mapping = FileMapping(str(tmp_path), str(tmp_path), output_sync="missing")
+    observed, error = asyncio.run(RemoteFileHandler(LocalTransport()).collect(
+        mapping, files, ExecutionOutcome(), required=True,
+    ))
+    assert isinstance(error, FileNotFoundError)
+    assert observed.outputs[0].availability_state == "failed"
+    assert local.read_bytes() == b"old contents"
+
+
+def test_changed_matching_digest_reuses_single_captured_version(tmp_path, monkeypatch):
+    from ase2sprkkr.common.file_versions import FileVersion
+
+    local = tmp_path / "local.dat"
+    remote = tmp_path / "remote.dat"
+    local.write_bytes(b"original")
+    remote.write_bytes(b"original")
+    files = FileManifest(outputs=(
+        FileEntry(str(local), str(remote), availability_state="pending"),
+    ))
+    mapping = FileMapping(str(tmp_path), str(tmp_path), output_sync="changed")
+    original_capture = FileVersion.capture
+    captures = []
+
+    def tracked_capture(*args, **kwargs):
+        captures.append(args[0])
+        return original_capture(*args, **kwargs)
+
+    monkeypatch.setattr(FileVersion, "capture", tracked_capture)
+    observed, error = asyncio.run(RemoteFileHandler(LocalTransport()).collect(
+        mapping, files, ExecutionOutcome(), required=True,
+    ))
+    assert error is None
+    assert captures == [str(local)]
+    assert observed.outputs[0].verified_delivery_is_current()
+
+
+def test_changed_rechecks_after_local_mutation_during_capture(tmp_path, monkeypatch):
+    from ase2sprkkr.common.file_versions import FileVersion
+
+    local = tmp_path / "local.dat"
+    remote = tmp_path / "remote.dat"
+    local.write_bytes(b"original")
+    remote.write_bytes(b"original")
+    files = FileManifest(outputs=(
+        FileEntry(str(local), str(remote), availability_state="pending"),
+    ))
+    mapping = FileMapping(str(tmp_path), str(tmp_path), output_sync="changed")
+    original_capture = FileVersion.capture
+    captures = []
+
+    def mutated_capture(*args, **kwargs):
+        captures.append(args[0])
+        if len(captures) == 1:
+            local.write_bytes(b"stale replacement")
+        return original_capture(*args, **kwargs)
+
+    monkeypatch.setattr(FileVersion, "capture", mutated_capture)
+    observed, error = asyncio.run(RemoteFileHandler(LocalTransport()).collect(
+        mapping, files, ExecutionOutcome(), required=True,
+    ))
+    assert error is None
+    assert local.read_bytes() == b"original"
+    assert len(captures) == 2  # compare then verify downloaded bytes
+    assert observed.outputs[0].verified_delivery_is_current()
+
+
+def test_available_receipt_for_different_path_is_not_trusted(tmp_path):
+    from ase2sprkkr.common.file_versions import FileVersion
+
+    local = tmp_path / "local.dat"
+    other = tmp_path / "other.dat"
+    remote = tmp_path / "remote.dat"
+    local.write_bytes(b"stale")
+    other.write_bytes(b"stale")
+    remote.write_bytes(b"authoritative")
+    files = FileManifest(outputs=(FileEntry(
+        str(local), str(remote), availability_state="available",
+        verified_local_version=FileVersion.capture(other, require_digest=True),
+    ),))
+    mapping = FileMapping(str(tmp_path), str(tmp_path), output_sync="always")
+    observed, error = asyncio.run(RemoteFileHandler(LocalTransport()).collect(
+        mapping, files, ExecutionOutcome(), required=True,
+    ))
+    assert error is None
+    assert local.read_bytes() == b"authoritative"
+    assert observed.outputs[0].verified_delivery_is_current()
