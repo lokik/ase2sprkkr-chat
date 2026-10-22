@@ -109,3 +109,27 @@ def test_manager_transition_commits_value_object_through_store(tmp_path):
     final = manager.transition(original, state=RunState.RUNNING)
     assert final == manager.store.get(original.id)
     assert original.state is RunState.NEW
+
+
+def test_detached_state_is_never_a_persistent_run_record():
+    from dataclasses import replace
+    import pytest
+    from ase2sprkkr.execution.base import RunState
+    from ase2sprkkr.execution import (
+        RunRecord, Execution, FileManifest, WorkingDirectory, ExecutorEndpoint,
+    )
+
+    record = RunRecord(
+        id="running-detach", task="SCF", state=RunState.RUNNING,
+        created_at="2026-10-22T10:00:00+00:00",
+        updated_at="2026-10-22T10:00:00+00:00",
+        execution=Execution(
+            ExecutorEndpoint(executor="local"),
+            WorkingDirectory("."),
+        ),
+        files=FileManifest(),
+    )
+    with pytest.raises(ValueError, match="DETACHED"):
+        replace(record, state=RunState.DETACHED)
+    with pytest.raises(ValueError, match="DETACHED"):
+        record.with_transition(state=RunState.DETACHED)

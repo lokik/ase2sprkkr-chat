@@ -173,7 +173,8 @@ class ManagedRunner:
     def stop_observation(self):
         """Stop just this client's observation without touching the backend."""
         with self._lock:
-            if self._finalizing or self._completion.done():
+            if (self._finalizing or self._observation_stopped.is_set()
+                    or self._completion.done()):
                 return False
             if self._thread is None and self.backend_id is None:
                 raise RuntimeError("Run has not been submitted")

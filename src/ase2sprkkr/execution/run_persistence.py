@@ -99,7 +99,8 @@ class RunPersistence:
     def attached(self, run: CalculationRun):
         """Sync nonterminal attached state; completion has its own transaction."""
         state = run.state
-        if run.backend_id is None or state == RunState.NEW or state.is_terminal:
+        if (run.backend_id is None or state in (RunState.NEW, RunState.DETACHED)
+                or state.is_terminal):
             return
         with self._record_lock:
             if self._record.state.is_terminal:

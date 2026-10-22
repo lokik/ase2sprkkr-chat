@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ase2sprkkr.execution.base import ExecutionSpec, LaunchSpec, RunState
+from ase2sprkkr.execution.base import ExecutionSpec, LaunchSpec, RunState, ObservationDetached
 from ase2sprkkr.execution import (
     RunRecord, Execution, WorkingDirectory, ExecutorEndpoint, FileManifest, FileEntry,
 )
@@ -1304,13 +1304,24 @@ def test_psij_stop_observation_ends_monitor_without_cancel(monkeypatch, tmp_path
         output_file=None,
     ))
     runner._job.status = _Status("ACTIVE")
-    async def exercise():
-        task = asyncio.create_task(runner._monitor())
-        await asyncio.sleep(0)
-        runner.stop_observation()
-        await asyncio.wait_for(task, 2)
-    asyncio.run(exercise())
-    assert runner.state is RunState.UNKNOWN
+    runner._job.native_id = "123"
+    subscribed = threading.Event()
+    subscribe = executor._observe_job
+
+    def observe(job, observer):
+        detach = subscribe(job, observer)
+        subscribed.set()
+        return detach
+
+    monkeypatch.setattr(executor, "_observe_job", observe)
+    runner.start()
+    assert subscribed.wait(3)
+    assert runner.stop_observation()
+    runner._thread.join(3)
+    assert not runner._thread.is_alive()
+    with pytest.raises(ObservationDetached):
+        runner.wait()
+    assert runner.state is RunState.DETACHED
     assert runner._job.status.state.name == "ACTIVE"
     assert runner._job._status_callback is psij_backend._ignore_job_status
 
@@ -1369,9 +1380,10 @@ def test_project_observer_detaches_without_stopping_other_attached_client(
         assert subscribed.wait(3)
         job = first._runner._job
         assert second._runner._job is job
-        first.stop_observation()
-        first.wait()
-        assert first._runner.state is RunState.UNKNOWN
+        assert first.stop_observation()
+        with pytest.raises(ObservationDetached):
+            first.wait()
+        assert first._runner.state is RunState.DETACHED
         assert job.status.state.name == "ACTIVE"
         assert not second._runner._done.is_set()
         assert len(executor._observers[job]) == 1

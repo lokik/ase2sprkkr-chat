@@ -93,6 +93,8 @@ def dispatch_cancellation(action):
 def start_monitor(runner, *, missing_backend=None):
     """Start a runner's monitor once, under its lifecycle lock."""
     with runner._lock:
+        if runner._state == RunState.DETACHED:
+            raise ObservationDetached("Cannot restart a detached observer")
         if runner._thread is not None:
             return
         if missing_backend is not None and runner._backend_id is None:

@@ -88,6 +88,8 @@ class RunRecord:
             object.__setattr__(self, "files", FileManifest(**self.files))
         if not isinstance(self.state, RunState):
             object.__setattr__(self, "state", RunState(self.state))
+        if self.state == RunState.DETACHED:
+            raise ValueError("DETACHED is a client observation state, not a RunRecord state")
         if not isinstance(self.confirmed, bool):
             raise TypeError("confirmed must be bool")
         if self.error is not None and not isinstance(self.error, str):
@@ -142,6 +144,8 @@ class RunRecord:
 
         No disk I/O or backend calls happen here; RunStore owns atomicity.
         """
+        if state is not None and RunState(state) == RunState.DETACHED:
+            raise ValueError("DETACHED cannot be persisted as a RunRecord state")
         if expected_record is not None and self != expected_record:
             raise RuntimeError("Run changed during postprocessing retry")
         if self.state.is_terminal and (skip_if_terminal or observed):

@@ -266,3 +266,17 @@ def test_calculation_detach_does_not_postprocess(tmp_path):
         run.wait()
     assert parsed == []
     assert callbacks == []
+
+
+def test_second_stop_does_not_publish_detach_twice_before_monitor_start(tmp_path):
+    spec = ExecutionSpec(argv=(), directory=str(tmp_path),
+                         input_file=None, output_file=None)
+    runner = _ManagedStub(spec)
+    calls = []
+    runner.observation_detached_callback = lambda: calls.append(True)
+    assert runner.stop_observation()
+    assert runner.stop_observation() is False
+    assert calls == [True]
+    assert runner._state == RunState.DETACHED
+    with pytest.raises(ObservationDetached):
+        runner.start()
