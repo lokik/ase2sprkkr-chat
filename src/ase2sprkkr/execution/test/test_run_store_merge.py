@@ -343,3 +343,51 @@ def test_terminal_lookup_rejects_foreign_project_identity(tmp_path):
     assert manager.store.get(original.id) == final
 
 
+
+
+def test_non_project_run_identity_is_immutable_across_day_shards(tmp_path):
+    from dataclasses import replace
+
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    timestamp = "2030-01-01T10:00:00+00:00"
+    original = replace(
+        _record(manager, tmp_path), created_at=timestamp, updated_at=timestamp,
+    )
+    store.save(original)
+    forged = replace(
+        original, created_at="2030-01-02T10:00:00+00:00",
+        updated_at="2030-01-02T10:00:00+00:00",
+    )
+
+    with pytest.raises(ValueError, match="persistent creation time"):
+        store.save(forged)
+    with pytest.raises(ValueError, match="persistent creation time"):
+        store.update(forged, lambda latest: latest)
+    assert store.get(original.id) == original
+    assert store.runs() == (original,)
+
+
+def test_non_project_store_rejects_duplicate_ids_across_day_shards(tmp_path):
+    from dataclasses import replace
+
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    original = replace(
+        _record(manager, tmp_path), created_at="2030-01-01T10:00:00+00:00",
+    )
+    duplicate = replace(
+        original, created_at="2030-01-02T10:00:00+00:00",
+    )
+    store.save(original)
+    store._write_unlocked(duplicate)  # Simulate pre-existing corrupt history.
+
+    for operation in (
+        lambda: store.get(original.id),
+        lambda: store.runs(),
+        lambda: store.runs(limit=1),
+        lambda: store.save(original),
+        lambda: store.update(original, lambda latest: latest),
+    ):
+        with pytest.raises(ValueError, match="Duplicate run ID"):
+            operation()

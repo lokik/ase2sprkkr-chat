@@ -272,10 +272,8 @@ class RunStore:
         return self.directory / self._bucket(record.created_at) / f"{record.id}.json"
 
     def _run_lock_path(self, record):
-        if self.projects_directory is not None:
-            return self.directory / f".{record.id}.lock"
-        path = self._path(record)
-        return path.with_name(f".{record.id}.lock")
+        # Run IDs are unique across the entire store, not only within a day shard.
+        return self.directory / f".{record.id}.lock"
 
     def _path_for_id(self, run_id):
         filename = f"{run_id}.json"
@@ -284,8 +282,6 @@ class RunStore:
             path = day / filename
             if not path.is_file():
                 continue
-            if self.projects_directory is None:
-                return path
             if found is not None:
                 raise ValueError(f"Duplicate run ID {run_id!r} across date shards")
             found = path
@@ -371,8 +367,6 @@ class RunStore:
             return self.update(record, claim), ()
 
     def _check_persisted_identity(self, record):
-        if self.projects_directory is None:
-            return
         try:
             path = self._path_for_id(record.id)
         except FileNotFoundError:
@@ -456,20 +450,17 @@ class RunStore:
 
         with self._lock:
             records = []
-            seen_ids = set() if self.projects_directory is not None else None
+            seen_ids = set()
             for day in self._day_directories(newest=newest):
                 for record in self._records_in_directory(day, newest=newest, strict=strict):
-                    if seen_ids is not None:
-                        if record.id in seen_ids:
-                            raise ValueError(f"Duplicate run ID {record.id!r} across date shards")
-                        seen_ids.add(record.id)
+                    if record.id in seen_ids:
+                        raise ValueError(f"Duplicate run ID {record.id!r} across date shards")
+                    seen_ids.add(record.id)
                     if active is True and record.state.is_terminal:
                         continue
                     if active is False and not record.state.is_terminal:
                         continue
                     records.append(record)
-                    if seen_ids is None and limit is not None and len(records) >= limit:
-                        return tuple(records)
             return tuple(records if limit is None else records[:limit])
 
 
