@@ -330,16 +330,6 @@ class FileManifest:
         outputs = entries(*spec.output_files)
         caches = entries(*spec.cache_files)
 
-        # Validate the user's declarations before primary_input becomes
-        # another metadata reference to the matching inputs entry.
-        _validate_file_declarations((
-            *(("input", entry) for entry in inputs),
-            ("stdin", None if stdin is None else FileEntry(local_path=stdin)),
-            ("stdout", None if stdout is None else FileEntry(local_path=stdout)),
-            ("stderr", None if stderr is None else FileEntry(local_path=stderr)),
-            *(("output", entry) for entry in outputs),
-            *(("cache", entry) for entry in caches),
-        ), primary_input=None if primary is None else FileEntry(local_path=primary))
         return cls(
             inputs=tuple(inputs),
             primary_input=None if primary is None else FileEntry(local_path=primary),
