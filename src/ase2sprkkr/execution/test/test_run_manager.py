@@ -739,3 +739,27 @@ def test_slow_terminal_ack_does_not_block_refresh_or_ack_twice(tmp_path, monkeyp
 
     assert acknowledged == [run.id]
     assert manager.store.get(run.id).state == RunState.FINISHED
+
+def test_attached_unknown_does_not_override_newer_scheduler_state(tmp_path):
+    from ase2sprkkr.execution.run_persistence import RunPersistence
+
+    manager = _manager(tmp_path)
+    executor = _Executor()
+    initial = manager.new_record(task="DOS", directory=tmp_path)
+    queued = manager.transition(
+        initial, state=RunState.QUEUED,
+        execution=initial.execution.submitted("native-1"),
+    )
+    persistence = RunPersistence(manager, executor, queued)
+    newer = manager.transition(
+        queued, state=RunState.RUNNING, message="scheduler confirmed",
+    )
+
+    persistence.attached(SimpleNamespace(
+        state=RunState.UNKNOWN, backend_id="native-1",
+        failure_phase=None,
+    ))
+
+    assert persistence.record == newer
+    assert manager.store.get(initial.id) == newer
+    assert persistence.record.message == "scheduler confirmed"

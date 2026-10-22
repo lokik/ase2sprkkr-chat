@@ -103,6 +103,7 @@ class RunPersistence:
                 self._record, state=state,
                 execution=self._execution_for(run, self._record),
                 failure_phase=run.failure_phase,
+                expected_updated_at=self._record.updated_at,
             )
             self._observation_base_version = self._record.updated_at
 
