@@ -17,7 +17,6 @@ from ...execution.local import materialize_local_spec
 from ...execution.target_connection import SSHConnection
 from ...input_parameters.input_parameters import InputParameters
 from ...input_parameters.task_definition import TaskDefinition
-from ...sprkkr import calculation as calculation_module
 from ...sprkkr.calculation import PreparedCalculation
 from ...sprkkr.profile import SPRKKRProfile
 
@@ -231,7 +230,8 @@ def test_explicit_local_executor_overrides_remote_profile(tmp_path, monkeypatch)
         raise AssertionError("explicit executor was replaced by the profile backend")
 
     monkeypatch.setattr(
-        calculation_module, "default_execution_manager", must_not_resolve_default_manager,
+        "ase2sprkkr.execution.persistence.default_executors",
+        must_not_resolve_default_manager,
     )
 
     profile = SPRKKRProfile(executor="ssh", host="cluster", mpi="auto")

@@ -57,7 +57,8 @@ def test_remote_input_staging_is_conditional_write(tmp_path, sync, conflict):
     def record(local, task):
         mapping = FileMapping(str(local), remote_root, input_sync=sync)
         files = FileManifest(
-            stdin=FileEntry(local_path=str(local / "stdin.in")),
+            inputs=(FileEntry(local_path=str(local / "stdin.in")),),
+            stdin=True,
             mapping=mapping,
         ).with_mapping(mapping)
         return _record(manager, local, task, files, endpoint=endpoint,

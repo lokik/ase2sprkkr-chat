@@ -8,7 +8,7 @@ from ...input_parameters.input_parameters import InputParameters
 from ...potentials.potentials import Potential
 
 from ...execution.base import RunState
-from ...execution import JobFiles, FileManifest
+from ...execution import Executor, JobFiles, FileManifest
 from ..calculator import SPRKKR
 from ..profile import SPRKKRProfile
 
@@ -27,9 +27,7 @@ class _UnstartedRunner:
         pass
 
 
-class _Executor:
-    def resolve_mpi(self, mpi):
-        return mpi
+class _Executor(Executor):
 
     def create_run(self, spec, callback=None):
         return _UnstartedRunner(spec)

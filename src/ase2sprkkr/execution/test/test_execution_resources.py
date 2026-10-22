@@ -40,6 +40,7 @@ class _Task:
 
 
 class _Parameters:
+    definition_name = "SCF"
     CONTROL = SimpleNamespace(
         POTFIL=SimpleNamespace(result=None),
         DATASET=SimpleNamespace(result=None),
@@ -126,6 +127,9 @@ class _Executor:
     def __init__(self, *, factory_error=None, submit_error=None):
         self.factory_error = factory_error
         self.submit_error = submit_error
+
+    def resolve_spec(self, spec):
+        return spec
 
     def create_run(self, spec, callback=None):
         if self.factory_error is not None:
