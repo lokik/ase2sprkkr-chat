@@ -244,10 +244,8 @@ def test_materialized_manifest_can_download_and_rehydrate(tmp_path):
     assert materialize_manifest(restored, remote=True) == (restored, None)
 
 
-def test_collect_rejects_materialized_cache_output_collision_before_download(tmp_path):
+def test_manifest_rejects_cache_output_collision_before_any_transfer(tmp_path):
     from ase2sprkkr.execution import FileMapping
-    from ase2sprkkr.execution.base import ExecutionOutcome
-    from ase2sprkkr.execution.file_availability import materialize_manifest
 
     local, remote = tmp_path / "local", tmp_path / "remote"
     local.mkdir()
@@ -255,24 +253,20 @@ def test_collect_rejects_materialized_cache_output_collision_before_download(tmp
     (remote / "result.dat").write_text("remote value")
     destination = local / "result.dat"
     destination.write_text("original local value")
-    manifest = FileManifest(
-        outputs=(FileEntry(str(local / "*.dat"), str(remote / "*.dat"),
-                           availability_state="pending"),),
-        caches=(FileEntry(str(destination), str(remote / "result.dat"),
-                                     availability_state="pending"),),
-        mapping=FileMapping(str(local), str(remote)),
-    )
-    frozen, error = materialize_manifest(manifest, remote=True)
-    assert error is None
-    endpoint = RemoteEndpointExecutor(LocalTransport())
-    context = asyncio.run(endpoint.resolve_mapping(LaunchSpec(
-        local_root=str(local), remote_root=str(remote),
-    )))
-    with pytest.raises(ValueError, match="Conflicting output/cache file destination"):
-        asyncio.run(endpoint.file_handler.collect(
-            context, frozen, ExecutionOutcome(), required=True,
-        ))
+
+    # The manifest owns declaration validation. No materialization or remote
+    # transfer should be needed to detect a cache/output path collision.
+    with pytest.raises(ValueError, match="Duplicate file declaration: output and cache"):
+        FileManifest(
+            outputs=(FileEntry(str(local / "*.dat"), str(remote / "*.dat"),
+                               availability_state="pending"),),
+            caches=(FileEntry(str(destination), str(remote / "result.dat"),
+                              availability_state="pending"),),
+            mapping=FileMapping(str(local), str(remote)),
+        )
+
     assert destination.read_text() == "original local value"
+    assert (remote / "result.dat").read_text() == "remote value"
 
 
 def test_materialization_assigns_cache_baselines_to_concrete_members(tmp_path):
