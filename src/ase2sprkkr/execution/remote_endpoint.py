@@ -6,7 +6,7 @@ import os
 import posixpath
 from contextlib import ExitStack
 from dataclasses import asdict, replace
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from .base import (
     ExecutionSpec,
@@ -24,19 +24,6 @@ from .endpoint import endpoint_for_executor
 
 
 _REMOTE_BACKENDS = {"local", "psij"}
-
-
-def _relative_local_path(path, local_root):
-    """Resolve a local path and enforce the run's mapped root boundary."""
-    path = Path(path).expanduser().resolve()
-    root = Path(local_root).expanduser().resolve()
-    try:
-        return path.relative_to(root)
-    except ValueError as exc:
-        raise ValueError(
-            f"Local path {path} is outside mapped root {root}; "
-            "specify local_root/remote_root explicitly"
-        ) from exc
 
 
 class RemoteEndpointExecutor(Executor):
@@ -99,23 +86,14 @@ class RemoteEndpointExecutor(Executor):
         return files.with_mapping(mapping), mapping.map_path(spec.directory)
 
     def submission_directory(self, spec):
-        launch = spec.launch
-        relative = _relative_local_path(
-            spec.directory, launch.local_root or Path.home(),
-        )
-
-        root = launch.remote_root
-        if root is None or root == "~":
-            remote_root = "~"
-        elif root.startswith("~/"):
-            remote_root = posixpath.normpath(root)
-        elif posixpath.isabs(root):
-            remote_root = posixpath.normpath(root)
-        else:
-            remote_root = posixpath.normpath(posixpath.join("~", root))
-        if not relative.parts:
-            return remote_root
-        return posixpath.join(remote_root, *PurePosixPath(*relative.parts).parts)
+        """Describe the mapped directory before resolving remote HOME."""
+        root = spec.launch.remote_root or "~"
+        if not posixpath.isabs(root) and not root.startswith("~"):
+            root = posixpath.join("~", root)
+        return FileMapping(
+            local_root=spec.launch.local_root or Path.home(),
+            remote_root=posixpath.normpath(root),
+        ).map_path(spec.directory)
 
     def acknowledge_submission(self, run):
         """Release temporary submission identity after client persistence."""

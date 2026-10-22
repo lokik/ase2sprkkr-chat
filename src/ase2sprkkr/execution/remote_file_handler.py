@@ -31,11 +31,11 @@ class RemoteFileHandler:
     def __init__(self, transport):
         self.transport = transport
 
-    async def _stage_file(self, mapping, spec, value, used, *,
+    async def _stage_file(self, mapping, source, used, *,
                           uploads=None, required=True):
-        source = _local_path(spec, value)
-        if source is None:
-            return None
+        # The manifest, not spec, defines which absolute source is staged.
+        if not os.path.isabs(source):
+            raise ValueError("Manifest input paths must be absolute")
         target = mapping.map_path(source)
         previous = used.get(target)
         if previous is not None and previous != source:
@@ -78,9 +78,10 @@ class RemoteFileHandler:
         used[target] = source
         return target
 
-    async def _stage_input_pattern(self, mapping, spec, value, used, *,
+    async def _stage_input_pattern(self, mapping, source, used, *,
                                    required=True):
-        source = _local_path(spec, value)
+        if not os.path.isabs(source):
+            raise ValueError("Manifest input patterns must be absolute")
         matches = expand_local_files(source, mapping.local_root)
         if not matches and required:
             raise FileNotFoundError(
@@ -89,7 +90,7 @@ class RemoteFileHandler:
         uploads = []
         for match in matches:
             await self._stage_file(
-                mapping, spec, match, used, uploads=uploads, required=required,
+                mapping, match, used, uploads=uploads, required=required,
             )
         if uploads:
             await self.transport.put_files(
@@ -97,7 +98,7 @@ class RemoteFileHandler:
             )
         return matches
 
-    async def _prepare_cache_files(self, mapping, spec, used, cache_entries):
+    async def _prepare_cache_files(self, mapping, used, cache_entries):
         """Stage the manifest's cache declarations and capture target baselines."""
         targets, baselines = {}, {}
         root = mapping.remote_root
@@ -109,14 +110,14 @@ class RemoteFileHandler:
             if has_file_magic(local):
                 remote_pattern = mapping.map_path(local)
                 await self._stage_input_pattern(
-                    mapping, spec, local, used, required=False,
+                    mapping, local, used, required=False,
                 )
                 if FileSyncPolicy(mapping.output_sync) != FileSyncPolicy.NEVER:
                     for remote in await self.transport.expand_files(remote_pattern, root):
                         baselines[remote] = await self.transport.file_signature(remote)
                 continue
             remote = await self._stage_file(
-                mapping, spec, local, used, required=False,
+                mapping, local, used, required=False,
             )
             before = (None if FileSyncPolicy(mapping.output_sync) == FileSyncPolicy.NEVER
                       else await self.transport.file_signature(remote))
@@ -148,16 +149,16 @@ class RemoteFileHandler:
         # Primary input and stdin are mandatory references. Stage them first,
         # so an optional auxiliary alias cannot weaken their requirements.
         if primary is not None:
-            await self._stage_file(mapping, spec, primary, used)
+            await self._stage_file(mapping, primary, used)
         if manifest.stdin is not None and manifest.stdin.local_path is not None:
-            await self._stage_file(mapping, spec, manifest.stdin.local_path, used)
+            await self._stage_file(mapping, manifest.stdin.local_path, used)
         for entry in manifest.inputs:
             source = entry.local_path
             if source is None or source == primary:
                 continue
             if has_file_magic(source):
                 matches = await self._stage_input_pattern(
-                    mapping, spec, source, used, required=not entry.optional,
+                    mapping, source, used, required=not entry.optional,
                 )
                 for match in matches:
                     input_optional[match] = (
@@ -165,7 +166,7 @@ class RemoteFileHandler:
                     )
             else:
                 await self._stage_file(
-                    mapping, spec, source, used, required=not entry.optional,
+                    mapping, source, used, required=not entry.optional,
                 )
 
         # Primary input and stdin are mandatory even when matched by an
@@ -177,7 +178,7 @@ class RemoteFileHandler:
         # Cache staging shares the collision map, not input file identity.
         input_sources = tuple(dict.fromkeys(used.values()))
         cache_targets, cache_before = await self._prepare_cache_files(
-            mapping, spec, used, manifest.caches,
+            mapping, used, manifest.caches,
         )
 
         caches = [
