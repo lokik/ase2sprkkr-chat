@@ -175,6 +175,7 @@ def test_terminal_refresh_cannot_replace_manifest_or_execution(tmp_path):
 def test_terminal_persistent_run_state_does_not_query_backend(tmp_path):
     from ase2sprkkr.execution.run_persistence import RunPersistence
     from ase2sprkkr.execution.postprocessing import CalculationRun
+    from ase2sprkkr.execution import JobFiles, FileManifest
 
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
     record = _record(manager, tmp_path)
@@ -182,6 +183,7 @@ def test_terminal_persistent_run_state_does_not_query_backend(tmp_path):
 
     class Backend:
         callback = None
+        job_files = JobFiles(FileManifest())
 
         @property
         def state(self):
