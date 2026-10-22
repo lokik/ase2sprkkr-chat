@@ -499,16 +499,19 @@ def test_ssh_psij_cleanup_removes_declared_outputs_before_submit(tmp_path, monke
     from ase2sprkkr.execution.psij import PsijRunner
 
     class Runner(PsijRunner):
-        def __init__(self, spec):
+        def __init__(self, executor, spec, *, run_id, cleanup_side):
+            assert cleanup_side == "local"
             self.spec = spec
             self._stdout_path = None
             self._stderr_path = None
+            self._cleanup_side = cleanup_side
 
         backend_id = "native-123"
         state = RunState.RUNNING
         return_code = None
         failure_phase = None
         result = type("Result", (), {"output_file": None, "error_file": None})()
+
         def submit(self):
             self._prepare_io()
             assert not output.exists()
@@ -517,9 +520,10 @@ def test_ssh_psij_cleanup_removes_declared_outputs_before_submit(tmp_path, monke
     class Backend:
         backend = "slurm"
         url = None
-        def create_project_run(self, spec, *, run_id, cleanup_side):
-            assert cleanup_side == "local"
-            return Runner(spec)
+
+    # Target-side submit constructs PsijRunner directly. Replace that
+    # boundary with a non-submitting runner, retaining the real _prepare_io.
+    monkeypatch.setattr("ase2sprkkr.execution.psij.PsijRunner", Runner)
     monkeypatch.setattr(remote_service, "_psij_executor", lambda options: Backend())
     request = {
         "id": "d" * 32, "executor": "psij", "directory": str(tmp_path),
