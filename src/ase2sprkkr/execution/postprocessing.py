@@ -272,8 +272,11 @@ class CalculationRun:
             finally:
                 self._wake_waiters()
         else:
-            finish_monitor(self, cleanup=self._close_resources)
-            self._wake_waiters()
+            try:
+                finish_monitor(self, cleanup=self._close_resources)
+            finally:
+                # A cleanup failure must not strand concurrent waiters.
+                self._wake_waiters()
 
     def retry_persistence(self):
         """Retry the durable completion without executing or parsing the job again."""

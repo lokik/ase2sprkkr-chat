@@ -12,7 +12,7 @@ import time
 from datetime import datetime, timedelta
 from dataclasses import replace
 from pathlib import Path
-from threading import Event, Lock, RLock
+from threading import Lock, RLock
 
 from .file_availability import prepare_local_files, discover_local_files
 from .growing_file_tail import follow_growing_files
