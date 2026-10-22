@@ -168,6 +168,11 @@ class RemoteEndpointExecutor(Executor):
     def create_project_run(self, spec, *, run_id, callback=None):
         return RemoteRunner(self, spec, callback=callback, run_id=run_id)
 
+    def preflight_result_files(self, run, files):
+        """Validate all historical sources before JobFiles starts downloading."""
+        self._validate_run(run)
+        self.file_handler.plan_restore(run, files)
+
     def fetch_result_files(self, run, files, *, destinations=None):
         self._validate_run(run)
         return _run_sync(self.file_handler.restore(
