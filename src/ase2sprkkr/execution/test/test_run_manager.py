@@ -12,18 +12,18 @@ from ase2sprkkr.execution import (
     RunState,
     RunStatus,
     RunStore,
-    JobFiles, FileManifest,
+    JobFiles, JobFilesOwner, FileManifest,
 )
 
 from ase2sprkkr.execution.manager import ExecutionManager
 from ase2sprkkr.execution.pool import Executors
 
 
-class _RawRunner:
+class _RawRunner(JobFilesOwner):
     def __init__(self, spec, executor, on_submit=None):
         self.spec = spec
         self.executor = executor
-        self.job_files = JobFiles(FileManifest.from_spec(spec))
+        self._initialize_job_files(FileManifest.from_spec(spec))
         self.callback = None
         self.on_submit = on_submit
         self.state = RunState.NEW
