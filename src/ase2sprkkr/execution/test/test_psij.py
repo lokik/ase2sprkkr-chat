@@ -1477,7 +1477,7 @@ def test_psij_preparation_reuses_declared_outputs_for_check_and_cleanup(
         argv=("program",), directory=str(tmp_path),
         input_file=str(input_file), output_file=str(output_file),
         error_file=str(error_file),
-        output_files=("result-*.dat", "run.out"),
+        output_files=("result-*.dat",),
         cache_files=("restart.pot",),
     ))
     runner._prepare_io()
