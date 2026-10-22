@@ -66,8 +66,8 @@ def test_remote_handler_is_shared_without_run_state(tmp_path):
     )
     a, b = endpoint.create_run(spec_a), endpoint.create_run(spec_b)
     assert a.file_handler is endpoint.file_handler is b.file_handler
-    assert a.job_files.manifest == FileManifest.from_spec(spec_a)
-    assert b.job_files.manifest == FileManifest.from_spec(spec_b)
+    assert a.run_files.manifest == FileManifest.from_spec(spec_a)
+    assert b.run_files.manifest == FileManifest.from_spec(spec_b)
 
     async def prepare():
         first = await a.file_handler.prepare(await endpoint.resolve_mapping(a.spec.launch), a.spec)
@@ -577,7 +577,7 @@ def test_collect_does_not_recheck_skipped_terminal_files(tmp_path):
     assert result == manifest
 
 
-def test_job_files_reconciles_terminal_delivery(tmp_path):
+def test_run_files_reconciles_terminal_delivery(tmp_path):
     from ase2sprkkr.execution.manifest_merge import merge_terminal_files
     from ase2sprkkr.execution.run_model import FileManifest, FileEntry
 

@@ -19,3 +19,18 @@ def test_project_schema_has_no_run_reference_list(tmp_path):
     assert not hasattr(project, "persistent_refs")
     text = (tmp_path / "projects" / f"{project.id}.json").read_text()
     assert "persistent_refs" not in text
+
+def test_project_handle_reuses_repository_manager(tmp_path):
+    projects = ProjectRepository(tmp_path / "projects")
+    project = projects.create("Run")
+    manager, project_id = resolve_project_manager(project)
+    assert manager is projects.manager
+    assert project_id == project.id
+
+
+def test_explicit_manager_preserves_execution_configuration(tmp_path):
+    projects = ProjectRepository(tmp_path / "projects")
+    project = projects.create("Run")
+    manager, project_id = resolve_project_manager((projects.manager, project))
+    assert manager is projects.manager
+    assert project_id == project.id

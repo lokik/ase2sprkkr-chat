@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.run_manager import RunManager
 from ase2sprkkr.execution.run_store import RunStore
 from ase2sprkkr.execution.historical_restore import update_historical_availability
 from ase2sprkkr.execution.manifest_merge import merge_snapshot, merge_terminal_files
@@ -12,7 +12,7 @@ from ase2sprkkr.execution.run_model import FileManifest
 
 
 def _captured_run(tmp_path):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     record = manager.new_record(task="DOS", directory=tmp_path)
     record = replace(record, files=FileManifest(captured_at="2026-10-22T00:00:00+00:00"))
     return manager, manager.store.save(record)
@@ -66,7 +66,7 @@ def test_snapshot_capture_failure_preserves_unverified_files(tmp_path, monkeypat
     from ase2sprkkr.execution.run_model import FileEntry
 
     path = str(tmp_path / "result.dat")
-    manager = ExecutionManager(RunStore(tmp_path / "failure-runs"))
+    manager = RunManager(RunStore(tmp_path / "failure-runs"))
     record = manager.new_record(
         task="DOS", directory=tmp_path,
         files=FileManifest(outputs=(FileEntry(path, availability_state="pending"),)),
@@ -76,7 +76,7 @@ def test_snapshot_capture_failure_preserves_unverified_files(tmp_path, monkeypat
     def fail_capture(manifest):
         raise OSError("capture failed")
 
-    import ase2sprkkr.execution.manager as manager_module
+    import ase2sprkkr.execution.run_manager as manager_module
     monkeypatch.setattr(manager_module, "capture_result_files", fail_capture)
     completed = manager.complete(
         record, state=RunState.FINISHED, files_available=True,
@@ -93,7 +93,7 @@ def test_concurrent_persisted_download_failure_overrides_stale_success(tmp_path)
 
     path = str(tmp_path / "output.dat")
     original = FileManifest(outputs=(FileEntry(path, availability_state="pending"),))
-    manager = ExecutionManager(RunStore(tmp_path / "concurrent-runs"))
+    manager = RunManager(RunStore(tmp_path / "concurrent-runs"))
     record = manager.store.save(manager.new_record(
         task="DOS", directory=tmp_path, files=original,
     ))
@@ -117,7 +117,7 @@ def test_concurrent_delivery_does_not_force_failed_completion(tmp_path):
 
     path = str(tmp_path / "output.dat")
     manifest = FileManifest(outputs=(FileEntry(path, availability_state="pending"),))
-    manager = ExecutionManager(RunStore(tmp_path / "available-runs"))
+    manager = RunManager(RunStore(tmp_path / "available-runs"))
     record = manager.store.save(manager.new_record(
         task="DOS", directory=tmp_path, files=manifest,
     ))
@@ -135,7 +135,7 @@ def test_captured_completion_respects_newer_failed_file_state(tmp_path, monkeypa
 
     path = str(tmp_path / "output.dat")
     manifest = FileManifest(outputs=(FileEntry(path, availability_state="pending"),))
-    manager = ExecutionManager(RunStore(tmp_path / "snapshot-runs"))
+    manager = RunManager(RunStore(tmp_path / "snapshot-runs"))
     record = manager.store.save(manager.new_record(
         task="DOS", directory=tmp_path, files=manifest,
     ))
@@ -151,7 +151,7 @@ def test_captured_completion_respects_newer_failed_file_state(tmp_path, monkeypa
             input_versions=(version,), output_versions=(version,),
         )
 
-    import ase2sprkkr.execution.manager as manager_module
+    import ase2sprkkr.execution.run_manager as manager_module
     monkeypatch.setattr(manager_module, "capture_result_files", capture)
     completed = manager.complete(
         record, state=RunState.FINISHED, files_available=True, return_code=0,
@@ -186,7 +186,7 @@ def test_independent_availability_update_does_not_change_terminal_outcome(tmp_pa
     from ase2sprkkr.execution.run_model import FileEntry
 
     output = str(tmp_path / "output.dat")
-    manager = ExecutionManager(RunStore(tmp_path / "availability-runs"))
+    manager = RunManager(RunStore(tmp_path / "availability-runs"))
     record = manager.store.save(manager.new_record(
         task="DOS", directory=tmp_path,
         files=FileManifest(outputs=(FileEntry(output, availability_state="pending"),)),
@@ -205,7 +205,7 @@ def test_stale_historical_updater_preserves_other_file_status(tmp_path):
 
     first = str(tmp_path / "first.dat")
     second = str(tmp_path / "second.dat")
-    manager = ExecutionManager(RunStore(tmp_path / "parallel-availability"))
+    manager = RunManager(RunStore(tmp_path / "parallel-availability"))
     record = manager.store.save(manager.new_record(
         task="DOS", directory=tmp_path, files=FileManifest(outputs=(
             FileEntry(first, availability_state="pending"),
@@ -232,7 +232,7 @@ def test_parallel_run_stores_merge_independent_file_updates(tmp_path):
     second = str(tmp_path / "second.dat")
     directory = tmp_path / "parallel-run-stores"
     store = RunStore(directory)
-    manager = ExecutionManager(store)
+    manager = RunManager(store)
     record = store.save(manager.new_record(
         task="DOS", directory=tmp_path, files=FileManifest(outputs=(
             FileEntry(first, availability_state="pending"),

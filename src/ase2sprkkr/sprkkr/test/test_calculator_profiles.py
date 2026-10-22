@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 from ase2sprkkr.configuration import definition
-from ase2sprkkr.execution import ExecutionManager, RemoteExecutor
+from ase2sprkkr.execution import RunManager, RemoteExecutor
 from ase2sprkkr.profiles import ProfilesConfigurationContainer
 from ase2sprkkr.sprkkr import profile as profile_module
 from ase2sprkkr.sprkkr.calculator import SPRKKR
@@ -128,7 +128,7 @@ def test_calculate_temporary_override_preserves_calculator_profile(monkeypatch):
 
 
 def test_ssh_profile_uses_direct_remote_execution_by_default():
-    executor = ExecutionManager().executors.for_endpoint(
+    executor = RunManager().executors.for_endpoint(
         SPRKKRProfile(executor="ssh", host="user@cluster").endpoint
     )
 
@@ -138,7 +138,7 @@ def test_ssh_profile_uses_direct_remote_execution_by_default():
 
 
 def test_ssh_profile_can_use_psij_on_target():
-    executor = ExecutionManager().executors.for_endpoint(
+    executor = RunManager().executors.for_endpoint(
         SPRKKRProfile(
             executor="ssh",
             host="user@cluster",
@@ -164,7 +164,7 @@ def test_direct_psij_profile_still_defaults_to_slurm(monkeypatch):
 
     monkeypatch.setattr("ase2sprkkr.execution.psij.PsijExecutor", FakePsijExecutor)
 
-    executor = ExecutionManager().executors.for_endpoint(SPRKKRProfile(executor="psij").endpoint)
+    executor = RunManager().executors.for_endpoint(SPRKKRProfile(executor="psij").endpoint)
 
     assert executor is not None
     assert captured == {"backend": "slurm", "url": None, "poll_interval": None}

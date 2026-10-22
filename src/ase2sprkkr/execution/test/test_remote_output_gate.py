@@ -85,7 +85,7 @@ def _fail_download(runner, tmp_path):
         str(tmp_path / "result.dat"), "/work/case/result.dat",
         availability_state="pending",
     )
-    runner.job_files.replace(replace(runner.job_files.manifest, outputs=(file,)))
+    runner.run_files.replace(replace(runner.run_files.manifest, outputs=(file,)))
 
     async def fail_sync(*args, **kwargs):
         raise OSError("remote output could not be downloaded")
@@ -103,8 +103,8 @@ def test_terminal_remote_state_may_publish_streamed_output(tmp_path):
     assert destination.read_bytes() == b"streamed\n"
     assert output.closed is True
     assert executor.sync_calls == 1
-    assert runner.job_files.manifest.stdout.availability_state == "available"
-    assert runner.job_files.manifest.stdout.availability_message is None
+    assert runner.run_files.manifest.stdout.availability_state == "available"
+    assert runner.run_files.manifest.stdout.availability_message is None
 
 
 def test_unknown_remote_state_does_not_publish_or_download_output(tmp_path):
@@ -130,7 +130,7 @@ def test_successful_backend_with_failed_download_fails_run(tmp_path):
     assert runner.state == RunState.FAILED
     assert runner.failure_phase.value == "download"
     assert runner.return_code == 0
-    failed = runner.job_files.manifest.outputs[0]
+    failed = runner.run_files.manifest.outputs[0]
     assert failed.availability_state == "failed"
     assert "could not be downloaded" in failed.availability_message
     assert destination.read_bytes() == b"streamed\n"
@@ -156,7 +156,7 @@ def test_failed_backend_keeps_execution_failure_when_diagnostics_cannot_download
     assert runner.failure_phase.value == "execution"
     assert runner.failure_message == "SPR-KKR exited with status 17"
     assert result.return_code == 17
-    failed = runner.job_files.manifest.outputs[0]
+    failed = runner.run_files.manifest.outputs[0]
     assert failed.availability_state == "failed"
     assert "could not be downloaded" in failed.availability_message
     assert destination.read_bytes() == b"streamed\n"
@@ -169,7 +169,7 @@ def test_cancelled_backend_survives_diagnostic_download_failure(tmp_path):
     asyncio.run(runner._monitor())
     assert runner.state == RunState.CANCELLED
     assert runner.failure_phase is None
-    assert runner.job_files.manifest.outputs[0].availability_state == "failed"
+    assert runner.run_files.manifest.outputs[0].availability_state == "failed"
     assert destination.read_bytes() == b"streamed\n"
 
 
@@ -204,8 +204,8 @@ def test_remote_stderr_incomplete_after_success_is_download_failure(tmp_path):
 
     assert runner.state == RunState.FAILED
     assert runner.failure_phase == FailurePhase.DOWNLOAD
-    assert runner.job_files.manifest.stderr.availability_state == "failed"
-    assert runner.job_files.manifest.stdout.availability_state == "available"
+    assert runner.run_files.manifest.stderr.availability_state == "failed"
+    assert runner.run_files.manifest.stdout.availability_state == "available"
     assert stdout_path.read_bytes() == b"streamed\n"
     assert stderr_path.read_bytes() == b""
     assert output.closed and error.closed

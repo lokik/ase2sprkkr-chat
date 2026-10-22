@@ -5,12 +5,12 @@ import asyncio
 import pytest
 
 from ase2sprkkr.execution import FailurePhase, RunState, RunStatus, RunStore
-from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.run_manager import RunManager
 
 
 @pytest.fixture
 def manager(tmp_path):
-    return ExecutionManager(RunStore(tmp_path / "runs"))
+    return RunManager(RunStore(tmp_path / "runs"))
 
 
 def test_submitted_terminal_observation_first_persists_backend_identity(manager, tmp_path):

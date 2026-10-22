@@ -10,6 +10,7 @@ import pytest
 
 from ..projects import (
     Project,
+    ProjectRecord,
     ProjectConflictError,
     ProjectDeleteError,
     ProjectRepository,
@@ -38,14 +39,14 @@ def _write_project(directory, project_id, **values):
 
 def _save_while_locked(directory, project_id, started, finished):
     repository = ProjectRepository(directory)
-    project = repository.project(project_id).rename("Worker")
+    project = repository.project(project_id)
     started.set()
-    repository.save(project, expected_generation=project.generation)
+    project.rename("Worker")
     finished.set()
 
 
 def test_project_editing_methods_keep_snapshot_generation():
-    project = Project(id=ROOT_A, generation=7, name="Original")
+    project = ProjectRecord(id=ROOT_A, generation=7, name="Original")
 
     edited = project.rename(" Renamed ").move_to(ROOT_B)
 
@@ -56,7 +57,7 @@ def test_project_editing_methods_keep_snapshot_generation():
 
 
 def test_project_rejects_invalid_local_edits():
-    project = Project(id=ROOT_A, generation=1, name="Project")
+    project = ProjectRecord(id=ROOT_A, generation=1, name="Project")
 
     with pytest.raises(ValueError, match="name"):
         project.rename(" ")
@@ -73,9 +74,9 @@ def test_repository_uses_one_generation_checked_json_per_project(tmp_path):
     assert [path.stem for path in json_files] == sorted([parent.id, child.id])
     assert repository.project(child.id).parent_id == parent.id
 
-    edited = parent.rename("Renamed")
-    saved = repository.save(edited, expected_generation=parent.generation)
+    saved = parent.rename("Renamed")
 
+    assert isinstance(saved, Project)
     assert saved.generation == 2
     assert saved.name == "Renamed"
 
@@ -83,19 +84,20 @@ def test_repository_uses_one_generation_checked_json_per_project(tmp_path):
 def test_stale_save_conflicts_and_explicit_overwrite_replaces_snapshot(tmp_path):
     repository = ProjectRepository(tmp_path / "projects")
     original = repository.create("Original")
-    stale = repository.project(original.id).rename("Stale name")
+    initial = original.record
+    stale = initial.rename("Stale name")
     renamed = repository.save(
-        original.rename("Renamed elsewhere"),
-        expected_generation=original.generation,
+        initial.rename("Renamed elsewhere"),
+        expected_generation=initial.generation,
     )
 
     with pytest.raises(ProjectConflictError) as exc_info:
-        repository.save(stale, expected_generation=original.generation)
+        repository.save(stale, expected_generation=initial.generation)
     assert exc_info.value.current == renamed
 
     overwritten = repository.save(
         stale,
-        expected_generation=original.generation,
+        expected_generation=initial.generation,
         overwrite=True,
     )
     assert overwritten.name == "Stale name"
@@ -110,16 +112,12 @@ def test_move_validates_parent_and_rejects_cycles(tmp_path):
     repository = ProjectRepository(directory)
 
     child = repository.project(CHILD)
-    moved = repository.save(
-        child.move_to(ROOT_B), expected_generation=child.generation
-    )
+    moved = child.move_to(ROOT_B)
     assert moved.parent_id == ROOT_B
 
     root = repository.project(ROOT_B)
     with pytest.raises(ProjectRepositoryError, match="cycle"):
-        repository.save(
-            root.move_to(CHILD), expected_generation=root.generation
-        )
+        root.move_to(CHILD)
 
 
 def test_delete_rejects_root_and_project_with_children(tmp_path):
@@ -145,9 +143,7 @@ def test_repository_publishes_local_changes(tmp_path):
 
     root = repository.create("Root")
     child = repository.create("Child", parent_id=root.id)
-    child = repository.save(
-        child.rename("Renamed"), expected_generation=child.generation
-    )
+    child.rename("Renamed")
     repository.delete(child.id, expected_generation=child.generation)
 
     assert changed == [root.id, child.id, child.id, child.id]
@@ -162,11 +158,7 @@ def test_refresh_publishes_external_project_change(tmp_path):
     first.subscribe(changed.append)
 
     second = ProjectRepository(directory)
-    second_snapshot = second.project(project.id)
-    second.save(
-        second_snapshot.rename("Elsewhere"),
-        expected_generation=second_snapshot.generation,
-    )
+    second.project(project.id).rename("Elsewhere")
 
     refreshed = first.refresh()
 
@@ -197,3 +189,32 @@ def test_project_lock_serializes_generation_check_and_write(tmp_path):
     assert process.exitcode == 0
     assert finished.is_set()
     assert repository.project(project.id).name == "Worker"
+
+def test_project_handle_reads_live_metadata_and_exposes_jobs(tmp_path):
+    repository = ProjectRepository(tmp_path / "projects")
+    project = repository.create("Initial")
+    another = repository.project(project.id)
+    assert another.record == project.record
+    assert another.name == "Initial"
+    assert another.rename("Changed") is another
+    assert project.name == "Changed"
+
+    record = repository.manager.new_record(
+        task="DOS", directory=tmp_path, project_id=project.id,
+    )
+    repository.run_store.save(record)
+    assert project.last_job().id == record.id
+    assert project.jobs()[0].record.id == record.id
+    assert project.job(record.id).id == record.id
+
+
+def test_project_handle_refuses_job_from_different_project(tmp_path):
+    repository = ProjectRepository(tmp_path / "projects")
+    first = repository.create("First")
+    second = repository.create("Second")
+    record = repository.manager.new_record(
+        task="DOS", directory=tmp_path, project_id=second.id,
+    )
+    repository.run_store.save(record)
+    with pytest.raises(KeyError):
+        first.job(record.id)

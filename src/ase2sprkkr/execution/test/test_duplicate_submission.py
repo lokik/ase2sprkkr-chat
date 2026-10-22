@@ -13,8 +13,8 @@ from ase2sprkkr.execution import (
     RunStore,
 )
 
-from ase2sprkkr.execution.manager import ExecutionManager
-from ase2sprkkr.execution.job_files import JobFiles
+from ase2sprkkr.execution.run_manager import RunManager
+from ase2sprkkr.execution.run_files import RunFiles
 
 
 class _Runner:
@@ -29,7 +29,7 @@ class _Runner:
         self.exception = None
         self.failure_phase = None
         self.failure_message = None
-        self.job_files = JobFiles(FileManifest.from_spec(spec))
+        self.run_files = RunFiles(FileManifest.from_spec(spec))
 
     @property
     def return_code(self):
@@ -97,8 +97,8 @@ def _run(manager, executor, directory, *, task="DOS", dataset="case"):
 def test_duplicate_task_and_dataset_is_rejected_across_managers(tmp_path):
     directory = tmp_path / "work"
     store_path = tmp_path / "runs"
-    first_manager = ExecutionManager(RunStore(store_path))
-    second_manager = ExecutionManager(RunStore(store_path))
+    first_manager = RunManager(RunStore(store_path))
+    second_manager = RunManager(RunStore(store_path))
     first = _run(first_manager, _Executor(), directory)
     second = _run(second_manager, _Executor(), directory)
 
@@ -112,7 +112,7 @@ def test_duplicate_task_and_dataset_is_rejected_across_managers(tmp_path):
 
 
 def test_different_dataset_can_share_non_scf_directory(tmp_path):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     executor = _Executor()
     first = _run(manager, executor, tmp_path, dataset="one")
     second = _run(manager, executor, tmp_path, dataset="two")
@@ -125,7 +125,7 @@ def test_different_dataset_can_share_non_scf_directory(tmp_path):
 
 
 def test_scf_conflicts_with_other_tasks_in_same_namespace(tmp_path):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     executor = _Executor()
     scf = _run(manager, executor, tmp_path, task="SCF", dataset="scf")
     dos = _run(manager, executor, tmp_path, task="DOS", dataset="dos")
@@ -137,7 +137,7 @@ def test_scf_conflicts_with_other_tasks_in_same_namespace(tmp_path):
 
 
 def test_final_run_releases_submission_namespace(tmp_path):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     executor = _Executor()
     first = _run(manager, executor, tmp_path)
     first.submit()
@@ -155,7 +155,7 @@ def test_final_run_releases_submission_namespace(tmp_path):
 
 def test_submitting_record_contains_submission_key_before_backend_submit(tmp_path):
     store = RunStore(tmp_path / "runs")
-    manager = ExecutionManager(store)
+    manager = RunManager(store)
     executor = _Executor()
     run = _run(manager, executor, tmp_path)
     backend = executor.runners[0]
@@ -181,7 +181,7 @@ def test_submitting_record_contains_submission_key_before_backend_submit(tmp_pat
 def test_declared_exact_outputs_conflict_only_if_they_share_a_target(
     tmp_path, overlap,
 ):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     first_path = str(tmp_path / "one.out")
     second_path = first_path if overlap else str(tmp_path / "two.out")
     first = manager.new_record(
@@ -217,7 +217,7 @@ def test_declared_exact_outputs_conflict_only_if_they_share_a_target(
 def test_declared_read_write_conflicts_respect_access_and_absolute_paths(
     tmp_path, first_access, same_directory, conflict,
 ):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     shared = tmp_path / ("shared.pot" if same_directory or first_access == "input" else "shared.out")
     if same_directory:
         shared.write_text("density")
@@ -262,7 +262,7 @@ def test_declared_read_write_conflicts_respect_access_and_absolute_paths(
 def test_wildcard_output_collisions_follow_pattern_overlap(
     tmp_path, first_pattern, second_pattern, second_is_stdout, conflict,
 ):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     first = manager.new_record(
         task="DOS", directory=tmp_path,
         files=FileManifest(outputs=(
@@ -290,7 +290,7 @@ def test_wildcard_output_collisions_follow_pattern_overlap(
 @pytest.mark.parametrize("alias_kind", ("directory", "file"))
 def test_local_submission_detects_symlinked_output_alias(tmp_path, alias_kind):
     """Distinct names for one writable local file must conflict."""
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     original = tmp_path / "actual"
     original.mkdir()
     actual = original / "result.out"
@@ -319,7 +319,7 @@ def test_local_submission_detects_symlinked_output_alias(tmp_path, alias_kind):
 
 def test_local_submission_detects_hardlinked_output_alias(tmp_path):
     """Distinct local names sharing an inode cannot be written concurrently."""
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     original = tmp_path / "source.out"
     alias = tmp_path / "alias.out"
     original.write_text("existing output")
@@ -340,7 +340,7 @@ def test_local_submission_detects_hardlinked_output_alias(tmp_path):
 
 
 def test_scf_submission_detects_symlinked_working_directory(tmp_path):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     work = tmp_path / "work"
     work.mkdir()
     alias = tmp_path / "work-alias"

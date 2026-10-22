@@ -1,7 +1,7 @@
 """The public run factory freezes execution before creating file state."""
 from ase2sprkkr.execution import (
-    CalculationRun, ExecutionSpec, ExecutionManager, Executors, FileManifest,
-    JobFiles, LaunchSpec, ProjectRepository, RunState,
+    CalculationRun, ExecutionSpec, RunManager, Executors, FileManifest,
+    RunFiles, LaunchSpec, ProjectRepository, RunState,
 )
 from ase2sprkkr.execution.base import Executor
 from ase2sprkkr.execution.local_process import select_mpi_spec
@@ -13,7 +13,7 @@ class _Raw:
         self.spec = spec
         self.callback = None
         self.state = RunState.NEW
-        self.job_files = JobFiles(FileManifest.from_spec(spec))
+        self.run_files = RunFiles(FileManifest.from_spec(spec))
 
 
 class _Executor(Executor):
@@ -44,17 +44,17 @@ def test_untracked_factory_chooses_only_mpi_input(tmp_path):
     )
     assert run.spec.argv == ("mpirun", "parallel")
     assert run.spec.stdin == "parallel.in"
-    assert run.job_files.manifest.input_files == (str(tmp_path / "parallel.in"),)
+    assert run.run_files.manifest.input_files == (str(tmp_path / "parallel.in"),)
 
 
 def test_project_factory_reserves_only_chosen_input(tmp_path):
     projects = ProjectRepository(tmp_path / "projects")
     project = projects.create("MPI factory test")
-    manager = ExecutionManager(project_repository=projects, executors=Executors())
+    manager = RunManager(project_repository=projects, executors=Executors())
     run = CalculationRun.create(
         _spec(tmp_path), executor=_Executor(), project=(manager, project.id),
         task="SCF", process_result=lambda value: value,
     )
     assert run.spec.stdin == "parallel.in"
     assert run.record.files.input_files == (str(tmp_path / "parallel.in"),)
-    assert run.job_files.manifest.input_files == run.record.files.input_files
+    assert run.run_files.manifest.input_files == run.record.files.input_files

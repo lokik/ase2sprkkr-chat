@@ -1,7 +1,7 @@
 import pytest
 
 import ase2sprkkr.execution.file_history as file_history_module
-from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.run_manager import RunManager
 from ase2sprkkr.execution import (
     FileAvailabilityState,
     FailurePhase,
@@ -16,7 +16,7 @@ def test_result_snapshot_sync_failure_is_file_failure(tmp_path, monkeypatch):
     output = tmp_path / "result.out"
     output.write_text("result")
     store = RunStore(tmp_path / "runs")
-    manager = ExecutionManager(store)
+    manager = RunManager(store)
     record = manager.new_record(
         task="SCF",
         directory=tmp_path,

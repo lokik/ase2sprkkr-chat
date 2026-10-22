@@ -64,7 +64,7 @@ def _wait_for_live_output(runner, output_seen, output, timeout=30):
 def test_remote_executor_over_ssh(docker_execution_image):
     from ase.build import bulk
     from ase2sprkkr.execution import (
-        ExecutionManager,
+        RunManager,
         RemoteExecutor,
         ProjectRepository,
         SshTransport,
@@ -149,7 +149,7 @@ def test_remote_executor_over_ssh(docker_execution_image):
             )
             projects = ProjectRepository(tmp / "projects")
             project = projects.create("SSH integration")
-            manager = ExecutionManager(
+            manager = RunManager(
                 project_repository=projects
             )
             output_seen = Event()
@@ -185,7 +185,7 @@ def test_remote_executor_over_ssh(docker_execution_image):
 
             assert runner.backend_id is not None
             assert runner.executor.transport.host == "tester@127.0.0.1"
-            remote_directory = runner.job_files.manifest.mapping.map_path(str(workdir))
+            remote_directory = runner.run_files.manifest.mapping.map_path(str(workdir))
             assert remote_directory == "/home/tester/ase2sprkkr-runs/calculation"
             _wait_for_live_output(runner, output_seen, output)
 
@@ -215,7 +215,7 @@ def test_remote_executor_over_ssh(docker_execution_image):
             # client-owned record, while terminal result replay is handled by
             # the outputs layer rather than by attaching a live runner.
             run_id = runner.id
-            restarted = ExecutionManager(
+            restarted = RunManager(
                 project_repository=projects
             )
             record = restarted.store.get(run_id)
