@@ -146,6 +146,10 @@ class OutputObserverWarning(RuntimeWarning):
     """An output observer failed while the calculation itself keeps running."""
 
 
+class ObservationDetached(RuntimeError):
+    """The local observation was stopped; the backend may still run."""
+
+
 class SubmissionNotStarted(RuntimeError):
     """Submission failed before the backend could possibly accept the run."""
 
@@ -231,6 +235,7 @@ class RunState(str, Enum):
     QUEUED = "queued"
     RUNNING = "running"
     DOWNLOADING = "downloading"
+    DETACHED = "detached"
     POSTPROCESSING = "postprocessing"
     FINISHED = "finished"
     FAILED = "failed"

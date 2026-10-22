@@ -261,6 +261,13 @@ class RemoteRunner(ManagedRunner):
             self.job_files.merge(manifest)
         start_monitor(self, missing_backend="Run has no backend reference")
 
+    def stop_observation(self):
+        if self._run_id is None:
+            raise NotImplementedError(
+                "Nonpersistent remote runs cannot safely detach observation"
+            )
+        return super().stop_observation()
+
     def _cancel_backend(self):
         return _run_sync(
             self.executor.connection.cancel(self._backend_id)
