@@ -47,6 +47,11 @@ class _BackendRunner:
     def file_snapshot(self):
         return self.files
 
+    @property
+    def return_code(self):
+        # Cancellation before the backend's terminal observation has no exit code.
+        return None
+
     def prepare_submission(self):
         return None
 
