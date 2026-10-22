@@ -134,13 +134,6 @@ def test_history_listing_is_lazy_but_loading_restores_missing_output(
     )
 
 
-@pytest.mark.parametrize(
-    "entrypoint, expected_error",
-    [
-        pytest.param("load", ProjectResultUnavailableError, id="load-project-result"),
-        pytest.param("retrieve", HistoricalFileMismatchError, id="retrieve-files"),
-    ],
-)
 def test_retrieve_rejects_existing_modified_historical_output(tmp_path):
     manager, executor, record = _terminal_run(tmp_path)
     output = tmp_path / "run.out"
@@ -163,6 +156,13 @@ def test_retrieve_allows_modified_historical_input_with_intact_output(tmp_path):
     assert restored.files.state is FileState.CURRENT
 
 
+@pytest.mark.parametrize(
+    "entrypoint, expected_error",
+    [
+        pytest.param("load", ProjectResultUnavailableError, id="load-project-result"),
+        pytest.param("retrieve", HistoricalFileMismatchError, id="retrieve-files"),
+    ],
+)
 def test_restored_changed_content_is_rejected_as_overwritten(
     tmp_path, monkeypatch, entrypoint, expected_error,
 ):
