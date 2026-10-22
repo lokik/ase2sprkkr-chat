@@ -428,3 +428,31 @@ def test_update_without_backend_does_not_reconstruct_executor(tmp_path):
     updated = manager.update(record, RunStatus(state=RunState.SUBMITTING))
     assert updated.state is RunState.SUBMITTING
     assert updated.execution.backend_id is None
+
+
+def test_refresh_does_not_apply_stale_status_after_terminal_commit(tmp_path):
+    """A slow status query cannot add stale failure data to a newer finish."""
+    manager = _manager(tmp_path)
+    executor = _Executor()
+    endpoint = manager.executors.register(executor)
+    original = manager.new_record(task="DOS", directory=tmp_path, endpoint=endpoint)
+    queued = manager.transition(
+        original, state=RunState.QUEUED,
+        execution=original.execution.submitted("native-1"),
+    )
+    finished = []
+
+    def stale_status(*records):
+        assert records == (queued,)
+        finished.append(manager.transition(
+            queued, state=RunState.FINISHED, return_code=0,
+        ))
+        return (RunStatus(
+            RunState.FAILED, backend_id="native-1",
+            message="outdated scheduler failure",
+        ),)
+
+    executor.status = stale_status
+    assert manager.refresh((queued,)) == (finished[0],)
+    assert manager.store.get(queued.id) == finished[0]
+    assert finished[0].message is None
