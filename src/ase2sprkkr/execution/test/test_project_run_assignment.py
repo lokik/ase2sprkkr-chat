@@ -8,15 +8,15 @@ from ase2sprkkr.execution import (
     ExecutionManager, ExecutionSpec, Executor, ProjectRepository, RunState,
     FileManifest,
 )
-from ase2sprkkr.execution.job_files import JobFilesOwner
+from ase2sprkkr.execution.job_files import JobFiles
 
 
-class _Runner(JobFilesOwner):
+class _Runner:
     def __init__(self, spec, executor):
         self.spec = spec
         self.executor = executor
         self.callback = None
-        self._initialize_job_files(FileManifest.from_spec(spec))
+        self.job_files = JobFiles(FileManifest.from_spec(spec))
         self.state = RunState.NEW
         self.backend_id = None
         self.result = SimpleNamespace(return_code=0)
