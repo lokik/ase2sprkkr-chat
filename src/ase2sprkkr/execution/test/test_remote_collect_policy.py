@@ -42,6 +42,33 @@ def test_collect_existing_output_without_remote_access(tmp_path, policy, expecte
     assert files.outputs[0].availability_state == "pending"
 
 
+def test_new_submission_cleanup_allows_missing_to_fetch_new_result(tmp_path):
+    from ase2sprkkr.execution import ExecutionSpec, LaunchSpec
+    from ase2sprkkr.execution.file_availability import prepare_local_files
+
+    local = tmp_path / "result.dat"
+    local.write_text("old")
+    spec = ExecutionSpec(
+        argv=("program",), directory=str(tmp_path), input_file=None,
+        output_file=None, output_files=(str(local),),
+        launch=LaunchSpec(output_sync="missing", cleanup_outputs="both"),
+    )
+    prepare_local_files(spec, side="local")
+    assert not local.exists()
+    remote = tmp_path / "remote-result.dat"
+    remote.write_text("new")
+    manifest = FileManifest(outputs=(FileEntry(
+        str(local), str(remote), availability_state="pending",
+    ),))
+    mapping = FileMapping(str(tmp_path), str(tmp_path), output_sync="missing")
+    result, error = asyncio.run(RemoteFileHandler(LocalTransport()).collect(
+        mapping, manifest, ExecutionOutcome(), required=True,
+    ))
+    assert error is None
+    assert result.outputs[0].availability_state == "available"
+    assert local.read_text() == "new"
+
+
 def test_collect_missing_cache_still_checks_remote_baseline(tmp_path):
     local = tmp_path / "cache.pot"
     local.write_text("original")

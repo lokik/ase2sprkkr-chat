@@ -13,6 +13,7 @@ from .remote_file_handler import FileSyncPolicy
 from .transport import FILE_DELIVERY_ERRORS
 from .run_model import FileManifest
 from .managed_runner import ManagedRunner
+from .file_availability import prepare_local_files
 from .supervisor_monitor import backend_status_from_facts, monitor_supervisor
 
 
@@ -183,6 +184,9 @@ class RemoteRunner(ManagedRunner):
             remote_directory = mapping.map_path(self.spec.directory)
             await self.executor.transport.run(("mkdir", "-p", "--", remote_directory))
             manifest = await self.file_handler.prepare(mapping, self.spec, files)
+            # One-time local cleanup for a new submission; never for attach/collect.
+            prepare_local_files(self.spec, side="local", preserve_open_streams=True,
+                                manifest=files)
             # The runner owns backend identity, command construction and the
             # submission protocol. FileHandler knows only file locations.
             mapped = {entry.local_path: entry.remote_path
@@ -196,6 +200,7 @@ class RemoteRunner(ManagedRunner):
                 "id": self._run_id,
                 "executor": self.executor.backend,
                 "executor_options": self.executor.backend_options,
+                "cleanup_side": "remote",
                 "directory": remote_directory,
                 **self.spec.command_request(argv),
                 "input_file": (

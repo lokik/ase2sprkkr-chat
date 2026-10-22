@@ -418,6 +418,7 @@ class LaunchSpec:
     remote_root: Optional[str] = None
     input_sync: str = FileSyncPolicy.CHANGED.value
     output_sync: str = FileSyncPolicy.CHANGED.value
+    cleanup_outputs: str = "both"
 
     def __post_init__(self):
         mpi = self.mpi
@@ -440,6 +441,8 @@ class LaunchSpec:
             raise ValueError("Invalid output_sync file synchronization policy") from exc
         object.__setattr__(self, "input_sync", input_sync.value)
         object.__setattr__(self, "output_sync", output_sync.value)
+        from .file_availability import normalize_output_cleanup
+        object.__setattr__(self, "cleanup_outputs", normalize_output_cleanup(self.cleanup_outputs))
 
     def __bool__(self):
         return self.mpi.requested
