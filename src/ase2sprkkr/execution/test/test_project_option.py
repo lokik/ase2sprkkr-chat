@@ -8,6 +8,7 @@ from ase2sprkkr.execution import (
     RunState,
     JobFiles, FileManifest,
 )
+from ase2sprkkr.execution.job_files import JobFilesOwner
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from ase2sprkkr.input_parameters.task_definition import TaskDefinition
 from ase2sprkkr.sprkkr import calculation as calculation_module
@@ -16,13 +17,13 @@ from ase2sprkkr.sprkkr.calculator import SPRKKR
 from ase2sprkkr.sprkkr.profile import SPRKKRProfile
 
 
-class _Runner:
+class _Runner(JobFilesOwner):
     def __init__(self, callback=None, *, spec=None):
         self.callback = callback
         self.state = RunState.NEW
         self.backend_id = None
         self.spec = spec
-        self.job_files = JobFiles(FileManifest())
+        self._initialize_job_files(FileManifest())
         self.failure_phase = None
         self.failure_message = None
         self.result = ExecutionOutcome(
