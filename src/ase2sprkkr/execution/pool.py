@@ -22,10 +22,8 @@ class _ExecutorPool:
 
     def for_endpoint(self, endpoint):
         """Return the shared backend reconstructed from *endpoint*."""
-        from .endpoint import ExecutorEndpoint, create_executor_from_endpoint
+        from .endpoint import create_executor_from_endpoint
 
-        if isinstance(endpoint, dict):
-            endpoint = ExecutorEndpoint(**endpoint)
         return self.get(endpoint, lambda: create_executor_from_endpoint(endpoint))
 
 
@@ -35,20 +33,25 @@ class Executors:
     def __init__(self):
         self._pool = _ExecutorPool()
 
-    def register(self, executor, endpoint=None):
-        from .endpoint import ExecutorEndpoint, endpoint_for_executor
+    @staticmethod
+    def _endpoint(value):
+        from .endpoint import ExecutorEndpoint
 
-        if endpoint is None:
-            endpoint = endpoint_for_executor(executor)
-        elif isinstance(endpoint, dict):
-            endpoint = ExecutorEndpoint(**endpoint)
+        return ExecutorEndpoint(**value) if isinstance(value, dict) else value
+
+    def register(self, executor, endpoint=None):
+        from .endpoint import endpoint_for_executor
+
+        endpoint = self._endpoint(
+            endpoint_for_executor(executor) if endpoint is None else endpoint
+        )
         registered = self._pool.get(endpoint, lambda: executor)
         if registered is not executor:
             raise ValueError(f"Another executor is already registered for {endpoint!r}")
         return endpoint
 
     def for_endpoint(self, endpoint):
-        return self._pool.for_endpoint(endpoint)
+        return self._pool.for_endpoint(self._endpoint(endpoint))
 
     def for_record(self, record):
         return self.for_endpoint(record.execution.endpoint)
