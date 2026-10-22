@@ -10,6 +10,7 @@ import os
 from dataclasses import replace
 from datetime import datetime, timezone
 
+from ..common.file_fingerprints import file_fingerprint
 from ..common.file_versions import FileState, FileVersion
 from ._durability import sync_file
 from .transport import expand_local_candidates, has_file_magic
@@ -29,12 +30,23 @@ def concrete_result_files(manifests):
     return tuple(paths)
 
 
-def snapshot_result_files(manifests, *, sync=False):
+def snapshot_result_files(manifests, *, sync=False, verified_versions=()):
+    """Capture stable history, reusing delivery hashes only for unchanged files."""
+    verified = {
+        os.fspath(version.path): version for version in verified_versions
+        if version is not None and version.available
+    }
     versions = []
     for path in concrete_result_files(manifests):
         if sync:
             sync_file(path)
-        versions.append(FileVersion.capture(path, require_digest=True))
+        previous = verified.get(path)
+        if (previous is not None
+                and file_fingerprint(path) == previous.fingerprint):
+            # The delivery already computed a stable SHA-256 for these bytes.
+            versions.append(previous)
+        else:
+            versions.append(FileVersion.capture(path, require_digest=True))
     return tuple(sorted(versions, key=lambda value: os.fspath(value.path)))
 
 
@@ -78,11 +90,17 @@ def missing_result_files(result_files):
 def capture_result_files(result_files):
     if result_files is None or result_files.captured_at is not None:
         return result_files
+    verified_versions = (
+        entry.verified_local_version for entry in result_files.files
+        if entry.availability_state == "available"
+        and entry.verified_local_version is not None
+    )
     captured = replace(
         result_files,
         input_versions=snapshot_result_files(result_files.input_files),
         output_versions=snapshot_result_files(
             result_files.output_files, sync=True,
+            verified_versions=verified_versions,
         ),
         captured_at=datetime.now(timezone.utc).isoformat(),
     )

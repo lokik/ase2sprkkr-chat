@@ -831,3 +831,41 @@ def test_remote_streams_verify_independently_without_manifest_copies(tmp_path):
     assert updated.stdout.availability_state == "available"
     assert updated.stderr.availability_state == "failed"
     assert manifest.stdout.availability_state == "pending"
+
+
+def test_follow_stream_uses_one_local_content_capture(tmp_path, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from ase2sprkkr.common.file_versions import file_digest, FileVersion
+    from ase2sprkkr.execution.remote_file_handler import RemoteFileHandler
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+    import ase2sprkkr.common.file_versions as versions
+
+    output = tmp_path / "stream.out"
+    output.write_bytes(b"stream contents")
+    expected = file_digest(output)
+    original = versions.file_digest
+    reads = []
+
+    def counted_digest(path, *args, **kwargs):
+        reads.append(path)
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(versions, "file_digest", counted_digest)
+
+    class Transport:
+        async def file_signature(self, path):
+            stat = output.stat()
+            return stat.st_size, stat.st_mtime_ns
+        async def file_digest(self, path):
+            return expected
+
+    entry = FileEntry(str(output), "/remote/stream.out", "pending")
+    observed, error = asyncio.run(RemoteFileHandler(Transport()).verify_stream_availability(
+        FileManifest(stdout=entry),
+        SimpleNamespace(output_file=None, error_file=None),
+    ))
+    assert error is None
+    assert len(reads) == 1
+    assert observed.stdout.verified_local_version.digest == expected
+    assert observed.stdout.verified_local_version.is_current()

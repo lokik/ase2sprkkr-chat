@@ -51,3 +51,40 @@ def test_uncaptured_wildcard_requires_regular_file(tmp_path):
     assert missing_result_files(files) == ()
     result.unlink()
     assert missing_result_files(files) == (declaration,)
+
+
+def test_capture_reuses_verified_output_without_hashing_again(tmp_path, monkeypatch):
+    from ase2sprkkr.common.file_versions import FileVersion
+    import ase2sprkkr.common.file_versions as versions
+
+    output = tmp_path / "output.dat"
+    output.write_bytes(b"delivered result")
+    verified = FileVersion.capture(output, require_digest=True)
+    files = FileManifest(outputs=(FileEntry(
+        local_path=str(output), availability_state="available",
+        verified_local_version=verified,
+    ),))
+
+    def unexpected_digest(*args, **kwargs):
+        raise AssertionError("Unchanged delivery must not be hashed twice")
+
+    monkeypatch.setattr(versions, "file_digest", unexpected_digest)
+    captured = capture_result_files(files)
+    assert captured.output_versions == (verified,)
+    assert captured.output_versions[0].digest == verified.digest
+
+
+def test_capture_rehashes_changed_verified_output(tmp_path):
+    from ase2sprkkr.common.file_versions import FileVersion, file_digest
+
+    output = tmp_path / "output.dat"
+    output.write_bytes(b"delivered result")
+    verified = FileVersion.capture(output, require_digest=True)
+    files = FileManifest(outputs=(FileEntry(
+        local_path=str(output), availability_state="available",
+        verified_local_version=verified,
+    ),))
+    output.write_bytes(b"changed result")
+    captured = capture_result_files(files)
+    assert captured.output_versions[0].digest == file_digest(output)
+    assert captured.output_versions[0].digest != verified.digest

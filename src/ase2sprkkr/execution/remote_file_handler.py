@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from dataclasses import replace
 
+from ..common.file_fingerprints import file_fingerprint
 from ..common.file_versions import FileVersion, file_digest
 from .base import file_path
 from .run_model import FileEntry, FileManifest, FileSyncPolicy
@@ -351,7 +352,7 @@ class RemoteFileHandler:
                 continue
             checked.add(identity)
             try:
-                await self._verify_stream(entry, kind, spec)
+                version = await self._verify_stream(entry, kind, spec)
             except FILE_DELIVERY_ERRORS as exc:
                 manifest = manifest.with_file_availability(
                     entry.local_path, "failed", str(exc),
@@ -360,28 +361,14 @@ class RemoteFileHandler:
                 if first_error is None:
                     first_error = exc
             else:
-                try:
-                    version = FileVersion.capture(
-                        entry.local_path, require_digest=True,
-                    )
-                except OSError as exc:
-                    manifest = manifest.with_file_availability(
-                        entry.local_path, "failed", str(exc),
-                        remote_path=entry.remote_path,
-                    )
-                    if first_error is None:
-                        first_error = exc
-                else:
-                    manifest = manifest.with_file_availability(
-                        entry.local_path, "available", remote_path=entry.remote_path,
-                        verified_local_version=version,
-                    )
+                manifest = manifest.with_file_availability(
+                    entry.local_path, "available", remote_path=entry.remote_path,
+                    verified_local_version=version,
+                )
         return manifest, first_error
 
     async def _verify_stream(self, entry, kind, spec):
         """Verify one streamed file against its remote authoritative contents."""
-        from ..common.file_versions import file_digest
-
         if entry.remote_path is None:
             raise ValueError(f"No remote path for {kind}")
         signature = await self.transport.file_signature(entry.remote_path)
@@ -398,15 +385,27 @@ class RemoteFileHandler:
                 f"Streamed local {kind} size does not match the authoritative "
                 f"remote output: {entry.local_path}"
             )
+        # One stable content capture both verifies the stream and supplies its
+        # durable SHA-256 identity; do not read the entire file a second time.
+        version = FileVersion.capture(entry.local_path, require_digest=True)
         digest = await self.transport.file_digest(entry.remote_path)
-        if digest is None or file_digest(entry.local_path) != digest:
+        if digest is None or version.digest != digest:
             raise RuntimeError(
                 f"Streamed local {kind} contents differ from remote output: "
                 f"{entry.local_path}"
             )
         if await self.transport.file_signature(entry.remote_path) != signature:
             raise RuntimeError(f"Remote {kind} output changed during verification")
+        before = file_fingerprint(entry.local_path)
+        if before != version.fingerprint:
+            raise RuntimeError(f"Local {kind} output changed during verification")
         os.utime(entry.local_path, ns=(stat.st_atime_ns, signature[1]))
+        after = file_fingerprint(entry.local_path)
+        if ((after.device, after.inode, after.mode, after.size)
+                != (before.device, before.inode, before.mode, before.size)
+                or after.mtime_ns != signature[1]):
+            raise RuntimeError(f"Local {kind} output changed during timestamp update")
+        return replace(version, fingerprint=after)
 
     @staticmethod
     def plan_restore(run, paths, *, destinations=None):

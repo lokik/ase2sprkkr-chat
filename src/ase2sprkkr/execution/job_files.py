@@ -35,10 +35,15 @@ class JobFiles:
             return manifest
 
     def merge(self, observed: FileManifest) -> FileManifest:
-        """Apply an observation to the latest working state atomically."""
-        with self._lock:
-            self._manifest = merge_snapshot(self._manifest, observed)
-            return self._manifest
+        """Reconcile outside the lock and atomically publish the latest state."""
+        while True:
+            with self._lock:
+                previous = self._manifest
+            merged = merge_snapshot(previous, observed)
+            with self._lock:
+                if self._manifest is previous:
+                    self._manifest = merged
+                    return merged
 
     def mark_availability(self, path, state, message=None, *, remote_path=None):
         """Update a declared file in working memory, retaining older snapshots."""
