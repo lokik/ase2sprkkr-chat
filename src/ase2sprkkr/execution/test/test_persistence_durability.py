@@ -133,7 +133,7 @@ def test_reserve_syncs_inputs_before_submitting_record(tmp_path, monkeypatch):
     real_write = manager_module.durable_write_json
 
     def tracked_write(path, data, **options):
-        if data["state"] == RunState.SUBMITTING:
+        if data["state"] == RunState.SUBMITTING.value:
             events.append(("state", "submitting"))
         return real_write(path, data, **options)
 
