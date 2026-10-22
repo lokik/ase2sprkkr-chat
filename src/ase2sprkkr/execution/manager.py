@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import subprocess
 from dataclasses import replace
@@ -11,6 +10,7 @@ from uuid import uuid4
 
 from .base import FailurePhase, RunState, RunStatus
 from .endpoint import ExecutorEndpoint
+from .file_history import capture_result_files, missing_result_files
 from .job_files import JobFiles
 from .pool import Executors
 from .postprocessing import CalculationRun
@@ -37,14 +37,6 @@ class DuplicateSubmissionError(RuntimeError):
                 len(self.conflicts), "" if len(self.conflicts) == 1 else "s"
             )
         )
-
-
-_NO_FILES_FAILURES = frozenset((
-    FailurePhase.SUBMISSION,
-    FailurePhase.LAUNCH,
-    FailurePhase.FILES,
-    FailurePhase.DOWNLOAD,
-))
 
 
 class ExecutionManager:
@@ -157,19 +149,8 @@ class ExecutionManager:
 
         return self.store.update(record, mark_absent)
 
-    def reserve(self, record, *, spec=None, executor=None):
-        """Resolve placement, reserve files and recover stale submissions."""
-        if spec is not None:
-            if executor is None:
-                raise ValueError("An executor is required for submission placement")
-            files, remote_directory = executor.reservation_context(spec, record.files)
-            execution = record.execution
-            if remote_directory is not None:
-                execution = replace(
-                    execution,
-                    directory=replace(execution.directory, remote=remote_directory),
-                )
-            record = replace(record, files=files, execution=execution)
+    def reserve(self, record):
+        """Reserve files and recover stale submissions before retrying."""
         attempted_recovery = set()
         while True:
             reserved, conflicts = self.store.reserve_files(record)
@@ -215,89 +196,6 @@ class ExecutionManager:
             )
         return updated
 
-    def record_submitted(self, record, *, backend_id, state, failure_phase, files):
-        """Commit backend identity before its submission ticket can be ACKed."""
-        if backend_id is None:
-            raise RuntimeError("Executor submit returned without a backend ID")
-        if record.state.is_terminal:
-            return record
-        state = RunState(state)
-        if state.is_terminal:
-            # Synchronous completion is published after durable submission.
-            state = RunState.SUBMITTING
-        return self.transition(
-            record, state=state,
-            execution=record.execution.submitted(backend_id),
-            failure_phase=(None if state == RunState.SUBMITTING
-                           else _failure_phase(failure_phase)),
-            files=files,
-        )
-
-    def record_submission_failure(
-        self, record, *, error, uncertain, state, backend_id,
-        failure_phase=None, message=None,
-    ):
-        """Persist definite non-launches without inventing backend outcomes."""
-        if not uncertain:
-            if record.state == RunState.NEW:
-                return record  # The reservation was refused.
-            if isinstance(error, asyncio.CancelledError):
-                return self.complete(
-                    record, state=RunState.CANCELLED, files_available=False,
-                )
-            return self.complete(
-                record, state=RunState.FAILED,
-                message=message or str(error),
-                failure_phase=_failure_phase(failure_phase) or FailurePhase.SUBMISSION,
-                files_available=False,
-            )
-        if backend_id is None or record.state.is_terminal:
-            return record
-        return self.transition(
-            record, state=state,
-            execution=record.execution.submitted(backend_id),
-            failure_phase=_failure_phase(failure_phase),
-        )
-
-    def record_observation(
-        self, record, *, state, execution, return_code, message,
-        failure_phase, files, expected_updated_at,
-    ):
-        """Commit an observer's fact without making it authoritative over newer data."""
-        if record.state.is_terminal:
-            return record
-        state = RunState(state)
-        if state == RunState.UNKNOWN:
-            if record.state == RunState.UNKNOWN:
-                return record
-            return self.transition(
-                record, state=state, execution=execution, message=message,
-                expected_updated_at=expected_updated_at,
-            )
-        if not state.is_terminal:
-            return None
-        phase = _failure_phase(failure_phase)
-        if state == RunState.FAILED and phase is None:
-            phase = FailurePhase.EXECUTION
-        return self.complete(
-            record, state=state, execution=execution,
-            return_code=return_code, message=message, failure_phase=phase,
-            files_available=phase not in _NO_FILES_FAILURES, files=files,
-        )
-
-    @staticmethod
-    def acknowledge_terminal(executor, record, *, backend_id=None):
-        """Return success only after ACK of a durable terminal record."""
-        if (not record.state.is_terminal
-                or (record.execution.backend_id is None and backend_id is None)):
-            return False
-        try:
-            executor.acknowledge(record)
-        except (OSError, RuntimeError, subprocess.CalledProcessError):
-            # Backend receipts remain retryable after transport errors.
-            return False
-        return True
-
     def complete(
         self,
         record,
@@ -330,7 +228,7 @@ class ExecutionManager:
 
         if files_available:
             try:
-                result_files = JobFiles.capture(result_files)
+                result_files = capture_result_files(result_files)
             except OSError as exc:
                 state = RunState.FAILED
                 phase = FailurePhase.FILES
@@ -404,7 +302,7 @@ class ExecutionManager:
         record = self.store.get(run if isinstance(run, str) else run.id)
         if not record.state.is_terminal:
             raise RuntimeError(f"Run {record.id} is not finished")
-        missing = JobFiles.missing_files(record.files)
+        missing = missing_result_files(record.files)
         executor = (
             self.executors.for_endpoint(record.execution.endpoint)
             if missing and record.execution.backend_id is not None else None
