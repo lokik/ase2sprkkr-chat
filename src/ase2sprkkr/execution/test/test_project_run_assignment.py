@@ -31,6 +31,10 @@ class _Runner:
         self.backend_id = "native-1"
         self.state = RunState.QUEUED
 
+    @property
+    def return_code(self):
+        return self.result.return_code
+
     def set_manifest(self, manifest):
         self.files = manifest
 
