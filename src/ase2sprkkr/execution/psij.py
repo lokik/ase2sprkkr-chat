@@ -72,12 +72,12 @@ def _psij_state(status, *, attached=False, return_code=None):
     scheduler status. That is UNKNOWN, not evidence of a new submission.
     A completed job with a nonzero exit code is an execution failure.
     """
-    name = getattr(getattr(status, "state", None), "name", None)
+    name = None if status is None else status.state.name
     if attached and name == "NEW":
         return RunState.UNKNOWN
     state = _STATE_MAP.get(name, RunState.UNKNOWN)
     if return_code is None:
-        return_code = getattr(status, "exit_code", None)
+        return_code = None if status is None else status.exit_code
     if state == RunState.FINISHED and return_code not in (None, 0):
         return RunState.FAILED
     return state
@@ -354,7 +354,8 @@ class PsijRunner(ManagedRunner):
             return self._return_code
         if self._return_code is not None:
             return self._return_code
-        return getattr(getattr(self._job, "status", None), "exit_code", None)
+        status = self._job.status
+        return None if status is None else status.exit_code
 
     def set_manifest(self, files):
         self._files = files
@@ -366,7 +367,7 @@ class PsijRunner(ManagedRunner):
 
     @property
     def backend_id(self):
-        native_id = getattr(self._job, "native_id", None)
+        native_id = self._job.native_id
         return None if native_id is None else str(native_id)
 
     def _prepare_io(self):
@@ -469,7 +470,7 @@ class PsijRunner(ManagedRunner):
             # their manifest on an inconclusive scheduler observation.
             return self.result
 
-        self._return_code = getattr(status, "exit_code", None)
+        self._return_code = None if status is None else status.exit_code
         # The scheduler may know FAILED/CANCELED without knowing the process
         # exit status; retain None rather than inventing an exit code.
         self.result.return_code = self._return_code
@@ -702,9 +703,9 @@ class PsijExecutor(Executor):
         with self._jobs_lock:
             status = self._terminal_observations.get(job)
             if status is None:
-                status = getattr(job, "status", None)
+                status = job.status
         state = _psij_state(status, attached=True)
-        return_code = getattr(status, "exit_code", None)
+        return_code = None if status is None else status.exit_code
         if state in (RunState.FINISHED, RunState.FAILED, RunState.CANCELLED):
             with self._jobs_lock:
                 if job not in self._observers and self._jobs.get(native_id) is job:
@@ -712,7 +713,7 @@ class PsijExecutor(Executor):
         return RunStatus(
             state=state, backend_id=native_id,
             return_code=return_code,
-            message=getattr(status, "message", None),
+            message=None if status is None else status.message,
             failure_phase=FailurePhase.EXECUTION if state == RunState.FAILED else None,
         )
 
