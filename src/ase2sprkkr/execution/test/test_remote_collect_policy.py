@@ -93,3 +93,27 @@ def test_collect_records_first_error_and_continues_other_outputs(tmp_path):
     assert isinstance(error, FileNotFoundError)
     assert [e.availability_state for e in result.outputs] == ["failed", "available"]
     assert (root / "second.out").read_text() == "second"
+
+
+def test_successful_remote_download_stores_revalidatable_sha256(tmp_path):
+    from ase2sprkkr.common.file_versions import file_digest
+
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    source = remote / "result.dat"
+    source.write_bytes(b"remote result")
+    local = tmp_path / "result.dat"
+    entry = FileEntry(str(local), str(source), availability_state="pending")
+    files = FileManifest(outputs=(entry,))
+    observed, error = asyncio.run(RemoteFileHandler(LocalTransport()).collect(
+        FileMapping(str(tmp_path), str(remote)),
+        files, ExecutionOutcome(), required=True,
+    ))
+    assert error is None
+    version = observed.outputs[0].verified_local_version
+    assert observed.outputs[0].availability_state == "available"
+    assert version.digest == file_digest(source)
+    assert version.is_current()
+
+    local.write_bytes(b"changed local copy")
+    assert not version.is_current()

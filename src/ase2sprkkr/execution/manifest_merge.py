@@ -36,6 +36,7 @@ def _merge_availability(previous, received, preserve):
         return replace(
             entry, availability_state=prior.availability_state,
             availability_message=prior.availability_message,
+            verified_local_version=prior.verified_local_version,
         )
 
     return received._map_files(merged)
@@ -60,6 +61,11 @@ def merge_snapshot(current, requested):
             return False
         if entry.availability_state == "pending":
             return True
+        if (prior.availability_state == "available"
+                and entry.availability_state == "failed"
+                and prior.verified_local_version is not None
+                and prior.verified_local_version.is_current()):
+            return True
         # A concurrent failed transfer invalidates speculative capture.
         return (
             requested.captured_at is not None
@@ -76,7 +82,11 @@ def merge_terminal_files(previous, received):
 
     def preserve(prior, entry):
         if entry.availability_state in ("failed", "skipped"):
-            return False
+            return (
+                prior.availability_state == "available"
+                and prior.verified_local_version is not None
+                and prior.verified_local_version.is_current()
+            )
         if prior.availability_state == "skipped":
             return True
         return (

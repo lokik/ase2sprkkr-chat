@@ -83,6 +83,7 @@ class FileEntry:
     availability_message: Optional[str] = None
     source: Optional[str] = None
     pre_run_signature: Optional[tuple] = None
+    verified_local_version: Optional[FileVersion] = None
     optional: bool = False
 
     def __post_init__(self):
@@ -96,6 +97,16 @@ class FileEntry:
             object.__setattr__(self, "remote_path", os.fspath(self.remote_path))
         if self.pre_run_signature is not None:
             object.__setattr__(self, "pre_run_signature", tuple(self.pre_run_signature))
+        if isinstance(self.verified_local_version, dict):
+            object.__setattr__(
+                self, "verified_local_version",
+                FileVersion(**self.verified_local_version),
+            )
+        if (self.verified_local_version is not None
+                and not isinstance(self.verified_local_version, FileVersion)):
+            raise TypeError("verified_local_version must be a FileVersion")
+        if self.availability_state != FileAvailabilityState.AVAILABLE:
+            object.__setattr__(self, "verified_local_version", None)
         if type(self.optional) is not bool:
             raise TypeError("FileEntry.optional must be a bool")
         if self.local_path is None and self.remote_path is None:
@@ -508,7 +519,7 @@ class FileManifest:
 
     def with_file_availability(
         self, local_path, state, message=None, *,
-        remote_path=None, kind=None,
+        remote_path=None, kind=None, verified_local_version=None,
     ):
         """Update one declared file identity; never register new members.
 
@@ -545,6 +556,7 @@ class FileManifest:
                     return replace(
                         entry, availability_state=state,
                         availability_message=message,
+                        verified_local_version=verified_local_version,
                     )
                 return entry
 

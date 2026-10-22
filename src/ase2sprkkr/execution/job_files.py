@@ -87,9 +87,15 @@ class JobFiles:
         verification observations are installed independently so a later
         failure cannot discard a successful earlier delivery.
         """
-        with self._lock:
-            self._manifest = merge_terminal_files(self._manifest, frozen)
-            manifest = self._manifest
+        while True:
+            with self._lock:
+                previous = self._manifest
+            merged = merge_terminal_files(previous, frozen)
+            with self._lock:
+                if self._manifest is previous:
+                    self._manifest = merged
+                    manifest = merged
+                    break
 
         try:
             observed, transfer_error = await handler.collect(
@@ -101,7 +107,13 @@ class JobFiles:
             transfer_error = exc
         else:
             if observed is not None:
-                self.merge(observed)
+                merged = self.merge(observed)
+                # An unrelated failed attempt may race with a successfully
+                # verified download. Only suppress the transfer error if
+                # every reported failure was superseded by intact delivery.
+                if (transfer_error is not None and observed.failed_files
+                        and not merged.failed_files):
+                    transfer_error = None
             else:
                 manifest = None
 
