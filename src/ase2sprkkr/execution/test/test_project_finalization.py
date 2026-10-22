@@ -790,6 +790,7 @@ def test_cancel_after_persisted_completion_does_not_touch_backend_or_store(
     class Raw:
         callback = None
         state = RunState.RUNNING
+        job_files = JobFiles(record.files)
 
         def cancel(self):
             calls.append("backend")
