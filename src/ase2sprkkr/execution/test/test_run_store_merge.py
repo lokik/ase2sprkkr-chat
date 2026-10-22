@@ -203,7 +203,7 @@ def test_explicit_availability_update_preserves_terminal_snapshot(tmp_path):
         files=FileManifest(outputs=(FileEntry(local_path=output),)),
     )
     terminal = manager.transition(original, state=RunState.FINISHED)
-    updated = manager.update_file_availability(terminal, output, "skipped")
+    updated = terminal.job_files.update_availability(manager.store, output, "skipped")
 
     assert updated.state is RunState.FINISHED
     assert updated.finished_at == terminal.finished_at
