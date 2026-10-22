@@ -120,7 +120,7 @@ def test_unknown_remote_state_does_not_publish_or_download_output(tmp_path):
     assert executor.sync_calls == 0
 
 
- def test_successful_backend_with_failed_download_fails_run(tmp_path):
+def test_successful_backend_with_failed_download_fails_run(tmp_path):
     runner, executor, destination, output = _run(tmp_path, RunState.FINISHED)
     _fail_download(runner, tmp_path)
 
