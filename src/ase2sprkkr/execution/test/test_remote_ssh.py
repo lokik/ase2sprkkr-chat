@@ -185,7 +185,7 @@ def test_remote_executor_over_ssh(docker_execution_image):
 
             assert runner.backend_id is not None
             assert runner.executor.transport.host == "tester@127.0.0.1"
-            remote_directory = runner.job_files.snapshot().mapping.map_path(str(workdir))
+            remote_directory = runner.file_snapshot().mapping.map_path(str(workdir))
             assert remote_directory == "/home/tester/ase2sprkkr-runs/calculation"
             _wait_for_live_output(runner, output_seen, output)
 

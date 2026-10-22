@@ -255,7 +255,7 @@ def test_remote_executor_runs_psij_slurm_over_ssh(docker_execution_image):
             assert runner.backend_id is not None
             assert runner.executor.backend_options["backend"] == "slurm"
             assert runner.executor.transport.host == "tester@127.0.0.1"
-            assert runner.job_files.snapshot().mapping.map_path(str(workdir)) == (
+            assert runner.file_snapshot().mapping.map_path(str(workdir)) == (
                 "/home/tester/ase2sprkkr-runs/calculation"
             )
 
