@@ -27,7 +27,7 @@ def _launch(local_root, remote_root):
 
 
 def _record(runner):
-    files = runner.job_files.snapshot()
+    files = runner.file_snapshot()
     execution = Execution(
         endpoint_for_executor(runner.executor),
         WorkingDirectory(
