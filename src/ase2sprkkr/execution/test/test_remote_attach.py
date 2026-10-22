@@ -230,7 +230,7 @@ def test_remote_attach_preserves_existing_partial_stream(tmp_path, monkeypatch):
     assert local_output.read_bytes() == b"partial"
 
 def test_remote_status_preserves_frozen_file_manifest():
-    from dataclasses import asdict, replace
+    from dataclasses import asdict
 
     from ..run_model import FileEntry, FileManifest
 
