@@ -61,6 +61,9 @@ def test_finished_execution_passes_unknown_return_code_to_reader(tmp_path):
                 input_file=input_path, output_file=output_path, return_code=None,
             )
 
+        def prepare_submission(self):
+            pass
+
         def submit(self):
             self.state = RunState.RUNNING
 
