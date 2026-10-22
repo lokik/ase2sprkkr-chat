@@ -36,8 +36,10 @@ def test_equal_size_corruption_fails_even_if_length_matches(tmp_path, channel):
         stdout=b"bad!" if channel == "stdout" else b"same",
         stderr=b"wrong" if channel == "stderr" else b"error",
     )
-    with pytest.raises(RuntimeError, match=f"{channel} contents differ"):
-        asyncio.run(handler.verify_streams(manifest, spec))
+    checked, error = asyncio.run(handler.verify_stream_availability(manifest, spec))
+    assert isinstance(error, RuntimeError)
+    assert f"{channel} contents differ" in str(error)
+    assert getattr(checked, channel).availability_state == "failed"
     assert (local_out if channel == "stdout" else local_err).exists()
 
 
@@ -45,13 +47,18 @@ def test_equal_size_corruption_fails_even_if_length_matches(tmp_path, channel):
 def test_missing_authoritative_stream_is_not_success(tmp_path, channel):
     handler, manifest, spec, _, _, remote_out, remote_err = _case(tmp_path)
     (remote_out if channel == "stdout" else remote_err).unlink()
-    with pytest.raises(FileNotFoundError, match=f"Remote {channel} output is missing"):
-        asyncio.run(handler.verify_streams(manifest, spec))
+    checked, error = asyncio.run(handler.verify_stream_availability(manifest, spec))
+    assert isinstance(error, FileNotFoundError)
+    assert f"Remote {channel} output is missing" in str(error)
+    assert getattr(checked, channel).availability_state == "failed"
 
 
 def test_successful_integrity_check_preserves_timestamps(tmp_path):
     handler, manifest, spec, local_out, local_err, remote_out, remote_err = _case(tmp_path)
-    asyncio.run(handler.verify_streams(manifest, spec))
+    checked, error = asyncio.run(handler.verify_stream_availability(manifest, spec))
+    assert error is None
+    assert checked.stdout.availability_state == "available"
+    assert checked.stderr.availability_state == "available"
     assert local_out.stat().st_mtime_ns == remote_out.stat().st_mtime_ns
     assert local_err.stat().st_mtime_ns == remote_err.stat().st_mtime_ns
 
@@ -74,8 +81,10 @@ def test_remote_stream_modified_during_integrity_check_is_rejected(tmp_path, mon
         return signature
 
     monkeypatch.setattr(handler.transport, "file_signature", changing_signature)
-    with pytest.raises(RuntimeError, match="changed during verification"):
-        asyncio.run(handler.verify_streams(manifest, spec))
+    checked, error = asyncio.run(handler.verify_stream_availability(manifest, spec))
+    assert isinstance(error, RuntimeError)
+    assert "changed during verification" in str(error)
+    assert checked.stdout.availability_state == "failed"
     assert calls == 2
 
 
