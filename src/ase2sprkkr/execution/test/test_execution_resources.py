@@ -284,7 +284,7 @@ def test_failed_project_reservation_releases_prepared_resources():
 
     project = _tracked(
         FailedReservation(), None, postprocessed,
-        SimpleNamespace(state=RunState.NEW, updated_at="new", files=None),
+        SimpleNamespace(state=RunState.NEW, updated_at="new", files=FileManifest()),
     )
     with pytest.raises(ValueError, match="reservation rejected"):
         project.submit()
@@ -422,7 +422,7 @@ def test_project_cancel_during_reservation_does_not_close_in_use_inputs():
     )
     project = _tracked(
         SlowRejectedReservation(), None, processed,
-        SimpleNamespace(state=RunState.NEW, updated_at="new", files=None),
+        SimpleNamespace(state=RunState.NEW, updated_at="new", files=FileManifest()),
     )
 
     def reserve():
@@ -493,7 +493,7 @@ def test_manifest_persistence_failure_does_not_submit_backend():
     class FailingStore:
         def reserve(self, record):
             return SimpleNamespace(state=RunState.SUBMITTING, id="reserved",
-                                   updated_at="reserved", files=None)
+                                   updated_at="reserved", files=FileManifest())
 
         def transition(self, record, **kwargs):
             transitions.append(kwargs)
@@ -509,7 +509,7 @@ def test_manifest_persistence_failure_does_not_submit_backend():
     project = _tracked(
         FailingStore(), None, processed,
         SimpleNamespace(state=RunState.NEW, id="reserved",
-                        updated_at="new", files=None),
+                        updated_at="new", files=FileManifest()),
     )
 
     with pytest.raises(OSError, match="manifest write failed"):
@@ -585,7 +585,7 @@ def test_project_cancel_during_manifest_staging_never_submits_backend():
     class Store:
         def reserve(self, record):
             return SimpleNamespace(state=RunState.SUBMITTING, id="run",
-                                   updated_at="reserved", files=None)
+                                   updated_at="reserved", files=FileManifest())
 
         def transition(self, record, **changes):
             return record
@@ -596,7 +596,7 @@ def test_project_cancel_during_manifest_staging_never_submits_backend():
 
     processed = CalculationRun(Backend(), lambda outcome: outcome, resources=resources)
     project = _tracked(Store(), None, processed, SimpleNamespace(
-        state=RunState.NEW, id="run", updated_at="new", files=None,
+        state=RunState.NEW, id="run", updated_at="new", files=FileManifest(),
     ))
 
     def submit():
