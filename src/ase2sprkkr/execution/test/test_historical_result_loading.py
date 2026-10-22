@@ -249,9 +249,9 @@ def test_history_load_uses_retrieval_record_without_extra_store_lookup(
 
     assert loaded.run_record.state is RunState.FINISHED
     assert len(parsed) == 1
-    # Read initial record, perform retrieval, verify output, verify input.
-    # The removed check_result_files() used to load the same record again.
-    assert retrieved == [record.id] * 4
+    # One lookup loads the record, another starts retrieval.  Do not
+    # repeatedly reload the same record during reader construction.
+    assert retrieved == [record.id, record.id]
 
 
 def test_historical_missing_input_restores_without_output_availability_update(tmp_path):
@@ -611,9 +611,15 @@ def test_history_reconciles_durable_file_after_failed_directory_fsync(tmp_path, 
     output = tmp_path / "run.out"
     output.unlink()
     original = durability.fsync_directory
+    interrupted = False
 
     def fail_publish(directory):
-        if output.exists():
+        nonlocal interrupted
+        # Fail exactly the publication barrier, not the subsequent RunStore
+        # write which must durably record this transfer failure.
+        if (not interrupted and output.exists()
+                and Path(directory) == output.parent):
+            interrupted = True
             raise OSError("publication fsync interrupted")
         return original(directory)
 
