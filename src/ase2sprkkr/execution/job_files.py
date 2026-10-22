@@ -16,7 +16,7 @@ from ..common.file_locks import FileLock
 from .run_model import FileAvailabilityState, FileManifest
 from .transport import has_file_magic
 from .historical_restore import (
-    restore_historical_file,
+    preflight_historical_destination, restore_historical_file,
 )
 
 from .file_history import (
@@ -275,12 +275,19 @@ class JobFiles:
         if not paths:
             return record
 
+        # Preflight the entire historical batch before touching any file.
+        # The per-file operation repeats these checks after acquiring its
+        # lock, protecting against changes between validation and publication.
         for path in paths:
-            path = os.path.abspath(os.fspath(path))
             if has_file_magic(path):
                 raise ValueError(
                     f"Cannot restore unresolved historical wildcard: {path}"
                 )
+            preflight_historical_destination(path, versions.get(path))
+        if can_fetch:
+            executor.preflight_result_files(record, paths)
+
+        for path in paths:
             lock_path = Path(path).with_name(f".{Path(path).name}.restore.lock")
             with FileLock(lock_path):
                 version = versions.get(path)
