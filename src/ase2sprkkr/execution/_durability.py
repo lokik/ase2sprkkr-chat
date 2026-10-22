@@ -82,13 +82,24 @@ def durable_replace(source, destination):
 def durable_publish_new(source, destination):
     """Atomically publish a staged file only when destination is absent.
 
-    A hard link gives an atomic no-overwrite operation on the same filesystem,
-    unlike a check followed by os.replace().  The caller owns and must remove
-    the staging path (including after a failed publication).
+    POSIX hard links and Windows os.rename both fail atomically when the
+    destination already exists.  Never emulate this with an existence check
+    followed by os.replace(): that would overwrite an external writer's file.
+
+    The caller owns staging cleanup.  A failed durability barrier may leave
+    the published name visible; the failure still propagates to the caller.
     """
     source = Path(source)
     destination = Path(destination)
-    os.link(source, destination)
+    if os.name == "nt":
+        # On Windows, os.rename refuses to replace an existing destination.
+        # It also works on filesystems which do not support creating hard links.
+        os.rename(source, destination)
+    else:
+        # Both paths are in the same directory, so this is a single-filesystem
+        # atomic publish.  An unsupported hard link is a hard failure: no
+        # unsafe overwrite fallback is permitted.
+        os.link(source, destination)
     fsync_directory(destination.parent)
 
 
