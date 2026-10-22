@@ -9,7 +9,8 @@ import pytest
 
 from ..base import RunState
 from ...common.file_locks import FileLock
-from ..manager import DuplicateSubmissionError, RunStore
+from ..manager import DuplicateSubmissionError
+from ..run_store import RunStore
 from ..manager import ExecutionManager
 from ..projects import ProjectRepository, ProjectDeleteError
 
