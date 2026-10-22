@@ -319,6 +319,7 @@ def _psij_submit(request):
     )
     # PSI/J's _prepare_io() owns cleanup of its complete declared manifest.
     # Running a second cleanup here would duplicate it and risk wildcard caches.
+    submitted_at = datetime.now(timezone.utc).isoformat()
     runner.submit()
     backend_id = runner.backend_id
     if backend_id is None:
@@ -334,7 +335,7 @@ def _psij_submit(request):
                 backend_id, request["directory"],
             ),
             "directory": request["directory"],
-            "submitted_at": datetime.now(timezone.utc).isoformat(),
+            "submitted_at": submitted_at,
             "output_file": _absolute(Path(request["directory"]), spec.output_file),
             "error_file": _absolute(Path(request["directory"]), spec.error_file),
         }
