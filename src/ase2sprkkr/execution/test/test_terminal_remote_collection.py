@@ -24,10 +24,12 @@ def test_collection_preserves_a_previously_delivered_output(tmp_path):
         async def verify_stream_availability(self, manifest, spec):
             return manifest, None
 
-    actual, error = asyncio.run(JobFiles.collect_remote(
-        previous, frozen, Handler(), SimpleNamespace(), SimpleNamespace(),
+    owner = JobFiles(previous)
+    error = asyncio.run(owner.collect_remote(
+        frozen, Handler(), SimpleNamespace(), SimpleNamespace(),
         required=True,
     ))
+    actual = owner.manifest
     assert error is None
     assert actual is frozen or actual.outputs[0].availability_state == "available"
     assert actual.outputs[0].availability_state == "available"
@@ -57,10 +59,12 @@ def test_materialization_error_wins_without_losing_partial_delivery(tmp_path):
                 remote_path=stream.remote_path,
             ), None
 
-    result, error = asyncio.run(JobFiles.collect_remote(
-        frozen, frozen, Handler(), SimpleNamespace(), SimpleNamespace(),
+    owner = JobFiles(frozen)
+    error = asyncio.run(owner.collect_remote(
+        frozen, Handler(), SimpleNamespace(), SimpleNamespace(),
         required=True, materialization_error="wildcard scan failed",
     ))
+    result = owner.manifest
     assert calls == ["collect", "verify"]
     assert isinstance(error, RuntimeError)
     assert str(error) == "wildcard scan failed"
@@ -86,10 +90,12 @@ def test_failed_backend_skips_stream_verification_but_collects_diagnostics(tmp_p
         async def verify_stream_availability(self, manifest, spec):
             raise AssertionError("Failed backend must not verify FOLLOW streams")
 
-    result, error = asyncio.run(JobFiles.collect_remote(
-        None, frozen, Handler(), SimpleNamespace(), SimpleNamespace(),
+    owner = JobFiles(frozen)
+    error = asyncio.run(owner.collect_remote(
+        frozen, Handler(), SimpleNamespace(), SimpleNamespace(),
         required=False,
     ))
+    result = owner.manifest
     assert error is None
     assert calls == ["collect"]
     assert result.outputs[0].availability_state == "available"

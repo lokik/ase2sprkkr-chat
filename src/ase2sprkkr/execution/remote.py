@@ -11,7 +11,6 @@ from .base import FailurePhase, RunState, SubmissionNotStarted, file_path, start
 from ..common.async_utils import run_coro_sync as _run_sync
 from .remote_file_handler import FileSyncPolicy
 from .transport import FILE_DELIVERY_ERRORS
-from .job_files import JobFiles
 from .run_model import FileManifest
 from .managed_runner import ManagedRunner
 from .supervisor_monitor import backend_status_from_facts, monitor_supervisor
@@ -153,12 +152,11 @@ class RemoteRunner(ManagedRunner):
                 FileManifest(**status["files"])
                 if status.get("files") is not None else self.job_files.manifest
             )
-            observed, transfer_error = await JobFiles.collect_remote(
-                self.job_files.manifest, frozen, self.file_handler, self.result, self.spec,
+            transfer_error = await self.job_files.collect_remote(
+                frozen, self.file_handler, self.result, self.spec,
                 required=backend_state == RunState.FINISHED,
                 materialization_error=status.get("materialization_error"),
             )
-            self.job_files.merge(observed)
             if transfer_error is not None:
                 raise transfer_error
         except FILE_DELIVERY_ERRORS as exc:

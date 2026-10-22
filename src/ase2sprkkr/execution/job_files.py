@@ -164,45 +164,53 @@ class JobFiles:
 
         return JobFiles._merge_availability(previous, received, preserve)
 
-    @classmethod
     async def collect_remote(
-        cls, previous, frozen, handler, outcome, spec, *,
+        self, frozen, handler, outcome, spec, *,
         required, materialization_error=None,
     ):
-        """Reconcile frozen membership, collect files and verify FOLLOW streams.
+        """Collect terminal files into this job's mutable working state.
 
-        The handler performs I/O; this operation owns the terminal manifest
-        reconciliation and error precedence. A failed transfer must not erase
-        independently delivered streams or previously successful files.
+        The frozen membership is authoritative. Transfer and stream
+        verification observations are installed independently so a later
+        failure cannot discard a successful earlier delivery.
         """
-        manifest = cls.merge_terminal_files(previous, frozen)
+        with self._lock:
+            self._manifest = self.merge_terminal_files(self._manifest, frozen)
+            manifest = self._manifest
+
         try:
-            manifest, transfer_error = await handler.collect(
+            observed, transfer_error = await handler.collect(
                 manifest.mapping, manifest, outcome, required=required,
             )
         except FILE_DELIVERY_ERRORS as exc:
-            # A preflight failure precedes any transfer; still verify FOLLOW
-            # streams on successful jobs without changing output membership.
+            # A preflight failure cannot revoke independently delivered
+            # files. Still verify FOLLOW streams for successful jobs.
             transfer_error = exc
+        else:
+            if observed is not None:
+                self.merge(observed)
+            else:
+                manifest = None
 
         if required and manifest is not None:
             try:
-                manifest, stream_error = await handler.verify_stream_availability(
-                    manifest, spec,
+                observed, stream_error = await handler.verify_stream_availability(
+                    self.manifest, spec,
                 )
             except FILE_DELIVERY_ERRORS as exc:
-                # Preserve all independently delivered output/cache files.
                 stream_error = exc
+            else:
+                if observed is not None:
+                    self.merge(observed)
             if transfer_error is None:
                 transfer_error = stream_error
 
-        # The producer's failed wildcard scan is a separate terminal failure
-        # and has precedence over any later transfer/verification diagnostic.
-        error = (
+        # Wildcard materialization is an independent backend-side failure
+        # that precedes transfer/stream diagnostics.
+        return (
             RuntimeError(materialization_error)
             if materialization_error else transfer_error
         )
-        return manifest, error
 
     @staticmethod
     def update_availability(record: RunRecord, store, path, state, message=None):
