@@ -12,6 +12,7 @@ from ase2sprkkr.execution import (
     RunRecord, Execution, WorkingDirectory, ExecutorEndpoint, FileManifest, FileEntry,
 )
 from ase2sprkkr.execution import psij as psij_backend
+from ase2sprkkr.execution.endpoint import endpoint_for_executor
 
 
 class _Result:
@@ -166,13 +167,14 @@ def _executor(monkeypatch, backend):
     )
 
 
-def _psij_run(directory, backend_id=None):
+def _psij_run(directory, backend_id=None, *, executor=None):
     return RunRecord(
         id="psij-run", task="DOS", state=RunState.RUNNING,
         created_at="2026-10-13T08:00:00+00:00",
         updated_at="2026-10-13T08:00:00+00:00",
         execution=Execution(
-            ExecutorEndpoint(executor="psij", psij_backend="slurm"),
+            (endpoint_for_executor(executor) if executor is not None
+             else ExecutorEndpoint(executor="psij", psij_backend="slurm")),
             WorkingDirectory(str(directory)), backend_id,
         ),
         files=FileManifest(
@@ -568,7 +570,7 @@ def test_psij_local_slurm_explicit_wait_uses_native_job_wait(monkeypatch):
 def test_psij_status_and_attach_check_complete_endpoint(monkeypatch, tmp_path):
     executor = _executor(monkeypatch, _Backend())
     executor.url = "ssh://cluster-a"
-    run = _psij_run(tmp_path, "456")
+    run = _psij_run(tmp_path, "456", executor=executor)
     foreign = replace(
         run,
         execution=replace(
@@ -583,15 +585,7 @@ def test_psij_status_and_attach_check_complete_endpoint(monkeypatch, tmp_path):
     with pytest.raises(ValueError, match="PSI/J endpoint"):
         executor.attach(foreign, start=False)
 
-    matching = replace(
-        run,
-        execution=replace(
-            run.execution,
-            endpoint=ExecutorEndpoint(
-                executor="psij", psij_backend="slurm", psij_url=executor.url
-            ),
-        ),
-    )
+    matching = run
     expected = psij_backend.RunStatus(RunState.RUNNING, backend_id="456")
     monkeypatch.setattr(executor, "status_native", lambda native_id: expected)
     assert executor.status(matching) == (expected,)
@@ -610,7 +604,7 @@ def test_psij_record_status_uses_native_status(monkeypatch, tmp_path):
         return expected
 
     monkeypatch.setattr(executor, "status_native", status_native)
-    assert executor.status(_psij_run(tmp_path, "456")) == (expected,)
+    assert executor.status(_psij_run(tmp_path, "456", executor=executor)) == (expected,)
     assert seen == ["456"]
 
 
@@ -684,7 +678,7 @@ def test_psij_executor_attaches_to_native_job(monkeypatch, tmp_path):
     error = tmp_path / "run.err"
     output.write_bytes(b"old output\n")
     error.write_bytes(b"")
-    run = _psij_run(tmp_path, "456")
+    run = _psij_run(tmp_path, "456", executor=executor)
     runner = executor.attach(run)
     result = runner.wait()
 
@@ -698,7 +692,7 @@ def test_psij_executor_attaches_to_native_job(monkeypatch, tmp_path):
 def test_psij_attach_to_stderr_only(monkeypatch, tmp_path):
     executor = _executor(monkeypatch, _Backend())
     from dataclasses import replace
-    run = _psij_run(tmp_path, "456")
+    run = _psij_run(tmp_path, "456", executor=executor)
     run = replace(run, files=replace(run.files, stdout=None))
     (tmp_path / "run.err").write_bytes(b"existing error\n")
 
@@ -710,7 +704,7 @@ def test_psij_attach_to_stderr_only(monkeypatch, tmp_path):
 def test_psij_attach_without_recorded_streams(monkeypatch, tmp_path):
     executor = _executor(monkeypatch, _Backend())
     from dataclasses import replace
-    run = _psij_run(tmp_path, "456")
+    run = _psij_run(tmp_path, "456", executor=executor)
     run = replace(run, files=replace(run.files, stdout=None, stderr=None))
     attached = executor.attach(run, start=False)
     assert attached.spec.output_file is None
@@ -1020,15 +1014,16 @@ def test_psij_attached_new_status_does_not_resubmit(monkeypatch, tmp_path):
     executor = _executor(monkeypatch, backend)
     output = tmp_path / "run.out"
     output.write_bytes(b"existing output")
-    record = _psij_run(tmp_path, "456")
+    record = _psij_run(tmp_path, "456", executor=executor)
     manager = ExecutionManager(RunStore(tmp_path / "history"))
     manager.store.save(record)
+    manager.executors.register(executor)
     run = manager.attach(
-        record, executor=executor, process_result=lambda outcome: outcome,
+        record, process_result=lambda outcome: outcome,
     )
-    assert run._runner._runner.state is RunState.UNKNOWN
+    assert run._runner.state is RunState.UNKNOWN
     assert output.read_bytes() == b"existing output"
-    job = run._runner._runner._job
+    job = run._runner._job
     job.status = _Status("COMPLETED", 0)
     run.wait()
     assert output.read_bytes() == b"existing output"
@@ -1256,7 +1251,7 @@ def test_psij_simultaneous_attaches_share_callback_and_finish(monkeypatch, tmp_p
     job.status = _Status("ACTIVE")
     executor._cache_submitted_job(job)
 
-    run = _psij_run(tmp_path, "shared")
+    run = _psij_run(tmp_path, "shared", executor=executor)
     first = executor.attach(run, start=False)
     second = executor.attach(run, start=False)
     assert first._job is second._job is job
@@ -1339,10 +1334,11 @@ def test_project_observer_detaches_without_stopping_other_attached_client(
             job.status = _Status("ACTIVE")
 
     executor = _executor(monkeypatch, ActiveBackend())
-    record = _psij_run(tmp_path, "running-job")
+    record = _psij_run(tmp_path, "running-job", executor=executor)
     store = RunStore(tmp_path / "history")
     manager = ExecutionManager(store)
     store.save(record)
+    manager.executors.register(executor)
 
     subscribed = threading.Event()
     num_subscribers = 0
@@ -1360,15 +1356,15 @@ def test_project_observer_detaches_without_stopping_other_attached_client(
 
     monkeypatch.setattr(executor, "_observe_job", observe)
     first = manager.attach(
-        record, executor=executor, process_result=lambda outcome: outcome,
+        record, process_result=lambda outcome: outcome,
     )
     second = manager.attach(
-        record, executor=executor, process_result=lambda outcome: outcome,
+        record, process_result=lambda outcome: outcome,
     )
     try:
         assert subscribed.wait(3)
-        job = first._runner._runner._job
-        assert second._runner._runner._job is job
+        job = first._runner._job
+        assert second._runner._job is job
         first.stop_observation()
         first.wait()
         assert first._runner.state is RunState.UNKNOWN
