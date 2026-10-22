@@ -219,3 +219,46 @@ def test_stale_job_files_updater_preserves_other_file_status(tmp_path):
     assert first_update.files.outputs[0].availability_state == "available"
     assert second_update.files.outputs[0].availability_state == "available"
     assert second_update.files.outputs[1].availability_state == "failed"
+
+
+def test_parallel_run_stores_merge_independent_file_updates(tmp_path):
+    """Concurrent clients with stale records must not overwrite each other."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from ase2sprkkr.execution.run_model import FileEntry
+
+    first = str(tmp_path / "first.dat")
+    second = str(tmp_path / "second.dat")
+    directory = tmp_path / "parallel-run-stores"
+    store = RunStore(directory)
+    manager = ExecutionManager(store)
+    record = store.save(manager.new_record(
+        task="DOS", directory=tmp_path, files=FileManifest(outputs=(
+            FileEntry(first, availability_state="pending"),
+            FileEntry(second, availability_state="pending"),
+        )),
+    ))
+    barrier = Barrier(3)
+
+    def update(path, state, message=None):
+        # Independent stores model clients reopening the same persisted run.
+        client_store = RunStore(directory)
+        barrier.wait(timeout=10)
+        return record.job_files.update_availability(
+            client_store, path, state, message,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        delivered = pool.submit(update, first, "available")
+        failed = pool.submit(update, second, "failed", "lost download")
+        barrier.wait(timeout=10)
+        delivered.result(timeout=15)
+        failed.result(timeout=15)
+
+    persisted = store.get(record.id)
+    assert persisted.files.outputs[0].availability_state == "available"
+    assert persisted.files.outputs[1].availability_state == "failed"
+    assert persisted.files.outputs[1].availability_message == "lost download"
+    assert persisted.state == record.state
+    assert persisted.execution == record.execution
