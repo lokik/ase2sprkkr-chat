@@ -52,18 +52,6 @@ class RemoteRunner(ManagedRunner):
             self.start()
 
     @property
-    def execution(self):
-        if self._backend_id is None and self._remote_directory is None:
-            return None
-        from .endpoint import endpoint_for_executor
-        from .run_model import Execution, WorkingDirectory
-        return Execution(
-            endpoint_for_executor(self.executor),
-            WorkingDirectory(os.path.abspath(self.spec.directory), self._remote_directory),
-            backend_id=self._backend_id,
-        )
-
-    @property
     def state(self):
         # Once monitoring has started, only the client monitor may advance from
         # backend execution into DOWNLOADING. A direct backend query must never
