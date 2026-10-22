@@ -18,6 +18,29 @@ class HistoricalFileMismatchError(OSError):
     """Restored file contents differ from the captured digest."""
 
 
+def preflight_historical_destination(path, version):
+    """Reject unsafe local targets before any member of a batch transfers.
+
+    Return whether this file needs a download. The same check is repeated
+    under its restore lock because another process may change the destination.
+    """
+    # FileVersion follows symlinks: a new link to the original contents is
+    # nevertheless not the captured regular file.
+    if os.path.islink(path):
+        raise HistoricalFileMismatchError(
+            f"Historical destination is a symlink: {path}"
+        )
+    if version is not None and version.is_current():
+        return False
+    if version is None and os.path.isfile(path):
+        return False
+    if os.path.lexists(path):
+        raise HistoricalFileMismatchError(
+            f"Historical result file was modified: {path}"
+        )
+    return True
+
+
 def restore_historical_file(record, path, version, executor):
     """Fetch, verify and atomically publish one concrete historical file.
 
@@ -25,28 +48,15 @@ def restore_historical_file(record, path, version, executor):
     the following availability update. A transfer is only published when its
     recorded digest matches; never replace any existing destination.
     """
-    # A symlink is not the captured file itself. FileVersion fingerprints
-    # follow links, so without an explicit check a newly introduced symlink
-    # to the original inode could incorrectly pass is_current().
-    if os.path.islink(path):
-        raise HistoricalFileMismatchError(
-            f"Historical destination is a symlink: {path}"
-        )
-    if version is not None and version.is_current():
-        # Reaffirm durability when a previous publish succeeded but its
-        # directory fsync (or the following RunStore update) failed.
-        sync_file(path)
-        if not version.is_current():
-            raise HistoricalFileMismatchError(
-                f"Historical file changed during durability verification: {path}"
-            )
+    if not preflight_historical_destination(path, version):
+        if version is not None:
+            # Retry the durability barrier after a successful prior publish.
+            sync_file(path)
+            if not version.is_current():
+                raise HistoricalFileMismatchError(
+                    f"Historical file changed during durability verification: {path}"
+                )
         return
-    if version is None and os.path.isfile(path):
-        return
-    if version is not None and os.path.lexists(path):
-        raise HistoricalFileMismatchError(
-            f"Historical result file was modified: {path}"
-        )
 
     target = Path(path)
     staged = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
