@@ -178,6 +178,7 @@ def _local_submit(request):
                 Path(path).parent.mkdir(parents=True, exist_ok=True)
         prepare_local_files(
             original_spec, output_file=output_path, error_file=error_path,
+            side=request.get("cleanup_side", "local"),
         )
     except (OSError, ValueError) as exc:
         raise SubmissionNotStarted(str(exc)) from exc
@@ -309,9 +310,11 @@ def _psij_submit(request):
     executor = _psij_executor(request.get("executor_options"))
     spec = _request_spec(request)
     runner = (
-        executor.create_project_run(spec, run_id=request["id"])
+        executor.create_project_run(
+            spec, run_id=request["id"], cleanup_side=request.get("cleanup_side", "local"))
         if request.get("id")
-        else executor.create_run(spec)
+        else executor.create_run(
+            spec, cleanup_side=request.get("cleanup_side", "local"))
     )
     # PSI/J's _prepare_io() owns cleanup of its complete declared manifest.
     # Running a second cleanup here would duplicate it and risk wildcard caches.

@@ -263,6 +263,7 @@ class PsijRunner(ManagedRunner):
         job=None,
         attached=False,
         run_id=None,
+        cleanup_side="local",
     ):
         spec = executor.resolve_spec(spec)
         # File names must be concrete for PSI/J; execution monitoring and
@@ -276,6 +277,7 @@ class PsijRunner(ManagedRunner):
             state=RunState.UNKNOWN if attached else RunState.NEW, strict_paths=True,
         )
         self._run_id = run_id
+        self._cleanup_side = cleanup_side
         self._attached = attached
         self._submit_lock = Lock()
         self._observed_state = None
@@ -370,7 +372,7 @@ class PsijRunner(ManagedRunner):
         close_output_files(self.spec.output_file, self.spec.error_file)
         prepare_local_files(
             self.spec, output_file=self._stdout_path,
-            error_file=self._stderr_path,
+            error_file=self._stderr_path, side=self._cleanup_side,
         )
         for path in {self._stdout_path, self._stderr_path} - {None}:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -564,17 +566,15 @@ class PsijExecutor(Executor):
             return spec
         return select_mpi_spec(spec, scheduler=bool(spec.launch))
 
-    def create_run(self, spec: ExecutionSpec, callback=None):
-        return PsijRunner(self, spec, callback=callback)
+    def create_run(self, spec: ExecutionSpec, callback=None, *, cleanup_side="local"):
+        return PsijRunner(self, spec, callback=callback, cleanup_side=cleanup_side)
 
     def create_project_run(
-        self, spec: ExecutionSpec, *, run_id, callback=None
+        self, spec: ExecutionSpec, *, run_id, callback=None, cleanup_side="local"
     ):
         return PsijRunner(
-            self,
-            spec,
-            callback=callback,
-            run_id=run_id,
+            self, spec, callback=callback, run_id=run_id,
+            cleanup_side=cleanup_side,
         )
 
     def status(self, *runs):
