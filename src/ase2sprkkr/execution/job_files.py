@@ -100,7 +100,8 @@ class JobFiles:
 
         FileManifest already rejects output/cache identity collisions.
         """
-        # Remote-only caches are not in FileManifest.files.
+        # Remote-only caches are included even though FileManifest.files
+        # deliberately omits them. Merged streams share one physical identity.
         recorded = {}
         priority = {"failed": 3, "available": 2, "skipped": 1, "pending": 0, None: 0}
         for entry in (previous.stdout, previous.stderr,
@@ -118,6 +119,9 @@ class JobFiles:
                 return None
             prior = recorded.get((entry.local_path, entry.remote_path))
             if prior is None or not preserve(prior, entry):
+                return entry
+            if (entry.availability_state == prior.availability_state
+                    and entry.availability_message == prior.availability_message):
                 return entry
             return replace(
                 entry, availability_state=prior.availability_state,
