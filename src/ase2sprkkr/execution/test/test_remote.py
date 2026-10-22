@@ -323,16 +323,17 @@ def test_remote_input_policy_always_requires_local_file(tmp_path):
     "policy, local_value, generated_value, expected, downloads",
     [
         (FileSyncPolicy.CHANGED, "old", "new", "new", 1),
-        (FileSyncPolicy.CHANGED, "same", "same", "same", 0),
+        (FileSyncPolicy.CHANGED, "same", "same", "same", 1),
         (FileSyncPolicy.ALWAYS, "local", "remote", "remote", 1),
-        (FileSyncPolicy.MISSING, "local", "remote", "local", 0),
-        (FileSyncPolicy.NEVER, "local", "remote", "local", 0),
+        (FileSyncPolicy.MISSING, "local", "remote", "remote", 1),
+        (FileSyncPolicy.NEVER, "local", "remote", None, 0),
     ],
     ids=("changed", "unchanged", "always", "missing", "never"),
 )
 def test_remote_output_file_policies(
     tmp_path, policy, local_value, generated_value, expected, downloads,
 ):
+    """A new submission invalidates old declared outputs before syncing."""
     transport = _SpyTransport()
     workdir = tmp_path / "local" / "calculation"
     workdir.mkdir(parents=True)
@@ -350,10 +351,41 @@ def test_remote_output_file_policies(
 
     remote_file = remote_root / "calculation" / "file.dat"
     assert result.return_code == 0
-    assert file.read_text() == expected
+    if expected is None:
+        assert not file.exists()
+    else:
+        assert file.read_text() == expected
     assert transport.get_files == (
         [(remote_file, file)] if downloads else []
     )
+
+
+@pytest.mark.parametrize("policy", (FileSyncPolicy.MISSING, FileSyncPolicy.NEVER))
+def test_remote_output_policy_preserves_local_file_when_cleanup_is_remote_only(
+    tmp_path, policy,
+):
+    """Skipping local cleanup is an explicit choice, not a policy side effect."""
+    from dataclasses import replace
+
+    transport = _SpyTransport()
+    file = tmp_path / "local" / "calculation" / "file.dat"
+    file.parent.mkdir(parents=True)
+    file.write_text("previous result")
+
+    executor, spec, _, remote_root = _text_run(
+        tmp_path,
+        transport,
+        declared_output_files=(file,),
+        output_files=policy,
+        code="from pathlib import Path; Path('file.dat').write_text('new result')",
+    )
+    spec = replace(spec, launch=replace(spec.launch, cleanup_outputs="remote"))
+    result = _processed_run(executor, spec).run()
+
+    assert result.return_code == 0
+    assert file.read_text() == "previous result"
+    assert (remote_root / "calculation" / "file.dat").read_text() == "new result"
+    assert transport.get_files == []
 
 
 def test_remote_executor_does_not_reuse_stale_output(tmp_path):
