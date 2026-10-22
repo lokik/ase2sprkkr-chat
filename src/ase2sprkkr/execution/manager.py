@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 from dataclasses import replace
@@ -36,6 +37,14 @@ class DuplicateSubmissionError(RuntimeError):
                 len(self.conflicts), "" if len(self.conflicts) == 1 else "s"
             )
         )
+
+
+_NO_FILES_FAILURES = frozenset((
+    FailurePhase.SUBMISSION,
+    FailurePhase.LAUNCH,
+    FailurePhase.FILES,
+    FailurePhase.DOWNLOAD,
+))
 
 
 class ExecutionManager:
@@ -148,8 +157,19 @@ class ExecutionManager:
 
         return self.store.update(record, mark_absent)
 
-    def reserve(self, record):
-        """Reserve files and recover stale submissions before retrying."""
+    def reserve(self, record, *, spec=None, executor=None):
+        """Resolve placement, reserve files and recover stale submissions."""
+        if spec is not None:
+            if executor is None:
+                raise ValueError("An executor is required for submission placement")
+            files, remote_directory = executor.reservation_context(spec, record.files)
+            execution = record.execution
+            if remote_directory is not None:
+                execution = replace(
+                    execution,
+                    directory=replace(execution.directory, remote=remote_directory),
+                )
+            record = replace(record, files=files, execution=execution)
         attempted_recovery = set()
         while True:
             reserved, conflicts = self.store.reserve_files(record)
@@ -194,6 +214,89 @@ class ExecutionManager:
                 self.executors.for_endpoint(updated.execution.endpoint), updated,
             )
         return updated
+
+    def record_submitted(self, record, *, backend_id, state, failure_phase, files):
+        """Commit backend identity before its submission ticket can be ACKed."""
+        if backend_id is None:
+            raise RuntimeError("Executor submit returned without a backend ID")
+        if record.state.is_terminal:
+            return record
+        state = RunState(state)
+        if state.is_terminal:
+            # Synchronous completion is published after durable submission.
+            state = RunState.SUBMITTING
+        return self.transition(
+            record, state=state,
+            execution=record.execution.submitted(backend_id),
+            failure_phase=(None if state == RunState.SUBMITTING
+                           else _failure_phase(failure_phase)),
+            files=files,
+        )
+
+    def record_submission_failure(
+        self, record, *, error, uncertain, state, backend_id,
+        failure_phase=None, message=None,
+    ):
+        """Persist definite non-launches without inventing backend outcomes."""
+        if not uncertain:
+            if record.state == RunState.NEW:
+                return record  # The reservation was refused.
+            if isinstance(error, asyncio.CancelledError):
+                return self.complete(
+                    record, state=RunState.CANCELLED, files_available=False,
+                )
+            return self.complete(
+                record, state=RunState.FAILED,
+                message=message or str(error),
+                failure_phase=_failure_phase(failure_phase) or FailurePhase.SUBMISSION,
+                files_available=False,
+            )
+        if backend_id is None or record.state.is_terminal:
+            return record
+        return self.transition(
+            record, state=state,
+            execution=record.execution.submitted(backend_id),
+            failure_phase=_failure_phase(failure_phase),
+        )
+
+    def record_observation(
+        self, record, *, state, execution, return_code, message,
+        failure_phase, files, expected_updated_at,
+    ):
+        """Commit an observer's fact without making it authoritative over newer data."""
+        if record.state.is_terminal:
+            return record
+        state = RunState(state)
+        if state == RunState.UNKNOWN:
+            if record.state == RunState.UNKNOWN:
+                return record
+            return self.transition(
+                record, state=state, execution=execution, message=message,
+                expected_updated_at=expected_updated_at,
+            )
+        if not state.is_terminal:
+            return None
+        phase = _failure_phase(failure_phase)
+        if state == RunState.FAILED and phase is None:
+            phase = FailurePhase.EXECUTION
+        return self.complete(
+            record, state=state, execution=execution,
+            return_code=return_code, message=message, failure_phase=phase,
+            files_available=phase not in _NO_FILES_FAILURES, files=files,
+        )
+
+    @staticmethod
+    def acknowledge_terminal(executor, record, *, backend_id=None):
+        """Return success only after ACK of a durable terminal record."""
+        if (not record.state.is_terminal
+                or (record.execution.backend_id is None and backend_id is None)):
+            return False
+        try:
+            executor.acknowledge(record)
+        except (OSError, RuntimeError, subprocess.CalledProcessError):
+            # Backend receipts remain retryable after transport errors.
+            return False
+        return True
 
     def complete(
         self,
