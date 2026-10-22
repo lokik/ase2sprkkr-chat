@@ -207,13 +207,15 @@ def _same_local_file(first, second):
     return os.path.exists(a) and os.path.exists(b) and os.path.samefile(a, b)
 
 
-def _validate_file_declarations(entries):
+def _validate_file_declarations(entries, *, primary_input=None):
     """Reject duplicate file identities, except intentionally merged streams.
 
     primary_input is a reference to an inputs entry, not an extra declaration.
     Remote-only cache baselines are metadata, not file declarations.
     """
     import posixpath
+    import fnmatch
+    from .transport import has_file_magic
 
     declared = []
     for role, entry in entries:
@@ -228,9 +230,22 @@ def _validate_file_declarations(entries):
                 and posixpath.normpath(entry.remote_path)
                 == posixpath.normpath(previous.remote_path)
             )
+            roles = {role, previous_role}
+            if roles in ({"input", "stdin"}, {"stdout", "output"}, {"stderr", "output"}):
+                for literal, pattern in ((entry.local_path, previous.local_path),
+                                         (previous.local_path, entry.local_path)):
+                    if (literal is not None and pattern is not None
+                            and not has_file_magic(literal)
+                            and has_file_magic(pattern)
+                            and fnmatch.fnmatchcase(os.path.normpath(literal),
+                                                   os.path.normpath(pattern))):
+                        same_local = True
             if not same_local and not same_remote:
                 continue
-            if {role, previous_role} == {"input", "stdin"}:
+            if (roles == {"input", "stdin"} and primary_input is not None
+                    and same_local
+                    and _same_local_file(entry.local_path, primary_input.local_path)
+                    and _same_local_file(previous.local_path, primary_input.local_path)):
                 continue
             # An expanded wildcard may repeat an exact output/cache member,
             # but the same local destination must not have different sources.
@@ -253,14 +268,6 @@ def _validate_file_declarations(entries):
                             and previous.remote_path is not None
                             and not same_remote)):
                     raise ValueError("Merged stdout/stderr must share one file")
-                continue
-            # An explicitly declared output may also be the stdout/stderr
-            # destination. It is the same physical file, not a second
-            # competing source. Require matching paths on both hosts.
-            if ({role, previous_role} in ({"stdout", "output"}, {"stderr", "output"})
-                    and same_local
-                    and (entry.remote_path is None or previous.remote_path is None
-                         or same_remote)):
                 continue
             raise ValueError(
                 f"Duplicate file declaration: {previous_role} and {role} "
@@ -313,6 +320,11 @@ class FileManifest:
             else:
                 inputs.append(entry)
         stdin = file_path(spec.stdin, directory)
+        if stdin is not None and any(
+            _same_local_file(stdin, file_path(value, directory))
+            for value in spec.input_files
+        ):
+            raise ValueError("Duplicate file declaration: input and stdin refer to the same file")
         stdout = file_path(spec.output_file, directory)
         stderr = file_path(spec.error_file, directory)
         outputs = entries(*spec.output_files)
@@ -327,7 +339,7 @@ class FileManifest:
             ("stderr", None if stderr is None else FileEntry(local_path=stderr)),
             *(("output", entry) for entry in outputs),
             *(("cache", entry) for entry in caches),
-        ))
+        ), primary_input=None if primary is None else FileEntry(local_path=primary))
         return cls(
             inputs=tuple(inputs),
             primary_input=None if primary is None else FileEntry(local_path=primary),
@@ -368,7 +380,7 @@ class FileManifest:
             ("stderr", self.stderr),
             *(("output", entry) for entry in self.outputs),
             *(("cache", entry) for entry in self.caches),
-        ))
+        ), primary_input=self.primary_input)
     @property
     def files(self):
         """Distinct downloadable file states; shared streams count only once.
