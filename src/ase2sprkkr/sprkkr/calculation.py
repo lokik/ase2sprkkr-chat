@@ -21,7 +21,7 @@ from ..bindings.empty_spheres import add_empty_spheres
 from ..common.file_utils import Directory
 from ..common.temporary import temporary_option_value
 from ..execution.base import ExecutionResources
-from ..execution.persistence import resolve_project_manager, default_execution_manager
+from ..execution.persistence import resolve_project_manager, default_executors
 from ..execution.postprocessing import CalculationRun
 from ..input_parameters.input_parameters import InputParameters
 from ..potentials.potentials import Potential
@@ -908,11 +908,11 @@ def _create_sprkkr_run(
         project_context = resolve_project_manager(project)
         explicit_executor = executor is not None
         if executor is None:
-            manager = (
-                project_context[0] if project_context is not None
-                else default_execution_manager()
+            registry = (
+                project_context[0].executors if project_context is not None
+                else default_executors()
             )
-            executor = manager.executors.for_endpoint(profile.endpoint)
+            executor = registry.for_endpoint(profile.endpoint)
         if project_context is not None:
             manager, project_id = project_context
             executor_endpoint = (

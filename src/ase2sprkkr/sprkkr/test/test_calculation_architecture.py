@@ -195,6 +195,35 @@ def test_preparation_requires_task_definition(monkeypatch, tmp_path, fe_bulk):
         calculator.prepare(output_file=False, allow_temporary_files=True)
 
 
+def test_nonproject_run_without_explicit_executor_uses_shared_registry(
+    tmp_path, fe_bulk, monkeypatch,
+):
+    """Untracked runs do not need an ExecutionManager or a RunStore."""
+    class Registry:
+        def __init__(self):
+            self.endpoints = []
+
+        def for_endpoint(self, endpoint):
+            self.endpoints.append(endpoint)
+            return _Executor()
+
+    registry = Registry()
+    monkeypatch.setattr(calculation, "default_executors", lambda: registry)
+    calculator = SPRKKR(
+        atoms=fe_bulk.copy(),
+        directory=tmp_path,
+        profile=SPRKKRProfile(mpi=False),
+        empty_spheres=False,
+    )
+    runner = calculator.create_run(output_file=False)
+    try:
+        assert registry.endpoints == [calculator.profile.endpoint]
+        assert runner.spec.directory == str(tmp_path)
+        assert runner.persistence is None
+    finally:
+        runner.close()
+
+
 def test_prepared_calculation_constructs_its_runner(tmp_path, fe_bulk):
     calculator = SPRKKR(
         atoms=fe_bulk.copy(),
