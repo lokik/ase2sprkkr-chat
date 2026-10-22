@@ -25,16 +25,6 @@ def _local_path(spec, value):
         raise ValueError("Remote execution requires named files") from exc
 
 
-def _unique_declared_paths(spec, values, *, excluded=()):
-    """Normalize and deduplicate declarations, preserving declaration order."""
-    seen = set(excluded)
-    for value in values:
-        local = _local_path(spec, value)
-        if local is not None and local not in seen:
-            seen.add(local)
-            yield local, has_file_magic(local)
-
-
 class RemoteFileHandler:
     """Reusable remote file strategy, owned by an endpoint, not a run."""
 
@@ -110,10 +100,12 @@ class RemoteFileHandler:
         """Stage the manifest's cache declarations and capture target baselines."""
         targets, baselines = {}, {}
         root = mapping.remote_root
-        declared = (entry.local_path for entry in cache_entries
-                    if entry.local_path is not None)
-        for local, is_pattern in _unique_declared_paths(spec, declared):
-            if is_pattern:
+        # FileManifest already normalizes and validates declarations.
+        for entry in cache_entries:
+            local = entry.local_path
+            if local is None:
+                continue
+            if has_file_magic(local):
                 remote_pattern = mapping.map_path(local)
                 await self._stage_input_pattern(
                     mapping, spec, local, used, required=False,
@@ -196,18 +188,18 @@ class RemoteFileHandler:
 
         # Wildcard inputs are concretized during staging, not at completion.
         inputs = []
-        declared = tuple(entry.local_path for entry in manifest.inputs)
+        declared = {entry.local_path: entry for entry in manifest.inputs}
         for local in dict.fromkeys((*declared, *input_sources)):
-            if local is None:
+            if local is None or has_file_magic(local):
                 continue
             if (manifest.stdin is not None and local == manifest.stdin.local_path
                     and local not in declared):
                 continue
-            if has_file_magic(local):
-                continue
-            original = next((item for item in manifest.inputs if item.local_path == local), None)
-            inputs.append(FileEntry(local_path=local, remote_path=mapping.map_path(local),
-                                    optional=False if original is None else original.optional))
+            original = declared.get(local)
+            inputs.append(FileEntry(
+                local_path=local, remote_path=mapping.map_path(local),
+                optional=False if original is None else original.optional,
+            ))
 
         return replace(
             manifest,
