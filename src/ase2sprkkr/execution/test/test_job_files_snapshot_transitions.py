@@ -170,3 +170,43 @@ def test_snapshot_discard_preserves_failed_transfer_for_retry(tmp_path):
     discarded = JobFiles.discard_capture(merged)
     assert discarded.captured_at is None
     assert discarded.outputs[0].availability_state == "failed"
+
+
+def test_independent_availability_update_does_not_change_terminal_outcome(tmp_path):
+    from ase2sprkkr.execution.base import RunState
+    from ase2sprkkr.execution.run_model import FileEntry
+
+    output = str(tmp_path / "output.dat")
+    manager = ExecutionManager(RunStore(tmp_path / "availability-runs"))
+    record = manager.store.save(manager.new_record(
+        task="DOS", directory=tmp_path,
+        files=FileManifest(outputs=(FileEntry(output, availability_state="pending"),)),
+    ))
+    finished = manager.complete(record, state=RunState.FINISHED, return_code=0)
+    changed = record.job_files.update_availability(
+        manager.store, output, "failed", "historical fetch error",
+    )
+    assert changed.state == RunState.FINISHED
+    assert changed.finished_at == finished.finished_at
+    assert changed.files.failed_files[0].availability_message == "historical fetch error"
+
+
+def test_stale_job_files_updater_preserves_other_file_status(tmp_path):
+    from ase2sprkkr.execution.run_model import FileEntry
+
+    first = str(tmp_path / "first.dat")
+    second = str(tmp_path / "second.dat")
+    manager = ExecutionManager(RunStore(tmp_path / "parallel-availability"))
+    record = manager.store.save(manager.new_record(
+        task="DOS", directory=tmp_path, files=FileManifest(outputs=(
+            FileEntry(first, availability_state="pending"),
+            FileEntry(second, availability_state="pending"),
+        )),
+    ))
+    first_update = record.job_files.update_availability(manager.store, first, "available")
+    second_update = record.job_files.update_availability(
+        manager.store, second, "failed", "missing",
+    )
+    assert first_update.files.outputs[0].availability_state == "available"
+    assert second_update.files.outputs[0].availability_state == "available"
+    assert second_update.files.outputs[1].availability_state == "failed"
