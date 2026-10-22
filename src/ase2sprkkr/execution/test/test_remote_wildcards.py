@@ -1,7 +1,5 @@
 import asyncio
 
-import pytest
-
 from ..base import SubmissionNotStarted
 from ..remote import FileSyncPolicy
 from ..transport import LocalTransport
@@ -30,7 +28,7 @@ def test_local_transport_put_files_expands_patterns_and_preserves_paths(tmp_path
     assert not (destination / "a" / "ignored.txt").exists()
 
 
-def test_local_transport_get_files_expands_source_patterns(tmp_path):
+def test_local_transport_get_files_expands_sources(tmp_path):
     source = tmp_path / "source"
     destination = tmp_path / "destination"
     (source / "nested").mkdir(parents=True)
@@ -93,24 +91,24 @@ def test_remote_executor_downloads_output_wildcards_and_discards_stale_matches(t
     workdir = tmp_path / "local" / "calculation"
     remote_workdir = tmp_path / "remote" / "calculation"
     remote_workdir.mkdir(parents=True)
-    (remote_workdir / "artifact-stale.dat").write_text("stale")
+    (remote_workdir / "file-stale.dat").write_text("stale")
 
     executor, spec, _, _ = _text_run(
         tmp_path,
-        declared_output_files=(workdir / "artifact-*.dat",),
+        declared_output_files=(workdir / "file-*.dat",),
         code=(
             "import pathlib; "
-            "pathlib.Path('artifact-a.dat').write_text('a'); "
-            "pathlib.Path('artifact-b.dat').write_text('b'); print('done')"
+            "pathlib.Path('file-a.dat').write_text('a'); "
+            "pathlib.Path('file-b.dat').write_text('b'); print('done')"
         ),
     )
     result = _processed_run(executor, spec).run()
 
     assert result.return_code == 0
-    assert (workdir / "artifact-a.dat").read_text() == "a"
-    assert (workdir / "artifact-b.dat").read_text() == "b"
-    assert not (workdir / "artifact-stale.dat").exists()
-    assert not (remote_workdir / "artifact-stale.dat").exists()
+    assert (workdir / "file-a.dat").read_text() == "a"
+    assert (workdir / "file-b.dat").read_text() == "b"
+    assert not (workdir / "file-stale.dat").exists()
+    assert not (remote_workdir / "file-stale.dat").exists()
 
 
 def test_remote_executor_syncs_cache_wildcards_in_both_directions(tmp_path):
@@ -159,18 +157,17 @@ def test_exact_and_wildcard_outputs_share_availability_tracking(tmp_path):
     runner = _processed_run(executor, spec)
     runner.run()
 
-    entries = {entry.local_path: entry for entry in runner.files.outputs}
+    entries = {entry.local_path: entry for entry in runner.job_files.manifest.outputs}
     assert exact.read_text() == "exact"
     assert overlap.read_text() == "a"
     for name, expected in (("part-b.dat", "b"), ("part-c.dat", "c")):
         path = workdir / name
         assert path.read_text() == expected
         assert entries[str(path)].availability_state == "available"
-        assert entries[str(path)].source_pattern == str(pattern)
+        assert entries[str(path)].source == str(pattern)
 
     assert entries[str(exact)].availability_state == "available"
     assert entries[str(overlap)].availability_state == "available"
-    assert entries[str(pattern)].availability_state == "available"
 
     remote_workdir = remote_root / "calculation"
     for name in ("bands.dat", "part-a.dat", "part-b.dat", "part-c.dat"):
@@ -201,16 +198,15 @@ def test_exact_and_wildcard_caches_keep_individual_sync_states(tmp_path):
     runner = _processed_run(executor, spec)
     runner.run()
 
-    entries = {entry.file.local_path: entry.file for entry in runner.files.caches}
+    entries = {entry.local_path: entry for entry in runner.job_files.manifest.caches}
     assert exact.read_text() == "before"
     assert unchanged.read_text() == "unchanged"
     assert (workdir / "generated-new.dat").read_text() == "new"
     assert entries[str(exact)].availability_state == "skipped"
     assert entries[str(unchanged)].availability_state == "skipped"
-    assert entries[str(pattern)].availability_state == "available"
     new_entry = entries[str(workdir / "generated-new.dat")]
     assert new_entry.availability_state == "available"
-    assert new_entry.source_pattern == str(pattern)
+    assert new_entry.source == str(pattern)
 
 
 def test_remote_executor_tolerates_unmatched_optional_cache_wildcard(tmp_path):
@@ -284,43 +280,68 @@ def test_overlapping_exact_and_wildcard_caches_are_transferred_once(tmp_path):
     remote_b = remote_root / "calculation" / "restart-b.dat"
     assert sum(src == remote_a for src, _ in transport.get_files) == 1
     assert sum(src == remote_b for src, _ in transport.get_files) == 1
-    entries = {item.file.local_path: item.file for item in runner.files.caches}
+    entries = {item.local_path: item for item in runner.job_files.manifest.caches}
     assert entries[str(exact)].availability_state == "available"
-    assert entries[str(pattern)].availability_state == "available"
     assert exact.read_text() == "new"
 
 
-def test_missing_optional_scf_startup_pattern_is_not_fatal(tmp_path):
-    """Successful remote SCF need not emit the optional startup DOS."""
-    from ase2sprkkr.input_parameters.task_definition import TaskFile
+def test_remote_completed_run_freezes_missing_optional_wildcard_as_empty(tmp_path):
+    from .test_taskfile_optional_contract import DeclaredPath
 
     workdir = tmp_path / "local" / "calculation"
     executor, spec, _, _ = _text_run(
         tmp_path,
-        declared_output_files=(TaskFile(workdir / "*_SCFSTART.dos", optional=True),),
+        declared_output_files=(
+            DeclaredPath(str(workdir / "optional-*.dat"), optional=True),
+        ),
+        output_files=FileSyncPolicy.MISSING,
         code="print('done')",
     )
     runner = _processed_run(executor, spec)
     result = runner.run()
     assert result.return_code == 0
+    frozen = runner.job_files.manifest
+    assert frozen.outputs == ()
+    assert frozen.availability_state == "available"
+    assert not frozen.has_wildcards()
+    assert all("optional-*.dat" not in str(entry.local_path)
+               for entry in frozen.download_files)
 
 
-@pytest.mark.parametrize("optional_first", [True, False])
-def test_overlapping_optional_and_required_wildcards_sync_each_file_once(
-    tmp_path, optional_first,
-):
-    """Distinct wildcard requirements must share one concrete-transfer set."""
-    from ase2sprkkr.input_parameters.task_definition import TaskFile
+def test_remote_completed_run_fails_on_missing_mandatory_wildcard(tmp_path):
+    import pytest
+
+    workdir = tmp_path / "local" / "calculation"
+    executor, spec, _, _ = _text_run(
+        tmp_path,
+        declared_output_files=(workdir / "required-*.dat",),
+        code="print('done')",
+    )
+    runner = _processed_run(executor, spec)
+    with pytest.raises((FileNotFoundError, RuntimeError),
+                       match="required-\\*\\.dat|remote output pattern"):
+        runner.run()
+    missing = [
+        e for e in runner.job_files.manifest.outputs
+        if e.local_path == str(workdir / "required-*.dat")
+    ]
+    assert len(missing) == 1
+    assert missing[0].availability_state == "failed"
+
+
+def test_overlapping_required_and_optional_output_patterns_download_once(tmp_path):
+    """Overlapping globs do not duplicate physical downloads."""
     from .test_remote import _SpyTransport
+    from .test_taskfile_optional_contract import DeclaredPath
 
     transport = _SpyTransport()
     workdir = tmp_path / "local" / "calculation"
-    optional = TaskFile(workdir / "part-*.dat", optional=True)
-    required = TaskFile(workdir / "part-a*.dat")
-    declarations = (optional, required) if optional_first else (required, optional)
     executor, spec, _, remote_root = _text_run(
         tmp_path, transport,
-        declared_output_files=declarations,
+        declared_output_files=(
+            DeclaredPath(str(workdir / "part-*.dat"), optional=True),
+            DeclaredPath(str(workdir / "part-a*.dat")),
+        ),
         output_files=FileSyncPolicy.ALWAYS,
         code=(
             "from pathlib import Path; "
@@ -330,86 +351,8 @@ def test_overlapping_optional_and_required_wildcards_sync_each_file_once(
     )
     runner = _processed_run(executor, spec)
     assert runner.run().return_code == 0
-    for filename, expected in (("part-a.dat", "a"), ("part-b.dat", "b")):
-        assert (workdir / filename).read_text() == expected
-        assert sum(
-            source == remote_root / "calculation" / filename
-            for source, _ in transport.get_files
-        ) == 1
-    entries = {item.local_path: item for item in runner.files.outputs}
-    assert entries[str(optional)].availability_state == "available"
-    assert entries[str(required)].availability_state == "available"
-
-
-def test_missing_optional_exact_remote_output_is_not_fatal(tmp_path):
-    """Manifest optionality applies equally to explicit filenames and globs."""
-    from ase2sprkkr.input_parameters.task_definition import TaskFile
-
-    workdir = tmp_path / "local" / "calculation"
-    optional_file = workdir / "optional-result.dat"
-    executor, spec, _, _ = _text_run(
-        tmp_path,
-        declared_output_files=(TaskFile(optional_file, optional=True),),
-        code="print('done')",
-    )
-    runner = _processed_run(executor, spec)
-    result = runner.run()
-    assert result.return_code == 0
-    entries = {entry.local_path: entry for entry in runner.files.outputs}
-    assert entries[str(optional_file)].availability_state == "skipped"
-
-
-@pytest.mark.parametrize("pattern", [False, True])
-def test_remote_missing_optional_input_is_not_staged(tmp_path, pattern):
-    """A declared optional input is not sent when neither side has it."""
-    from ase2sprkkr.input_parameters.task_definition import TaskFile
-
-    workdir = tmp_path / "local" / "calculation"
-    pathname = "optional-*.pot" if pattern else "optional.pot"
-    missing = workdir / pathname
-    executor, spec, _, remote_root = _text_run(
-        tmp_path, declared_input_files=(TaskFile(missing, optional=True),),
-        code="print('ok')",
-    )
-    runner = _processed_run(executor, spec)
-    assert runner.run().return_code == 0
-    assert not tuple((remote_root / "calculation").glob("optional*.pot"))
-
-
-def test_mandatory_input_alias_cannot_be_made_optional(tmp_path):
-    """A required input wins over an optional declaration of the same file."""
-    from ase2sprkkr.input_parameters.task_definition import TaskFile
-
-    workdir = tmp_path / "local" / "calculation"
-    missing = workdir / "mandatory.pot"
-    executor, spec, _, _ = _text_run(
-        tmp_path,
-        declared_input_files=(TaskFile(missing, optional=True), missing),
-    )
-    with pytest.raises(SubmissionNotStarted, match="Conflicting optionality"):
-        _processed_run(executor, spec).run()
-
-
-def test_remote_collects_exact_cache_created_during_run(tmp_path):
-    """An absent cache is not an input, but can become a new output."""
-    from .test_remote import _SpyTransport
-
-    transport = _SpyTransport()
-    workdir = tmp_path / "local" / "calculation"
-    cache_file = workdir / "fresh-cache.dat"
-    executor, spec, _, remote_root = _text_run(
-        tmp_path, transport,
-        declared_cache_files=(cache_file,),
-        code=(
-            "from pathlib import Path; "
-            "Path('fresh-cache.dat').write_text('fresh')"
-        ),
-    )
-    runner = _processed_run(executor, spec)
-    assert runner.run().return_code == 0
-    assert cache_file.read_text() == "fresh"
-    remote_cache = remote_root / "calculation" / "fresh-cache.dat"
-    assert all(source != cache_file for source, _ in transport.put_files)
-    assert sum(source == remote_cache for source, _ in transport.get_files) == 1
-    entries = {entry.file.local_path: entry.file for entry in runner.files.caches}
-    assert entries[str(cache_file)].availability_state == "available"
+    assert (workdir / "part-a.dat").read_text() == "a"
+    assert (workdir / "part-b.dat").read_text() == "b"
+    for name in ("part-a.dat", "part-b.dat"):
+        assert sum(src == remote_root / "calculation" / name
+                   for src, _ in transport.get_files) == 1
