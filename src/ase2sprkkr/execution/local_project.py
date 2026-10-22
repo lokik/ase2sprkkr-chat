@@ -110,7 +110,7 @@ class LocalProjectRunner(ManagedRunner):
         # A terminal result is immutable. After acknowledgment the receipt
         # may disappear while the supervisor process is still shutting down.
         if (self._backend_id is None or self._state.is_terminal
-                or self._thread is not None):
+                or self.detached or self._thread is not None):
             return self._state
         status = local_status(self._backend_id, self.job_files.manifest)
         return self._apply_status(status)
