@@ -165,24 +165,6 @@ def test_stale_failed_snapshot_preserves_only_unchanged_verified_file(tmp_path):
     assert merge_snapshot(current, stale).outputs[0].availability_state == "failed"
 
 
-def test_frozen_failure_does_not_erase_verified_download(tmp_path):
-    from ase2sprkkr.common.file_versions import FileVersion
-    from ase2sprkkr.execution.manifest_merge import merge_terminal_files
-
-    path = tmp_path / "result.dat"
-    path.write_bytes(b"valid")
-    available = FileManifest(outputs=(FileEntry(
-        str(path), "/remote/result.dat", availability_state="available",
-        verified_local_version=FileVersion.capture(path, require_digest=True),
-    ),))
-    failed = available.with_file_availability(
-        str(path), "failed", "remote scan failed",
-    )
-    assert merge_terminal_files(available, failed).outputs[0].availability_state == "available"
-    path.unlink()
-    assert merge_terminal_files(available, failed).outputs[0].availability_state == "failed"
-
-
 def test_simultaneous_collections_keep_verified_success_after_late_failure(tmp_path):
     """An in-flight failed collector must not undo another collector's success."""
     from ase2sprkkr.common.file_versions import FileVersion

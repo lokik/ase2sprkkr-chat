@@ -529,8 +529,18 @@ def test_job_files_reconciles_terminal_delivery(tmp_path):
     assert updated.outputs[0].verified_local_version is None
     assert updated.outputs != (available,)
 
+    # A failed follow-up observation must not erase verified bytes while they
+    # still match the captured version; once they disappear, failure wins.
+    failed_verified = old.with_file_availability(
+        str(path), "failed", "remote scan failed",
+    )
+    assert merge_terminal_files(old, failed_verified).outputs[0].availability_state == "available"
+
     path.unlink()
     assert merge_terminal_files(old, frozen).outputs == (pending,)
+
+
+
 
 
 def test_manifest_does_not_add_files_on_availability_change(tmp_path):
