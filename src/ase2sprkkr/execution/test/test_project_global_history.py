@@ -22,7 +22,8 @@ def test_different_projects_share_one_store_and_keep_project_identity(tmp_path):
     second = projects.create("Second", parent_id=root.id)
     a = ExecutionManager(project_repository=projects)
     b = ExecutionManager(project_repository=projects)
-    assert a.store.directory == b.store.directory
+    assert a.store is b.store is projects.run_store
+    assert a.store.directory == b.store.directory == tmp_path / "projects_runs"
     first_run = a.new_record(task="DOS", directory=tmp_path / "work", dataset="same", project_id=first.id)
     second_run = b.new_record(task="DOS", directory=tmp_path / "work", dataset="same", project_id=second.id)
     assert first_run.project_id == first.id
@@ -73,18 +74,6 @@ def test_project_bound_manager_rejects_noncanonical_run_store(tmp_path):
     manager.store.save(record)
     assert canonical.get(record.id) == record
     assert not (tmp_path / "custom-runs").exists()
-
-
-def test_default_project_store_shared_across_projects(tmp_path):
-    projects = ProjectRepository(tmp_path / "projects")
-    one, two = projects.create("First"), projects.create("Second")
-    manager = ExecutionManager(project_repository=projects)
-    first = manager.new_record(task="DOS", directory=tmp_path / "a", project_id=one.id)
-    second = manager.new_record(task="DOS", directory=tmp_path / "b", project_id=two.id)
-    manager.store.save(first)
-    manager.store.save(second)
-    assert manager.store.directory == tmp_path / "projects_runs"
-    assert {run.project_id for run in manager.store.runs()} == {one.id, two.id}
 
 
 def test_unknown_run_prevents_project_deletion_until_terminal(tmp_path):

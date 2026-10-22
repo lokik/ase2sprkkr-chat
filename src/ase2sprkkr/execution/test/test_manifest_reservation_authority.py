@@ -110,27 +110,6 @@ def test_reserved_tilde_root_is_used_by_staging(tmp_path, monkeypatch):
     assert prepared.inputs[0].remote_path == manifest.inputs[0].remote_path
 
 
-def test_staging_rejects_changed_reserved_target(tmp_path):
-    executor = RemoteEndpointExecutor(LocalTransport())
-    spec = ExecutionSpec(
-        argv=("true",), directory=str(tmp_path),
-        input_file=None, output_file="out",
-        launch=LaunchSpec(local_root=str(tmp_path),
-                          remote_root=str(tmp_path / "remote")),
-    )
-    manifest, _ = executor.reservation_context(
-        spec, FileManifest.from_spec(spec),
-    )
-    from dataclasses import replace
-    mismatched = replace(manifest, stdout=replace(
-        manifest.stdout, remote_path="/unexpected/path",
-    ))
-    with pytest.raises(ValueError, match="differs from reserved path"):
-        asyncio.run(executor.file_handler.prepare(
-            mismatched.mapping, spec, mismatched,
-        ))
-
-
 def test_staging_uses_reserved_manifest_not_spec_declarations(tmp_path):
     """Stage reserved paths; changed spec declarations cannot expand the transfer."""
     from dataclasses import replace

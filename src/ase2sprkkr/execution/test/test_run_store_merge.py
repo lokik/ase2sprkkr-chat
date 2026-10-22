@@ -38,50 +38,30 @@ def test_stale_transition_cannot_regress_newer_lifecycle_state(tmp_path):
     assert running.execution.backend_id == "123"
 
 
-def test_none_does_not_erase_known_completion_metadata(tmp_path):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
-    original = _record(manager, tmp_path)
-    stale = manager.transition(original, state=RunState.RUNNING)
-    finished = manager.transition(
-        stale,
-        state=RunState.FINISHED,
-        return_code=0,
-        message="complete",
-    )
-
-    merged = manager.transition(
-        stale,
-        state=RunState.RUNNING,
-        return_code=None,
-        message=None,
-    )
-
-    assert merged.state == RunState.FINISHED
-    assert merged.return_code == 0
-    assert merged.message == "complete"
-    assert manager.store.get(original.id) == merged
-    assert finished.state == RunState.FINISHED
-
-
-def test_late_conflicting_final_state_does_not_replace_known_final_outcome(tmp_path):
+@pytest.mark.parametrize(
+    "late_state, late_return_code, late_message",
+    ((RunState.RUNNING, None, None),
+     (RunState.FAILED, 1, "late failure")),
+)
+def test_stale_transition_preserves_known_completion_metadata(
+    tmp_path, late_state, late_return_code, late_message,
+):
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
     original = _record(manager, tmp_path)
     running = manager.transition(original, state=RunState.RUNNING)
-    manager.transition(
-        running,
-        state=RunState.FINISHED,
-        return_code=0,
+    finished = manager.transition(
+        running, state=RunState.FINISHED, return_code=0, message="complete",
     )
 
     merged = manager.transition(
-        running,
-        state=RunState.FAILED,
-        return_code=1,
+        running, state=late_state, return_code=late_return_code,
+        message=late_message,
     )
 
-    assert merged.state == RunState.FINISHED
-    # A stale conflicting final update must not overwrite the precise outcome.
+    assert merged.state == finished.state == RunState.FINISHED
     assert merged.return_code == 0
+    assert merged.message == "complete"
+    assert manager.store.get(original.id) == merged
 
 
 def test_late_uncaptured_manifest_cannot_destroy_historical_snapshot(tmp_path):
@@ -111,37 +91,45 @@ def test_late_uncaptured_manifest_cannot_destroy_historical_snapshot(tmp_path):
     assert manager.store.get(running.id).files == completed.files
 
 
-def test_submitted_identity_rejects_directory_and_endpoint_changes(tmp_path):
+@pytest.mark.parametrize("submitted", (False, True))
+def test_execution_identity_is_immutable_across_submission(tmp_path, submitted):
     from dataclasses import replace
-    import pytest
     from ase2sprkkr.execution import WorkingDirectory
 
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
     original = _record(manager, tmp_path)
     manager.store.save(original)
-    staged = manager.transition(
-        original,
-        execution=replace(
-            original.execution,
-            directory=WorkingDirectory(str(tmp_path), "/remote/actual"),
-        ),
-    )
-    running = manager.transition(
-        staged, state=RunState.RUNNING,
-        execution=staged.execution.submitted("job-1"),
-    )
-    assert running.execution.directory.remote == "/remote/actual"
-    for changes in (
-        {"directory": WorkingDirectory(str(tmp_path), "/remote/other")},
-        {"directory": WorkingDirectory(str(tmp_path / "other"), "/remote/actual")},
+    current = original
+    if submitted:
+        staged = manager.transition(
+            original,
+            execution=replace(
+                original.execution,
+                directory=WorkingDirectory(str(tmp_path), "/remote/actual"),
+            ),
+        )
+        current = manager.transition(
+            staged, state=RunState.RUNNING,
+            execution=staged.execution.submitted("job-1"),
+        )
+        assert current.execution.directory.remote == "/remote/actual"
+
+    changes = [
+        {"directory": WorkingDirectory(str(tmp_path / "other"),
+                                       "/remote/actual" if submitted else None)},
         {"endpoint": ExecutorEndpoint(executor="psij", psij_backend="slurm")},
-        {"backend_id": "job-2"},
-    ):
+    ]
+    if submitted:
+        changes.extend((
+            {"directory": WorkingDirectory(str(tmp_path), "/remote/other")},
+            {"backend_id": "job-2"},
+        ))
+    for fields in changes:
         with pytest.raises(ValueError):
             manager.transition(
-                running, execution=replace(running.execution, **changes),
+                current, execution=replace(current.execution, **fields),
             )
-    assert manager.store.get(running.id).execution == running.execution
+    assert manager.store.get(current.id).execution == current.execution
 
 
 def test_terminal_refresh_cannot_replace_manifest_or_execution(tmp_path):
@@ -241,25 +229,6 @@ def test_terminal_run_cannot_acquire_backend_identity_after_failure(tmp_path):
     assert manager.store.get(failed.id).execution.backend_id is None
 
 
-def test_endpoint_and_local_directory_are_immutable_before_submission(tmp_path):
-    from dataclasses import replace
-    import pytest
-    from ase2sprkkr.execution import WorkingDirectory
-
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
-    original = _record(manager, tmp_path)
-    manager.store.save(original)
-    for changes in (
-        {"endpoint": ExecutorEndpoint(executor="psij", psij_backend="slurm")},
-        {"directory": WorkingDirectory(str(tmp_path / "other"))},
-    ):
-        with pytest.raises(ValueError):
-            manager.transition(
-                original, execution=replace(original.execution, **changes),
-            )
-    assert manager.store.get(original.id).execution == original.execution
-
-
 def test_concurrent_completers_reuse_one_durable_terminal_snapshot(tmp_path):
     from concurrent.futures import ThreadPoolExecutor
 
@@ -351,8 +320,6 @@ def test_terminal_lookup_rejects_foreign_project_identity(tmp_path):
             state=RunState.FINISHED,
         )
     assert manager.store.get(original.id) == final
-
-
 
 
 def test_save_cannot_overwrite_terminal_history(tmp_path):
