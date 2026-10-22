@@ -6,6 +6,7 @@ import os
 import fnmatch
 from pathlib import Path
 from uuid import uuid4
+from hashlib import sha256
 from dataclasses import replace
 from datetime import datetime, timezone
 
@@ -13,6 +14,7 @@ from ..common.file_locks import FileLock
 from ._durability import durable_publish_new, sync_file
 from ..common.file_versions import file_digest
 from .run_model import FileAvailabilityState
+from .file_availability import _pattern_root
 from .transport import has_file_magic
 
 from .file_history import (
@@ -258,7 +260,10 @@ class JobFiles:
             # All restorers, including other processes or runs sharing this
             # destination, serialize through a filesystem lock. Never hold
             # the RunStore record lock during network transfer.
-            lock_path = Path(path).with_name(f".{Path(path).name}.restore.lock")
+            # Wildcards may occur in directory components. Lock in the
+            # nearest literal ancestor and keep metacharacters out of the name.
+            lock_name = f".restore-{sha256(os.fsencode(path)).hexdigest()}.lock"
+            lock_path = Path(_pattern_root(path)) / lock_name
             with FileLock(lock_path):
                 version = versions.get(path)
                 staged = Path(path).with_name(
