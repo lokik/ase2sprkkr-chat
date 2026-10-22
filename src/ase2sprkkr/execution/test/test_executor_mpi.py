@@ -53,6 +53,7 @@ def test_input_parameters_preserve_mpi_launch_intent(tmp_path, monkeypatch):
     runner = SimpleNamespace(
         state=RunState.NEW,
         result=object(),
+        callback=None,
         reference=None,
         exception=None,
     )
@@ -222,6 +223,7 @@ def test_explicit_local_executor_overrides_remote_profile(tmp_path, monkeypatch)
     runner = SimpleNamespace(
         state=RunState.NEW,
         result=object(),
+        callback=None,
         reference=None,
         exception=None,
     )
@@ -236,10 +238,12 @@ def test_explicit_local_executor_overrides_remote_profile(tmp_path, monkeypatch)
             seen["spec"] = spec
             return runner
 
-    def must_not_resolve_profile(profile):
+    def must_not_resolve_default_manager():
         raise AssertionError("explicit executor was replaced by the profile backend")
 
-    monkeypatch.setattr(calculation_module, "executor_from_profile", must_not_resolve_profile)
+    monkeypatch.setattr(
+        calculation_module, "default_execution_manager", must_not_resolve_default_manager,
+    )
 
     profile = SPRKKRProfile(executor="ssh", host="cluster", mpi="auto")
     executor = ExplicitLocalExecutor()
