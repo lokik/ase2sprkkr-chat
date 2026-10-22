@@ -22,7 +22,7 @@ from ase2sprkkr.execution.postprocessing import CalculationRun
 from ase2sprkkr.execution.run_model import (
     FileAvailabilityState, FileManifest, FileEntry,
 )
-from ase2sprkkr.execution.job_files import JobFiles, JobFilesOwner
+from ase2sprkkr.execution.job_files import JobFilesOwner
 from ase2sprkkr.execution.transport import LocalTransport
 
 
