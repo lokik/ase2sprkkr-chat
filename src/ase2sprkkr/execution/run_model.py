@@ -300,9 +300,6 @@ class FileManifest:
                 if (path := file_path(value, directory)) is not None
             )
 
-        def paths(*values):
-            return tuple(entry.local_path for entry in entries(*values))
-
         primary = file_path(spec.input_file, directory)
         inputs = []
         for entry in entries(spec.input_file, *spec.input_files):
@@ -314,11 +311,11 @@ class FileManifest:
                     break
             else:
                 inputs.append(entry)
-        stdin = file_path(getattr(spec, "stdin", None), directory)
-        stdout = file_path(getattr(spec, "output_file", None), directory)
-        stderr = file_path(getattr(spec, "error_file", None), directory)
-        outputs = entries(*getattr(spec, "output_files", ()))
-        caches = entries(*getattr(spec, "cache_files", ()))
+        stdin = file_path(spec.stdin, directory)
+        stdout = file_path(spec.output_file, directory)
+        stderr = file_path(spec.error_file, directory)
+        outputs = entries(*spec.output_files)
+        caches = entries(*spec.cache_files)
 
         # Validate the user's declarations before primary_input becomes
         # another metadata reference to the matching inputs entry.
