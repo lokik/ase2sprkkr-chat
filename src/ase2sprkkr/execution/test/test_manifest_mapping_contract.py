@@ -77,6 +77,11 @@ def test_remote_submission_uses_reserved_primary_input_and_stdin(tmp_path):
     runner = executor.create_run(spec)
     mapping = FileMapping(str(tmp_path), str(tmp_path / "remote"),
                           input_sync="never")
+    # NEVER transfers nothing: required inputs must already exist on target.
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    for name in ("main.in", "stdin.in", "extra.in"):
+        (remote / name).write_text(name)
     reserved = FileManifest.from_spec(spec).with_mapping(mapping)
     runner.job_files.replace(reserved)
     # A stale or independently modified spec cannot change file membership.
@@ -89,6 +94,25 @@ def test_remote_submission_uses_reserved_primary_input_and_stdin(tmp_path):
     assert request["stdin"] == reserved.stdin.remote_path
     assert "wrong.in" not in str(request["files"])
     assert "unreserved.in" not in str(request["files"])
+    assert {path.name for path in remote.iterdir()} == {
+        "main.in", "stdin.in", "extra.in",
+    }
+
+
+def test_never_requires_existing_remote_primary_input(tmp_path):
+    spec = _spec(tmp_path)
+    # Local content does not satisfy input_sync=never.
+    (tmp_path / "main.in").write_text("local input")
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    mapping = FileMapping(str(tmp_path), str(remote), input_sync="never")
+    manifest = FileManifest.from_spec(spec).with_mapping(mapping)
+    executor = RemoteEndpointExecutor(LocalTransport())
+
+    with pytest.raises(FileNotFoundError, match="Required remote input file"):
+        asyncio.run(executor.file_handler.prepare(mapping, spec, manifest))
+    assert not (remote / "main.in").exists()
+
 
 
 def test_local_submission_uses_reserved_file_declarations(tmp_path):
