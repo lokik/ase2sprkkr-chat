@@ -243,6 +243,11 @@ class RunState(str, Enum):
         return self in (RunState.FINISHED, RunState.FAILED, RunState.CANCELLED)
 
 
+class SubmissionRecovery(str, Enum):
+    """Conclusive absence of backend submission (None is uncertain)."""
+    ABSENT = "absent"
+
+
 class FailurePhase(str, Enum):
     """Phase in which a run entered :attr:`RunState.FAILED`."""
 
@@ -551,6 +556,10 @@ class Executor:
         Executors with a remote file mapping override this hook. Restoration
         still validates each destination immediately before publication.
         """
+
+    def abandoned_preparation_is_safe(self):
+        """Return true only when abandoned preparation cannot keep writing files."""
+        return False
 
     def fetch_result_files(self, run, files, *, destinations=None):
         """Retrieve *files*, optionally staging each canonical local path.
