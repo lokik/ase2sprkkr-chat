@@ -160,6 +160,7 @@ class ProjectRepository:
         self._listeners: set[ProjectChangedListener] = set()
         self._known: dict[str, Project] = {}
         self._run_store = None
+        self._manager = None
 
     def subscribe(self, listener: ProjectChangedListener) -> Callable[[], None]:
         """Subscribe to local or refreshed project changes."""
@@ -307,6 +308,38 @@ class ProjectRepository:
                     self.runs_directory, projects_directory=self.directory,
                 )
             return self._run_store
+
+    @property
+    def manager(self):
+        """Lazily reuse one execution manager and its executor registry."""
+        with self._state_lock:
+            if self._manager is None:
+                from .manager import ExecutionManager
+                self._manager = ExecutionManager(project_repository=self)
+            return self._manager
+
+    def job(self, run_id):
+        """Open a persistent job by ID."""
+        from .job import Job
+        record = self.run_store.get(run_id)
+        if record.project_id is None:
+            raise ValueError("Run does not belong to a project")
+        self.project(record.project_id)
+        return Job(self.manager, record.id)
+
+    def jobs(self, project_id, *, newest=True):
+        """List persisted jobs belonging to one project."""
+        from .job import Job
+        canonical = self.project(project_id).id
+        records = self.run_store.runs(newest=newest)
+        return tuple(
+            Job(self.manager, record.id)
+            for record in records if record.project_id == canonical
+        )
+
+    def last_job(self, project_id):
+        """Return the most recent persisted job of a project, or None."""
+        return next(iter(self.jobs(project_id)), None)
 
     def delete(self, project_id: str, *, expected_generation: int) -> None:
         """Delete an inactive leaf project and its globally stored run history."""

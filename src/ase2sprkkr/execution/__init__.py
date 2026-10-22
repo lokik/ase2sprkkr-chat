@@ -36,6 +36,7 @@ from .projects import (
     default_projects_directory,
 )
 from .job_files import JobFiles
+from .job import Job
 from .psij import PsijExecutor, PsijRunner
 from .remote import FileSyncPolicy, RemoteRunner
 from .remote_endpoint import RemoteEndpointExecutor
@@ -51,6 +52,7 @@ __all__ = [
     "FileMapping",
     "FileManifest",
     "JobFiles",
+    "Job",
     "ExecutionOutcome",
     "ExecutionResources",
     "ExecutionSpec",

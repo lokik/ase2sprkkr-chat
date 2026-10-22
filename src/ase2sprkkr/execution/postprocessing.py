@@ -118,6 +118,14 @@ class CalculationRun:
         return self.persistence.id
 
     @property
+    def job(self):
+        """The stored job, or None for an untracked calculation."""
+        if self.persistence is None:
+            return None
+        from .job import Job
+        return Job(self.persistence.manager, self.persistence.id)
+
+    @property
     def record(self):
         if self.persistence is None:
             raise AttributeError("Untracked calculation has no RunRecord")
