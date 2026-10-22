@@ -143,30 +143,15 @@ def test_optional_and_required_output_transfer_are_independent(tmp_path):
 
 
 def test_optional_alias_cannot_weaken_mandatory_stdin(tmp_path):
-    import asyncio
-
-    from ase2sprkkr.execution.remote_file_handler import RemoteFileHandler
-    from ase2sprkkr.execution.run_model import FileMapping
-    from ase2sprkkr.execution.transport import LocalTransport
-
-    (tmp_path / "input.inp").write_text("input")
-    remote = tmp_path / "remote"
-    remote.mkdir()
     missing = tmp_path / "missing-stdin.inp"
     spec_obj = spec(
         tmp_path, stdin=missing,
         input_files=(DeclaredPath(str(missing), optional=True),),
     )
-    files = FileManifest.from_spec(spec_obj)
-    assert files.stdin is True
-    assert files.inputs[0].local_path == str(missing)
-    # The staging layer still treats stdin as mandatory.
-    mapping = FileMapping(str(tmp_path), str(remote))
-    handler = RemoteFileHandler(LocalTransport())
-    with pytest.raises(FileNotFoundError, match="neither locally nor remotely"):
-        asyncio.run(handler.prepare(
-            mapping, spec_obj, FileManifest.from_spec(spec_obj),
-        ))
+    # Invalid declarations fail before staging or any remote transfer:
+    # a mandatory stdin source cannot also be an optional input.
+    with pytest.raises(ValueError, match="Standard input cannot be optional"):
+        FileManifest.from_spec(spec_obj)
 
 
 @pytest.mark.parametrize("present", (False, True))

@@ -349,21 +349,10 @@ class FileManifest:
                 values.insert(0, spec.stdin)
             elif position:
                 values.insert(0, values.pop(position))
-        # Coalesce identical declarations, but reject contradictory
-        # optionality. The primary input and stdin are always mandatory.
-        unique = {}
-        for value in values:
-            path = file_path(value, directory)
-            if path is None:
-                continue
-            optional = getattr(value, "optional", False)
-            previous = unique.get(path)
-            if previous is not None:
-                if previous.optional != optional:
-                    raise ValueError(f"Conflicting optionality for file {path}")
-                continue
-            unique[path] = FileEntry(local_path=path, optional=optional)
-        inputs = tuple(unique.values())
+        # stdin references one existing declaration (or is inserted above).
+        # Independently declared inputs must remain distinct: coalescing them
+        # hides accidental repeated declarations and optionality mistakes.
+        inputs = entries(*values)
         if stdin and inputs[0].optional:
             raise ValueError("Standard input cannot be optional")
         stdout = file_path(spec.output_file, directory)
