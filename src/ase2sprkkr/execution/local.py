@@ -8,7 +8,7 @@ import stat
 import sys
 from threading import Event, Lock, Thread
 
-from .job_files import JobFiles, JobFilesOwner
+from .job_files import JobFiles
 from .run_model import FileManifest
 from .base import (
     ExecutionOutcome,
@@ -32,7 +32,7 @@ from .local_process import (
 )
 
 
-class LocalRunner(JobFilesOwner):
+class LocalRunner:
     """One local subprocess execution.
 
     The runner owns only process lifecycle, output-file writing and raw output
@@ -41,7 +41,7 @@ class LocalRunner(JobFilesOwner):
 
     def __init__(self, spec: ExecutionSpec, callback=None):
         self.spec = spec
-        self._job_files = JobFiles(FileManifest.from_spec(spec))
+        self.job_files = JobFiles(FileManifest.from_spec(spec))
         self.callback = callback
         self.result = ExecutionOutcome.from_spec(spec)
 
