@@ -393,12 +393,12 @@ def test_psij_project_manifest_marks_concrete_and_wildcard_files(monkeypatch, tm
         argv=("program",), input_file=None, directory=str(tmp_path),
         output_file=str(tmp_path / "run.out"),
     ), run_id="manifest")
-    runner.replace_file_manifest(files)
+    runner.job_files.replace(files)
     runner.submit()
     runner.wait()
-    assert runner.file_snapshot().stdout.availability_state == "available"
-    assert runner.file_snapshot().outputs[0].availability_state == "available"
-    matches = [entry for entry in runner.file_snapshot().outputs if entry.source is not None]
+    assert runner.job_files.manifest.stdout.availability_state == "available"
+    assert runner.job_files.manifest.outputs[0].availability_state == "available"
+    matches = [entry for entry in runner.job_files.manifest.outputs if entry.source is not None]
     assert len(matches) == 1
     assert matches[0].availability_state == "available"
 
@@ -412,10 +412,10 @@ def test_psij_missing_optional_output_is_skipped(monkeypatch, tmp_path):
         argv=("program",), input_file=None, directory=str(tmp_path),
         output_file=None,
     ), run_id="optional")
-    runner.replace_file_manifest(files)
+    runner.job_files.replace(files)
     runner.submit()
     runner.wait()
-    assert runner.file_snapshot().outputs[0].availability_state == "skipped"
+    assert runner.job_files.manifest.outputs[0].availability_state == "skipped"
 
 
 def test_psij_mpi_process_count_becomes_resource_spec(monkeypatch, tmp_path):
@@ -710,7 +710,7 @@ def test_psij_attach_without_recorded_streams(monkeypatch, tmp_path):
     attached = executor.attach(run, start=False)
     assert attached.spec.output_file is None
     assert attached.spec.error_file is None
-    assert attached.file_snapshot() == run.files
+    assert attached.job_files.manifest == run.files
 
 
 def test_psij_recovers_live_slurm_submission_by_run_id(monkeypatch, tmp_path):
