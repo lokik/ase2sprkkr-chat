@@ -548,3 +548,28 @@ def test_restore_rejects_symlink_supplied_as_staged_file(tmp_path):
     assert not output.exists()
     assert outside.read_text() == "original output"
     assert list(tmp_path.glob(".run.out.*.tmp")) == []
+
+
+def test_restore_detects_content_changed_immediately_after_publication(
+    tmp_path, monkeypatch,
+):
+    """An external writer cannot make corrupted history appear available."""
+    import ase2sprkkr.execution.job_files as job_files
+
+    manager, executor, record = _terminal_run(tmp_path)
+    output = tmp_path / "run.out"
+    output.unlink()
+    publish = job_files.durable_publish_new
+
+    def overwrite_after_publish(staged, destination):
+        publish(staged, destination)
+        output.write_text("different contents")
+
+    monkeypatch.setattr(job_files, "durable_publish_new", overwrite_after_publish)
+    with pytest.raises(HistoricalFileMismatchError, match="changed during retrieval"):
+        manager.retrieve_result_files(record.id)
+
+    saved = manager.store.get(record.id)
+    assert saved.state is RunState.FINISHED
+    assert saved.files.outputs[0].availability_state == "failed"
+    assert output.read_text() == "different contents"

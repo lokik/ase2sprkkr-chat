@@ -321,28 +321,31 @@ class JobFiles:
                 finally:
                     staged.unlink(missing_ok=True)
 
-                refreshed = store.get(record.id)
-                still_missing = path in missing_result_files(refreshed.files)
-                if path not in tracked:
-                    # Inputs have captured file versions but no per-file
-                    # availability state in the manifest.
-                    if still_missing:
-                        raise FileNotFoundError(
-                            f"Historical input file is still missing: {path}"
-                        )
-                    record = refreshed
-                    continue
-                record = JobFiles(refreshed).update_availability(
-                    store, path,
-                    FileAvailabilityState.FAILED if still_missing
-                    else FileAvailabilityState.AVAILABLE,
-                    "Historical file is still missing" if still_missing else None,
-                )
-                if still_missing:
-                    raise FileNotFoundError(
+                # The captured version is immutable. Checking only this
+                # path avoids re-reading the run and scanning all versions for
+                # every downloaded file. RunStore.update reads the latest
+                # record atomically when changing availability.
+                error = None
+                if not os.path.isfile(path):
+                    error = FileNotFoundError(
                         f"Historical file is still missing after retrieval: {path}"
                     )
-        return record
+                elif version is not None and not version.is_current():
+                    error = HistoricalFileMismatchError(
+                        f"Historical file changed during retrieval: {path}"
+                    )
+                if path in tracked:
+                    record = self.update_availability(
+                        store, path,
+                        FileAvailabilityState.FAILED if error
+                        else FileAvailabilityState.AVAILABLE,
+                        str(error) if error else None,
+                    )
+                if error is not None:
+                    raise error
+        # Inputs have no availability field; only their frozen versions are
+        # checked. Return the latest run without a redundant per-input read.
+        return store.get(record.id)
 
 
 def _paths_overlap(first, second, *, check_hardlinks=False):
