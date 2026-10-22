@@ -523,7 +523,7 @@ def test_restore_directory_sync_failure_does_not_erase_published_file(
     real_sync_directory = durability.fsync_directory
 
     def fail_after_publish(directory):
-        if Path(directory) == tmp_path:
+        if Path(directory) == tmp_path and output.exists():
             raise OSError("directory fsync failed")
         return real_sync_directory(directory)
 
