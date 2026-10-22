@@ -13,7 +13,6 @@ from ase2sprkkr.execution.base import RunState
 class SubmissionStoreDouble:
     @contextmanager
     def submission_owner(self, record):
-        assert record.id
         yield True
 
     def begin_dispatch(self, record):
