@@ -17,7 +17,7 @@ from ase2sprkkr.sprkkr.calculator import SPRKKR
 from ase2sprkkr.sprkkr.profile import SPRKKRProfile
 
 
-class _Runner(JobFilesOwner):
+class _Runner:
     def __init__(self, callback=None, *, spec=None):
         self.callback = callback
         self.state = RunState.NEW
