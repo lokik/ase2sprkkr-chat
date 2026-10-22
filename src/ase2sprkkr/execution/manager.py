@@ -26,7 +26,7 @@ from .base import (
     RunStatus,
     SubmissionNotStarted,
 )
-from .job_files import JobFiles
+from .job_files import JobFiles, HistoricalFileMismatchError
 from .file_history import file_is_current
 from .endpoint import ExecutorEndpoint, endpoint_for_executor
 from .pool import Executors
@@ -36,10 +36,6 @@ from .run_model import (
     Execution, WorkingDirectory, FileManifest,
 )
 from .transport import has_file_magic
-
-
-class HistoricalFileMismatchError(OSError):
-    """Restored contents differ from a run's captured SHA-256 digest."""
 
 
 _RUN_RECORD_SCHEMA_VERSION = 3
@@ -827,9 +823,7 @@ class ExecutionManager:
             self.executors.for_record(record)
             if missing and record.execution.backend_id is not None else None
         )
-        return record.job_files.retrieve(
-            self.store, executor, mismatch_error=HistoricalFileMismatchError,
-        )
+        return record.job_files.retrieve(self.store, executor)
 
     @staticmethod
     def _acknowledge_submission(executor, record):
