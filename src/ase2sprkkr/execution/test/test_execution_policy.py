@@ -285,22 +285,16 @@ def test_file_path_strict_contract_preserves_optional_none(tmp_path):
         file_path(object(), tmp_path, required=True)
 
 
-def test_strict_runner_path_errors_remain_backend_specific(tmp_path):
+def test_required_path_validation_and_psij_policy(tmp_path):
     from ase2sprkkr.execution.psij import _path as psij_path
-    from ase2sprkkr.execution.remote_file_handler import _local_path
 
-    spec = ExecutionSpec(
-        argv=(), input_file=None, output_file=None, directory=str(tmp_path),
-    )
-    with pytest.raises(ValueError, match="Remote execution requires named files"):
-        _local_path(spec, object())
-    with pytest.raises(ValueError, match="Remote execution requires named files"):
-        _local_path(spec, 1)
+    for invalid in (object(), 1):
+        with pytest.raises(ValueError, match="named file"):
+            file_path(invalid, tmp_path, required=True)
     with pytest.raises(ValueError, match="PSI/J execution requires named"):
         psij_path(object(), tmp_path)
-    assert _local_path(spec, None) is None
+    assert file_path(None, tmp_path, required=True) is None
     assert psij_path(None, tmp_path) is None
-
 
 
 def test_common_command_request_preserves_mpi_and_launch_contract(tmp_path):

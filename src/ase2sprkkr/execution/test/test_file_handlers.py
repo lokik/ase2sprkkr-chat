@@ -245,8 +245,9 @@ def test_materialized_manifest_can_download_and_rehydrate(tmp_path):
     assert materialize_manifest(restored, remote=True) == (restored, None)
 
 
-def test_manifest_rejects_cache_output_collision_before_any_transfer(tmp_path):
+def test_materialization_rejects_cache_output_collision_before_any_transfer(tmp_path):
     from ase2sprkkr.execution import FileMapping
+    from ase2sprkkr.execution.file_availability import materialize_manifest
 
     local, remote = tmp_path / "local", tmp_path / "remote"
     local.mkdir()
@@ -255,16 +256,18 @@ def test_manifest_rejects_cache_output_collision_before_any_transfer(tmp_path):
     destination = local / "result.dat"
     destination.write_text("original local value")
 
-    # The manifest owns declaration validation. No materialization or remote
-    # transfer should be needed to detect a cache/output path collision.
+    # A wildcard is a declaration of a pattern, not a concrete duplicate.
+    # Its collision with a cache is detectable only when it is materialized,
+    # before any transfer or deletion of the local file.
+    manifest = FileManifest(
+        outputs=(FileEntry(str(local / "*.dat"), str(remote / "*.dat"),
+                           availability_state="pending"),),
+        caches=(FileEntry(str(destination), str(remote / "result.dat"),
+                          availability_state="pending"),),
+        mapping=FileMapping(str(local), str(remote)),
+    )
     with pytest.raises(ValueError, match="Duplicate file declaration: output and cache"):
-        FileManifest(
-            outputs=(FileEntry(str(local / "*.dat"), str(remote / "*.dat"),
-                               availability_state="pending"),),
-            caches=(FileEntry(str(destination), str(remote / "result.dat"),
-                              availability_state="pending"),),
-            mapping=FileMapping(str(local), str(remote)),
-        )
+        materialize_manifest(manifest, remote=True)
 
     assert destination.read_text() == "original local value"
     assert (remote / "result.dat").read_text() == "remote value"

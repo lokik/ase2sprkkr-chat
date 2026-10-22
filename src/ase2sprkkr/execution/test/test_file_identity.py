@@ -1,6 +1,6 @@
 """One file has one declaration, except explicitly merged output streams."""
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 import pytest
 
@@ -87,9 +87,9 @@ def test_adding_output_for_cache_destination_is_rejected():
     path = "/local/shared"
     files = FileManifest(caches=(FileEntry(path, "/remote/cache", "pending"),))
     with pytest.raises(ValueError, match="Duplicate file declaration"):
-        files.with_added_file(
-            FileEntry(path, "/remote/result", "available"), kind="output",
-        )
+        replace(files, outputs=(
+            FileEntry(path, "/remote/result", "available"),
+        ))
 
 
 def test_availability_update_cannot_register_unknown_file():
@@ -101,11 +101,11 @@ def test_availability_update_cannot_register_unknown_file():
     assert len(files.outputs) == 1
 
 
-def test_explicit_registration_shares_identity_update_logic():
+def test_declared_output_availability_updates_preserve_source():
     files = FileManifest()
     entry = FileEntry("/local/new", "/remote/new", "available",
                       source="/local/*.dat")
-    registered = files.with_added_file(entry)
+    registered = replace(files, outputs=(entry,))
     assert registered.outputs == (entry,)
     updated = registered.with_file_availability(
         entry.local_path, "failed", "download failed", remote_path=entry.remote_path,

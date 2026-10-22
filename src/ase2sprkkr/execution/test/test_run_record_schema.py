@@ -77,24 +77,25 @@ def test_persisted_execution_identity_cannot_be_replaced(tmp_path):
     assert manager.store.get(record.id).execution.backend_id == "job-42"
 
 
-def test_run_store_lookup_prefers_newest_record(tmp_path):
+def test_run_store_rejects_reused_id_with_different_creation_time(tmp_path):
     store = RunStore(tmp_path / "runs")
     created = "2026-10-17T12:34:56+00:00"
-    old = RunRecord(
+    original = RunRecord(
         id="same-id", state=RunState.RUNNING,
         created_at=created, updated_at=created, task="DOS",
         execution=Execution(ExecutorEndpoint(), WorkingDirectory(str(tmp_path))),
         files=FileManifest(),
     )
-    newest = replace(
-        old, created_at="2026-10-19T12:34:56+00:00",
-        updated_at="2026-10-19T12:34:56+00:00", task="BSF",
+    forged = replace(
+        original, created_at="2026-10-19T12:34:56+00:00",
+        updated_at="2026-10-19T12:34:56+00:00",
     )
-    store.save(old)
-    store.save(newest)
+    store.save(original)
+    with pytest.raises(ValueError, match="persistent creation time"):
+        store.save(forged)
     (store.directory / "unrelated-file.txt").write_text("not a shard")
 
-    assert store.get("same-id") == newest
+    assert store.get("same-id") == original
 
 
 def test_run_store_lookup_preserves_missing_directory_error(tmp_path):

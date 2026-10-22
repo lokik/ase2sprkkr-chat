@@ -335,7 +335,7 @@ def test_terminal_lookup_rejects_foreign_project_identity(tmp_path):
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
     original = _record(manager, tmp_path)
     final = manager.complete(original, state=RunState.FINISHED)
-    with pytest.raises(ValueError, match="persistent identity"):
+    with pytest.raises(ValueError, match="persistent project identity"):
         manager.complete(
             replace(original, project_id="different-project"),
             state=RunState.FINISHED,

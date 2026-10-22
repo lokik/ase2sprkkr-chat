@@ -56,12 +56,12 @@ def _record(
     input_definition=None,
     input_file=None,
 ):
-    files = FileManifest() if input_file is None else JobFiles(
+    files = FileManifest() if input_file is None else JobFiles.capture(
         FileManifest(
             inputs=(FileEntry(local_path=str(input_file)),),
             primary_input=FileEntry(local_path=str(input_file)),
         )
-    ).capture()
+    )
     return RunRecord(
         id="run", task=task, input_definition=input_definition,
         state=RunState.RUNNING,
