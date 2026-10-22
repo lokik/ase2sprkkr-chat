@@ -10,7 +10,11 @@ from ase2sprkkr.execution import (
 
 
 class _Runner:
-    def __init__(self):
+    def __init__(self, spec, executor):
+        self.spec = spec
+        self.executor = executor
+        self.callback = None
+        self.files = None
         self.state = RunState.NEW
         self.backend_id = None
         self.result = SimpleNamespace(return_code=0)
@@ -25,7 +29,16 @@ class _Runner:
         if self.on_submit:
             self.on_submit()
         self.backend_id = "native-1"
-        self.state = RunState.FINISHED
+        self.state = RunState.QUEUED
+
+    def set_manifest(self, manifest):
+        self.files = manifest
+
+    def file_snapshot(self):
+        return self.files
+
+    def prepare_submission(self):
+        pass
 
     def wait(self):
         return self.result
@@ -45,7 +58,7 @@ class _Executor(Executor):
 
     def create_project_run(self, spec, *, run_id, callback=None):
         self.run_id = run_id
-        self.runner = _Runner()
+        self.runner = _Runner(spec, self)
         return self.runner
 
     def create_run(self, spec, callback=None):
@@ -63,7 +76,8 @@ def test_run_is_durable_in_project_namespace_before_backend_submit(tmp_path):
     manager, projects, project = _fixture(tmp_path)
     executor = _Executor()
     run = manager.create_run(
-        executor, ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
+        ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
+        endpoint=manager.executors.register(executor),
         process_result=lambda outcome: outcome, task="DOS",
         input_definition="dos", project_id=project.id,
     )
@@ -94,7 +108,8 @@ def test_project_must_exist_before_backend_is_created(tmp_path, explicit):
 
     with pytest.raises(errors, match=message):
         manager.create_run(
-            executor, ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
+            ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
+            endpoint=manager.executors.register(executor),
             process_result=lambda outcome: outcome, task="DOS",
             **options,
         )
