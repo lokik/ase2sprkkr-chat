@@ -7,6 +7,7 @@ from ase2sprkkr.common.module_registry import RegistryEntryNotFound
 from ase2sprkkr.execution import (
     FileManifest,
     FileEntry,
+    JobFiles,
     Execution,
     WorkingDirectory,
     ExecutorEndpoint,
@@ -33,12 +34,8 @@ class _Store:
 
 
 class _Manager:
-    def __init__(self, record, *, input_current=True):
+    def __init__(self, record):
         self.store = _Store(record)
-        self.input_current = input_current
-
-    def input_file_is_current(self, record):
-        return self.input_current
 
     def attach(
         self,
@@ -59,12 +56,12 @@ def _record(
     input_definition=None,
     input_file=None,
 ):
-    files = (
-        FileManifest()
-        if input_file is None else FileManifest(
-            inputs=(FileEntry(local_path=str(input_file)),)
+    files = FileManifest() if input_file is None else JobFiles(
+        FileManifest(
+            inputs=(FileEntry(local_path=str(input_file)),),
+            primary_input=FileEntry(local_path=str(input_file)),
         )
-    )
+    ).capture()
     return RunRecord(
         id="run", task=task, input_definition=input_definition,
         state=RunState.RUNNING,
@@ -132,16 +129,18 @@ def test_project_attach_uses_persisted_task_and_schema(
 
 
 def test_project_attach_does_not_parse_stale_input(tmp_path):
-    input_file = tmp_path / "run.inp"
-    input_file.write_text("not valid SPR-KKR input")
+    input_file = _input_file(tmp_path, "DOS")
     record = _record(
         tmp_path,
         "DOS",
         input_definition="dos",
         input_file=input_file,
     )
+    # Historical validity belongs to captured file versions, not a manager
+    # test double. Mutating the file must invalidate the saved snapshot.
+    input_file.write_text("not valid SPR-KKR input")
 
-    reader = _reader_for_record(_Manager(record, input_current=False), record)
+    reader = _reader_for_record(_Manager(record), record)
 
     assert isinstance(reader, DosOutputReader)
     assert reader.input_parameters is None
