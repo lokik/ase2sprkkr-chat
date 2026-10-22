@@ -213,7 +213,7 @@ def test_manifest_from_spec_preserves_distinct_roles(tmp_path):
     from types import SimpleNamespace
 
     spec = SimpleNamespace(
-        directory=str(tmp_path), input_file="input.inp",
+        directory=str(tmp_path), input_file="input.inp", stdin=None,
         input_files=("other.inp",), output_file="stdout.out",
         error_file="stderr.err", output_files=("result.dat",),
         cache_files=("restart.pot",),
@@ -240,7 +240,7 @@ def test_duplicate_file_declarations_are_errors(tmp_path, role, overlap):
     from types import SimpleNamespace
 
     spec = SimpleNamespace(
-        directory=str(tmp_path), input_file="input.inp",
+        directory=str(tmp_path), input_file="input.inp", stdin=None,
         input_files=("other.inp",), output_file="stdout.out",
         error_file="stderr.err", output_files=("result.dat",),
         cache_files=(),
@@ -253,8 +253,6 @@ def test_duplicate_file_declarations_are_errors(tmp_path, role, overlap):
 @pytest.mark.parametrize("extras,stdin,expected", [
     (("input.inp",), None, ("input.inp",)),
     (("other.inp", "./other.inp"), None, ("input.inp", "other.inp")),
-    (("input.inp", "other.inp"), "input.inp", ("input.inp", "other.inp")),
-    (("other.inp",), "other.inp", ("input.inp", "other.inp")),
 ])
 def test_duplicate_input_roles_share_one_staged_file(tmp_path, extras, stdin, expected):
     from types import SimpleNamespace
@@ -352,15 +350,11 @@ def test_launch_rejects_unknown_sync_policies(name):
         LaunchSpec(**{name: "unsupported"})
 
 
-def test_manifest_accepts_output_that_is_also_stdout_or_stderr():
-    shared = FileEntry("/local/run.out", "/remote/run.out")
-    manifest = FileManifest(stdout=shared, outputs=(shared,))
-    assert manifest.stdout == manifest.outputs[0]
-    assert len(manifest.files) == 1
-
-    errors = FileEntry("/local/run.err", "/remote/run.err")
-    manifest = FileManifest(stderr=errors, outputs=(errors,))
-    assert manifest.stderr == manifest.outputs[0]
+@pytest.mark.parametrize("role", ("stdout", "stderr"))
+def test_manifest_rejects_stream_declared_as_output(role):
+    entry = FileEntry("/local/run.out", "/remote/run.out")
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest(**{role: entry}, outputs=(entry,))
 
 
 def test_manifest_rejects_stream_output_remote_source_disagreement():
@@ -414,15 +408,9 @@ def test_manifest_rejects_two_remote_outputs_claiming_one_local_destination():
         ))
 
 
-def test_materialized_wildcard_collision_is_deferred_to_delivery():
-    declaration = FileEntry("/local/*.dat", "/remote/*.dat")
+def test_materialized_output_cache_collision_rejected():
     member = FileEntry("/local/data.dat", "/remote/data.dat",
                        source="/local/*.dat")
     cache = FileEntry("/local/data.dat", "/remote/data.dat")
-    # Discovery must preserve both records rather than crash while building
-    # the immutable manifest. The transfer preflight rejects their collision.
-    manifest = FileManifest(outputs=(member,), caches=(cache,))
-    assert manifest.outputs == (member,)
-    assert manifest.caches == (cache,)
     with pytest.raises(ValueError, match="Duplicate file declaration"):
-        FileManifest(outputs=(cache,), caches=(cache,))
+        FileManifest(outputs=(member,), caches=(cache,))
