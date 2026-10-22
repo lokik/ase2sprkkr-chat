@@ -15,9 +15,7 @@ from .historical_restore import (
     HistoricalFileMismatchError, restore_historical_file,
 )
 
-from .file_history import (
-    capture_result_files, file_is_current, missing_result_files, sync_result_files,
-)
+from .file_history import file_is_current
 
 
 class JobFiles:
@@ -77,15 +75,6 @@ class JobFiles:
         """Check the primary output against the immutable historical snapshot."""
         files = record.files
         return file_is_current(files, files.output_file, files.output_versions)
-
-    def sync_inputs(self):
-        sync_result_files(self.manifest.input_files)
-
-    def capture(self, manifest=None):
-        return capture_result_files(self.manifest if manifest is None else manifest)
-
-    def missing_files(self):
-        return missing_result_files(self.manifest)
 
     @staticmethod
     def _merge_availability(previous, received, preserve):
