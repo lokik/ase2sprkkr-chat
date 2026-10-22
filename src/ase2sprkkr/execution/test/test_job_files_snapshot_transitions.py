@@ -7,7 +7,7 @@ import pytest
 from ase2sprkkr.execution.manager import ExecutionManager
 from ase2sprkkr.execution.run_store import RunStore
 from ase2sprkkr.execution.historical_restore import update_historical_availability
-from ase2sprkkr.execution.manifest_merge import merge_snapshot, merge_terminal_files
+from ase2sprkkr.execution.manifest_merge import merge_snapshot, merge_terminal_files, discard_capture
 from ase2sprkkr.execution.run_model import FileManifest
 
 
@@ -164,19 +164,21 @@ def test_captured_completion_respects_newer_failed_file_state(tmp_path, monkeypa
     assert completed.files.outputs[0].availability_state == "failed"
 
 
-def test_snapshot_discard_preserves_failed_transfer_for_retry(tmp_path):
+@pytest.mark.parametrize("captured_state", ("available", "skipped"))
+def test_snapshot_discard_preserves_failed_transfer_for_retry(tmp_path, captured_state):
     from ase2sprkkr.execution.run_model import FileEntry
 
     path = str(tmp_path / "result.dat")
     current = FileManifest(outputs=(FileEntry(path, availability_state="failed", availability_message="transfer failed"),))
     snapshot = FileManifest(
-        outputs=(FileEntry(path, availability_state="available"),),
+        outputs=(FileEntry(path, availability_state=captured_state),),
         captured_at="2026-10-22T00:00:00+00:00",
     )
     merged = merge_snapshot(current, snapshot)
+    assert merged.captured_at == snapshot.captured_at
     assert merged.failed_files
     assert merged.outputs[0].availability_message == "transfer failed"
-    discarded = replace(merged, captured_at=None)
+    discarded = discard_capture(merged)
     assert discarded.captured_at is None
     assert discarded.outputs[0].availability_state == "failed"
 

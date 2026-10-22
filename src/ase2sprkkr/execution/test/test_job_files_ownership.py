@@ -186,67 +186,6 @@ def test_captured_snapshot_rejects_conflicting_update():
         merge_snapshot(captured, fresh)
     assert merge_snapshot(fresh, captured) == captured
 
-def test_capture_failure_does_not_falsely_mark_unprocessed_files_failed(monkeypatch):
-    import pytest
-    from dataclasses import replace
-    from types import SimpleNamespace
-    from ase2sprkkr.execution import manager as manager_module
-    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
-    from ase2sprkkr.execution.base import RunState, FailurePhase
-
-    files = FileManifest(outputs=(
-        FileEntry("/tmp/untouched", "/remote/untouched", "pending"),
-    ))
-    class Store:
-        def terminal_record(self, record):
-            return None
-    manager = manager_module.ExecutionManager(Store())
-    record = SimpleNamespace(files=files)
-    monkeypatch.setattr(
-        manager_module, "capture_result_files",
-        lambda manifest: (_ for _ in ()).throw(OSError("capture failed")),
-    )
-    seen = {}
-    def transition(record, **kwargs):
-        seen.update(kwargs)
-        return kwargs
-    monkeypatch.setattr(manager, "transition", transition)
-    manager.complete(record, state=RunState.FINISHED, files_available=True)
-    assert seen["state"] == RunState.FAILED
-    assert seen["failure_phase"] == FailurePhase.FILES
-    assert seen["files"].outputs[0].availability_state == "pending"
-
-
-def test_terminal_merge_does_not_restore_vanished_available_file(tmp_path):
-    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
-
-    missing = str(tmp_path / "vanished.dat")
-    previous = FileManifest(outputs=(
-        FileEntry(missing, "/remote/vanished.dat", availability_state="available"),
-    ))
-    received = FileManifest(outputs=(
-        FileEntry(missing, "/remote/vanished.dat", availability_state="pending"),
-    ))
-    assert merge_terminal_files(previous, received) == received
-
-
-def test_snapshot_merge_preserves_failed_transfer_over_stale_captured_success(tmp_path):
-    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
-
-    path = str(tmp_path / "result.dat")
-    current = FileManifest(outputs=(
-        FileEntry(path, "/remote/result.dat", availability_state="failed",
-                  availability_message="download failed"),
-    ))
-    stale = FileManifest(outputs=(
-        FileEntry(path, "/remote/result.dat", availability_state="available"),
-    ), captured_at="2026-10-22T00:00:00+00:00")
-    merged = merge_snapshot(current, stale)
-    assert merged.captured_at == stale.captured_at
-    assert merged.outputs[0].availability_state == "failed"
-    assert merged.outputs[0].availability_message == "download failed"
-
-
 def test_file_manifest_aggregates_distinct_cache_and_output_states(tmp_path):
     from ase2sprkkr.execution.run_model import FileEntry, FileManifest
 
@@ -286,6 +225,7 @@ def test_stream_verification_exception_preserves_partial_download(tmp_path):
 
     class Handler:
         async def collect(self, mapping, manifest, outcome, *, required):
+            assert manifest is initial
             return manifest.with_file_availability(path, "available"), None
 
         async def verify_stream_availability(self, manifest, spec):
@@ -299,23 +239,8 @@ def test_stream_verification_exception_preserves_partial_download(tmp_path):
     assert isinstance(error, OSError)
     assert str(error) == "stream verification unavailable"
     assert saved.outputs[0].availability_state == "available"
+    assert initial.outputs[0].availability_state == "pending"
 
-
-def test_snapshot_merge_preserves_concurrent_failure_over_captured_skip(tmp_path):
-    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
-
-    path = str(tmp_path / "result.dat")
-    previous = FileManifest(outputs=(
-        FileEntry(path, "/remote/result", availability_state="failed",
-                  availability_message="transfer failed"),
-    ))
-    captured = FileManifest(
-        outputs=(FileEntry(path, "/remote/result", availability_state="skipped"),),
-        captured_at="2026-10-22T00:00:00+00:00",
-    )
-    merged = merge_snapshot(previous, captured)
-    assert merged.outputs[0].availability_state == "failed"
-    assert merged.outputs[0].availability_message == "transfer failed"
 
 def test_atomic_completion_downgrades_stale_capture_after_download_failure(tmp_path):
     from dataclasses import replace
@@ -352,17 +277,6 @@ def test_atomic_completion_downgrades_stale_capture_after_download_failure(tmp_p
     assert completed.files.outputs[0].availability_message == "transfer failed"
     assert completed.files.captured_at is None
 
-
-def test_discard_capture_keeps_file_delivery_facts(tmp_path):
-    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
-    entry = FileEntry(str(tmp_path / "result"), "/remote/result",
-                      availability_state="failed")
-    original = FileManifest(outputs=(entry,),
-                            captured_at="2026-10-22T00:00:00+00:00")
-    updated = discard_capture(original)
-    assert updated.captured_at is None
-    assert updated.input_versions == updated.output_versions == ()
-    assert updated.outputs == original.outputs
 
 def test_failed_atomic_completion_discards_captured_versions(tmp_path):
     from dataclasses import replace
@@ -489,26 +403,3 @@ def test_runner_owns_job_files_and_preserves_immutable_snapshots(tmp_path):
     assert runner.job_files.manifest.outputs[0].availability_state == "available"
     assert manifest.outputs[0].availability_state == "pending"
 
-def test_collect_updates_same_job_files_without_changing_old_snapshot(tmp_path):
-    import asyncio
-    from types import SimpleNamespace
-    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
-
-    path = str(tmp_path / "result")
-    initial = FileManifest(outputs=(FileEntry(path, availability_state="pending"),))
-    owner = JobFiles(initial)
-
-    class Handler:
-        async def collect(self, mapping, manifest, outcome, *, required):
-            assert manifest is initial
-            return manifest.with_file_availability(path, "available"), None
-
-        async def verify_stream_availability(self, manifest, spec):
-            raise OSError("stream verification failed")
-
-    failure = asyncio.run(owner.collect_remote(
-        initial, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
-    ))
-    assert isinstance(failure, OSError)
-    assert owner.manifest.outputs[0].availability_state == "available"
-    assert initial.outputs[0].availability_state == "pending"

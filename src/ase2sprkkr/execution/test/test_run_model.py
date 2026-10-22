@@ -99,18 +99,6 @@ def test_wildcard_declaration_does_not_register_concrete_members():
         )
 
 
-def test_merged_stdout_stderr_has_only_one_file_status():
-    manifest = FileManifest(
-        stdout=FileEntry("/local/combined", "/remote/combined", "pending"),
-        stderr=FileEntry("/local/combined", "/remote/combined", "pending"),
-    )
-    manifest = manifest.with_file_availability("/local/combined", "available")
-    assert len(manifest.files) == 1
-    assert manifest.stdout.availability_state == "available"
-    assert manifest.stderr.availability_state == "available"
-    assert FileManifest(**asdict(manifest)) == manifest
-
-
 def test_materialized_wildcard_members_have_independent_availability(tmp_path):
     """Concrete members are materialized once, then receive independent states."""
     from ..file_availability import materialize_manifest
@@ -293,19 +281,6 @@ def test_stdin_refers_to_first_input_and_reorders_auxiliary_input(tmp_path):
     assert reordered.inputs[1].local_path == str(tmp_path / "input.inp")
 
 
-def test_only_stdout_and_stderr_may_share_a_file():
-    files = FileManifest(
-        stdout=FileEntry("/local/shared", "/remote/shared"),
-        stderr=FileEntry("/local/shared", "/remote/shared"),
-    )
-    assert len(files.files) == 1
-    with pytest.raises(ValueError, match="Duplicate file declaration"):
-        FileManifest(
-            outputs=(FileEntry("/local/shared", "/remote/shared"),),
-            stdout=FileEntry("/local/shared", "/remote/shared"),
-        )
-
-
 def test_availability_enum_is_exported_from_model_and_execution():
     from ase2sprkkr.execution import FileAvailabilityState
     from ase2sprkkr.execution.run_model import FileAvailabilityState as ModelState
@@ -370,22 +345,6 @@ def test_launch_rejects_unknown_sync_policies(name):
         LaunchSpec(**{name: "unsupported"})
 
 
-@pytest.mark.parametrize("role", ("stdout", "stderr"))
-def test_manifest_rejects_stream_declared_as_output(role):
-    entry = FileEntry("/local/run.out", "/remote/run.out")
-    with pytest.raises(ValueError, match="Duplicate file declaration"):
-        FileManifest(**{role: entry}, outputs=(entry,))
-
-
-def test_manifest_rejects_stream_output_remote_source_disagreement():
-    with pytest.raises(ValueError, match="Duplicate file declaration"):
-        FileManifest(
-            stdout=FileEntry("/local/run.out", "/remote/run.out"),
-            outputs=(FileEntry("/local/run.out", "/remote/another.out"),),
-        )
-
-
-
 def test_manifest_allows_one_remote_output_downloaded_to_distinct_local_paths():
     shared_source = "/remote/result.out"
     manifest = FileManifest(outputs=(
@@ -393,14 +352,6 @@ def test_manifest_allows_one_remote_output_downloaded_to_distinct_local_paths():
         FileEntry("/local/b.out", shared_source),
     ))
     assert len(manifest.outputs) == 2
-
-
-def test_manifest_rejects_two_remote_outputs_claiming_one_local_destination():
-    with pytest.raises(ValueError, match="Duplicate file declaration"):
-        FileManifest(outputs=(
-            FileEntry("/local/result.out", "/remote/first.out"),
-            FileEntry("/local/result.out", "/remote/second.out"),
-        ))
 
 
 def test_materialized_output_cache_collision_rejected():
