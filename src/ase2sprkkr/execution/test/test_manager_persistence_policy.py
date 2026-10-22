@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from ase2sprkkr.execution import FailurePhase, RunState, RunStore
+from ase2sprkkr.execution import FailurePhase, RunState, RunStatus, RunStore
 from ase2sprkkr.execution.manager import ExecutionManager
 
 
@@ -139,3 +139,52 @@ def test_terminal_ack_needs_durable_backend_identity(manager, tmp_path):
             pytest.fail("Undurable backend receipt was acknowledged")
 
     assert not manager.acknowledge_terminal(Backend(), record)
+
+def test_last_observed_only_tracks_successful_backend_facts(manager, tmp_path):
+    record = manager.new_record(task="DOS", directory=tmp_path)
+    assert record.last_observed is None
+    assert record.confirmed
+    submitted = manager.transition(record, state=RunState.SUBMITTING)
+    assert submitted.last_observed is None
+    running = manager.update(submitted, RunStatus(state=RunState.RUNNING))
+    assert running.confirmed
+    assert running.error is None
+    assert running.last_observed is not None
+    unverified = manager.update(running, RunStatus(state=RunState.UNKNOWN, message="SSH offline"))
+    assert unverified.state == RunState.RUNNING
+    assert not unverified.confirmed
+    assert unverified.error == "SSH offline"
+    assert unverified.last_observed == running.last_observed
+    assert unverified.message == running.message
+    metadata = manager.transition(unverified, message="operator note")
+    assert metadata.last_observed == running.last_observed
+    assert not metadata.confirmed
+    verified = manager.update(metadata, RunStatus(state=RunState.RUNNING))
+    assert verified.state == RunState.RUNNING
+    assert verified.confirmed
+    assert verified.error is None
+    assert verified.last_observed is not None
+
+
+def test_uncertain_backend_status_preserves_terminal_state(manager, tmp_path):
+    record = manager.new_record(task="DOS", directory=tmp_path)
+    finished = manager.complete(record, state=RunState.FINISHED)
+    stale = manager.update(finished, RunStatus(state=RunState.UNKNOWN, message="lost"))
+    assert stale == finished
+    assert stale.confirmed
+
+
+def test_previous_run_record_schema_defaults_are_accepted(manager, tmp_path):
+    from dataclasses import asdict
+    from ase2sprkkr.execution.run_record import RunRecord
+
+    record = manager.new_record(task="DOS", directory=tmp_path)
+    data = asdict(record)
+    for name in ("confirmed", "error", "last_observed"):
+        data.pop(name)
+    old_record = RunRecord(**data)
+    assert old_record.confirmed
+    assert old_record.error is None
+    assert old_record.last_observed is None
+    manager.store.save(old_record)
+    assert manager.store.get(record.id) == old_record

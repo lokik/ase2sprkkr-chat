@@ -26,10 +26,6 @@ class RunPersistence:
         self._record_lock = Lock()
         self._ack_lock = Lock()
         self._terminal_acknowledged = False
-        # CAS baseline for the running monitor, not the most recent refresh.
-        # Refresh must not allow an older UNKNOWN observation to overwrite
-        # fresher scheduler state.
-        self._observation_base_version = record.updated_at
 
     @property
     def id(self):
@@ -56,7 +52,6 @@ class RunPersistence:
     def dispatching(self):
         with self._record_lock:
             self._record = self.manager.store.begin_dispatch(self._record)
-            self._observation_base_version = self._record.updated_at
 
     def before_submit(self, run: CalculationRun) -> FileManifest:
         """Reserve atomically and return the committed layout for runner staging."""
@@ -66,7 +61,6 @@ class RunPersistence:
             self._record = self.manager.reserve(
                 self._record, spec=self._spec, executor=self.executor,
             )
-            self._observation_base_version = self._record.updated_at
             return self._record.files
 
     def prepared(self, run: CalculationRun):
@@ -77,7 +71,6 @@ class RunPersistence:
                 execution=self._execution_for(run, self._record),
                 files=run.job_files.manifest,
             )
-            self._observation_base_version = self._record.updated_at
 
     def submitted(self, run: CalculationRun):
         """Persist backend identity before acknowledging its temporary ticket."""
@@ -87,7 +80,6 @@ class RunPersistence:
                     self._record, backend_id=run.backend_id, state=run.state,
                     failure_phase=run.failure_phase, files=run.job_files.manifest,
                 )
-                self._observation_base_version = self._record.updated_at
             record = self._record
         self.manager._acknowledge_submission(self.executor, record)
 
@@ -117,8 +109,8 @@ class RunPersistence:
                 execution=self._execution_for(run, self._record),
                 failure_phase=run.failure_phase,
                 expected_updated_at=self._record.updated_at,
+                observed=state != RunState.UNKNOWN,
             )
-            self._observation_base_version = self._record.updated_at
 
     def can_cancel(self, run: CalculationRun):
         """A confirmed terminal run cannot be cancelled; never wait for I/O.
@@ -151,7 +143,7 @@ class RunPersistence:
                     return_code=run.return_code, message=message,
                     failure_phase=run.failure_phase,
                     files=run.job_files.manifest,
-                    expected_updated_at=self._observation_base_version,
+                    expected_updated_at=self._record.updated_at,
                 )
                 if updated is None:
                     return
@@ -164,6 +156,4 @@ class RunPersistence:
     def refresh(self):
         with self._record_lock:
             self._record = self.manager.refresh((self._record,))[0]
-            # Do not advance _observation_base_version here: scheduler status
-            # is not a new observation from the still-running file monitor.
             return self._record

@@ -101,6 +101,7 @@ class ExecutionManager:
         expected_record=None,
         skip_if_terminal=False,
         validate_completed_files=False,
+        observed=False,
     ):
         """Atomically commit the value object's validated state transition."""
         return self.store.update(
@@ -112,6 +113,7 @@ class ExecutionManager:
                 expected_record=expected_record,
                 skip_if_terminal=skip_if_terminal,
                 validate_completed_files=validate_completed_files,
+                observed=observed,
             ),
         )
 
@@ -216,6 +218,7 @@ class ExecutionManager:
             message=status.message,
             failure_phase=phase,
             expected_updated_at=expected_updated_at,
+            observed=state != RunState.UNKNOWN,
         )
         if updated.execution.backend_id is not None:
             self._acknowledge_submission(
@@ -282,8 +285,6 @@ class ExecutionManager:
             return record
         state = RunState(state)
         if state == RunState.UNKNOWN:
-            if record.state == RunState.UNKNOWN:
-                return record
             return self.transition(
                 record, state=state, execution=execution, message=message,
                 expected_updated_at=expected_updated_at,
@@ -297,6 +298,7 @@ class ExecutionManager:
             record, state=state, execution=execution,
             return_code=return_code, message=message, failure_phase=phase,
             files_available=phase not in _NO_FILES_FAILURES, files=files,
+            observed=True,
         )
 
     @staticmethod
@@ -323,6 +325,7 @@ class ExecutionManager:
         files_available=False,
         files=None,
         expected_record=None,
+        observed=False,
     ):
         # Another observer (or our own interrupted durable write) may have
         # committed completion already. In that case no file re-capture is
@@ -362,6 +365,7 @@ class ExecutionManager:
             expected_record=expected_record,
             skip_if_terminal=True,
             validate_completed_files=True,
+            observed=observed,
         )
 
     def resume_download(self, run):

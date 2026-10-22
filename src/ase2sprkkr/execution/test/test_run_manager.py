@@ -702,8 +702,11 @@ def test_refresh_cannot_promote_stale_monitor_unknown(tmp_path):
     result = run.persistence.completed(stale_monitor)
 
     assert result == RunState.RUNNING
-    assert run.record == refreshed
-    assert manager.store.get(run.id) == refreshed
+    assert run.record.state == RunState.RUNNING
+    assert not run.record.confirmed
+    assert run.record.error == "stale monitor disconnected"
+    assert run.record.last_observed == refreshed.last_observed
+    assert manager.store.get(run.id) == run.record
 
 
 def test_slow_terminal_ack_does_not_block_refresh_or_ack_twice(tmp_path, monkeypatch):

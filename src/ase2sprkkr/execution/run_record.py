@@ -69,6 +69,9 @@ class RunRecord:
     schema_version: int = _RUN_RECORD_SCHEMA_VERSION
     project_id: Optional[str] = None
     submission_phase: Optional[SubmissionPhase] = None
+    confirmed: bool = True
+    error: Optional[str] = None
+    last_observed: Optional[str] = None
 
     def __post_init__(self):
         _run_id(self.id)
@@ -85,6 +88,16 @@ class RunRecord:
             object.__setattr__(self, "files", FileManifest(**self.files))
         if not isinstance(self.state, RunState):
             object.__setattr__(self, "state", RunState(self.state))
+        if not isinstance(self.confirmed, bool):
+            raise TypeError("confirmed must be bool")
+        if self.error is not None and not isinstance(self.error, str):
+            raise TypeError("error must be str or None")
+        if self.last_observed is not None and not isinstance(self.last_observed, str):
+            raise TypeError("last_observed must be an ISO timestamp or None")
+        if self.state == RunState.UNKNOWN:
+            # Legacy records lacked the previous known state. Keep them
+            # readable, but do not create any new UNKNOWN transitions.
+            object.__setattr__(self, "confirmed", False)
         if self.failure_phase is not None and not isinstance(self.failure_phase, FailurePhase):
             object.__setattr__(self, "failure_phase", FailurePhase(self.failure_phase))
         if self.submission_phase is not None and not isinstance(self.submission_phase, SubmissionPhase):
@@ -103,10 +116,7 @@ class RunRecord:
         if self.state.is_terminal:
             return self.state
         if requested == RunState.UNKNOWN:
-            # Uncertainty cannot retract confirmed execution completion.
-            if self.state in (RunState.POSTPROCESSING, RunState.DOWNLOADING):
-                return self.state
-            return requested
+            return self.state
         if self.state == RunState.UNKNOWN:
             return requested
         if _STATE_RANK[requested] < _STATE_RANK[self.state]:
@@ -126,6 +136,7 @@ class RunRecord:
         expected_record=None,
         skip_if_terminal=False,
         validate_completed_files=False,
+        observed=False,
     ):
         """Return a validated immutable snapshot of a run-state observation.
 
@@ -139,15 +150,23 @@ class RunRecord:
                 and self.updated_at != expected_updated_at):
             # An independent refresh has superseded this observation.
             return self
+        inconclusive = state is not None and RunState(state) == RunState.UNKNOWN
+        if observed and (state is None or inconclusive):
+            raise ValueError("Successful observation requires a known state")
+        if inconclusive and self.state.is_terminal:
+            return self
         final_locked = self.state.is_terminal
         now = _now()
         merged_state = self._merged_state(state)
-        if (state is not None and RunState(state) == RunState.UNKNOWN
-                and merged_state != RunState.UNKNOWN):
-            # Ignore the entire stale observation, including its message
-            # and file metadata, not merely its proposed state.
-            return self
         changes = {"state": merged_state, "updated_at": now}
+        if inconclusive:
+            changes["confirmed"] = False
+            changes["error"] = None if message is _UNCHANGED else message
+        elif state is not None:
+            changes["confirmed"] = True
+            changes["error"] = None
+        if observed:
+            changes["last_observed"] = now
         target_execution = self.execution if execution is _UNCHANGED or execution is None else execution
         if merged_state != RunState.SUBMITTING or target_execution.backend_id is not None:
             changes["submission_phase"] = None
@@ -170,17 +189,17 @@ class RunRecord:
             elif final_locked and execution != self.execution:
                 raise ValueError("Final execution identity cannot change")
             changes["execution"] = execution
-        if return_code is not _UNCHANGED and return_code is not None:
+        if not inconclusive and return_code is not _UNCHANGED and return_code is not None:
             if not final_locked or self.return_code is None:
                 changes["return_code"] = return_code
-        if message is not _UNCHANGED:
+        if not inconclusive and message is not _UNCHANGED:
             if message is None and self.state == RunState.UNKNOWN and merged_state != RunState.UNKNOWN:
                 # A later scheduler observation supersedes the stale
                 # connection-error diagnostic.
                 changes["message"] = None
             elif message is not None and (not final_locked or self.message is None):
                 changes["message"] = message
-        if failure_phase is not _UNCHANGED:
+        if not inconclusive and failure_phase is not _UNCHANGED:
             normalized = _failure_phase(failure_phase)
             if not final_locked or self.failure_phase is None:
                 changes["failure_phase"] = normalized
