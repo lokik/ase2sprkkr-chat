@@ -348,3 +348,38 @@ def test_snapshot_merge_preserves_concurrent_failure_over_captured_skip(tmp_path
     merged = JobFiles.merge_snapshot(previous, captured)
     assert merged.outputs[0].availability_state == "failed"
     assert merged.outputs[0].availability_message == "transfer failed"
+
+def test_atomic_completion_downgrades_stale_capture_after_download_failure(tmp_path):
+    from dataclasses import replace
+    from ase2sprkkr.execution.base import FailurePhase, RunState
+    from ase2sprkkr.execution.manager import ExecutionManager
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+
+    path = str(tmp_path / "result.dat")
+    files = FileManifest(outputs=(
+        FileEntry(path, "/remote/result", availability_state="pending"),
+    ))
+    record = ExecutionManager().new_record(
+        task="SCF", directory=tmp_path, files=files,
+    )
+    # An independent download observer persists failure while an older
+    # completion observer still holds its speculative captured success.
+    latest = replace(
+        record, state=RunState.POSTPROCESSING,
+        files=files.with_file_availability(
+            path, "failed", "transfer failed", remote_path="/remote/result",
+        ),
+    )
+    stale_capture = FileManifest(
+        outputs=(FileEntry(path, "/remote/result", availability_state="skipped"),),
+        captured_at="2026-10-22T00:00:00+00:00",
+    )
+    completed = latest.with_transition(
+        state=RunState.FINISHED, files=stale_capture,
+        validate_completed_files=True,
+    )
+    assert completed.state == RunState.FAILED
+    assert completed.failure_phase == FailurePhase.DOWNLOAD
+    assert completed.files.outputs[0].availability_state == "failed"
+    assert completed.files.outputs[0].availability_message == "transfer failed"
+    assert completed.files.captured_at is None
