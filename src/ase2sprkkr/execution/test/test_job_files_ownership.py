@@ -447,3 +447,25 @@ def test_job_files_reconciles_stale_observation_with_working_changes(tmp_path):
     assert combined.outputs[1].availability_state == "failed"
     assert combined.outputs[1].availability_message == "download failed"
     assert original.outputs[1].availability_state == "pending"
+
+
+def test_runner_exposes_file_operations_not_mutable_job_files(tmp_path):
+    from ase2sprkkr.execution.base import ExecutionSpec
+    from ase2sprkkr.execution.local import LocalRunner
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+
+    spec = ExecutionSpec(
+        argv=(), directory=str(tmp_path), input_file=None,
+        output_file=None, error_file=None, stdin=None, cache_files=(),
+    )
+    runner = LocalRunner(spec)
+    assert not hasattr(runner, "job_files")
+
+    path = str(tmp_path / "output.dat")
+    manifest = FileManifest(outputs=(FileEntry(path, availability_state="pending"),))
+    assert runner.replace_file_manifest(manifest) is manifest
+    assert runner.file_snapshot() is manifest
+
+    observed = manifest.with_file_availability(path, "available")
+    assert runner.merge_file_manifest(observed).outputs[0].availability_state == "available"
+    assert runner.file_snapshot().outputs[0].availability_state == "available"
