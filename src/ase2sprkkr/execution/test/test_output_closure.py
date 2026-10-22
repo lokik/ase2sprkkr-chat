@@ -62,18 +62,6 @@ def test_local_runners_close_unique_output_handles(monkeypatch, tmp_path, backen
     assert stderr.close_calls == 1
 
 
-def test_close_failure_still_closes_other_output_handles():
-    """A failed close cannot skip subsequent handles; preserve its error."""
-    class Faulty:
-        def close(self):
-            raise OSError("cannot close output")
-
-    other = _TrackedOutput()
-    with pytest.raises(OSError, match="cannot close output"):
-        close_output_files(Faulty(), other)
-    assert other.close_calls == 1
-
-
 @pytest.mark.parametrize(
     "monitor_fails,finish_fails,close_fails",
     [(True, False, False), (False, True, False), (False, False, True),

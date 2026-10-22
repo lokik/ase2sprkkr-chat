@@ -265,31 +265,6 @@ def test_guarded_run_identity_across_day_shards(tmp_path):
     assert store.runs() == (updated,)
 
 
-def test_guarded_run_detects_preexisting_duplicate_ids(tmp_path):
-    projects = ProjectRepository(tmp_path / "projects")
-    project = projects.create("Project")
-    store = projects.run_store
-    record = replace(
-        ExecutionManager(project_repository=projects).new_record(
-            task="DOS", directory=tmp_path / "work", project_id=project.id,
-        ),
-        created_at="2030-01-01T10:00:00+00:00",
-    )
-    duplicate = replace(record, created_at="2030-01-02T10:00:00+00:00")
-    store.save(record)
-    store._write_unlocked(duplicate)  # Simulate corrupted persisted history.
-    for operation in (
-        lambda: store.get(record.id),
-        lambda: store.runs(),
-        lambda: store.runs(limit=1),
-        lambda: store.runs(active=True, limit=1),
-        lambda: store.save(record),
-        lambda: store.update(record, lambda current: current),
-    ):
-        with pytest.raises(ValueError, match="Duplicate run ID"):
-            operation()
-
-
 def test_guarded_run_cross_day_save_serializes_across_store_instances(
     tmp_path, monkeypatch,
 ):

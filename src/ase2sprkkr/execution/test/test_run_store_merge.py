@@ -362,26 +362,42 @@ def test_non_project_run_identity_is_immutable_across_day_shards(tmp_path):
     assert store.runs() == (original,)
 
 
-def test_non_project_store_rejects_duplicate_ids_across_day_shards(tmp_path):
+@pytest.mark.parametrize("project_scoped", (False, True), ids=("standalone", "project"))
+def test_duplicate_run_ids_across_day_shards_are_rejected(tmp_path, project_scoped):
     from dataclasses import replace
 
-    store = RunStore(tmp_path / "runs")
-    manager = ExecutionManager(store)
-    original = replace(
-        _record(manager, tmp_path), created_at="2030-01-01T10:00:00+00:00",
-    )
+    if project_scoped:
+        from ase2sprkkr.execution.projects import ProjectRepository
+
+        projects = ProjectRepository(tmp_path / "projects")
+        project = projects.create("Project")
+        manager = ExecutionManager(project_repository=projects)
+        store = manager.store
+        original = replace(
+            manager.new_record(
+                task="DOS", directory=tmp_path / "work", project_id=project.id,
+            ),
+            created_at="2030-01-01T10:00:00+00:00",
+        )
+    else:
+        store = RunStore(tmp_path / "runs")
+        manager = ExecutionManager(store)
+        original = replace(
+            _record(manager, tmp_path), created_at="2030-01-01T10:00:00+00:00",
+        )
     duplicate = replace(
         original, created_at="2030-01-02T10:00:00+00:00",
     )
     store.save(original)
-    store._write_unlocked(duplicate)  # Simulate pre-existing corrupt history.
+    store._write_unlocked(duplicate)  # Simulate corrupt persisted history.
 
     for operation in (
         lambda: store.get(original.id),
         lambda: store.runs(),
         lambda: store.runs(limit=1),
+        lambda: store.runs(active=True, limit=1),
         lambda: store.save(original),
-        lambda: store.update(original, lambda latest: latest),
+        lambda: store.update(original, lambda current: current),
     ):
         with pytest.raises(ValueError, match="Duplicate run ID"):
             operation()
