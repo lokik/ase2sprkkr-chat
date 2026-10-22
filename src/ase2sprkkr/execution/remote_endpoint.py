@@ -240,7 +240,7 @@ class RemoteEndpointExecutor(Executor):
                 self, spec, callback=callback, output_listener=output_listener,
                 backend_id=execution.backend_id,
                 remote_directory=execution.directory.remote,
-                files=files,
+                files=files, run_id=run.id,
                 state=backend_status_from_facts(
                     status, execution.backend_id, needs_delivery=True, files=files,
                 ).state,
