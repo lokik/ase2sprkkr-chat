@@ -343,6 +343,22 @@ def test_project_manager_returns_one_public_calculation_runner(tmp_path):
     assert run.backend_id == "native-1"
 
 
+def test_calculation_run_job_files_is_read_only_runner_view(tmp_path):
+    manager = _manager(tmp_path)
+    executor = _Executor()
+    run = manager.create_run(
+        _spec(tmp_path),
+        endpoint=manager.executors.register(executor),
+        process_result=lambda outcome: outcome,
+        task="DOS",
+    )
+    files = executor.runners[0].job_files
+    assert run.job_files is files
+    with pytest.raises(AttributeError):
+        run.job_files = JobFiles(FileManifest())
+    assert run.job_files is files
+
+
 def test_executors_are_owned_by_manager_and_keyed_by_endpoint(tmp_path):
     manager = _manager(tmp_path)
     assert isinstance(manager.executors, Executors)

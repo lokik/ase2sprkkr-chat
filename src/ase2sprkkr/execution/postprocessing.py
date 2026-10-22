@@ -34,7 +34,6 @@ class CalculationRun:
         callback=None, *, resources=None,
                  persistence: RunPersistenceHooks | None = None):
         self._runner = runner
-        self.job_files = runner.job_files
         self._process_result = process_result
         self.callback = callback
         self.persistence = persistence
@@ -65,6 +64,11 @@ class CalculationRun:
         if runner.callback is not None:
             raise ValueError("Raw runner already has a completion callback")
         runner.callback = self._backend_completed
+
+    @property
+    def job_files(self):
+        """Runner-owned working file state; never maintain a second reference."""
+        return self._runner.job_files
 
     @property
     def id(self):
