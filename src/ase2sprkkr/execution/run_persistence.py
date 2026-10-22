@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
 from dataclasses import replace
 from threading import Lock
 
@@ -154,7 +155,7 @@ class RunPersistence:
             return
         try:
             self.executor.acknowledge(self._record)
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError, subprocess.CalledProcessError):
             # Backend receipts remain safely repeatable after this failure.
             return
         self._terminal_acknowledged = True

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from dataclasses import replace
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -314,7 +315,7 @@ class ExecutionManager:
             return
         try:
             executor.acknowledge_submission(record)
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError, subprocess.CalledProcessError):
             # The receipt remains recoverable until a subsequent refresh.
             pass
 

@@ -2,6 +2,7 @@ from threading import Event
 from types import SimpleNamespace
 
 import pytest
+import subprocess
 
 from ase2sprkkr.execution import (
     DuplicateSubmissionError,
@@ -133,6 +134,107 @@ def test_submit_persists_submitting_before_backend_call(tmp_path):
     assert stored.execution.backend_id == executor.runners[0].backend_id
     assert stored.task == "ARPES"
     assert stored.dataset == "case"
+
+
+@pytest.mark.parametrize(
+    "ack_error",
+    [
+        pytest.param(OSError("SSH disconnected"), id="os-error"),
+        pytest.param(
+            subprocess.CalledProcessError(255, ("ssh", "ack-submit")),
+            id="ssh-command-error",
+        ),
+    ],
+)
+def test_submission_ack_failure_does_not_undo_durable_submit(
+    tmp_path, monkeypatch, ack_error,
+):
+    manager = _manager(tmp_path)
+    executor = _Executor()
+    observed = []
+
+    def fail_ack(record):
+        stored = manager.store.get(record.id)
+        observed.append((stored.state, stored.execution.backend_id))
+        raise ack_error
+
+    monkeypatch.setattr(executor, "acknowledge_submission", fail_ack)
+    run = manager.create_run(
+        _spec(tmp_path), endpoint=manager.executors.register(executor),
+        process_result=lambda outcome: outcome,
+        task="ARPES",
+    )
+
+    run.submit()
+
+    assert observed == [(RunState.QUEUED, "native-1")]
+    assert run.state == RunState.QUEUED
+    assert manager.store.get(run.id).execution.backend_id == "native-1"
+
+
+@pytest.mark.parametrize(
+    "ack_error",
+    [
+        pytest.param(OSError("SSH disconnected"), id="os-error"),
+        pytest.param(
+            subprocess.CalledProcessError(255, ("ssh", "ack")),
+            id="ssh-command-error",
+        ),
+    ],
+)
+def test_terminal_ack_failure_preserves_completion_and_retries(
+    tmp_path, monkeypatch, ack_error,
+):
+    manager = _manager(tmp_path)
+    executor = _Executor()
+    callback_results = []
+    observed_states = []
+    run = manager.create_run(
+        _spec(tmp_path), endpoint=manager.executors.register(executor),
+        process_result=lambda outcome: outcome,
+        task="DOS", callback=callback_results.append,
+    )
+    run.submit()
+
+    def fail_ack(record):
+        observed_states.append(manager.store.get(record.id).state)
+        raise ack_error
+
+    monkeypatch.setattr(executor, "acknowledge", fail_ack)
+    executor.runners[0].finish()
+    result = run.wait()
+
+    assert result.return_code == 0
+    assert callback_results == [result]
+    assert run.persistence_error is None
+    assert manager.store.get(run.id).state == RunState.FINISHED
+    assert observed_states == [RunState.FINISHED]
+
+    monkeypatch.setattr(
+        executor, "acknowledge",
+        lambda record: observed_states.append(manager.store.get(record.id).state),
+    )
+    assert run.persistence.completed(run) == RunState.FINISHED
+    assert run.persistence.completed(run) == RunState.FINISHED
+    assert observed_states == [RunState.FINISHED, RunState.FINISHED]
+    assert callback_results == [result]
+
+
+def test_submission_ack_does_not_hide_programming_errors(tmp_path, monkeypatch):
+    manager = _manager(tmp_path)
+    executor = _Executor()
+    run = manager.create_run(
+        _spec(tmp_path), endpoint=manager.executors.register(executor),
+        process_result=lambda outcome: outcome, task="DOS",
+    )
+    run.submit()
+
+    def bad_ack(_record):
+        raise ValueError("invalid ACK payload")
+
+    monkeypatch.setattr(executor, "acknowledge_submission", bad_ack)
+    with pytest.raises(ValueError, match="invalid ACK payload"):
+        manager._acknowledge_submission(executor, manager.store.get(run.id))
 
 
 @pytest.mark.parametrize(
