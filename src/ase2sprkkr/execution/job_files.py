@@ -101,7 +101,13 @@ class JobFiles:
             transfer_error = exc
         else:
             if observed is not None:
-                self.merge(observed)
+                merged = self.merge(observed)
+                # An unrelated failed attempt may race with a successfully
+                # verified download. Only suppress the transfer error if
+                # every reported failure was superseded by intact delivery.
+                if (transfer_error is not None and observed.failed_files
+                        and not merged.failed_files):
+                    transfer_error = None
             else:
                 manifest = None
 

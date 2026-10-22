@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from dataclasses import replace
 
-from ..common.file_versions import file_digest
+from ..common.file_versions import FileVersion, file_digest
 from .base import file_path
 from .run_model import FileEntry, FileManifest, FileSyncPolicy
 from .transport import FILE_DELIVERY_ERRORS, expand_local_files, has_file_magic
@@ -311,9 +311,23 @@ class RemoteFileHandler:
                     if first_error is None:
                         first_error = exc
                 else:
+                    try:
+                        version = (
+                            FileVersion.capture(entry.local_path, require_digest=True)
+                            if state == "available" else None
+                        )
+                    except OSError as exc:
+                        state = "failed"
+                        version = None
+                        if first_error is None:
+                            first_error = exc
+                        message = str(exc)
+                    else:
+                        message = None
                     manifest = manifest.with_file_availability(
-                        entry.local_path, state, kind=kind,
+                        entry.local_path, state, message, kind=kind,
                         remote_path=entry.remote_path,
+                        verified_local_version=version,
                     )
         return manifest, first_error
 
@@ -346,9 +360,22 @@ class RemoteFileHandler:
                 if first_error is None:
                     first_error = exc
             else:
-                manifest = manifest.with_file_availability(
-                    entry.local_path, "available", remote_path=entry.remote_path,
-                )
+                try:
+                    version = FileVersion.capture(
+                        entry.local_path, require_digest=True,
+                    )
+                except OSError as exc:
+                    manifest = manifest.with_file_availability(
+                        entry.local_path, "failed", str(exc),
+                        remote_path=entry.remote_path,
+                    )
+                    if first_error is None:
+                        first_error = exc
+                else:
+                    manifest = manifest.with_file_availability(
+                        entry.local_path, "available", remote_path=entry.remote_path,
+                        verified_local_version=version,
+                    )
         return manifest, first_error
 
     async def _verify_stream(self, entry, kind, spec):
