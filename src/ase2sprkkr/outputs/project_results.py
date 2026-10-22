@@ -38,7 +38,7 @@ def _task_definition_for_record(record):
 def _input_parameters_for_record(manager, record, task_definition):
     result_files = record.files
     input_file = None if result_files is None else result_files.input_file
-    if input_file is None or not manager.input_file_is_current(record):
+    if input_file is None or not record.job_files.input_file_is_current():
         return None
     if record.input_definition is None:
         return None
@@ -201,7 +201,7 @@ def load_project_result(manager, run):
         raise ProjectResultUnavailableError(record, message)
 
     output_file = result_files.output_file
-    output_available = manager.output_file_is_current(record)
+    output_available = record.job_files.output_file_is_current()
     if not output_available:
         raise ProjectResultUnavailableError(
             record, "output result file is unavailable"
