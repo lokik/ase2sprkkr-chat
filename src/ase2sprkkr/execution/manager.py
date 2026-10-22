@@ -298,6 +298,8 @@ class RunStore:
         try:
             with path.open() as file:
                 data = json.load(file)
+            if not isinstance(data, dict):
+                raise ValueError("Run record must be a JSON object")
             version = data.get("schema_version")
             if version != _RUN_RECORD_SCHEMA_VERSION:
                 raise ValueError(

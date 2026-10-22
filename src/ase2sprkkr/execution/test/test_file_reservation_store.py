@@ -249,3 +249,20 @@ def test_fresh_submission_is_not_recovered(tmp_path, monkeypatch):
     with pytest.raises(DuplicateSubmissionError):
         manager.reserve(second)
     assert manager.store.get(first.id).state == RunState.SUBMITTING
+
+
+@pytest.mark.parametrize("payload", ("null", "[]", '"text"', "7"))
+def test_malformed_run_record_json_value_is_corrupt(tmp_path, payload):
+    from ase2sprkkr.execution.manager import CorruptRunRecord
+
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    record = manager.reserve(manager.new_record(task="SCF", directory=tmp_path))
+    store._path(record).write_text(payload)
+
+    with pytest.raises(CorruptRunRecord, match="JSON object"):
+        store.get(record.id)
+    with pytest.warns(RuntimeWarning, match="Corrupt run record"):
+        assert store.runs(active=True) == ()
+    with pytest.raises(CorruptRunRecord, match="JSON object"):
+        manager.reserve(manager.new_record(task="SCF", directory=tmp_path))
