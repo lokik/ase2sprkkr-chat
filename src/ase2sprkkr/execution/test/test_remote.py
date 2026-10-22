@@ -169,7 +169,12 @@ def test_remote_input_file_and_stdin_staged_only_once(tmp_path):
         target = remote_root / "calculation" / "input.txt"
         assert request["input_file"] == str(target)
         assert request["stdin"] == str(target)
-        assert request["input_files"] == [str(target)]
+        assert "input_files" not in request
+        assert [entry["remote_path"] for entry in request["files"]["inputs"]] == [
+            str(target),
+        ]
+        assert request["files"]["primary_input"]["remote_path"] == str(target)
+        assert request["files"]["stdin"]["remote_path"] == str(target)
         assert [destination for _, destination in transport.put_files] == [target]
     finally:
         spec.input_file.close()
@@ -202,7 +207,7 @@ def test_remote_executor_stages_declared_input_files(tmp_path):
         output_file=output_file,
         directory=str(workdir),
         stdin=input_file,
-        input_files=(input_file, potential_file),
+        input_files=(potential_file,),
         launch=_launch(tmp_path, remote_root),
     )
 
