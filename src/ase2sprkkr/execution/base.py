@@ -93,6 +93,8 @@ def dispatch_cancellation(action):
 def start_monitor(runner, *, missing_backend=None):
     """Start a runner's monitor once, under its lifecycle lock."""
     with runner._lock:
+        if runner.detached:
+            raise ObservationDetached('Cannot restart detached observer')
         if runner._thread is not None:
             return
         if missing_backend is not None and runner._backend_id is None:
@@ -144,6 +146,10 @@ class MpiNotFoundWarning(UserWarning):
 
 class OutputObserverWarning(RuntimeWarning):
     """An output observer failed while the calculation itself keeps running."""
+
+
+class ObservationDetached(RuntimeError):
+    """This client's monitor stopped without cancelling its calculation."""
 
 
 class SubmissionNotStarted(RuntimeError):
