@@ -311,7 +311,7 @@ def test_persistent_reservation_rejects_duplicate_before_submitting(tmp_path):
     record = manager.store.save(manager.new_record(task="DOS", directory=tmp_path))
     persistence = RunPersistence(manager, _Executor(), record)
     published = []
-    runner = SimpleNamespace(set_manifest=published.append)
+    runner = SimpleNamespace(replace_file_manifest=published.append)
     persistence.before_submit(runner)
     assert persistence.record.state is RunState.SUBMITTING
     with pytest.raises(RuntimeError, match="already"):
