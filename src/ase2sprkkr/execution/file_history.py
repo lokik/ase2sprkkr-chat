@@ -68,7 +68,7 @@ def missing_result_files(result_files):
     missing = []
     for manifest in result_files.manifests:
         if has_file_magic(manifest):
-            if not expand_local_candidates(manifest):
+            if not any(os.path.isfile(path) for path in expand_local_candidates(manifest)):
                 missing.append(manifest)
         elif not os.path.isfile(manifest):
             missing.append(manifest)
