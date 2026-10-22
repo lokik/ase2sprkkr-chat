@@ -300,14 +300,12 @@ class CalculationRun:
             if self.hooks is not None:
                 self.hooks.before_submit(self)
 
-            prepare = getattr(self._runner, "prepare_submission", None)
-            if prepare is not None:
-                try:
-                    prepare()
-                except Exception as exc:
-                    if isinstance(exc, SubmissionNotStarted):
-                        raise
-                    raise SubmissionNotStarted(str(exc)) from exc
+            try:
+                self._runner.prepare_submission()
+            except Exception as exc:
+                if isinstance(exc, SubmissionNotStarted):
+                    raise
+                raise SubmissionNotStarted(str(exc)) from exc
 
             if self.hooks is not None:
                 self.hooks.prepared(self)
@@ -504,12 +502,7 @@ class CalculationRun:
 
     def stop_observation(self):
         """Stop this client's monitor; leave the backend calculation intact."""
-        stop = getattr(self._runner, "stop_observation", None)
-        if stop is None:
-            raise NotImplementedError(
-                "This execution backend cannot detach its observation"
-            )
-        return stop()
+        return self._runner.stop_observation()
 
     def cancel(self):
         if self.hooks is not None and not self.hooks.can_cancel(self):
