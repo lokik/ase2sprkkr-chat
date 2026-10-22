@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+import re
 from typing import Optional
 
 from .base import FailurePhase, RunState
@@ -26,6 +27,14 @@ _UNCHANGED = object()
 
 def _now():
     return datetime.now(timezone.utc).isoformat()
+
+
+def _run_id(value):
+    """Validate a single portable path component for a durable run ID."""
+    if (not isinstance(value, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", value) is None):
+        raise ValueError(f"Invalid run ID {value!r}: expected a safe filename component")
+    return value
 
 
 def _failure_phase(value):
@@ -55,6 +64,7 @@ class RunRecord:
     project_id: Optional[str] = None
 
     def __post_init__(self):
+        _run_id(self.id)
         object.__setattr__(self, "task", str(self.task).upper())
         if self.dataset is not None:
             object.__setattr__(self, "dataset", str(self.dataset))

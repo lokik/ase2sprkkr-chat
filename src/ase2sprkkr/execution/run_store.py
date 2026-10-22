@@ -17,7 +17,7 @@ from .base import RunState
 from .file_reservations import reservation_conflict
 from .file_history import sync_result_files
 from .projects import _project_id
-from .run_record import RunRecord, _RUN_RECORD_SCHEMA_VERSION, _now
+from .run_record import RunRecord, _RUN_RECORD_SCHEMA_VERSION, _now, _run_id
 
 
 class CorruptRunRecord(RuntimeError):
@@ -63,14 +63,14 @@ class RunStore:
             raise ValueError(f"Invalid run creation timestamp: {created_at!r}") from exc
 
     def _path(self, record):
-        return self.directory / self._bucket(record.created_at) / f"{record.id}.json"
+        return self.directory / self._bucket(record.created_at) / f"{_run_id(record.id)}.json"
 
     def _run_lock_path(self, record):
         # Run IDs are unique across the entire store, not only within a day shard.
-        return self.directory / f".{record.id}.lock"
+        return self.directory / f".{_run_id(record.id)}.lock"
 
     def _path_for_id(self, run_id):
-        filename = f"{run_id}.json"
+        filename = f"{_run_id(run_id)}.json"
         found = None
         for day in self._day_directories(newest=True):
             path = day / filename

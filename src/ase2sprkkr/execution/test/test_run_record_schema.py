@@ -101,3 +101,46 @@ def test_run_store_rejects_reused_id_with_different_creation_time(tmp_path):
 def test_run_store_lookup_preserves_missing_directory_error(tmp_path):
     with pytest.raises(FileNotFoundError, match="missing-run"):
         RunStore(tmp_path / "absent").get("missing-run")
+
+
+
+@pytest.mark.parametrize("bad_id", [
+    "", ".", "..", "../escape", "/tmp/escape", "nested/run",
+    r"nested\\run", ".hidden", "with space", "bad\u0000id", 123,
+    "x" * 129,
+])
+def test_run_record_rejects_unsafe_path_ids(tmp_path, bad_id):
+    with pytest.raises(ValueError, match="Invalid run ID"):
+        RunRecord(
+            id=bad_id, state=RunState.NEW,
+            created_at="2026-10-17T12:34:56+00:00",
+            updated_at="2026-10-17T12:34:56+00:00", task="DOS",
+            execution=Execution(ExecutorEndpoint(), WorkingDirectory(str(tmp_path))),
+            files=FileManifest(),
+        )
+
+
+@pytest.mark.parametrize("bad_id", ["../escape", "/tmp/escape", r"nested\\run", ""])
+def test_run_store_rejects_unsafe_id_lookups(tmp_path, bad_id):
+    store = RunStore(tmp_path / "runs")
+    with pytest.raises(ValueError, match="Invalid run ID"):
+        store.get(bad_id)
+    assert not store.directory.exists()
+
+
+def test_run_store_rejects_unsafe_id_in_persisted_record(tmp_path):
+    store = RunStore(tmp_path / "runs")
+    record = RunRecord(
+        id="safe-run", state=RunState.NEW,
+        created_at="2026-10-17T12:34:56+00:00",
+        updated_at="2026-10-17T12:34:56+00:00", task="DOS",
+        execution=Execution(ExecutorEndpoint(), WorkingDirectory(str(tmp_path))),
+        files=FileManifest(),
+    )
+    store.save(record)
+    path = store.directory / "2026-10-17" / "safe-run.json"
+    data = json.loads(path.read_text())
+    data["id"] = "../escape"
+    path.write_text(json.dumps(data))
+    with pytest.raises(CorruptRunRecord, match="Invalid run ID"):
+        store.get("safe-run")
