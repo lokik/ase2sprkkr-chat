@@ -25,8 +25,7 @@ from ase2sprkkr.outputs.project_results import (
 
 
 class _RawRunner:
-    def __init__(self, spec):
-        self.spec = spec
+    def __init__(self):
         self.callback = None
         self.state = RunState.NEW
         self.backend_id = None
@@ -66,7 +65,7 @@ class _Executor(Executor):
     name = "test"
 
     def create_project_run(self, spec, *, run_id, callback=None):
-        self.runner = _RawRunner(spec)
+        self.runner = _RawRunner()
         return self.runner
 
 
@@ -818,10 +817,7 @@ def test_unknown_observation_closes_owned_streams_but_attach_can_recover(tmp_pat
 
     class ObservedRunner(_RawRunner):
         def __init__(self, *, recovered=False):
-            super().__init__(ExecutionSpec(
-                argv=(), input_file=None, output_file=None,
-                directory=str(tmp_path),
-            ))
+            super().__init__()
             self.recovered = recovered
             self.state = RunState.FINISHED if recovered else RunState.NEW
             self.backend_id = "existing-job" if recovered else None

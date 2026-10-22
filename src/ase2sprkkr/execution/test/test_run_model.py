@@ -468,3 +468,50 @@ def test_download_files_only_include_concrete_remote_entries():
         ("/remote/data.dat", "skipped"),
         ("/remote/cache.pot", "available"),
     ]
+
+
+@pytest.mark.parametrize("optional_first", [True, False])
+def test_input_alias_optionality_must_agree(tmp_path, optional_first):
+    from types import SimpleNamespace
+    from ase2sprkkr.input_parameters.task_definition import TaskFile
+
+    optional = TaskFile(tmp_path / "aux.dat", optional=True)
+    required = tmp_path / "aux.dat"
+    values = (optional, required) if optional_first else (required, optional)
+    spec = SimpleNamespace(
+        directory=str(tmp_path), input_file=None, stdin=False,
+        input_files=values, output_file=None, error_file=None,
+        output_files=(), cache_files=(),
+    )
+    with pytest.raises(ValueError, match="Conflicting optionality"):
+        FileManifest.from_spec(spec)
+
+
+def test_primary_input_must_not_be_optional(tmp_path):
+    from types import SimpleNamespace
+    from ase2sprkkr.input_parameters.task_definition import TaskFile
+
+    spec = SimpleNamespace(
+        directory=str(tmp_path),
+        input_file=TaskFile(tmp_path / "main.inp", optional=True),
+        stdin=False, input_files=(), output_file=None, error_file=None,
+        output_files=(), cache_files=(),
+    )
+    with pytest.raises(ValueError, match="cannot be declared optional"):
+        FileManifest.from_spec(spec)
+
+
+def test_duplicate_optional_inputs_are_single_frozen_declaration(tmp_path):
+    from types import SimpleNamespace
+    from ase2sprkkr.input_parameters.task_definition import TaskFile
+
+    optional = TaskFile(tmp_path / "aux.dat", optional=True)
+    spec = SimpleNamespace(
+        directory=str(tmp_path), input_file=None, stdin=False,
+        input_files=(optional, optional),
+        output_file=None, error_file=None, output_files=(), cache_files=(),
+    )
+    manifest = FileManifest.from_spec(spec)
+    assert [(e.local_path, e.optional) for e in manifest.inputs] == [
+        (str(tmp_path / "aux.dat"), True),
+    ]
