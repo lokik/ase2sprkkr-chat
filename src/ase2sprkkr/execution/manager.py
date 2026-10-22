@@ -671,7 +671,7 @@ class ExecutionManager:
         authoritative and the attached raw runner replays/synchronizes files
         before task postprocessing can finish.
         """
-        record = self.store.get(run) if isinstance(run, str) else self.store.get(run.id)
+        record = self.store.get(run if isinstance(run, str) else run.id)
 
         def reopen(latest):
             if (latest.state != RunState.FAILED
@@ -694,7 +694,7 @@ class ExecutionManager:
         """Retry historical parsing without resubmitting or attaching a backend."""
         from .postprocessing import claim_historical_postprocessing, parse_historical_result
 
-        record = self.store.get(run) if isinstance(run, str) else self.store.get(run.id)
+        record = self.store.get(run if isinstance(run, str) else run.id)
         reopened = self.store.update(record, claim_historical_postprocessing)
         try:
             result = parse_historical_result(reopened, process_result)
@@ -714,7 +714,7 @@ class ExecutionManager:
         return result
 
     def retrieve_result_files(self, run):
-        record = self.store.get(run) if isinstance(run, str) else self.store.get(run.id)
+        record = self.store.get(run if isinstance(run, str) else run.id)
         if not record.state.is_terminal:
             raise RuntimeError(f"Run {record.id} is not finished")
         missing = record.job_files.missing_files()
