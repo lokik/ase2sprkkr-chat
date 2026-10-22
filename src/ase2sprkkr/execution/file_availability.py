@@ -181,13 +181,18 @@ def validate_output_collisions(streams, *, protected=()):
         target = os.path.abspath(os.fspath(stream))
         if has_file_magic(target):
             continue
+        resolved_target = os.path.realpath(target)
         for declaration, candidate in protected_paths:
-            same_path = os.path.realpath(target) == os.path.realpath(candidate)
-            same_inode = (
-                os.path.exists(target) and os.path.exists(candidate)
-                and os.path.samefile(target, candidate)
-            )
-            if same_path or same_inode:
+            if resolved_target == os.path.realpath(candidate):
+                raise ValueError(
+                    f"Output {target} overlaps protected input/cache {declaration}"
+                )
+            # Only existing files can share an inode via distinct hardlinks.
+            try:
+                same_file = os.path.samefile(target, candidate)
+            except (FileNotFoundError, NotADirectoryError):
+                same_file = False
+            if same_file:
                 raise ValueError(
                     f"Output {target} overlaps protected input/cache {declaration}"
                 )
