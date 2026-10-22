@@ -43,5 +43,7 @@ def test_result_snapshot_sync_failure_is_file_failure(tmp_path, monkeypatch):
     assert failed.return_code == 0
     assert failed.finished_at is not None
     assert failed.files.captured_at is None
-    assert failed.files.availability_state == FileAvailabilityState.FAILED
+    # A failed snapshot fsync does not prove the output transfer failed.
+    # Do not overwrite the independent per-file availability observation.
+    assert failed.files.availability_state == FileAvailabilityState.PENDING
     assert "cannot synchronize result snapshot" in failed.message
