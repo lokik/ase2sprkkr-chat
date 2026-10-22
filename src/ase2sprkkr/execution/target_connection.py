@@ -40,7 +40,7 @@ class LocalConnection:
 
     async def status(self, backend_id, files=None):
         from .remote_service import status_remote
-        return await asyncio.to_thread(status_remote, backend_id)
+        return await asyncio.to_thread(status_remote, backend_id, files)
 
     async def cancel(self, backend_id):
         from .remote_service import cancel_remote
