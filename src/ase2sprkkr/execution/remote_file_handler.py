@@ -111,6 +111,7 @@ class RemoteFileHandler:
                     ):
                         expanded.append(FileEntry(
                             remote_path=remote,
+                            source=local,
                             pre_run_signature=await self.transport.file_signature(remote),
                         ))
             else:
