@@ -257,7 +257,7 @@ class JobFiles:
             and executor.supports_result_file_retrieval
             and record.execution.backend_id is not None
         )
-        missing = self.missing_files() if can_fetch else ()
+        missing = missing_result_files(record.files) if can_fetch else ()
         # A symlink can point at unchanged historical contents while having
         # replaced the recorded regular file. Inspect it explicitly because
         # FileVersion.state() follows the link and may call it CURRENT.
