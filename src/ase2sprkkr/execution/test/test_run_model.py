@@ -434,7 +434,7 @@ def test_input_alias_optionality_must_agree(tmp_path, optional_first):
         input_files=values, output_file=None, error_file=None,
         output_files=(), cache_files=(),
     )
-    with pytest.raises(ValueError, match="Conflicting optionality"):
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
         FileManifest.from_spec(spec)
 
 
@@ -452,7 +452,7 @@ def test_primary_input_must_not_be_optional(tmp_path):
         FileManifest.from_spec(spec)
 
 
-def test_duplicate_optional_inputs_are_single_frozen_declaration(tmp_path):
+def test_duplicate_optional_inputs_are_rejected(tmp_path):
     from types import SimpleNamespace
     from ase2sprkkr.input_parameters.task_definition import TaskFile
 
@@ -462,7 +462,5 @@ def test_duplicate_optional_inputs_are_single_frozen_declaration(tmp_path):
         input_files=(optional, optional),
         output_file=None, error_file=None, output_files=(), cache_files=(),
     )
-    manifest = FileManifest.from_spec(spec)
-    assert [(e.local_path, e.optional) for e in manifest.inputs] == [
-        (str(tmp_path / "aux.dat"), True),
-    ]
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest.from_spec(spec)
