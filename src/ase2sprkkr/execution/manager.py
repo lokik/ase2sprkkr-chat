@@ -347,7 +347,7 @@ class ExecutionManager:
         )
         raw = executor.create_project_run(spec, run_id=record.id)
         # The runner owns mutable working files; RunRecord holds frozen snapshots.
-        raw.replace_file_manifest(record.files)
+        raw.job_files.replace(record.files)
         persistence = RunPersistence(self, executor, record, spec=spec)
         return CalculationRun(
             raw, process_result, callback=callback,
@@ -382,10 +382,7 @@ class ExecutionManager:
         output_listener=None,
     ):
         """Attach raw execution, then resume client-side postprocessing."""
-        # Even a RunRecord supplied by the caller may predate a refresh or
-        # terminal download. Always attach from the current durable snapshot.
-        run_id = run if isinstance(run, str) else run.id
-        record = self.store.get(run_id)
+        record = self.store.get(run) if isinstance(run, str) else run
         if record.execution.backend_id is None:
             raise RuntimeError(f"Run {record.id} has no backend reference")
         executor = self.executors.for_endpoint(record.execution.endpoint)
