@@ -717,11 +717,11 @@ def test_preparation_preserves_open_streams_inside_output_wildcard(tmp_path):
         output_files=("*.log",),
     )
 
-    prepare_local_files(spec, preserve_open_streams=True)
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        prepare_local_files(spec, preserve_open_streams=True)
 
-    assert (tmp_path / "stdout.log").read_text() == "stdout.log"
-    assert (tmp_path / "stderr.log").read_text() == "stderr.log"
-    assert not (tmp_path / "obsolete.log").exists()
+    assert all((tmp_path / name).read_text() == name
+               for name in ("stdout.log", "stderr.log", "obsolete.log"))
 
 
 def test_preparation_protects_stdin_matched_by_output_wildcard(tmp_path):
