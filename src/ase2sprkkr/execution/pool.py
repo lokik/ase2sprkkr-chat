@@ -1,31 +1,24 @@
-"""Reusable execution backend pooling independent of run persistence."""
+"""Endpoint-scoped executor identity and reuse."""
 
 from __future__ import annotations
 
 from threading import RLock
 
 
-class _ExecutorPool:
-    """Process-local cache of reusable execution backends."""
-
-    def __init__(self):
-        self._executors = {}
-        self._lock = RLock()
-
-    def get(self, key, factory):
-        with self._lock:
-            executor = self._executors.get(key)
-            if executor is None:
-                executor = factory()
-                self._executors[key] = executor
-            return executor
-
-
 class Executors:
     """Own executor registration and endpoint-scoped lookup for a manager."""
 
     def __init__(self):
-        self._pool = _ExecutorPool()
+        self._instances = {}
+        self._lock = RLock()
+
+    def _get(self, endpoint, factory):
+        with self._lock:
+            executor = self._instances.get(endpoint)
+            if executor is None:
+                executor = factory()
+                self._instances[endpoint] = executor
+            return executor
 
     @staticmethod
     def _endpoint(value):
@@ -39,7 +32,7 @@ class Executors:
         endpoint = self._endpoint(
             endpoint_for_executor(executor) if endpoint is None else endpoint
         )
-        registered = self._pool.get(endpoint, lambda: executor)
+        registered = self._get(endpoint, lambda: executor)
         if registered is not executor:
             raise ValueError(f"Another executor is already registered for {endpoint!r}")
         return endpoint
@@ -48,7 +41,7 @@ class Executors:
         from .endpoint import create_executor_from_endpoint
 
         endpoint = self._endpoint(endpoint)
-        return self._pool.get(endpoint, lambda: create_executor_from_endpoint(endpoint))
+        return self._get(endpoint, lambda: create_executor_from_endpoint(endpoint))
 
     def for_record(self, record):
         return self.for_endpoint(record.execution.endpoint)
