@@ -65,7 +65,7 @@ def test_input_parameters_preserve_mpi_launch_intent(tmp_path, monkeypatch):
             return spec
 
         def create_run(self, spec, callback=None):
-            seen["spec"] = spec
+            seen["spec"] = self.resolve_spec(spec)
             return runner
 
     profile = SPRKKRProfile(mpi="auto")
@@ -223,7 +223,7 @@ def test_explicit_local_executor_overrides_remote_profile(tmp_path, monkeypatch)
             )
 
         def create_run(self, spec, callback=None):
-            seen["spec"] = spec
+            seen["spec"] = self.resolve_spec(spec)
             return runner
 
     def must_not_resolve_default_manager():

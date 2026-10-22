@@ -158,6 +158,8 @@ def test_profile_executor_is_selected_before_mpi_resolution(monkeypatch, tmp_pat
             return spec
 
         def create_run(self, spec, callback=None):
+            # Resolution belongs to the executor factory, not CalculationRun.
+            spec = self.resolve_spec(spec)
             calls.append(("create_run", spec.argv))
             return backend_runner
 

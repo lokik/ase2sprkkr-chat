@@ -71,9 +71,6 @@ class _Executor(Executor):
     def __init__(self):
         self.runners = []
 
-    def resolve_mpi(self, mpi=None):
-        return False
-
     def create_run(self, spec, callback=None):
         runner = _Runner(callback, spec=spec)
         self.runners.append(runner)
