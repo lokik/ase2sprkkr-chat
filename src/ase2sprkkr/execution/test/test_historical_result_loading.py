@@ -253,3 +253,33 @@ def test_history_load_uses_retrieval_record_without_extra_store_lookup(
     # Read initial record, perform retrieval, verify output, verify input.
     # The removed check_result_files() used to load the same record again.
     assert retrieved == [record.id] * 4
+
+
+def test_historical_missing_input_restores_without_output_availability_update(tmp_path):
+    manager, executor, record = _terminal_run(tmp_path)
+    input_path = tmp_path / "run.inp"
+    input_path.unlink()
+    original_fetch = executor.fetch_result_files
+
+    def fetch(reference, files, *, destinations=None):
+        if str(input_path) in files:
+            input_path.write_text("input")
+        else:
+            original_fetch(reference, files, destinations=destinations)
+
+    executor.fetch_result_files = fetch
+    restored = manager.retrieve_result_files(record.id)
+    assert input_path.read_text() == "input"
+    assert restored.id == record.id
+    assert restored.state == record.state
+
+
+def test_historical_missing_input_reports_unrestored_file(tmp_path):
+    manager, executor, record = _terminal_run(tmp_path)
+    input_path = tmp_path / "run.inp"
+    input_path.unlink()
+    executor.fetch_result_files = lambda reference, files, *, destinations=None: None
+
+    with pytest.raises(FileNotFoundError, match="Historical input file is still missing"):
+        manager.retrieve_result_files(record.id)
+    assert manager.store.get(record.id).state == record.state
