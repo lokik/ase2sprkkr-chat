@@ -1011,7 +1011,7 @@ def test_cancel_terminal_receipt_is_read_exactly_once(tmp_path, monkeypatch):
 
     def terminal_outcome(receipt_id):
         reads.append(receipt_id)
-        return RunState.FINISHED, 0, None, None
+        return RunState.FINISHED, 0, None, None, None, None
 
     monkeypatch.setattr(remote_service, "_process_outcome", terminal_outcome)
     monkeypatch.setattr(
