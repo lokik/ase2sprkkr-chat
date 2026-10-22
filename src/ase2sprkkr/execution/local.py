@@ -196,11 +196,11 @@ class LocalRunner:
                 self._state = RunState.CANCELLED
                 self._started.set()
                 return self.result
-            prepare_local_files(
-                self.spec, preserve_open_streams=True,
-            )
             try:
                 runtime_spec = materialize_local_spec(self.spec)
+                # MPI/command preparation may fail; leave old results alone
+                # until we have a launchable command.
+                prepare_local_files(self.spec, preserve_open_streams=True)
                 stdin = self._open_streams(stdin=runtime_spec.stdin)
                 self._process = await start_local_process(runtime_spec, stdin=stdin)
             except BaseException as exc:

@@ -177,10 +177,6 @@ def _local_submit(request):
         for path in (output_path, error_path):
             if path is not None:
                 Path(path).parent.mkdir(parents=True, exist_ok=True)
-        prepare_local_files(
-            original_spec, output_file=output_path, error_file=error_path,
-            side=request.get("cleanup_side", "local"),
-        )
     except (OSError, ValueError) as exc:
         raise SubmissionNotStarted(str(exc)) from exc
 
@@ -214,6 +210,15 @@ def _local_submit(request):
         env[_SPEC_ENV] = json.dumps(worker_spec, separators=(",", ":"))
         env[_START_FD_ENV] = str(start_fd)
         try:
+            # All prelaunch IPC setup succeeded; clean immediately before the
+            # supervisor is spawned. An IPC failure must keep older outputs.
+            try:
+                prepare_local_files(
+                    original_spec, output_file=output_path, error_file=error_path,
+                    side=request.get("cleanup_side", "local"),
+                )
+            except (OSError, ValueError) as exc:
+                raise SubmissionNotStarted(str(exc)) from exc
             process = subprocess.Popen(
                 [sys.executable, "-m", "ase2sprkkr.execution.remote_process_worker"],
                 cwd=directory,

@@ -184,9 +184,6 @@ class RemoteRunner(ManagedRunner):
             remote_directory = mapping.map_path(self.spec.directory)
             await self.executor.transport.run(("mkdir", "-p", "--", remote_directory))
             manifest = await self.file_handler.prepare(mapping, self.spec, files)
-            # One-time local cleanup for a new submission; never for attach/collect.
-            prepare_local_files(self.spec, side="local", preserve_open_streams=True,
-                                manifest=files)
             # The runner owns backend identity, command construction and the
             # submission protocol. FileHandler knows only file locations.
             mapped = {entry.local_path: entry.remote_path
@@ -242,6 +239,17 @@ class RemoteRunner(ManagedRunner):
             request, manifest = self._prepared
 
         request["detached"] = self._run_id is not None
+        # Staging and durable PREPARING must not destroy previous outputs.
+        # Clear only when submission is ready to be dispatched.
+        try:
+            prepare_local_files(
+                self.spec, side="local", preserve_open_streams=True,
+                manifest=manifest,
+            )
+        except (OSError, ValueError) as exc:
+            self._failure_phase = FailurePhase.SUBMISSION
+            self._failure_message = str(exc)
+            raise SubmissionNotStarted(str(exc)) from exc
         status = await self.executor.connection.submit(request)
         remote_id = status.get("remote_id")
         if not remote_id:

@@ -172,3 +172,66 @@ def test_postprocessing_rejected_submit_preserves_error_and_does_not_monitor(
     with pytest.raises(SubmissionNotStarted, match="preflight refused") as waited:
         runner.wait()
     assert waited.value is failure
+
+
+def test_remote_output_cleanup_occurs_at_dispatch_not_staging(tmp_path):
+    """PREPARING (and cancellation before dispatch) must retain old outputs."""
+    directory = tmp_path / "local"
+    directory.mkdir()
+    old = directory / "old.dat"
+    old.write_text("previous run")
+    executor = RemoteEndpointExecutor(LocalTransport())
+    spec = ExecutionSpec(
+        argv=("ignored",), directory=str(directory), input_file=None,
+        output_file=None, output_files=(str(old),),
+        launch=LaunchSpec(
+            local_root=str(tmp_path), remote_root=str(tmp_path / "remote"),
+            cleanup_outputs="both",
+        ),
+    )
+    runner = executor.create_run(spec)
+    runner.prepare_submission()
+    assert old.read_text() == "previous run"
+
+    dispatched = []
+
+    async def fake_submit(request):
+        assert not old.exists()
+        dispatched.append(request["directory"])
+        return {"remote_id": "opaque", "state": RunState.RUNNING.value}
+
+    executor.connection.submit = fake_submit
+    asyncio.run(runner._submit_async())
+    assert dispatched == [str(tmp_path / "remote" / "local")]
+
+
+def test_remote_cleanup_failure_before_dispatch_is_known_non_submission(
+    tmp_path, monkeypatch,
+):
+    from ase2sprkkr.execution.base import SubmissionNotStarted
+
+    directory = tmp_path / "local"
+    directory.mkdir()
+    old = directory / "old.dat"
+    old.write_text("previous run")
+    executor = RemoteEndpointExecutor(LocalTransport())
+    spec = ExecutionSpec(
+        argv=("ignored",), directory=str(directory), input_file=None,
+        output_file=None, output_files=(str(old),),
+        launch=LaunchSpec(local_root=tmp_path, remote_root=tmp_path / "remote"),
+    )
+    runner = executor.create_run(spec)
+    runner.prepare_submission()
+    assert old.read_text() == "previous run"
+
+    def refuse_cleanup(*args, **kwargs):
+        raise PermissionError("output not writable")
+
+    async def impossible_submit(request):
+        pytest.fail("Failed cleanup must not submit the backend")
+
+    monkeypatch.setattr("ase2sprkkr.execution.remote.prepare_local_files", refuse_cleanup)
+    executor.connection.submit = impossible_submit
+    with pytest.raises(SubmissionNotStarted, match="output not writable"):
+        asyncio.run(runner._submit_async())
+    assert old.read_text() == "previous run"

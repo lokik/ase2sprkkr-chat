@@ -1488,3 +1488,27 @@ def test_request_spec_does_not_duplicate_primary_input():
     assert FileManifest.from_spec(spec).input_files == (
         "/remote/main.in", "/remote/extra.in",
     )
+
+
+def test_target_ipc_failure_does_not_delete_declared_outputs(tmp_path, monkeypatch):
+    """Target cleanup belongs after IPC preparation, just before Popen."""
+    from ase2sprkkr.execution.base import SubmissionNotStarted
+
+    old = tmp_path / "old.dat"
+    old.write_text("previous run")
+
+    def broken_pipe():
+        raise OSError("IPC unavailable")
+
+    monkeypatch.setattr(remote_service.os, "pipe", broken_pipe)
+    request = {
+        "directory": str(tmp_path),
+        "argv": ["echo", "new"],
+        "input_file": None,
+        "output_file": None,
+        "output_files": ["old.dat"],
+        "launch": {"cleanup_outputs": "both"},
+    }
+    with pytest.raises(SubmissionNotStarted, match="IPC unavailable"):
+        remote_service._local_submit(request)
+    assert old.read_text() == "previous run"
