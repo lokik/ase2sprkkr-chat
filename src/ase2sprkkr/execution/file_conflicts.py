@@ -1,5 +1,7 @@
 """Determine whether two jobs require conflicting filesystem access."""
 
+from __future__ import annotations
+
 import fnmatch
 import os
 
