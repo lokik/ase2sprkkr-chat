@@ -630,3 +630,36 @@ def test_history_reconciles_durable_file_after_failed_directory_fsync(tmp_path, 
     assert restored.files.availability_state == "available"
     assert executor.fetch_calls == [(record.id, (str(output),))]
     assert restored.state is RunState.FINISHED
+
+
+def test_failed_published_history_reconciles_without_executor(tmp_path):
+    from ase2sprkkr.execution.job_files import JobFiles
+
+    manager, executor, record = _terminal_run(tmp_path)
+    output = tmp_path / "run.out"
+    failed = record.job_files.update_availability(
+        manager.store, str(output), "failed", "directory fsync failed",
+    )
+
+    def unexpected_fetch(*args, **kwargs):
+        raise AssertionError("Verified published bytes must not download")
+
+    executor.fetch_result_files = unexpected_fetch
+    recovered = JobFiles(failed).retrieve(manager.store, executor=None)
+    assert recovered.files.availability_state == FileAvailabilityState.AVAILABLE
+    assert recovered.state is RunState.FINISHED
+    assert output.read_text() == "original output"
+
+
+def test_failed_published_history_remains_failed_without_backend_if_missing(tmp_path):
+    from ase2sprkkr.execution.job_files import JobFiles
+
+    manager, _, record = _terminal_run(tmp_path)
+    output = tmp_path / "run.out"
+    failed = record.job_files.update_availability(
+        manager.store, str(output), "failed", "download failed",
+    )
+    output.unlink()
+    unchanged = JobFiles(failed).retrieve(manager.store, executor=None)
+    assert unchanged.files.availability_state == FileAvailabilityState.FAILED
+    assert not output.exists()
