@@ -6,9 +6,10 @@ import os
 from pathlib import Path
 from dataclasses import replace
 from datetime import datetime, timezone
+from threading import RLock
 
 from ..common.file_locks import FileLock
-from .run_model import FileAvailabilityState
+from .run_model import FileAvailabilityState, FileManifest
 from .transport import has_file_magic
 from .historical_restore import (
     HistoricalFileMismatchError, restore_historical_file,
@@ -20,14 +21,50 @@ from .file_history import (
 
 
 class JobFiles:
-    """Operate on one run's manifest without duplicating its persistent state."""
+    """Mutable per-run file state over immutable FileManifest values.
 
-    def __init__(self, record):
-        self.record = record
+    File manifests are validated value objects. No RunRecord or RunStore is
+    retained by the working file owner; historical operations receive their
+    RunRecord explicitly.
+    """
+
+    def __init__(self, manifest: FileManifest):
+        if not isinstance(manifest, FileManifest):
+            raise TypeError("JobFiles expects a FileManifest")
+        self._manifest = manifest
+        self._lock = RLock()
 
     @property
-    def manifest(self):
-        return self.record.files
+    def manifest(self) -> FileManifest:
+        with self._lock:
+            return self._manifest
+
+    def snapshot(self) -> FileManifest:
+        """Return a stable immutable value; subsequent changes cannot mutate it."""
+        return self.manifest
+
+    def replace(self, manifest: FileManifest) -> FileManifest:
+        """Install a reserved or recovered authoritative file state."""
+        if not isinstance(manifest, FileManifest):
+            raise TypeError("JobFiles expects a FileManifest")
+        with self._lock:
+            self._manifest = manifest
+            return manifest
+
+    def merge(self, observed: FileManifest) -> FileManifest:
+        """Apply an observation to the latest working state atomically."""
+        with self._lock:
+            self._manifest = self.merge_snapshot(self._manifest, observed)
+            return self._manifest
+
+    def mark_availability(self, path, state, message=None, *, remote_path=None):
+        """Update a declared file in working memory, retaining older snapshots."""
+        with self._lock:
+            self._manifest = self._manifest.with_file_availability(
+                path, FileAvailabilityState(state).value, message,
+                remote_path=remote_path,
+            )
+            return self._manifest
 
     def input_file_is_current(self):
         files = self.manifest
@@ -169,7 +206,7 @@ class JobFiles:
             stream_error = exc
         return manifest, error if error is not None else stream_error
 
-    def update_availability(self, store, path, state, message=None):
+    def update_availability(self, record, store, path, state, message=None):
         """Update one file's availability using the latest durable record."""
         state = FileAvailabilityState(state)
 
@@ -183,16 +220,15 @@ class JobFiles:
                 files=files,
             )
 
-        return store.update(self.record, update)
+        return store.update(record, update)
 
-    def retrieve(self, store, executor=None):
+    def retrieve(self, record, store, executor=None):
         """Restore missing history and reconcile already-published failed files.
 
         A captured file may be present and hash-correct after a failed
         directory fsync. It still needs a durability retry and an atomic
         availability update, even when no backend retrieval is available.
         """
-        record = self.record
         if not record.state.is_terminal:
             raise RuntimeError(f"Run {record.id} is not finished")
 
