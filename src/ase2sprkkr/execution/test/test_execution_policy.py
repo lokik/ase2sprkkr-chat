@@ -14,13 +14,14 @@ from ase2sprkkr.execution.base import (
 from ase2sprkkr.execution.endpoint import endpoint_for_executor
 from ase2sprkkr.execution.local import LocalExecutor, LocalRunner
 from ase2sprkkr.execution.manager import (
-    FileAvailabilityState,
     ExecutionManager,
     PersistentRun,
     RunStore,
 )
 from ase2sprkkr.execution.postprocessing import PostprocessingRunner
-from ase2sprkkr.execution.run_model import FileManifest, FileEntry
+from ase2sprkkr.execution.run_model import (
+    FileAvailabilityState, FileManifest, FileEntry,
+)
 from ase2sprkkr.execution.transport import LocalTransport
 
 
