@@ -112,23 +112,27 @@ class SSHConnection:
             return posixpath.join(await self.remote_home(), directory[2:])
         return directory
 
-    async def submit(self, request):
-        launch = request.get("launch") or {}
-        mpi = launch.get("mpi") or {}
-        if (
-            self.backend == "local"
-            and mpi.get("autodetect")
-            and not mpi.get("required")
-            and mpi.get("warning", True)
-        ):
-            resolved = await self._json_request("resolve-mpi", payload={"mpi": "auto"})
-            if not resolved.get("mpi"):
+    async def resolve_mpi(self, mpi):
+        """Ask the target about MPI before uploading any input files."""
+        resolved = await self._json_request(
+            "resolve-mpi", payload={"mpi": asdict(mpi)},
+        )
+        launcher = resolved.get("mpi")
+        if launcher is None:
+            if not mpi.allows_serial_fallback:
+                raise FileNotFoundError(
+                    "MPI was requested but no MPI launcher was found on the remote host"
+                )
+            if mpi.warning:
                 warnings.warn(
                     "MPI autodetection did not find an MPI launcher on the remote "
                     "host; the calculation will run without MPI.",
                     MpiNotFoundWarning,
                     stacklevel=3,
                 )
+        return None if launcher is None else tuple(launcher)
+
+    async def submit(self, request):
         return await self._json_request(
             "submit", request["directory"], payload=request,
         )

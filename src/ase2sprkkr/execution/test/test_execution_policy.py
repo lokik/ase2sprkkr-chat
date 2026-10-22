@@ -312,7 +312,7 @@ def test_common_command_request_preserves_mpi_and_launch_contract(tmp_path):
     spec = ExecutionSpec(
         argv=("serial", "input.inp"),
         mpi_argv=("parallel", "input.inp"),
-        mpi_uses_stdin=False,
+        mpi_stdin=None,
         input_file=None, output_file=None,
         directory=str(tmp_path),
         launch=LaunchSpec.from_mpi(2),
@@ -320,7 +320,7 @@ def test_common_command_request_preserves_mpi_and_launch_contract(tmp_path):
     request = spec.command_request()
     assert request["argv"] == ["serial", "input.inp"]
     assert request["mpi_argv"] == ["parallel", "input.inp"]
-    assert request["mpi_uses_stdin"] is False
+    assert "mpi_uses_stdin" not in request
 
     transformed = spec.command_request(
         lambda command: [arg.upper() for arg in command]
@@ -328,5 +328,5 @@ def test_common_command_request_preserves_mpi_and_launch_contract(tmp_path):
     assert transformed["argv"] == ["SERIAL", "INPUT.INP"]
     assert transformed["mpi_argv"] == ["PARALLEL", "INPUT.INP"]
     assert transformed["launch"] == request["launch"]
-    assert transformed["mpi_uses_stdin"] is False
+    assert "mpi_uses_stdin" not in transformed
     assert spec.argv == ("serial", "input.inp")

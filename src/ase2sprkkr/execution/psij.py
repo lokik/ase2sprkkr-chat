@@ -264,6 +264,7 @@ class PsijRunner(ManagedRunner):
         attached=False,
         run_id=None,
     ):
+        spec = executor.resolve_spec(spec)
         # File names must be concrete for PSI/J; execution monitoring and
         # public runner lifecycle are inherited from ManagedRunner.
         self._stdout_path = _path(spec.output_file, spec.directory)
@@ -293,15 +294,15 @@ class PsijRunner(ManagedRunner):
 
     def _job_command(self):
         launch = self.spec.launch
-        if not launch or self.spec.mpi_argv is None:
+        if not launch:
             return tuple(self.spec.argv), None, None
         mpi = launch.mpi
         if mpi.launcher:
-            return (*mpi.launcher, *self.spec.mpi_argv), None, None
+            return (*mpi.launcher, *self.spec.argv), None, None
         resources = None
         if mpi.process_count is not None:
             resources = self._psij.ResourceSpecV1(process_count=mpi.process_count)
-        return tuple(self.spec.mpi_argv), resources, self._mpi_launcher()
+        return tuple(self.spec.argv), resources, self._mpi_launcher()
 
     def _project_metadata(self):
         if self._run_id is None:
@@ -324,12 +325,7 @@ class PsijRunner(ManagedRunner):
             arguments=[os.fspath(arg) for arg in argv[1:]],
             directory=self.spec.directory,
             environment=environment,
-            stdin_path=(
-                self._stdin_path
-                if not (self.spec.launch and self.spec.mpi_argv is not None)
-                or self.spec.mpi_uses_stdin
-                else None
-            ),
+            stdin_path=self._stdin_path,
             stdout_path=self._stdout_path,
             stderr_path=self._stderr_path,
             resources=resources,
@@ -561,6 +557,12 @@ class PsijExecutor(Executor):
         self._terminal_observations = {}
         self._jobs_lock = RLock()
         self._max_idle_jobs = 64
+
+    def resolve_spec(self, spec: ExecutionSpec) -> ExecutionSpec:
+        from .local_process import select_mpi_spec
+        if spec.mpi_argv is None:
+            return spec
+        return select_mpi_spec(spec, scheduler=bool(spec.launch))
 
     def create_run(self, spec: ExecutionSpec, callback=None):
         return PsijRunner(self, spec, callback=callback)

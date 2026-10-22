@@ -344,8 +344,7 @@ class LocalExecutor(Executor):
         return True
 
     def create_run(self, spec: ExecutionSpec, callback=None):
-        # Freeze the original file declarations before selecting serial/MPI.
-        return LocalRunner(spec, callback=callback)
+        return LocalRunner(self.resolve_spec(spec), callback=callback)
 
     def create_project_run(
         self, spec: ExecutionSpec, *, run_id: str, callback=None
@@ -354,7 +353,7 @@ class LocalExecutor(Executor):
 
         return LocalProjectRunner(
             self,
-            spec,
+            self.resolve_spec(spec),
             run_id=run_id,
             callback=callback,
         )

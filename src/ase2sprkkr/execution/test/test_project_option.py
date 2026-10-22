@@ -234,11 +234,8 @@ def test_run_level_profile_selects_executor_instead_of_calculator_executor(
         return profile_executor
 
     monkeypatch.setattr(
-        calculation_module,
-        "default_execution_manager",
-        lambda: SimpleNamespace(
-            executors=SimpleNamespace(for_endpoint=select_profile_endpoint),
-        ),
+        "ase2sprkkr.execution.persistence.default_executors",
+        lambda: SimpleNamespace(for_endpoint=select_profile_endpoint),
     )
 
     runner = calculator.create_run(profile=profile)

@@ -130,11 +130,13 @@ def run(args, global_args):
     elif args.remote_action == "ack":
         _print_json(acknowledge_remote(args.remote_id))
     elif args.remote_action == "resolve-mpi":
-        from ...execution.base import LaunchSpec
+        from ...execution.base import LaunchSpec, MpiSpec
         from ...execution.mpi import resolve_mpi_command
 
         request = json.load(sys.stdin)
-        launch = LaunchSpec.from_mpi(request.get("mpi"))
+        mpi = request.get("mpi")
+        launch = (LaunchSpec(mpi=MpiSpec(**mpi)) if isinstance(mpi, dict)
+                  else LaunchSpec.from_mpi(mpi))
         _print_json({"mpi": resolve_mpi_command(launch.mpi)})
     else:
         raise ValueError("Unknown remote action: {}".format(args.remote_action))

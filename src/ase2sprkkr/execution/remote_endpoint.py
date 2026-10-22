@@ -163,11 +163,25 @@ class RemoteEndpointExecutor(Executor):
             )
         )
 
+    def resolve_spec(self, spec):
+        from .local_process import select_mpi_spec
+
+        if spec.mpi_argv is None:
+            return spec
+        if self.backend == "psij":
+            return select_mpi_spec(spec, scheduler=bool(spec.launch))
+        if not spec.launch:
+            return select_mpi_spec(spec)
+        launcher = _run_sync(self.connection.resolve_mpi(spec.launch.mpi))
+        return select_mpi_spec(spec, launcher)
+
     def create_run(self, spec, callback=None):
-        return RemoteRunner(self, spec, callback=callback)
+        return RemoteRunner(self, self.resolve_spec(spec), callback=callback)
 
     def create_project_run(self, spec, *, run_id, callback=None):
-        return RemoteRunner(self, spec, callback=callback, run_id=run_id)
+        return RemoteRunner(
+            self, self.resolve_spec(spec), callback=callback, run_id=run_id,
+        )
 
     def preflight_result_files(self, run, files):
         """Validate all historical sources before JobFiles starts downloading."""

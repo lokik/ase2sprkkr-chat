@@ -36,8 +36,8 @@ class _UnstartedRunner:
 
 
 class _Executor:
-    def resolve_mpi(self, mpi):
-        return mpi
+    def resolve_spec(self, spec):
+        return spec
 
     def create_run(self, spec, callback=None):
         return _UnstartedRunner(spec)
