@@ -951,6 +951,7 @@ class ExecutionManager:
             project_id=project_id,
         )
         self.register_executor(executor, endpoint)
+        executor = self.executors.for_endpoint(endpoint)
 
         raw = executor.create_project_run(spec, run_id=record.id)
         # The manifest is owned by RunRecord. Local execution observes its
@@ -998,6 +999,7 @@ class ExecutionManager:
         else:
             endpoint = record.execution.endpoint
             self.register_executor(executor, endpoint)
+            executor = self.executor_for(record)
 
         raw = executor.attach(
             record,

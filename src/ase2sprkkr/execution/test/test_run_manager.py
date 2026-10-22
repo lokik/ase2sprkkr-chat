@@ -288,3 +288,12 @@ def test_register_executor_rejects_conflicting_instance():
     with pytest.raises(ValueError, match="already registered"):
         executors.register(conflicting, endpoint)
     assert executors.for_endpoint(endpoint) is original
+
+
+def test_explicit_executor_for_run_is_the_registered_instance(tmp_path):
+    manager = _manager(tmp_path)
+    executor = _Executor()
+    run = manager.create_run(
+        executor, _spec(tmp_path), process_result=lambda value: value, task="DOS",
+    )
+    assert run.hooks.executor is manager.executor_for(run.record)
