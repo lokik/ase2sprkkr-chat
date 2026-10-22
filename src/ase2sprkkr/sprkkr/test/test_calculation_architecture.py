@@ -6,7 +6,7 @@ from ase.build import bulk
 import pytest
 
 from ...execution.base import RunState
-from ...execution import JobFiles, FileManifest
+from ...execution import RunFiles, FileManifest
 from ...input_parameters.input_parameters import InputParameters
 from ...input_parameters.task_definition import TaskDefinition
 from ...potentials.potentials import Potential
@@ -24,7 +24,7 @@ def fe_bulk():
 class _UnstartedRunner:
     def __init__(self, spec):
         self.spec = spec
-        self.job_files = JobFiles(FileManifest.from_spec(spec))
+        self.job_files = RunFiles(FileManifest.from_spec(spec))
         self.state = RunState.NEW
         self.result = None
         self.reference = None
@@ -198,7 +198,7 @@ def test_preparation_requires_task_definition(monkeypatch, tmp_path, fe_bulk):
 def test_nonproject_run_without_explicit_executor_uses_shared_registry(
     tmp_path, fe_bulk, monkeypatch,
 ):
-    """Untracked runs do not need an ExecutionManager or a RunStore."""
+    """Untracked runs do not need an RunManager or a RunStore."""
     class Registry:
         def __init__(self):
             self.endpoints = []

@@ -11,7 +11,7 @@ import asyncio
 from concurrent.futures import Future
 from threading import Event, Lock
 
-from .job_files import JobFiles
+from .run_files import RunFiles
 from .run_model import FileManifest
 from .base import (
     ExecutionOutcome, FailurePhase, ObservationDetached, OutputObservers, RunState,
@@ -36,7 +36,7 @@ class ManagedRunner:
         self._return_code = None
         self._failure_phase = None
         self._failure_message = None
-        self.job_files = JobFiles(files if files is not None else FileManifest.from_spec(spec))
+        self.job_files = RunFiles(files if files is not None else FileManifest.from_spec(spec))
         self._output_observers = OutputObservers(output_listener)
         self._lock = Lock()
         self._done = Event()

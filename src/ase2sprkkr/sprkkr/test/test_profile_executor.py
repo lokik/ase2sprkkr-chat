@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from ase2sprkkr.configuration import definition
-from ase2sprkkr.execution import ExecutionManager, LocalExecutor, RunState, SshTransport
+from ase2sprkkr.execution import RunManager, LocalExecutor, RunState, SshTransport
 from ase2sprkkr.execution.remote_endpoint import RemoteEndpointExecutor
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from ase2sprkkr.input_parameters.task_definition import TaskDefinition
@@ -62,7 +62,7 @@ def test_named_ssh_profile_resolves_executor_settings(monkeypatch):
 
 
 def test_local_profile_creates_local_executor():
-    executor = ExecutionManager().executors.for_endpoint(SPRKKRProfile().endpoint)
+    executor = RunManager().executors.for_endpoint(SPRKKRProfile().endpoint)
 
     assert isinstance(executor, LocalExecutor)
 
@@ -80,7 +80,7 @@ def test_ssh_profile_creates_endpoint_only_executor():
         output_sync="always",
     )
 
-    executor = ExecutionManager().executors.for_endpoint(profile.endpoint)
+    executor = RunManager().executors.for_endpoint(profile.endpoint)
 
     assert isinstance(executor, RemoteEndpointExecutor)
     assert isinstance(executor.transport, SshTransport)
@@ -104,7 +104,7 @@ def test_ssh_profile_creates_endpoint_only_executor():
 
 def test_ssh_profile_requires_host():
     with pytest.raises(ValueError, match="requires 'host'"):
-        ExecutionManager().executors.for_endpoint(SPRKKRProfile(executor="ssh").endpoint)
+        RunManager().executors.for_endpoint(SPRKKRProfile(executor="ssh").endpoint)
 
 
 def test_psij_profile_creates_configured_executor(monkeypatch):
@@ -119,7 +119,7 @@ def test_psij_profile_creates_configured_executor(monkeypatch):
 
     monkeypatch.setattr("ase2sprkkr.execution.psij.PsijExecutor", FakePsijExecutor)
 
-    executor = ExecutionManager().executors.for_endpoint(
+    executor = RunManager().executors.for_endpoint(
         SPRKKRProfile(
             executor="psij",
             psij_backend="slurm",
@@ -133,21 +133,21 @@ def test_psij_profile_creates_configured_executor(monkeypatch):
 
 def test_unknown_runtime_executor_is_rejected():
     with pytest.raises(ValueError, match="unsupported execution endpoint"):
-        ExecutionManager().executors.for_endpoint(SPRKKRProfile(executor="custom").endpoint)
+        RunManager().executors.for_endpoint(SPRKKRProfile(executor="custom").endpoint)
 
 
 def test_profile_executor_is_selected_before_mpi_resolution(monkeypatch, tmp_path):
     parameters = InputParameters.create("DOS")
     parameters.CONTROL.DATASET = "test"
     parameters.CONTROL.POTFIL = "test.pot"
-    from ase2sprkkr.execution import JobFiles, FileManifest, LaunchSpec
+    from ase2sprkkr.execution import RunFiles, FileManifest, LaunchSpec
     backend_runner = SimpleNamespace(
         state=RunState.NEW,
         result=object(),
         reference=None,
         exception=None,
         callback=None,
-        job_files=JobFiles(FileManifest()),
+        job_files=RunFiles(FileManifest()),
         add_output_listener=lambda callback: None,
     )
     calls = []

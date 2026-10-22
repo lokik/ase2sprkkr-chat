@@ -17,8 +17,8 @@ from ase2sprkkr.execution import (
     FileManifest,
 )
 
-from ase2sprkkr.execution.manager import ExecutionManager
-from ase2sprkkr.execution.job_files import JobFiles
+from ase2sprkkr.execution.run_manager import RunManager
+from ase2sprkkr.execution.run_files import RunFiles
 from ase2sprkkr.execution.pool import Executors
 
 
@@ -26,7 +26,7 @@ class _RawRunner:
     def __init__(self, spec, executor, on_submit=None):
         self.spec = spec
         self.executor = executor
-        self.job_files = JobFiles(FileManifest.from_spec(spec))
+        self.job_files = RunFiles(FileManifest.from_spec(spec))
         self.callback = None
         self.on_submit = on_submit
         self.state = RunState.NEW
@@ -107,7 +107,7 @@ def _spec(tmp_path, *, dataset="case"):
 
 
 def _manager(tmp_path):
-    return ExecutionManager(
+    return RunManager(
         RunStore(tmp_path / "runs"), executors=Executors()
     )
 
@@ -410,7 +410,7 @@ def test_calculation_run_job_files_is_read_only_runner_view(tmp_path):
     files = executor.runners[0].job_files
     assert run.job_files is files
     with pytest.raises(AttributeError):
-        run.job_files = JobFiles(FileManifest())
+        run.job_files = RunFiles(FileManifest())
     assert run.job_files is files
 
 

@@ -13,7 +13,7 @@ from ase2sprkkr.execution import (
     RunStore,
 )
 from ase2sprkkr.execution.endpoint import endpoint_for_executor
-from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.run_manager import RunManager
 from ase2sprkkr.execution.historical_restore import (
     HistoricalFileMismatchError, retrieve_historical_files,
     update_historical_availability,
@@ -56,7 +56,7 @@ def _spec(tmp_path):
 
 
 def _manager(store):
-    return ExecutionManager(store)
+    return RunManager(store)
 
 
 def _terminal_run(tmp_path, *, state=RunState.FINISHED, return_code=0, task="DOS"):
@@ -372,7 +372,7 @@ def test_uncaptured_missing_output_after_fetch_raises_and_marks_failed(tmp_path)
     """A no-op backend retrieval is never considered a successful restore."""
     from ase2sprkkr.execution.run_model import FileEntry
 
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     executor = _HistoryExecutor()
     endpoint = endpoint_for_executor(executor)
     manager.executors.register(executor, endpoint)
@@ -398,7 +398,7 @@ def test_uncaptured_missing_output_after_fetch_raises_and_marks_failed(tmp_path)
 def test_uncaptured_restore_interruption_never_publishes_partial_output(tmp_path):
     from ase2sprkkr.execution.run_model import FileEntry
 
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     executor = _HistoryExecutor()
     endpoint = endpoint_for_executor(executor)
     manager.executors.register(executor, endpoint)
@@ -433,7 +433,7 @@ def test_uncaptured_restore_publishes_complete_file_atomically(tmp_path):
     from pathlib import Path
     from ase2sprkkr.execution.run_model import FileEntry
 
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     executor = _HistoryExecutor()
     endpoint = endpoint_for_executor(executor)
     manager.executors.register(executor, endpoint)
@@ -492,7 +492,7 @@ def test_uncaptured_external_file_is_never_overwritten(tmp_path, monkeypatch):
     import ase2sprkkr.execution.historical_restore as historical_restore
     from ase2sprkkr.execution.run_model import FileEntry
 
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     executor = _HistoryExecutor()
     endpoint = endpoint_for_executor(executor)
     manager.executors.register(executor, endpoint)
@@ -529,7 +529,7 @@ def test_uncaptured_wildcard_requires_concrete_historical_membership(tmp_path):
     """Historical retrieval must never materialize new wildcard members."""
     from ase2sprkkr.execution.run_model import FileEntry
 
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     executor = _HistoryExecutor()
     endpoint = endpoint_for_executor(executor)
     manager.executors.register(executor, endpoint)

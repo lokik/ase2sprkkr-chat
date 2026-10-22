@@ -51,12 +51,12 @@ def test_finished_execution_passes_unknown_return_code_to_reader(tmp_path):
 
     profile = SimpleNamespace(create_execution=create_execution)
 
-    from ase2sprkkr.execution import JobFiles, FileManifest
+    from ase2sprkkr.execution import RunFiles, FileManifest
 
     class FinishedRunner:
         def __init__(self, spec):
             self.spec = spec
-            self.job_files = JobFiles(FileManifest.from_spec(spec))
+            self.job_files = RunFiles(FileManifest.from_spec(spec))
             self.state = RunState.NEW
             self.callback = None
             self.exception = None

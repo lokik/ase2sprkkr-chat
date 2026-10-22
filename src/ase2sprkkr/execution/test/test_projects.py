@@ -9,7 +9,7 @@ import time
 import pytest
 
 from ..projects import (
-    Project,
+    ProjectRecord,
     ProjectConflictError,
     ProjectDeleteError,
     ProjectRepository,
@@ -45,7 +45,7 @@ def _save_while_locked(directory, project_id, started, finished):
 
 
 def test_project_editing_methods_keep_snapshot_generation():
-    project = Project(id=ROOT_A, generation=7, name="Original")
+    project = ProjectRecord(id=ROOT_A, generation=7, name="Original")
 
     edited = project.rename(" Renamed ").move_to(ROOT_B)
 
@@ -56,7 +56,7 @@ def test_project_editing_methods_keep_snapshot_generation():
 
 
 def test_project_rejects_invalid_local_edits():
-    project = Project(id=ROOT_A, generation=1, name="Project")
+    project = ProjectRecord(id=ROOT_A, generation=1, name="Project")
 
     with pytest.raises(ValueError, match="name"):
         project.rename(" ")

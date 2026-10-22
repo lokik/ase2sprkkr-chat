@@ -48,7 +48,7 @@ _NO_FILES_FAILURES = frozenset((
 ))
 
 
-class ExecutionManager:
+class RunManager:
     """Persist public run lifecycle without task-specific knowledge."""
 
     def __init__(self, store=None, *, executors=None, submitting_grace=60.0,
@@ -73,8 +73,13 @@ class ExecutionManager:
         if self.projects is not None:
             if project_id is None:
                 raise ValueError("Tracked runs require an explicit project_id")
-            from .projects import Project
-            identity = project_id.id if isinstance(project_id, Project) else str(project_id)
+            from .project import Project
+            from .projects import ProjectRecord
+            identity = (
+                project_id.id
+                if isinstance(project_id, (Project, ProjectRecord))
+                else str(project_id)
+            )
             project_id = self.projects.project(identity).id
         now = _now()
         local = os.path.abspath(os.fspath(directory))
@@ -473,7 +478,7 @@ class ExecutionManager:
             project_id=project_id,
         )
         # The executor selects serial/MPI exactly once before its runner
-        # constructs JobFiles. Freeze those declarations in RunRecord.
+        # constructs RunFiles. Freeze those declarations in RunRecord.
         raw = executor.create_project_run(spec, run_id=record.id)
         record = replace(record, files=raw.job_files.manifest)
         persistence = RunPersistence(self, executor, record, spec=raw.spec)

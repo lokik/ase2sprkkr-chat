@@ -1,13 +1,13 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
-from ase2sprkkr.execution.job_files import JobFiles
+from ase2sprkkr.execution.run_files import RunFiles
 from ase2sprkkr.execution.base import RunState
 from ase2sprkkr.execution.run_record import RunRecord
 from ase2sprkkr.execution.run_model import Execution, WorkingDirectory, FileManifest, FileEntry, FileMapping
 from ase2sprkkr.execution.endpoint import ExecutorEndpoint, endpoint_for_executor
 from ase2sprkkr.execution.local import LocalExecutor
-from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.run_manager import RunManager
 from ase2sprkkr.execution.run_store import RunStore
 from ase2sprkkr.execution.psij import PsijExecutor, PsijRunner
 from ase2sprkkr.execution.remote import RemoteRunner
@@ -17,7 +17,7 @@ from ase2sprkkr.execution.remote_endpoint import RemoteEndpointExecutor
 class _AttachedRunner:
     def __init__(self, run):
         self.callback = None
-        self.job_files = JobFiles(run.files)
+        self.job_files = RunFiles(run.files)
         self.backend_id = run.execution.backend_id
         self.result = SimpleNamespace(return_code=0)
         self.return_code = 0
@@ -58,7 +58,7 @@ class _AttachExecutor(LocalExecutor):
 
 
 def test_manager_attach_forwards_initial_output_listener(tmp_path):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     manager.executors.register(_AttachExecutor())
     record = manager.new_record(task="SCF", directory=tmp_path)
     record = replace(

@@ -1,7 +1,7 @@
 """Immutable local file snapshots and historical file integrity.
 
 Pure file operations live here; run lifecycle and durable RunRecord updates
-remain the responsibility of ExecutionManager.
+remain the responsibility of RunManager.
 """
 
 from __future__ import annotations

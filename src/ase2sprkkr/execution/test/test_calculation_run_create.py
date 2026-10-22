@@ -1,7 +1,7 @@
 """The public run factory freezes execution before creating file state."""
 from ase2sprkkr.execution import (
-    CalculationRun, ExecutionSpec, ExecutionManager, Executors, FileManifest,
-    JobFiles, LaunchSpec, ProjectRepository, RunState,
+    CalculationRun, ExecutionSpec, RunManager, Executors, FileManifest,
+    RunFiles, LaunchSpec, ProjectRepository, RunState,
 )
 from ase2sprkkr.execution.base import Executor
 from ase2sprkkr.execution.local_process import select_mpi_spec
@@ -13,7 +13,7 @@ class _Raw:
         self.spec = spec
         self.callback = None
         self.state = RunState.NEW
-        self.job_files = JobFiles(FileManifest.from_spec(spec))
+        self.job_files = RunFiles(FileManifest.from_spec(spec))
 
 
 class _Executor(Executor):
@@ -50,7 +50,7 @@ def test_untracked_factory_chooses_only_mpi_input(tmp_path):
 def test_project_factory_reserves_only_chosen_input(tmp_path):
     projects = ProjectRepository(tmp_path / "projects")
     project = projects.create("MPI factory test")
-    manager = ExecutionManager(project_repository=projects, executors=Executors())
+    manager = RunManager(project_repository=projects, executors=Executors())
     run = CalculationRun.create(
         _spec(tmp_path), executor=_Executor(), project=(manager, project.id),
         task="SCF", process_result=lambda value: value,
@@ -76,7 +76,7 @@ def test_run_factory_resolves_only_once_for_untracked_and_project(tmp_path):
         if tracked:
             projects = ProjectRepository(tmp_path / "project-single-resolution")
             project = projects.create("Single resolution")
-            manager = ExecutionManager(project_repository=projects, executors=Executors())
+            manager = RunManager(project_repository=projects, executors=Executors())
             kwargs.update(project=(manager, project.id), task="SCF")
         run = CalculationRun.create(
             _spec(tmp_path), executor=executor,

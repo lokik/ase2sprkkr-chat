@@ -8,7 +8,7 @@ import stat
 import sys
 from threading import Event, Lock, Thread
 
-from .job_files import JobFiles
+from .run_files import RunFiles
 from .run_model import FileManifest
 from .base import (
     ExecutionOutcome,
@@ -42,7 +42,7 @@ class LocalRunner:
     def __init__(self, spec: ExecutionSpec, callback=None):
         # A runner receives the already-selected concrete launch variant.
         self.spec = spec
-        self.job_files = JobFiles(FileManifest.from_spec(spec))
+        self.job_files = RunFiles(FileManifest.from_spec(spec))
         self.callback = callback
         self.result = ExecutionOutcome.from_spec(spec)
 

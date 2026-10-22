@@ -1,10 +1,10 @@
 from ase2sprkkr.execution import RunStore
 
-from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.run_manager import RunManager
 
 
 def test_run_record_persists_task_and_schema(tmp_path):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     record = manager.new_record(
         task="spleed",
         input_definition="arpes",
