@@ -33,7 +33,7 @@ class _RawRunner(JobFilesOwner):
         self.exception = None
         self.failure_phase = None
         self.failure_message = None
-        self._initialize_job_files(FileManifest())
+        self._job_files = JobFiles(FileManifest())
 
     def prepare_submission(self):
         return None

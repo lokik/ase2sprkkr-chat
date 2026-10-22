@@ -14,7 +14,7 @@ from ase2sprkkr.execution import (
 )
 
 from ase2sprkkr.execution.manager import ExecutionManager
-from ase2sprkkr.execution.job_files import JobFilesOwner
+from ase2sprkkr.execution.job_files import JobFiles, JobFilesOwner
 
 
 class _Runner(JobFilesOwner):
@@ -29,7 +29,7 @@ class _Runner(JobFilesOwner):
         self.exception = None
         self.failure_phase = None
         self.failure_message = None
-        self._initialize_job_files(FileManifest.from_spec(spec))
+        self._job_files = JobFiles(FileManifest.from_spec(spec))
 
     @property
     def return_code(self):

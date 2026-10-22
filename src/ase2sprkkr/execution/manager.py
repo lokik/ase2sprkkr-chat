@@ -382,7 +382,10 @@ class ExecutionManager:
         output_listener=None,
     ):
         """Attach raw execution, then resume client-side postprocessing."""
-        record = self.store.get(run) if isinstance(run, str) else run
+        # Even a RunRecord supplied by the caller may predate a refresh or
+        # terminal download. Always attach from the current durable snapshot.
+        run_id = run if isinstance(run, str) else run.id
+        record = self.store.get(run_id)
         if record.execution.backend_id is None:
             raise RuntimeError(f"Run {record.id} has no backend reference")
         executor = self.executors.for_endpoint(record.execution.endpoint)

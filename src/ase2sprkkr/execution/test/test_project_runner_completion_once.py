@@ -47,7 +47,7 @@ class _Runner(JobFilesOwner):
     execution = None
 
     def __init__(self):
-        self._initialize_job_files(FileManifest())
+        self._job_files = JobFiles(FileManifest())
 
     def wait(self):
         self.state = RunState.FINISHED

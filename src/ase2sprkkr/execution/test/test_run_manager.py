@@ -17,7 +17,7 @@ from ase2sprkkr.execution import (
 )
 
 from ase2sprkkr.execution.manager import ExecutionManager
-from ase2sprkkr.execution.job_files import JobFilesOwner
+from ase2sprkkr.execution.job_files import JobFiles, JobFilesOwner
 from ase2sprkkr.execution.pool import Executors
 
 
@@ -25,7 +25,7 @@ class _RawRunner(JobFilesOwner):
     def __init__(self, spec, executor, on_submit=None):
         self.spec = spec
         self.executor = executor
-        self._initialize_job_files(FileManifest.from_spec(spec))
+        self._job_files = JobFiles(FileManifest.from_spec(spec))
         self.callback = None
         self.on_submit = on_submit
         self.state = RunState.NEW

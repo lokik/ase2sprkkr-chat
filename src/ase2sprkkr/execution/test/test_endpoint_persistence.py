@@ -1,5 +1,7 @@
 from threading import Event
 
+import pytest
+
 from ase2sprkkr.execution import (
     
     ExecutorEndpoint,
@@ -87,7 +89,8 @@ def test_manager_reconstructs_local_executor_after_restart(tmp_path):
     assert isinstance(executor, LocalExecutor)
 
 
-def test_attach_reconstructs_persisted_endpoint_without_task_reader(tmp_path):
+@pytest.mark.parametrize("by_id", [True, False], ids=["id", "stale-record"])
+def test_attach_reconstructs_persisted_endpoint_without_task_reader(tmp_path, by_id):
     class AttachedRunner:
         def __init__(self, run, executor):
             self.callback = None
@@ -143,6 +146,7 @@ def test_attach_reconstructs_persisted_endpoint_without_task_reader(tmp_path):
         endpoint=endpoint,
     )
     store.save(record)
+    stale = record
     record = first.transition(record, state=RunState.RUNNING, execution=record.execution.submitted("42"))
 
     executor = ReconstructedExecutor()
@@ -151,12 +155,13 @@ def test_attach_reconstructs_persisted_endpoint_without_task_reader(tmp_path):
     restarted = ExecutionManager(store, executors=executors)
 
     attached = restarted.attach(
-        record.id,
+        record.id if by_id else stale,
         process_result=lambda outcome: outcome,
     )
 
     assert attached.executor is executor
     assert executor.calls == [(record, None, None, False)]
+    assert attached.record.execution.backend_id == "42"
 
     attached.cancel()
 

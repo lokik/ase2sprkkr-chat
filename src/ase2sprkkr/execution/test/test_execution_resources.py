@@ -12,7 +12,7 @@ from ase2sprkkr.execution.base import (
     SubmissionNotStarted,
 )
 from ase2sprkkr.execution import FileManifest
-from ase2sprkkr.execution.job_files import JobFilesOwner
+from ase2sprkkr.execution.job_files import JobFiles, JobFilesOwner
 from ase2sprkkr.execution.postprocessing import CalculationRun
 from ase2sprkkr.execution.run_persistence import RunPersistence
 
@@ -85,7 +85,7 @@ class _Runner(JobFilesOwner):
         self.backend_id = None
         self.failure_phase = None
         self.failure_message = None
-        self._initialize_job_files(FileManifest())
+        self._job_files = JobFiles(FileManifest())
         self.result = ExecutionOutcome(
             input_file=None if spec is None else spec.input_file,
             output_file=None if spec is None else spec.output_file,
