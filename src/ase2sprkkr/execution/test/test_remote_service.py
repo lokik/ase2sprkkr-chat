@@ -53,7 +53,7 @@ def test_remote_id_is_opaque_backend_handle_without_lifecycle_state(tmp_path):
     [
         (RunState.UNKNOWN, None, None, None),
         (RunState.RUNNING, None, None, None),
-        (RunState.FINISHED, 0, None, None, None, None),
+        (RunState.FINISHED, 0, None, None),
         (RunState.CANCELLED, -15, None, None),
         (RunState.FAILED, 127, FailurePhase.LAUNCH, "spawn failed"),
         (RunState.FAILED, 7, FailurePhase.EXECUTION, "job failed"),
