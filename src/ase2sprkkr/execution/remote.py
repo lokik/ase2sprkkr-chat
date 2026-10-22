@@ -148,20 +148,15 @@ class RemoteRunner(ManagedRunner):
         self._state = RunState.DOWNLOADING
         try:
             from .run_model import FileManifest
-            if status.get("files") is not None:
-                self._files = JobFiles.merge_terminal_files(
-                    self._files, FileManifest(**status["files"]),
-                )
-            freeze_error = (
-                RuntimeError(status["materialization_error"])
-                if status.get("materialization_error") else None
+            frozen = (
+                FileManifest(**status["files"])
+                if status.get("files") is not None else self._files
             )
-            self._files, transfer_error = await JobFiles.collect_remote(
-                self._files, self.file_handler, self.result, self.spec,
+            self._files, transfer_error = await JobFiles.collect_terminal_remote(
+                self._files, frozen, self.file_handler, self.result, self.spec,
                 required=backend_state == RunState.FINISHED,
+                materialization_error=status.get("materialization_error"),
             )
-            if freeze_error is not None:
-                raise freeze_error
             if transfer_error is not None:
                 raise transfer_error
         except Exception as exc:

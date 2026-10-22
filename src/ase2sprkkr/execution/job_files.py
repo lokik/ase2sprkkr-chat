@@ -83,6 +83,22 @@ class JobFiles:
         return received._map_files(preserve)
 
 
+    @classmethod
+    async def collect_terminal_remote(
+        cls, previous, frozen, handler, outcome, spec, *,
+        required, materialization_error=None,
+    ):
+        """Reconcile frozen membership and collect; retain partial delivery."""
+        manifest = cls.merge_terminal_files(previous, frozen)
+        manifest, transfer_error = await cls.collect_remote(
+            manifest, handler, outcome, spec, required=required,
+        )
+        error = (
+            RuntimeError(materialization_error)
+            if materialization_error else transfer_error
+        )
+        return manifest, error
+
     @staticmethod
     async def collect_remote(manifest, handler, outcome, spec, *, required):
         """Coordinate per-file download and stream verification for a run.
