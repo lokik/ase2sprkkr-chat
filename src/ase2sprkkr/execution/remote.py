@@ -177,12 +177,13 @@ class RemoteRunner(ManagedRunner):
 
     async def _prepare_async(self):
         try:
-            mapping = self.job_files.manifest.mapping if self.job_files.manifest is not None else None
+            files = self.job_files.snapshot()
+            mapping = files.mapping
             if mapping is None:
                 mapping = await self.executor.resolve_mapping(self.spec.launch)
             remote_directory = mapping.map_path(self.spec.directory)
             await self.executor.transport.run(("mkdir", "-p", "--", remote_directory))
-            manifest = await self.file_handler.prepare(mapping, self.spec, self.job_files.manifest)
+            manifest = await self.file_handler.prepare(mapping, self.spec, files)
             # The runner owns backend identity, command construction and the
             # submission protocol. FileHandler knows only file locations.
             mapped = {entry.local_path: entry.remote_path

@@ -144,19 +144,20 @@ class LocalProjectRunner(ManagedRunner):
             *self.spec.output_files, *self.spec.cache_files,
         ):
             file_path(value, self.spec.directory, flush=True)
+        files = self.job_files.snapshot()
         return {
             "executor": "local",
             "id": self._run_id,
             "detached": True,
             "directory": os.fspath(self.spec.directory),
             **self.spec.command_request(),
-            "input_file": self.job_files.manifest.input_file,
-            "stdin": (None if self.job_files.manifest.stdin is None
-                      else self.job_files.manifest.stdin.local_path),
-            "output_file": self.job_files.manifest.output_file,
-            "error_file": (None if self.job_files.manifest.stderr is None
-                           else self.job_files.manifest.stderr.local_path),
-            "files": asdict(self.job_files.manifest),
+            "input_file": files.input_file,
+            "stdin": (None if files.stdin is None
+                      else files.stdin.local_path),
+            "output_file": files.output_file,
+            "error_file": (None if files.stderr is None
+                           else files.stderr.local_path),
+            "files": asdict(files),
         }
 
     def prepare_submission(self):
