@@ -6,6 +6,23 @@ import re
 
 
 class SprKkrOutputParser(ProcessOutputParser):
+    _common_output_line = re.compile(
+        rb"VERSION|programm execution|^\s*from file:|"
+        rb"shape function file not available:|^\s*FILES:\s*$"
+    )
+    _sfn_file = re.compile(r"^\s*from file:\s*(.*?)\s*$")
+    _missing_sfn_file = re.compile(
+        r"^\s*shape function file not available:\s*(.*?)\s*$"
+    )
+
+    @staticmethod
+    def _register_sfn(result, filename, generated):
+        """Register an SFN file and whether this run had to generate it."""
+
+        result.files.add_file("SFN", filename, "sfn")
+        if generated or result.sfn_generated is None:
+            result.sfn_generated = generated
+
     async def read_commons(self, stdout, result):
         out = await self.parse_files(stdout, result)
         return out
@@ -13,23 +30,22 @@ class SprKkrOutputParser(ProcessOutputParser):
     async def parse_files(self, stdout, result):
         # Read version info
         try:
-            version = await readline_until(stdout, lambda line: b"VERSION" in line, can_end=False)
-            version = version.split()
-            result.program_info = {"version": version[3], "executable": version[1]}
+            result.program_info = {}
+            while True:
+                line = await readline_until(stdout, self._common_output_line.search, can_end=False)
 
-            # Read start time
-            started = await readline_until(stdout, lambda line: b"programm execution" in line, can_end=False)
-            started = re.sub("[a-z]", "", started).strip()
-            result.program_info["start_time"] = datetime.datetime.strptime(started, "%d/%m/%Y %H:%M:%S")
-
-            # Wait until the file marker line
-            await readline_until(stdout, lambda line: line.startswith(b" ffffffffff"), can_end=False)
-            await stdout.readline()
-            out = await stdout.readline()
-            if out.decode("utf8").strip() != "FILES:":
-                for i in range(10):
-                    print(await stdout.readline())
-                raise ValueError(f"Unexpected line: {out}")
+                if "version" not in result.program_info and "VERSION" in line:
+                    version = line.split()
+                    result.program_info.update(version=version[3], executable=version[1])
+                elif "programm execution" in line:
+                    started = re.sub("[a-z]", "", line).strip()
+                    result.program_info["start_time"] = datetime.datetime.strptime(started, "%d/%m/%Y %H:%M:%S")
+                elif match := self._missing_sfn_file.match(line):
+                    self._register_sfn(result, match.group(1), True)
+                elif match := self._sfn_file.match(line):
+                    self._register_sfn(result, match.group(1), False)
+                elif line.strip() == "FILES:":
+                    break
 
             await stdout.readline()  # skip empty line
 

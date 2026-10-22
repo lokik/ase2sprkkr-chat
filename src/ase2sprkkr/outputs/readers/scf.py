@@ -64,14 +64,30 @@ class ScfResult(TaskResult):
     It also allows to plot the convergence of values during iterations.
     """
 
+    produces_potential = True
+
     @cached_property
     def calculator(self):
         """The calculator that has the new (output) potential assigned - i.e. that
         can be used for further calculations with the (hopefully) converged wavefunctions etc."""
         if self._calculator:
             return self._calculator.copy_with_potential(self.potential_filename)
-        else:
-            SPRKKR(potential=self.potential_filename)
+        return SPRKKR(potential=self.potential_filename)
+
+    @cached_property
+    def sfn_filename(self):
+        """Shape-function file reported by SPR-KKR, if any."""
+        return self.path_to("SFN") if "SFN" in self.files else None
+
+    @cached_property
+    def sfn(self):
+        """Shape functions used by a full-potential calculation."""
+        sfn_file = self._sfn_file
+        return sfn_file.parsed_file() if sfn_file is not None else None
+
+    @cached_property
+    def _sfn_file(self):
+        return self.files.set_file_type("SFN", "sfn") if "SFN" in self.files else None
 
     @property
     def potential_filename(self):
@@ -82,9 +98,22 @@ class ScfResult(TaskResult):
     def start_potential_filename(self):
         return super().potential_filename
 
-    @property
+    @cached_property
     def start_potential(self):
-        return Potential.from_file(self.potential_filename)
+        """Potential used as input for the SCF calculation."""
+
+        return Potential.from_file(self.start_potential_filename)
+
+    @property
+    def any_potential(self):
+        """Return the parsed result potential, falling back to the input one."""
+
+        for attribute in ("potential", "start_potential"):
+            try:
+                return getattr(self, attribute)
+            except (AttributeError, KeyError, OSError, ValueError):
+                pass
+        return None
 
     @property
     def energy(self):
@@ -139,30 +168,30 @@ class ScfResult(TaskResult):
             [
                 generated_output(
                     "Converged",
-                    lambda _c: str(self.last_iteration.converged()),
+                    lambda _section: str(self.last_iteration.converged()),
                     info="Whether the final SCF iteration reached convergence.",
                 ),
                 generated_output(
                     "Number of iterations",
-                    lambda _c: len(self.iterations),
+                    lambda _section: len(self.iterations),
                     info="Number of completed SCF iterations.",
                 ),
                 generated_output(
                     "Fermi energy",
-                    lambda _c: self.last_iteration.energy.EF(),
+                    lambda _section: self.last_iteration.energy.EF(),
                     plot=lambda _option, **kwargs: self.plot(("energy", "EF"), **kwargs),
                     info="Fermi energy at the final SCF iteration.",
                 ),
                 generated_output(
                     "Error",
-                    lambda _c: self.last_iteration.error(),
+                    lambda _section: self.last_iteration.error(),
                     plot=lambda _option, **kwargs: self.plot("error", **kwargs),
                     info="Convergence error at the final SCF iteration.",
                     display_name="Convergence error",
                 ),
                 generated_output(
                     "Data",
-                    lambda _c: self,
+                    lambda _section: self,
                     result_class=DataOutputOption,
                     info="Complete parsed SCF result data.",
                     display_name="SCF result data",
@@ -172,6 +201,7 @@ class ScfResult(TaskResult):
 
     @property
     def output_values(self):
+        self._sfn_file
         output_values = super().output_values
         output_values.update(self._scf_output_values.items())
         return output_values
@@ -265,7 +295,12 @@ scf_section = Section(
             [
                 PV(("EF", "fermi"), float, info="Fermi energy"),
                 PV(("ETOT", "total"), float, info="Total energy"),
-                PV(("EMIN", "band_states_min"), float, info="Bottom of energy contour for band states"),
+                PV(
+                    ("EMIN", "band_states_min"),
+                    float,
+                    info="Bottom of energy contour for band states",
+                    is_required=False,
+                ),
                 PV(("ESCBOT", "semi_core_min"), float, info="Lower limit for semi-core states", is_required=False),
                 PV(("ECTOP", "core_max"), float, info="Upper limit for core states", is_required=False),
             ],
@@ -283,6 +318,11 @@ class ScfOutputParser(SprKkrOutputParser):
     This class reads and parses the output of the SCF task of the SPR-KKR.
     """
 
+    _iteration_event_line = re.compile(
+        rb"EMIN   = |^\s*from file:|shape function file not available:|"
+        rb"SPRKKR-run for:"
+    )
+
     def set_print_output(self, print_output):
         self.print_info = print_output == "info"
         self.print_output = print_output and not self.print_info
@@ -297,22 +337,32 @@ class ScfOutputParser(SprKkrOutputParser):
             _err_or_time = re.compile(rb"execution time for last iteration| ERR.*EF")
 
             while True:
-                out = {}
-                line = await readline_until(stdout, lambda line: b"EMIN   = " in line)
+                out = {"energy": {}}
+                line = await readline_until(
+                    stdout, self._iteration_event_line.search
+                )
                 if not line:
                     break
 
-                out["energy"] = {"EMIN": float(line.split("=")[1])}
-                line = await stdout.readline()
-                if b"ESCBOT" in line:
-                    out["energy"]["ESCBOT"] = float(line.split(b"=")[1])
-                    line = await stdout.readline()
-                if b"ECTOP" in line:
-                    out["energy"]["ECTOP"] = float(line.split(b"=")[1])
+                while "SPRKKR-run for:" not in line:
+                    if "EMIN   = " in line:
+                        out["energy"]["EMIN"] = float(line.split("=")[1])
+                        line = await stdout.readline()
+                        if b"ESCBOT" in line:
+                            out["energy"]["ESCBOT"] = float(line.split(b"=")[1])
+                            line = await stdout.readline()
+                        if b"ECTOP" in line:
+                            out["energy"]["ECTOP"] = float(line.split(b"=")[1])
+                    elif match := self._missing_sfn_file.match(line):
+                        self._register_sfn(result, match.group(1), True)
+                    elif match := self._sfn_file.match(line):
+                        self._register_sfn(result, match.group(1), False)
 
-                line = await readline_until(stdout, lambda line: b"SPRKKR-run for: " in line)
-                if not line:
-                    raise EOFError()
+                    line = await readline_until(
+                        stdout,
+                        self._iteration_event_line.search,
+                        can_end=False,
+                    )
                 line = line.strip()
                 if first and self.print_info:
                     print(line)
@@ -366,7 +416,7 @@ class ScfOutputParser(SprKkrOutputParser):
                         f"orbital moment: {out['moment']['orbital']:>13.6e} "
                     )
 
-            if self.print_output == "info":
+            if self.print_info:
                 if not iterations:
                     print(
                         "ERROR: No iteration has been finished. There is probably an error in the input files, please, examine the SPR-KKR output file."

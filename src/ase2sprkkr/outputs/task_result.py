@@ -1,11 +1,10 @@
-"""This module contains classes, used by parsers of the output files"""
+"""This module contains classes used by parsers of SPR-KKR output files."""
 
+import asyncio
 import os
-import re
-import importlib
-from . import readers
-from ..common.decorators import cached_property, cached_class_property, maybeclassmethod
-from ..common.process_output_reader import run_coro_sync
+import pyparsing as pp
+from ..common.warnings import DataValidityError
+from ..common.decorators import cached_property, maybeclassmethod
 from ..common.file_utils import FilePath, filename_from_file
 from ..potentials.potentials import Potential
 from ..input_parameters import input_parameters as input_parameters
@@ -15,9 +14,27 @@ from .result_options import create_files_section
 class TaskResult:
     """A base class for a result of a runned task (kkrscf executable)"""
 
-    def __init__(self, input_parameters, calculator, directory, output_file=None, input_file=None):
+    produces_potential = False
+    """Whether this result produces a new potential usable by later tasks."""
+
+    sfn_generated = None
+    """Whether this calculation generated rather than reused its SFN file."""
+
+    def __init__(
+        self,
+        input_parameters,
+        calculator,
+        directory,
+        output_file=None,
+        input_file=None,
+        task_name=None,
+    ):
         self._input_parameters = input_parameters
+        self._detected_input_parameters = None
         self._calculator = calculator
+        self._task_name = (
+            str(task_name).strip().lower() if task_name is not None else None
+        )
         self.files = create_files_section(self)
         self._directory = filename_from_file(directory, None, realpath=True)
 
@@ -31,6 +48,8 @@ class TaskResult:
 
         input_filename = filename_from_file(input_file, None)
         self.input_file = FilePath(input_filename, self.directory) if input_filename is not None else None
+        if self.input_file is not None:
+            self.files.add_file("input", self.input_file)
 
     @cached_property
     def directory(self):
@@ -50,26 +69,67 @@ class TaskResult:
 
     @property
     def task_name(self):
-        return self.input_parameters.task_name
+        if self._task_name is not None:
+            return self._task_name
+        parameters = self.input_parameters
+        task = parameters.task_definition if parameters is not None else None
+        if task is None:
+            raise ValueError("Cannot determine the task of this result from its input")
+        return str(task.name).strip().lower()
 
     @cached_property
     def input_parameters(self):
-        if self._input_parameters:
+        if self._input_parameters is not None:
             return self._input_parameters
-        if self.input_parameters_file:
-            return input_parameters.InputParameters.from_file(self.input_parameters_file)
+        source = self.input_parameters_file
+        if source is None:
+            return None
+        if self._detected_input_parameters is not None:
+            return self._detected_input_parameters
+        # Explicit input files remain authoritative: parsing failures surface.
+        return input_parameters.InputParameters.from_file(source)
+
+    def _candidate_input_files(self):
+        """Infer only a unique or explicitly paired native input file."""
+        import glob
+
+        directory = self.directory
+        if not os.path.isdir(directory):
+            return ()
+        candidates = sorted({
+            path for suffix in (".inp", ".in")
+            for path in glob.glob(os.path.join(directory, "*" + suffix))
+        })
+        if self.output_file is not None:
+            stem = os.path.splitext(os.path.basename(os.fspath(self.output_file)))[0]
+            for suffix in (".inp", ".in"):
+                paired = os.path.join(directory, stem + suffix)
+                if paired in candidates:
+                    return (paired,)
+        return tuple(candidates) if len(candidates) == 1 else ()
 
     @cached_property
     def input_parameters_file(self):
         if "input" in self.files:
             filename = self.path_to("input")
-            if os.path.isfile(filename):
-                return filename
+            return filename if os.path.isfile(filename) else None
+        for filename in self._candidate_input_files():
+            try:
+                parameters = input_parameters.InputParameters.from_file(filename)
+            except (OSError, UnicodeError, ValueError, pp.ParseBaseException, DataValidityError):
+                continue
+            if self._task_name is not None and parameters.task_name != self._task_name.upper():
+                continue
+            self._detected_input_parameters = parameters
+            self.files.add_file("input", filename)
+            return filename
+        return None
 
     @cached_property
     def potential_filename(self):
         """New (output) potential file name"""
-        potfil = self.input_parameters.CONTROL.POTFIL()
+        parameters = self.input_parameters
+        potfil = parameters.CONTROL.POTFIL() if parameters is not None else None
         if not potfil:
             potfil = self.files["potential"]() if "potential" in self.files else None
         if not potfil:
@@ -83,12 +143,46 @@ class TaskResult:
         """The new (output) potential - that contains the converged charge density etc."""
         return Potential.from_file(self.potential_filename)
 
+    @property
+    def any_potential(self):
+        """Return the parsed potential (SCF then try output and then input) """
+        try:
+            return self.potential
+        except (AttributeError, KeyError, OSError, ValueError):
+            return None
+
+    def parse_result_file(self, file, potential=None):
+        """Parse a registered structured result file in this calculation context."""
+
+        from ..result_files import ResultFile
+
+        if potential is None:
+            potential = self.any_potential
+        return ResultFile.from_file(
+            file.path(),
+            try_only=file.file_type,
+            potential=potential,
+        )
+
     def new_task(self, task):
-        out = self._calculator.copy_with_potential(self.potential_filename)
-        out.input_parameters = task
-        if isinstance(task, str) and task.lower() == "jxc":
-            out.input_parameters.set("EMIN", self.last_iteration.energy.EMIN())
-        return out
+        """Create a fresh calculator for *task* using values from this result."""
+        from ..input_parameters.task_definition import TaskDefinition
+        from ..sprkkr.calculator import SPRKKR
+
+        task = (
+            task
+            if isinstance(task, TaskDefinition)
+            else input_parameters.InputParameters.task_registry[task]
+        )
+        parameters = (
+            input_parameters.InputParameters.input_parameters_registry.create_from_result(
+                task, self
+            )
+        )
+        return SPRKKR(
+            potential=self.potential_filename,
+            input_parameters=parameters,
+        )
 
     def complete(self, error, return_code):
         self.error = error
@@ -111,130 +205,121 @@ class TaskResult:
         task_files.update(common_files)
         return task_files
 
-    @cached_class_property
-    def _match_task_regex(self):
-        return re.compile(r" TASK\s+ = ([A-Z]+)\s+\n")
-
     @classmethod
     def from_file(cls, file):
-        def read_output_for(task):
-            process = KkrOutputReader.class_for_task(task or "")
-            process = process(None, None, os.path.dirname(file))
-            f.seek(0)
-            return process.read_from_file(f)
+        """Read a standalone SPR-KKR output using registry-owned detection."""
+        from .reader_registry import reader_registry
 
-        with open(file, "rb") as f:
-            raw_out = f.read()
-            matches = cls._match_task_regex.search(raw_out.decode("utf8"))
-            typ = matches[1] if matches and matches[1] != "NONE" else None
-            if typ is None:
-                if b"Components of Dzyaloshinski-Moriya vector Dij" in raw_out:
-                    typ = "jxc"
-
-            out = read_output_for(typ)
-            if typ is None:
-                if "DOS" in out.files:
-                    with open(file, "rb") as f:
-                        out = read_output_for("DOS")
-            return out
-
-
-class KkrProcess:
-    def __init__(self, reader, output_parser, coroutine, result, callback=None):
-        self.reader = reader
-        self.output_parser = output_parser
-        self.coroutine = coroutine
-        self.result = result
-        self.callback = callback
-
-    def run(self):
-        result = self.result
-        try:
-            result, error, return_code = run_coro_sync(self.coroutine)
-            self.result.complete(error, return_code)
-        finally:
-            if self.callback:
-                self.callback(self.result)
-        return self.result
-
-    def stop_the_process(self):
-        self.output_parser.stop_the_process()
-
-    async def run_async(self):
-        result, error, return_code = await self.coroutine
-        self.result.complete(error, return_code)
-        return self.result
+        filename = os.fspath(file)
+        task = reader_registry.detect(filename)
+        reader_class = reader_registry.class_for_task_name(task)
+        reader = reader_class(
+            None,
+            None,
+            os.path.dirname(filename),
+            task_name=task,
+        )
+        return reader.read_from_file(filename)
 
 
 class KkrOutputReader:
-    """Class, that runs a process and reads its output using the underlying
-    output parser (see :class:`ase2sprkkr.common.process_output_reader.ProcessOutputParser`)
-    and return the appropriate TaskResult.
+    """Parse SPR-KKR output streams into a TaskResult.
 
-    Descendants should define parser_class and result_class property.
+    Execution is handled by :mod:`ase2sprkkr.execution`; this class owns only
+    task-specific parsing and result construction.
     """
 
-    def __init__(self, input_parameters, calculator, directory, print_output=False, read_callback=None):
+    def __init__(
+        self,
+        input_parameters,
+        calculator,
+        directory,
+        print_output=False,
+        task_name=None,
+    ):
         self.input_parameters = input_parameters
-        """ Input parameters, that command to read the output (thus probably the ones, that
-      run the process that produced the output. It is used e.g. for determining the potential file,
-      which belongs to the output.
-      """
         self.calculator = calculator
         self.directory = directory
-        """ Calculator, that can be used for further processing of the results. """
-        self.parser = self.parser_class(print_output, read_callback)
+        task = input_parameters.task_definition if input_parameters is not None else None
+        self.task_name = (
+            task_name
+            if task_name is not None
+            else task.name
+            if task is not None
+            else None
+        )
+        self.parser = self.parser_class(print_output)
 
-    def _create_result(self, output_file, input_file=None):
-        """Create an object that stores results of the KKR output parsing."""
+    @property
+    def print_output(self):
+        """Whether raw process output should be mirrored to the terminal."""
+        return bool(self.parser.print_output)
+
+    @classmethod
+    def matches_output(cls, output):
+        """Return whether legacy output without a task marker belongs to this reader."""
+        return False
+
+    def create_result(self, output_file, input_file=None):
+        """Create the TaskResult before parsing starts."""
         return self.result_class(
-            self.input_parameters, self.calculator, self.directory, output_file=output_file, input_file=input_file
+            self.input_parameters,
+            self.calculator,
+            self.directory,
+            output_file=output_file,
+            input_file=input_file,
+            task_name=self.task_name,
         )
 
-    def _create_process(self, coroutine, result, callback=None):
-        """Create an object that can run the desired process (either reading from file or running a process)
+    async def parse_streams(self, stdout, stderr, result):
+        """Parse simultaneously growing stdout and stderr streams.
 
-        Returns
-        -------
-        KkrProcess
-            An object that can run the process and return the result.
+        Parser failures are returned to the execution backend rather than
+        raised immediately. The backend must first observe the process exit
+        status: a truncated output stream is often only a symptom of the
+        executable having failed, and that failure is the more useful error.
         """
-        return KkrProcess(self, self.parser, coroutine, result, callback=callback)
+        return await asyncio.gather(
+            self.parser.read_output(stdout, result),
+            self.parser.read_error(stderr, result),
+            return_exceptions=True,
+        )
 
-    def create_process(self, cmd, outfile, input_file=None, callback=None, **kwargs):
-        """Create an object that takes care of running the command and parsing the results"""
-        result = self._create_result(filename_from_file(outfile, None), input_file)
-        coroutine = self.parser.run_async(cmd, outfile, self.directory, [result], **kwargs)
-        return self._create_process(coroutine, result, callback=callback)
+    def complete_result(self, result, output, error, return_code):
+        """Finalize once, prioritizing process failures over parser failures."""
+        if return_code == 0:
+            if isinstance(output, BaseException):
+                raise output
+            if isinstance(error, BaseException):
+                raise error
+
+        # Nonzero process exit must be reported even if parsing its truncated
+        # streams failed. Never hand a parser exception to parser.result().
+        parsed_output = None if isinstance(output, BaseException) else output
+        parsed_error = None if isinstance(error, BaseException) else error
+        _output, parsed_error, parsed_code = self.parser.result(
+            parsed_output, parsed_error, return_code,
+        )
+        if isinstance(output, BaseException):
+            raise output
+        if isinstance(error, BaseException):
+            raise error
+        result.complete(parsed_error, parsed_code)
+        return result
 
     @maybeclassmethod
     def read_from_file(self, cls, output, error=None, return_code=0, input_file=None, directory=None):
-        """Creates an object that takes care of reading and parsing of the output of a sprkkr process"""
+        """Parse output of an already finished SPR-KKR calculation."""
         if self is None:
             self = cls(None, None, directory)
-        result = self._create_result(output, input_file)
-        output_source = output if hasattr(output, "read") else result.path_to("output")
+        result = self.create_result(output, input_file)
+        output_source = (
+            result.path_to("output")
+            if isinstance(output, (str, bytes, os.PathLike)) else output
+        )
 
-        coroutine = self.parser.read_output_file(output_source, error, [result], return_code)
-        return self._create_process(coroutine, result).run()
-
-    @staticmethod
-    def class_for_task(task):
-        if not task:
-            return DefaultOutputReader
-        try:
-            mod = importlib.import_module(f".{task.lower()}", readers.__name__)
-            clsname = task.title() + "OutputReader"
-            cls = getattr(mod, clsname)
-            if not cls:
-                raise Exception(
-                    f"Can not determine the class to read the results of task {task}"
-                    "No {clsname} class in the module {oo.__name__}.{task}"
-                )
-        except ModuleNotFoundError:
-            cls = DefaultOutputReader
-
-        return cls
-
-
-from ..outputs.readers.default import DefaultOutputReader  # NOQA
+        _parsed_output, parsed_error, parsed_return_code = self.parser.read_from_file(
+            output_source, error, [result], return_code
+        )
+        result.complete(parsed_error, parsed_return_code)
+        return result
