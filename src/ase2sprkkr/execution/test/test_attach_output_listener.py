@@ -14,6 +14,8 @@ from ase2sprkkr.execution.remote_endpoint import RemoteEndpointExecutor
 
 class _AttachedRunner:
     def __init__(self, run):
+        self.callback = None
+        self.files = run.files
         self.backend_id = run.execution.backend_id
         self.result = SimpleNamespace(return_code=0)
         self.state = RunState.RUNNING
@@ -54,6 +56,7 @@ class _AttachExecutor(LocalExecutor):
 
 def test_manager_attach_forwards_initial_output_listener(tmp_path):
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager.executors.register(_AttachExecutor())
     record = manager.new_record(task="SCF", directory=tmp_path)
     record = replace(
         record, state=RunState.RUNNING,
@@ -64,7 +67,6 @@ def test_manager_attach_forwards_initial_output_listener(tmp_path):
     output = []
     runner = manager.attach(
         record,
-        executor=_AttachExecutor(),
         process_result=lambda result: result,
         output_listener=lambda text, kind: output.append((text, kind)),
     )
