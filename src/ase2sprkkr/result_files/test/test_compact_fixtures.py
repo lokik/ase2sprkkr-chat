@@ -130,9 +130,9 @@ def test_compact_large_native_example(tmp_path, original, expected_mode):
         if original.startswith("FePt.new_BSFEK_"):
             import re
             original_boundaries = re.findall(
-                r"(?m)^\\s*INDKDIR\\s+(\\d+)\\s*$", text)
+                r"(?m)^\s*INDKDIR\s+(\d+)\s*$", text)
             compact_boundaries = re.findall(
-                r"(?m)^\\s*INDKDIR\\s+(\\d+)\\s*$", reduced)
+                r"(?m)^\s*INDKDIR\s+(\d+)\s*$", reduced)
             assert len(compact_boundaries) == len(original_boundaries)
             assert list(map(int, compact_boundaries)) == sorted(
                 set(map(int, compact_boundaries)))
