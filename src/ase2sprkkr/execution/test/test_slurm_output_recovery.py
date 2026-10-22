@@ -2,9 +2,8 @@
 
 import asyncio
 import os
+import time
 from datetime import datetime, timezone
-from dataclasses import replace
-from types import SimpleNamespace
 
 from ase2sprkkr.execution import FileEntry, FileManifest, RunState, RunStore
 from ase2sprkkr.execution.base import SubmissionRecovery
@@ -106,7 +105,7 @@ def test_remote_probe_does_not_consult_local_files(tmp_path):
     class RemoteTransport:
         async def file_signature(self, path):
             assert path == "/cluster/out"
-            return (0, int(datetime.now(timezone.utc).timestamp() * 1e9))
+            return (0, time.time_ns() + 1_000_000_000)
     manifest = FileManifest(
         stdout=FileEntry(local_path=str(tmp_path / "out"), remote_path="/cluster/out"),
         mapping=FileMapping(str(tmp_path), "/cluster"),
