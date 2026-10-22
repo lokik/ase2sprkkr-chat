@@ -193,10 +193,18 @@ class FileManifest:
 
         directory = os.path.abspath(os.fspath(spec.directory))
 
+        primary_input = file_path(getattr(spec, "input_file", None), directory)
         inputs = declared_file_paths(
             (getattr(spec, "input_file", None), *getattr(spec, "input_files", ())),
             directory,
         )
+        # The primary calculation input is mandatory even if a TaskFile
+        # reference incorrectly marks this same path as optional.
+        if primary_input is not None:
+            inputs = tuple(
+                (path, required or path == primary_input)
+                for path, required in inputs
+            )
         stdout = file_path(getattr(spec, "output_file", None), directory)
         stderr = file_path(getattr(spec, "error_file", None), directory)
         # Output duplicates are ambiguous: the later execution manifest

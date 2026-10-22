@@ -396,3 +396,25 @@ def test_manifest_rejects_named_stdin_write_collisions(tmp_path, colliding_role)
     )
     with pytest.raises(ValueError, match="Duplicate file declaration"):
         FileManifest.from_spec(spec)
+
+
+def test_primary_input_is_required_even_if_taskfile_alias_is_optional(tmp_path):
+    from types import SimpleNamespace
+    from ase2sprkkr.input_parameters.task_definition import TaskFile
+
+    primary = tmp_path / "main.inp"
+    optional = tmp_path / "auxiliary.dat"
+    spec = SimpleNamespace(
+        directory=str(tmp_path),
+        input_file=TaskFile(primary, optional=True),
+        input_files=(TaskFile(primary, optional=True), TaskFile(optional, optional=True)),
+        stdin=None, output_file=None, error_file=None,
+        output_files=(), cache_files=(),
+    )
+
+    manifest = FileManifest.from_spec(spec)
+    assert [(entry.local_path, entry.optional) for entry in manifest.inputs] == [
+        (str(primary), False),
+        (str(optional), True),
+    ]
+    assert FileManifest(**asdict(manifest)) == manifest
