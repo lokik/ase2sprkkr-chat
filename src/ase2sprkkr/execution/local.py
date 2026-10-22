@@ -70,11 +70,6 @@ class LocalRunner:
         raise NotImplementedError("Local execution cannot detach observation")
 
     @property
-    def files(self):
-        """Untracked local processes have no persisted file manifest."""
-        return None
-
-    @property
     def state(self):
         return self._state
 
