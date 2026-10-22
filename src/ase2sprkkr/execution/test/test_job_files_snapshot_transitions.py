@@ -99,7 +99,7 @@ def test_concurrent_persisted_download_failure_overrides_stale_success(tmp_path)
     ))
     # Another client has already persisted a failed transfer, while the
     # completing client still holds the previous pending manifest.
-    current = JobFiles(record.files).update_availability(record, manager.store, path, "failed", "lost download")
+    current = JobFiles.update_availability(record, manager.store, path, "failed", "lost download")
     completed = manager.complete(
         record, state=RunState.FINISHED, files_available=False,
         return_code=0,
@@ -121,7 +121,7 @@ def test_concurrent_delivery_does_not_force_failed_completion(tmp_path):
     record = manager.store.save(manager.new_record(
         task="DOS", directory=tmp_path, files=manifest,
     ))
-    current = JobFiles(record.files).update_availability(record, manager.store, path, "available")
+    current = JobFiles.update_availability(record,record, manager.store, path, "available")
     completed = manager.complete(
         record, state=RunState.FINISHED, files_available=False, return_code=0,
     )
@@ -213,7 +213,7 @@ def test_stale_job_files_updater_preserves_other_file_status(tmp_path):
             FileEntry(second, availability_state="pending"),
         )),
     ))
-    first_update = JobFiles(record.files).update_availability(record, manager.store, first, "available")
+    first_update = JobFiles.update_availability(record, manager.store, first, "available")
     second_update = JobFiles(record.files).update_availability(
         record, manager.store, second, "failed", "missing",
     )
