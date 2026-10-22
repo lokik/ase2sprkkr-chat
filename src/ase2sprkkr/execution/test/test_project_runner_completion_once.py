@@ -194,7 +194,9 @@ def test_terminal_record_deduplicates_after_recreating_persistence():
     restarted = PersistentRun(manager, executor, first.record)
     assert restarted.completed(raw) is RunState.FINISHED
     assert manager.completions == 1
-    assert executor.acknowledgements == 1
+    # Terminal persistence is deduplicated; ACK deliberately retries after
+    # reconstructing a client, since its previous delivery is not durable.
+    assert executor.acknowledgements == 2
 
 
 def test_unknown_is_observation_not_terminal_state():
