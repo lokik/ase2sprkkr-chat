@@ -21,11 +21,6 @@ from ..common.async_utils import run_coro_sync as _run_sync
 
 
 
-def _file_path(value, directory=None):
-    # Local project submission flushes file objects before publishing paths.
-    return file_path(value, directory, flush=True)
-
-
 def local_manifest(files, status):
     """Interpret the supervisor's frozen stream availability; never scan globs.
 
@@ -148,20 +143,23 @@ class LocalProjectRunner(ManagedRunner):
 
     def _request(self):
         # Flush supplementary streams without deriving file membership again.
-        for values in (self.spec.input_files, self.spec.output_files,
-                       self.spec.cache_files):
-            for value in values:
-                _file_path(value, self.spec.directory)
+        for value in (
+            self.spec.stdin, *self.spec.input_files,
+            *self.spec.output_files, *self.spec.cache_files,
+        ):
+            file_path(value, self.spec.directory, flush=True)
         return {
             "executor": "local",
             "id": self._run_id,
             "detached": True,
             "directory": os.fspath(self.spec.directory),
             **self.spec.command_request(),
-            "input_file": self.result.input_file,
-            "stdin": _file_path(self.spec.stdin, self.spec.directory),
-            "output_file": self.result.output_file,
-            "error_file": self.result.error_file,
+            "input_file": self._files.input_file,
+            "stdin": (None if self._files.stdin is None
+                      else self._files.stdin.local_path),
+            "output_file": self._files.output_file,
+            "error_file": (None if self._files.stderr is None
+                           else self._files.stderr.local_path),
             "files": asdict(self._files),
         }
 

@@ -416,6 +416,37 @@ class FileManifest:
             return failures[0].availability_message
         return None
 
+    def with_mapping(self, mapping: FileMapping):
+        """Resolve all roles once and reject any change to a reserved target.
+
+        FileManifest owns placement. Reservation and staging must use this
+        identical validation before any file transfer takes place.
+        """
+        if self.mapping is not None and self.mapping != mapping:
+            raise ValueError("Submission mapping differs from reserved mapping")
+
+        def mapped(entry):
+            if entry is None or entry.local_path is None:
+                return entry
+            remote = mapping.map_path(entry.local_path)
+            if entry.remote_path is not None and entry.remote_path != remote:
+                raise ValueError("Submission path differs from reserved path")
+            return entry if entry.remote_path == remote else replace(
+                entry, remote_path=remote,
+            )
+
+        return replace(
+            self,
+            inputs=tuple(mapped(entry) for entry in self.inputs),
+            primary_input=mapped(self.primary_input),
+            stdin=mapped(self.stdin),
+            outputs=tuple(mapped(entry) for entry in self.outputs),
+            caches=tuple(mapped(entry) for entry in self.caches),
+            stdout=mapped(self.stdout),
+            stderr=mapped(self.stderr),
+            mapping=mapping,
+        )
+
     def with_remote_stream_paths(self, *, stdout=None, stderr=None):
         """Update recovered stream locations without changing file identity.
 

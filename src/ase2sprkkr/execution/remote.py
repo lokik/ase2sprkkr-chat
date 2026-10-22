@@ -203,10 +203,10 @@ class RemoteRunner(ManagedRunner):
                 "executor_options": self.executor.backend_options,
                 "directory": remote_directory,
                 **self.spec.command_request(argv),
-                "input_file": None if self.spec.input_file is None else
-                    mapped.get(file_path(self.spec.input_file, self.spec.directory)),
-                "stdin": None if self.spec.stdin is None else
-                    mapped.get(file_path(self.spec.stdin, self.spec.directory)),
+                "input_file": (None if manifest.primary_input is None
+                               else manifest.primary_input.remote_path),
+                "stdin": (None if manifest.stdin is None
+                          else manifest.stdin.remote_path),
                 "output_file": (None if manifest.stdout is None
                                 else manifest.stdout.remote_path),
                 "error_file": (None if manifest.stderr is None

@@ -96,22 +96,7 @@ class RemoteEndpointExecutor(Executor):
         """Resolve exactly the paths to be protected and later staged."""
         mapping = _run_sync(self.resolve_mapping(spec.launch))
 
-        def mapped(entry):
-            if entry is None or entry.local_path is None:
-                return entry
-            return replace(entry, remote_path=mapping.map_path(entry.local_path))
-
-        return replace(
-            files,
-            inputs=tuple(mapped(entry) for entry in files.inputs),
-            primary_input=mapped(files.primary_input),
-            stdin=mapped(files.stdin),
-            outputs=tuple(mapped(entry) for entry in files.outputs),
-            caches=tuple(mapped(entry) for entry in files.caches),
-            stdout=mapped(files.stdout),
-            stderr=mapped(files.stderr),
-            mapping=mapping,
-        ), mapping.map_path(spec.directory)
+        return files.with_mapping(mapping), mapping.map_path(spec.directory)
 
     def submission_directory(self, spec):
         launch = spec.launch
@@ -202,14 +187,9 @@ class RemoteEndpointExecutor(Executor):
     def create_project_run(self, spec, *, run_id, callback=None):
         return RemoteRunner(self, spec, callback=callback, run_id=run_id)
 
-    async def _fetch_result_files(self, run, files, *, destinations=None):
-        self._validate_run(run)
-        return await self.file_handler.restore(
-            run, files, destinations=destinations,
-        )
-
     def fetch_result_files(self, run, files, *, destinations=None):
-        return _run_sync(self._fetch_result_files(
+        self._validate_run(run)
+        return _run_sync(self.file_handler.restore(
             run, files, destinations=destinations,
         ))
 

@@ -126,36 +126,15 @@ class RemoteFileHandler:
     async def prepare(self, mapping, spec, manifest=None):
         """Stage the authoritative manifest; never re-declare files from spec."""
         manifest = FileManifest.from_spec(spec) if manifest is None else manifest
-        if manifest.mapping is not None and manifest.mapping != mapping:
-            raise ValueError("Submission mapping differs from reserved mapping")
+        # Validate every reserved target before touching a remote file.
+        manifest = manifest.with_mapping(mapping)
 
-        # Manifest paths are authoritative, but open source handles may still
-        # contain buffered data. Flush them before staging those paths.
+        # Named source handles may hold buffered input; flush without
+        # rebuilding the authoritative file declarations from the spec.
         for value in (
             spec.input_file, spec.stdin, *spec.input_files, *spec.cache_files,
         ):
             _local_path(spec, value)
-
-        def mapped(entry):
-            if entry is None or entry.local_path is None:
-                return entry
-            remote = mapping.map_path(entry.local_path)
-            if entry.remote_path is not None and entry.remote_path != remote:
-                raise ValueError("Submission path differs from reserved path")
-            return replace(entry, remote_path=remote)
-
-        # Validate all reserved targets before a single input/cache is uploaded.
-        manifest = replace(
-            manifest,
-            inputs=tuple(mapped(entry) for entry in manifest.inputs),
-            primary_input=mapped(manifest.primary_input),
-            stdin=mapped(manifest.stdin),
-            outputs=tuple(mapped(entry) for entry in manifest.outputs),
-            caches=tuple(mapped(entry) for entry in manifest.caches),
-            stdout=mapped(manifest.stdout),
-            stderr=mapped(manifest.stderr),
-            mapping=mapping,
-        )
 
         used = {}
         # Track optionality of materialized wildcard members as well as
