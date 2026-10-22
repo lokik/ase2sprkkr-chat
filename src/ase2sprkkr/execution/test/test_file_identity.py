@@ -44,21 +44,32 @@ def test_shared_stream_identity_remains_one_file():
     assert FileManifest(**asdict(updated)) == updated
 
 
-def test_output_alias_of_merged_stream_is_one_file_identity():
-    path = "/local/shared.log"
-    files = FileManifest(
-        stdout=FileEntry(path, "/remote/shared", "pending"),
-        stderr=FileEntry(path, "/remote/shared", "pending"),
-        outputs=(FileEntry(path, "/remote/shared", "pending"),),
-    )
+@pytest.mark.parametrize("role", ("stdout", "stderr"))
+def test_stream_and_output_same_path_rejected(role):
+    stream = FileEntry("/local/shared.log", "/remote/shared.log", "pending")
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest(**{role: stream}, outputs=(stream,))
 
-    assert len(files.files) == 1
-    updated = files.with_file_availability(path, "available")
-    assert updated.stdout.availability_state == "available"
-    assert updated.stderr.availability_state == "available"
-    assert updated.outputs[0].availability_state == "available"
-    assert len(updated.files) == 1
-    assert FileManifest(**asdict(updated)) == updated
+
+@pytest.mark.parametrize("role", ("stdout", "stderr"))
+def test_stream_and_output_wildcard_overlap_rejected(role):
+    stream = FileEntry("/local/run.log", "/remote/run.log", "pending")
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest(**{role: stream}, outputs=(
+            FileEntry("/local/*.log", "/remote/*.log", "pending"),
+        ))
+
+
+def test_stdin_and_auxiliary_input_rejected():
+    path = "/local/main.inp"
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest(inputs=(FileEntry(path),), stdin=FileEntry(path))
+
+
+def test_primary_input_may_feed_stdin():
+    entry = FileEntry("/local/main.inp")
+    files = FileManifest(inputs=(entry,), primary_input=entry, stdin=entry)
+    assert files.input_files == (entry.local_path,)
 
 
 def test_cache_only_path_updates_without_explicit_kind():
