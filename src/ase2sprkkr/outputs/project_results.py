@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from ..common.module_registry import RegistryEntryNotFound
 from ..execution import FailurePhase, FileState, RunState, JobFiles
-from ..execution.manager import HistoricalFileMismatchError
+from ..execution.historical_restore import HistoricalFileMismatchError
 from ..input_parameters.input_parameters import InputParameters
 from ..input_parameters.task_definition import TaskMismatchError
 from .reader_registry import reader_registry
