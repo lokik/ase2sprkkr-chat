@@ -46,6 +46,9 @@ class _RawRunner:
         self.failure_phase = None
         self._done = Event()
 
+    def prepare_submission(self):
+        return None
+
     def submit(self):
         self.state = RunState.RUNNING
 
@@ -75,7 +78,7 @@ def _record(tmp_path, executor, state=RunState.RUNNING):
     manager = ExecutionManager(
         RunStore(tmp_path / "runs")
     )
-    endpoint = manager.register_executor(executor)
+    endpoint = manager.executors.register(executor)
     record = manager.new_record(
         task="DOS",
         directory=str(tmp_path),
@@ -141,9 +144,11 @@ def test_postprocessing_is_observable_until_processor_finishes():
 
 def test_failed_wait_keeps_original_error_when_backend_status_is_unavailable():
     class InaccessibleRunner:
+        callback = None
         backend_id = "job-1"
         exception = None
         failure_phase = None
+        failure_message = None
         result = None
 
         def __init__(self):
@@ -154,6 +159,9 @@ def test_failed_wait_keeps_original_error_when_backend_status_is_unavailable():
             if not self.started:
                 return RunState.NEW
             raise OSError("backend status unavailable")
+
+        def prepare_submission(self):
+            return None
 
         def submit(self):
             self.started = True
