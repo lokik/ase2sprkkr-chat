@@ -286,3 +286,36 @@ def test_historical_missing_input_reports_unrestored_file(tmp_path):
     with pytest.raises(FileNotFoundError, match="Historical file was not retrieved"):
         manager.retrieve_result_files(record.id)
     assert manager.store.get(record.id).state == record.state
+
+
+def test_simultaneous_historical_restores_download_once(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, Lock
+
+    manager, executor, record = _terminal_run(tmp_path)
+    output_path = tmp_path / "run.out"
+    output_path.unlink()
+    original_fetch = executor.fetch_result_files
+    access = Lock()
+    calls = []
+
+    def fetch(run, files, *, destinations=None):
+        with access:
+            calls.append(tuple(files))
+        return original_fetch(run, files, destinations=destinations)
+
+    executor.fetch_result_files = fetch
+    start = Barrier(2)
+
+    def restore():
+        start.wait()
+        return manager.retrieve_result_files(record.id)
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        results = list(workers.map(lambda _: restore(), range(2)))
+
+    assert len(calls) == 1
+    assert output_path.read_text() == "original output"
+    assert all(value.state is RunState.FINISHED for value in results)
+    stored = manager.store.get(record.id)
+    assert stored.files.availability_state == FileAvailabilityState.AVAILABLE
