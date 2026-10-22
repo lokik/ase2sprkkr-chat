@@ -227,3 +227,25 @@ def test_unsupported_recovery_preserves_reservation(tmp_path, monkeypatch):
     assert manager.store.get(first.id).state == RunState.SUBMITTING
     assert second.state == RunState.NEW
     assert calls == [1]
+
+
+def test_fresh_submission_is_not_recovered(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from ase2sprkkr.execution.manager import DuplicateSubmissionError
+
+    manager = ExecutionManager(
+        RunStore(tmp_path / "runs"), submitting_grace=3600,
+    )
+    first = manager.reserve(manager.new_record(task="SCF", directory=tmp_path))
+    second = manager.new_record(task="SCF", directory=tmp_path)
+
+    def unexpected_recovery(*args, **kwargs):
+        raise AssertionError("Fresh submission must not be recovered")
+
+    monkeypatch.setattr(
+        manager.executors, "for_endpoint",
+        lambda endpoint: SimpleNamespace(recover_submission=unexpected_recovery),
+    )
+    with pytest.raises(DuplicateSubmissionError):
+        manager.reserve(second)
+    assert manager.store.get(first.id).state == RunState.SUBMITTING
