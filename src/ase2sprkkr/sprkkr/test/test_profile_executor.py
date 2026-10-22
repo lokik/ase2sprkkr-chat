@@ -62,7 +62,7 @@ def test_named_ssh_profile_resolves_executor_settings(monkeypatch):
 
 
 def test_local_profile_creates_local_executor():
-    executor = ExecutionManager().executors.for_profile(SPRKKRProfile())
+    executor = ExecutionManager().executors.for_endpoint(SPRKKRProfile().endpoint)
 
     assert isinstance(executor, LocalExecutor)
 
@@ -80,7 +80,7 @@ def test_ssh_profile_creates_endpoint_only_executor():
         output_sync="always",
     )
 
-    executor = ExecutionManager().executors.for_profile(profile)
+    executor = ExecutionManager().executors.for_endpoint(profile.endpoint)
 
     assert isinstance(executor, RemoteEndpointExecutor)
     assert isinstance(executor.transport, SshTransport)
@@ -104,7 +104,7 @@ def test_ssh_profile_creates_endpoint_only_executor():
 
 def test_ssh_profile_requires_host():
     with pytest.raises(ValueError, match="requires 'host'"):
-        ExecutionManager().executors.for_profile(SPRKKRProfile(executor="ssh"))
+        ExecutionManager().executors.for_endpoint(SPRKKRProfile(executor="ssh").endpoint)
 
 
 def test_psij_profile_creates_configured_executor(monkeypatch):
@@ -119,12 +119,12 @@ def test_psij_profile_creates_configured_executor(monkeypatch):
 
     monkeypatch.setattr("ase2sprkkr.execution.psij.PsijExecutor", FakePsijExecutor)
 
-    executor = ExecutionManager().executors.for_profile(
+    executor = ExecutionManager().executors.for_endpoint(
         SPRKKRProfile(
             executor="psij",
             psij_backend="slurm",
             psij_url="local://scheduler",
-        )
+        ).endpoint
     )
 
     assert isinstance(executor, FakePsijExecutor)
@@ -133,7 +133,7 @@ def test_psij_profile_creates_configured_executor(monkeypatch):
 
 def test_unknown_runtime_executor_is_rejected():
     with pytest.raises(ValueError, match="unsupported execution endpoint"):
-        ExecutionManager().executors.for_profile(SPRKKRProfile(executor="custom"))
+        ExecutionManager().executors.for_endpoint(SPRKKRProfile(executor="custom").endpoint)
 
 
 def test_profile_executor_is_selected_before_mpi_resolution(monkeypatch, tmp_path):
@@ -160,8 +160,8 @@ def test_profile_executor_is_selected_before_mpi_resolution(monkeypatch, tmp_pat
 
     fake_executor = FakeExecutor()
     class FakeExecutors:
-        def for_profile(self, profile):
-            calls.append(("factory", profile.executor))
+        def for_endpoint(self, endpoint):
+            calls.append(("factory", endpoint.executor))
             return fake_executor
 
     monkeypatch.setattr(
