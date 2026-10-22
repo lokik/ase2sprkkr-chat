@@ -19,9 +19,7 @@ from .historical_restore import (
     preflight_historical_destination, restore_historical_file,
 )
 
-from .file_history import (
-    capture_result_files, file_is_current, missing_result_files, sync_result_files,
-)
+from .file_history import file_is_current, missing_result_files
 
 
 class JobFiles:
@@ -65,18 +63,6 @@ class JobFiles:
                 remote_path=remote_path,
             )
             return self._manifest
-
-    @staticmethod
-    def sync_inputs(manifest):
-        sync_result_files(manifest.input_files)
-
-    @staticmethod
-    def capture(manifest):
-        return capture_result_files(manifest)
-
-    @staticmethod
-    def missing_files(manifest):
-        return missing_result_files(manifest)
 
     @staticmethod
     def input_file_is_current(record: RunRecord):
