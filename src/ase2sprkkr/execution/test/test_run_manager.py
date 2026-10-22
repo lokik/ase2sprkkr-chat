@@ -290,3 +290,34 @@ def test_executor_registration_normalizes_serialized_endpoint():
     assert executors.register(executor, endpoint) == endpoint
     with pytest.raises(ValueError, match="already registered"):
         executors.register(_Executor(), asdict(endpoint))
+
+
+def test_parallel_endpoint_lookup_constructs_one_executor(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, Lock
+    from ase2sprkkr.execution import ExecutorEndpoint
+    from ase2sprkkr.execution import endpoint as endpoint_module
+
+    registry = Executors()
+    endpoint = ExecutorEndpoint(executor="local")
+    start = Barrier(8)
+    lock = Lock()
+    instances = []
+
+    def factory(actual_endpoint):
+        assert actual_endpoint == endpoint
+        instance = _Executor()
+        with lock:
+            instances.append(instance)
+        return instance
+
+    monkeypatch.setattr(endpoint_module, "create_executor_from_endpoint", factory)
+
+    def lookup(_):
+        start.wait(timeout=10)
+        return registry.for_endpoint(endpoint)
+
+    with ThreadPoolExecutor(max_workers=8) as workers:
+        results = list(workers.map(lookup, range(8)))
+    assert len(instances) == 1
+    assert all(instance is instances[0] for instance in results)
