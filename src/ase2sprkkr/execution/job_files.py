@@ -10,6 +10,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 
 from ..common.file_locks import FileLock
+from ._durability import durable_replace, sync_file
 from ..common.file_versions import file_digest
 from .run_model import FileAvailabilityState
 from .transport import has_file_magic
@@ -260,9 +261,8 @@ class JobFiles:
             lock_path = Path(path).with_name(f".{Path(path).name}.restore.lock")
             with FileLock(lock_path):
                 version = versions.get(path)
-                staged = (
-                    Path(path).with_name(f".{Path(path).name}.{uuid4().hex}.tmp")
-                    if version is not None and version.digest is not None else None
+                staged = Path(path).with_name(
+                    f".{Path(path).name}.{uuid4().hex}.tmp"
                 )
                 try:
                     # A previous restorer might already have completed while
@@ -275,8 +275,6 @@ class JobFiles:
                         raise HistoricalFileMismatchError(
                             f"Historical result file was modified: {path}"
                         )
-                    elif staged is None:
-                        executor.fetch_result_files(record, (path,))
                     else:
                         executor.fetch_result_files(
                             record, (path,),
@@ -286,11 +284,16 @@ class JobFiles:
                             raise FileNotFoundError(
                                 f"Historical file was not retrieved: {path}"
                             )
-                        if file_digest(staged) != version.digest:
+                        if (version is not None and version.digest is not None
+                                and file_digest(staged) != version.digest):
                             raise HistoricalFileMismatchError(
                                 f"Historical result files have been overwritten: {path}"
                             )
-                        os.replace(staged, path)
+                        # Do not publish partial files or record availability
+                        # before both file contents and its directory entry
+                        # have crossed the durability barrier.
+                        sync_file(staged)
+                        durable_replace(staged, path)
                 except OSError as exc:
                     if path in tracked:
                         JobFiles(store.get(record.id)).update_availability(
@@ -298,8 +301,7 @@ class JobFiles:
                         )
                     raise
                 finally:
-                    if staged is not None:
-                        staged.unlink(missing_ok=True)
+                    staged.unlink(missing_ok=True)
 
                 refreshed = store.get(record.id)
                 still_missing = path in missing_result_files(refreshed.files)
