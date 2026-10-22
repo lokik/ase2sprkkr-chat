@@ -25,6 +25,13 @@ def restore_historical_file(record, path, version, executor):
     the following availability update. A transfer is only published when its
     recorded digest matches; never replace any existing destination.
     """
+    # A symlink is not the captured file itself. FileVersion fingerprints
+    # follow links, so without an explicit check a newly introduced symlink
+    # to the original inode could incorrectly pass is_current().
+    if os.path.islink(path):
+        raise HistoricalFileMismatchError(
+            f"Historical destination is a symlink: {path}"
+        )
     if version is not None and version.is_current():
         # Reaffirm durability when a previous publish succeeded but its
         # directory fsync (or the following RunStore update) failed.
