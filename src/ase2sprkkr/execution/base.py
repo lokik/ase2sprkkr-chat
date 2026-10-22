@@ -472,17 +472,19 @@ class ExecutionSpec:
     input_file: Any
     output_file: Any
     directory: str
-    stdin: Any = None
+    stdin: Any = False
     error_file: Any = None
     input_files: Sequence[Any] = ()
     output_files: Sequence[Any] = ()
     cache_files: Sequence[Any] = ()
     mpi_argv: Optional[Sequence[str]] = None
     launch: LaunchSpec = LaunchSpec()
-    # Each command has an independent input stream.
+    # None inherits the serial stream; False explicitly disables stdin.
     mpi_stdin: Any = None
 
     def __post_init__(self):
+        if self.stdin is None:
+            raise ValueError("ExecutionSpec.stdin=None is ambiguous; use False to disable stdin")
         object.__setattr__(self, "directory", os.fspath(self.directory))
         object.__setattr__(self, "input_file", _pathlike(self.input_file))
         object.__setattr__(self, "output_file", _pathlike(self.output_file))

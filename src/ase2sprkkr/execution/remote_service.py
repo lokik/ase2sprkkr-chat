@@ -151,7 +151,7 @@ def _request_spec(request):
         output_file=request.get("output_file"),
         error_file=request.get("error_file"),
         directory=os.fspath(request["directory"]),
-        stdin=request.get("stdin"),
+        stdin=(request["stdin"] if request.get("stdin") is not None else False),
         input_files=input_files,
         output_files=output_files,
         cache_files=cache_files,

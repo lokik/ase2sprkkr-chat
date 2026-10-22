@@ -153,7 +153,7 @@ class SPRKKRProfile:
         if gdb:
             # This is also the serial command used by ``mpi='auto'`` when MPI
             # autodetection falls back to non-MPI execution.
-            stdin = None
+            stdin = False
             print(f"run <{input_file.name}")
             argv = ["gdb", executable]
 
@@ -168,7 +168,8 @@ class SPRKKRProfile:
             output_files=tuple(output_files),
             cache_files=tuple(cache_files),
             mpi_argv=None if mpi_argv is None else tuple(mpi_argv),
-            mpi_stdin=None,
+            # SPR-KKR MPI receives its input as an argv path, not via stdin.
+            mpi_stdin=False if mpi_argv is not None else None,
             launch=launch,
         )
 

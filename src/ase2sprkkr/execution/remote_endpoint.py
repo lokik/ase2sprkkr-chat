@@ -166,8 +166,6 @@ class RemoteEndpointExecutor(Executor):
     def resolve_spec(self, spec):
         from .local_process import select_mpi_spec
 
-        if spec.mpi_argv is None:
-            return spec
         if self.backend == "psij":
             return select_mpi_spec(spec, scheduler=bool(spec.launch))
         if not spec.launch:

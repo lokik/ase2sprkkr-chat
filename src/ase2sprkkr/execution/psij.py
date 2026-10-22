@@ -95,7 +95,7 @@ def _load_psij():
 
 
 def _path(value, directory=None):
-    if value is None:
+    if value is None or value is False:
         return None
     try:
         return file_path(value, directory, required=True)
@@ -608,8 +608,6 @@ class PsijExecutor(Executor):
 
     def resolve_spec(self, spec: ExecutionSpec) -> ExecutionSpec:
         from .local_process import select_mpi_spec
-        if spec.mpi_argv is None:
-            return spec
         return select_mpi_spec(spec, scheduler=bool(spec.launch))
 
     def create_run(self, spec: ExecutionSpec, callback=None, *, cleanup_side="local"):

@@ -87,7 +87,7 @@ def test_input_parameters_preserve_mpi_launch_intent(tmp_path, monkeypatch):
         assert seen["spec"].mpi_argv == ("kkrscfMPI", input_file.name)
         assert seen["spec"].launch == LaunchSpec.from_mpi("auto")
         assert seen["spec"].stdin is input_file
-        assert seen["spec"].mpi_stdin is None
+        assert seen["spec"].mpi_stdin is False
         created.close()
 
 
@@ -116,7 +116,7 @@ def test_local_executor_materializes_mpi_on_execution_host(monkeypatch, tmp_path
     resolved = materialize_local_spec(spec)
 
     assert resolved.argv == ("srun", "-n", "16", "kkrscfMPI", input_file.name)
-    assert resolved.stdin is None
+    assert resolved.stdin is input_file
     assert resolved.mpi_argv is None
     input_file.close()
 
@@ -265,7 +265,7 @@ def test_mpi_stdin_is_explicit_and_serial_fallback_is_unchanged(monkeypatch, tmp
         input_file=None, output_file=None, directory=str(tmp_path),
         stdin=str(tmp_path / "separate-stdin.dat"),
     )
-    assert materialize_local_spec(spec).stdin is None
+    assert materialize_local_spec(spec).stdin == spec.stdin
     selected = materialize_local_spec(
         __import__("dataclasses").replace(spec, mpi_stdin="mpi-only.dat")
     )
