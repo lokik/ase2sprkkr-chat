@@ -409,3 +409,27 @@ def test_failed_atomic_completion_discards_captured_versions(tmp_path):
     assert completed.files.input_versions == ()
     assert completed.files.output_versions == ()
     assert completed.files.outputs[0].availability_state == "failed"
+
+
+def test_discard_capture_removes_real_version_records(tmp_path):
+    from dataclasses import replace
+    from ase2sprkkr.common.file_versions import FileVersion
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+
+    path = tmp_path / "result.dat"
+    path.write_bytes(b"completed")
+    version = FileVersion.capture(path)
+    original = FileManifest(
+        outputs=(FileEntry(str(path), "/remote/result",
+                           availability_state="failed",
+                           availability_message="transfer failed"),),
+        input_versions=(version,), output_versions=(version,),
+        captured_at="2026-10-22T00:00:00+00:00",
+    )
+    cleared = JobFiles.discard_capture(original)
+    assert cleared.captured_at is None
+    assert cleared.input_versions == ()
+    assert cleared.output_versions == ()
+    assert cleared.outputs == original.outputs
+    assert original.input_versions == (version,)
+    assert original.output_versions == (version,)
