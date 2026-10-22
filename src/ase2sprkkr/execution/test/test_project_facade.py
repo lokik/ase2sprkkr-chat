@@ -36,3 +36,15 @@ def test_project_facade_lists_only_its_jobs(tmp_path):
     assert first.job(saved.id).id == saved.id
     with pytest.raises(ValueError, match="another project"):
         first.job(second.last_job.id)
+
+
+def test_live_project_uses_its_own_manager_for_calculations(tmp_path):
+    from ase2sprkkr.execution.persistence import resolve_project_manager
+
+    repository = ProjectRepository(tmp_path / "projects")
+    project = repository.create_project("Owned")
+    manager, project_id = resolve_project_manager(project)
+    assert manager is repository.manager
+    assert manager.projects is repository
+    assert project_id == project.id
+    assert resolve_project_manager((manager, project.record)) == (manager, project_id)

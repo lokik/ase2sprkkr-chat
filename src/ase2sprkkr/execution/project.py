@@ -15,6 +15,11 @@ class Project:
         self.id = repository.project(project_id).id
 
     @property
+    def manager(self):
+        """The shared manager of this project's own repository."""
+        return self._repository.manager
+
+    @property
     def record(self):
         return self._repository.project(self.id)
 
