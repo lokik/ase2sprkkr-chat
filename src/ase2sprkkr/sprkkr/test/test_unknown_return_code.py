@@ -49,7 +49,11 @@ def test_finished_execution_passes_unknown_return_code_to_reader(tmp_path):
             directory=directory,
         )
 
-    profile = SimpleNamespace(create_execution=create_execution)
+    from ase2sprkkr.execution.endpoint import ExecutorEndpoint
+
+    profile = SimpleNamespace(
+        create_execution=create_execution, endpoint=ExecutorEndpoint(),
+    )
 
     from ase2sprkkr.execution import JobFiles, FileManifest
 
