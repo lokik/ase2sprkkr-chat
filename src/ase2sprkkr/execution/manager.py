@@ -134,10 +134,6 @@ class RunRecord:
                 f"unsupported schema version {self.schema_version}; "
                 f"expected {_RUN_RECORD_SCHEMA_VERSION}"
             )
-    @property
-    def job_files(self):
-        return JobFiles(self)
-
     def _merged_state(self, requested):
         if requested is None:
             return self.state
@@ -365,7 +361,7 @@ class RunStore:
                     raise RuntimeError("Run changed during file reservation")
                 # Do not sync inputs from a stale claim. Persist the claim
                 # only after the current manifest's inputs are durable.
-                record.job_files.sync_inputs()
+                JobFiles(record.files).sync_inputs()
                 return replace(
                     latest, state=RunState.SUBMITTING,
                     updated_at=_now(),
@@ -664,7 +660,7 @@ class ExecutionManager:
 
         if files_available:
             try:
-                result_files = record.job_files.capture(result_files)
+                result_files = JobFiles(record.files).capture(result_files)
             except OSError as exc:
                 state = RunState.FAILED
                 phase = FailurePhase.FILES
@@ -738,12 +734,12 @@ class ExecutionManager:
         record = self.store.get(run if isinstance(run, str) else run.id)
         if not record.state.is_terminal:
             raise RuntimeError(f"Run {record.id} is not finished")
-        missing = record.job_files.missing_files()
+        missing = JobFiles(record.files).missing_files()
         executor = (
             self.executors.for_endpoint(record.execution.endpoint)
             if missing and record.execution.backend_id is not None else None
         )
-        return record.job_files.retrieve(self.store, executor)
+        return JobFiles(record.files).retrieve(record, self.store, executor)
 
     @staticmethod
     def _acknowledge_submission(executor, record):
@@ -783,13 +779,12 @@ class ExecutionManager:
             project_id=project_id,
         )
         raw = executor.create_project_run(spec, run_id=record.id)
-        # The manifest is owned by RunRecord. Local execution observes its
-        # publication outcomes, without persisting an independent file list.
-        raw.set_manifest(record.files)
-        persistence = PersistentRun(self, executor, record, spec=spec)
+        # The runner owns mutable working files; RunRecord holds frozen snapshots.
+        raw.job_files.replace(record.files)
+        persistence = RunPersistence(self, executor, record, spec=spec)
         return CalculationRun(
             raw, process_result, callback=callback,
-            resources=resources, hooks=persistence,
+            resources=resources, persistence=persistence,
         )
 
     def refresh(self, records=None):
@@ -830,15 +825,15 @@ class ExecutionManager:
             output_listener=output_listener,
             start=False,
         )
-        persistence = PersistentRun(self, executor, record)
+        persistence = RunPersistence(self, executor, record)
         processed = CalculationRun(
-            raw, process_result, callback=callback, hooks=persistence,
+            raw, process_result, callback=callback, persistence=persistence,
         )
         processed.start(attached=True)
         return processed
 
 
-class PersistentRun:
+class RunPersistence:
     """Durable transaction participant for one CalculationRun.
 
     CalculationRun sequences execution and public completion. This object
@@ -889,7 +884,7 @@ class PersistentRun:
                 )
             self._record = replace(self._record, files=files, execution=execution)
         self._record = self.manager.reserve(self._record)
-        run.set_manifest(self._record.files)
+        run.job_files.replace(self._record.files)
         self._monitor_record_version = self._record.updated_at
 
     def prepared(self, run: CalculationRun):
@@ -897,7 +892,7 @@ class PersistentRun:
         self._record = self.manager.transition(
             self._record,
             execution=self._execution_for(run, self._record),
-            files=run.file_snapshot(),
+            files=run.job_files.snapshot(),
         )
         self._monitor_record_version = self._record.updated_at
 
@@ -917,7 +912,7 @@ class PersistentRun:
                     execution=self._execution_for(run, self._record),
                     failure_phase=(None if observed == RunState.SUBMITTING
                                    else _failure_phase(run.failure_phase)),
-                    files=run.file_snapshot(),
+                    files=run.job_files.snapshot(),
                 )
                 self._monitor_record_version = self._record.updated_at
         self.manager._acknowledge_submission(self.executor, self._record)
@@ -993,7 +988,7 @@ class PersistentRun:
                 message = str(error)
             if state == RunState.UNKNOWN:
                 # Repeated UNKNOWN is not a new backend observation. A fresh
-                # reattachment has its own PersistentRun and can recover it.
+                # reattachment has its own RunPersistence and can recover it.
                 if self._record.state == RunState.UNKNOWN:
                     return self._record.state
                 # A stale observer cannot overwrite a newer refresh.
@@ -1017,9 +1012,9 @@ class PersistentRun:
                 message=message,
                 failure_phase=phase,
                 files_available=files_available,
-                files=run.file_snapshot(),
+                files=run.job_files.snapshot(),
             )
-            # ACK follows the crash-durable transition. A new PersistentRun
+            # ACK follows the crash-durable transition. A new RunPersistence
             # retries a lost ACK, without repeating terminal persistence.
             self._acknowledge_terminal(run)
             return self._record.state

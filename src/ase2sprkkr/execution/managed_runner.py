@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 from threading import Event, Lock
 
+from .job_files import JobFiles
+from .run_model import FileManifest
 from .base import (
     ExecutionOutcome, FailurePhase, OutputObservers, RunState,
     finish_monitor, request_cancellation, start_monitor, wait_for_monitor,
@@ -33,7 +35,7 @@ class ManagedRunner:
         self._return_code = None
         self._failure_phase = None
         self._failure_message = None
-        self._files = files
+        self.job_files = JobFiles(files if files is not None else FileManifest.from_spec(spec))
         self._output_observers = OutputObservers(output_listener)
         self._lock = Lock()
         self._done = Event()
@@ -48,10 +50,6 @@ class ManagedRunner:
     @property
     def backend_id(self):
         return self._backend_id
-
-    def file_snapshot(self):
-        """Return the current staging/delivery snapshot for durable reconciliation."""
-        return self._files
 
     @property
     def exception(self):
@@ -78,7 +76,7 @@ class ManagedRunner:
             self._return_code = status.return_code
             self.result.return_code = status.return_code
         if status.files is not None:
-            self._files = status.files
+            self.job_files.merge(status.files)
         return self._state
 
     def add_output_listener(self, callback):
