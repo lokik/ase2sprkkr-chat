@@ -749,6 +749,7 @@ def test_concurrent_wait_and_completion_callback_persist_only_once(
         waiting = Thread(target=wait)
         waiting.start()
         assert not resources.closed
+        assert not resources.closed
         assert not input_stream.closed
         # The fake backend can report FINISHED during submit(), before
         # completion persistence starts. That state observation is valid;
