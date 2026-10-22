@@ -117,3 +117,66 @@ def test_no_alternate_command_with_mpi_disabled_remains_serial(tmp_path):
     selected = LocalExecutor().resolve_spec(candidate)
     assert selected is candidate
     assert selected.argv == ("serial",)
+
+
+def test_mpi_stdin_with_ordinary_argv_overrides_serial_stdin(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setattr(
+        "ase2sprkkr.execution.local_process.resolve_mpi_command",
+        lambda _: ("mpirun",),
+    )
+    candidate = replace(
+        spec(tmp_path), mpi_argv=None, mpi_stdin="mpi-input.in",
+        launch=LaunchSpec.from_mpi(True),
+    )
+    selected = LocalExecutor().resolve_spec(candidate)
+    assert selected.argv == ("mpirun", "serial")
+    assert selected.stdin == "mpi-input.in"
+    assert LocalExecutor().resolve_spec(selected) == selected
+    assert FileManifest.from_spec(selected).input_files == (
+        str(tmp_path / "mpi-input.in"),
+    )
+
+
+def test_serial_fallback_with_default_argv_uses_serial_stdin(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setattr(
+        "ase2sprkkr.execution.local_process.resolve_mpi_command",
+        lambda _: None,
+    )
+    candidate = replace(
+        spec(tmp_path), mpi_argv=None, mpi_stdin="mpi-input.in",
+        launch=LaunchSpec.from_mpi("auto"),
+    )
+    selected = LocalExecutor().resolve_spec(candidate)
+    assert selected.argv == ("serial",)
+    assert selected.stdin == "only-serial.in"
+    assert selected.mpi_stdin is None
+    assert not selected.launch.mpi.requested
+    assert FileManifest.from_spec(selected).input_files == (
+        str(tmp_path / "only-serial.in"),
+    )
+
+
+def test_ssh_mpi_stdin_with_ordinary_argv(tmp_path, monkeypatch):
+    from ase2sprkkr.execution import LocalTransport, RemoteExecutor
+
+    executor = RemoteExecutor(LocalTransport())
+
+    async def resolve_mpi(mpi):
+        return ("mpiexec",)
+
+    monkeypatch.setattr(executor.connection, "resolve_mpi", resolve_mpi)
+    candidate = replace(
+        spec(tmp_path), mpi_argv=None, mpi_stdin="mpi-input.in",
+        launch=LaunchSpec.from_mpi(True),
+    )
+    selected = executor.resolve_spec(candidate)
+    assert selected.argv == ("mpiexec", "serial")
+    assert selected.stdin == "mpi-input.in"
+    assert selected.mpi_stdin is None
+    assert FileManifest.from_spec(selected).input_files == (
+        str(tmp_path / "mpi-input.in"),
+    )

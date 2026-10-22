@@ -1527,3 +1527,24 @@ def test_psij_run_async_does_not_block_event_loop_during_submit(monkeypatch, tmp
 
     assert asyncio.run(exercise()).return_code == 0
     assert runner.state == RunState.FINISHED
+
+
+def test_psij_mpi_stdin_without_alternate_command(monkeypatch, tmp_path):
+    executor = _executor(monkeypatch, _Backend())
+    spec = ExecutionSpec(
+        argv=("program",), mpi_argv=None,
+        launch=LaunchSpec.from_mpi(2),
+        input_file=None, output_file=None, directory=str(tmp_path),
+        stdin=str(tmp_path / "serial.in"),
+        mpi_stdin=str(tmp_path / "parallel.in"),
+    )
+    runner = executor.create_run(spec)
+    assert runner.spec.argv == ("program",)
+    assert runner.spec.stdin == str(tmp_path / "parallel.in")
+    assert runner.spec.mpi_stdin is None
+    assert runner._job.spec.stdin_path == str(tmp_path / "parallel.in")
+    assert runner._job.spec.launcher == "srun"
+    assert runner._job.spec.resources.process_count == 2
+    assert runner.job_files.manifest.input_files == (
+        str(tmp_path / "parallel.in"),
+    )

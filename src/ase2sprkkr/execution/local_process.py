@@ -39,12 +39,12 @@ def _mpi_command(launch):
 def select_mpi_spec(spec: ExecutionSpec, launcher=None, *, scheduler=False):
     """Freeze one command and stdin before manifest construction.
 
-    Without a separate MPI command, launch the ordinary argv under MPI,
-    preserving its stdin. Scheduler metadata survives for PSI/J; the prefix
+    Without a separate MPI command, launch the ordinary argv under MPI.
+    In that case a supplied mpi_stdin overrides the ordinary stdin. Scheduler metadata survives for PSI/J; the prefix
     used by subprocess backends must not be resolved a second time.
     """
     if spec.mpi_argv is None and not spec.launch:
-        return spec
+        return spec if spec.mpi_stdin is None else replace(spec, mpi_stdin=None)
 
     enabled = scheduler or launcher is not None
     mpi_command = spec.mpi_argv if spec.mpi_argv is not None else spec.argv
@@ -58,7 +58,8 @@ def select_mpi_spec(spec: ExecutionSpec, launcher=None, *, scheduler=False):
     return replace(
         spec,
         argv=argv,
-        stdin=(spec.mpi_stdin if enabled and spec.mpi_argv is not None
+        stdin=(spec.mpi_stdin if enabled and
+               (spec.mpi_argv is not None or spec.mpi_stdin is not None)
                else spec.stdin),
         mpi_argv=None, mpi_stdin=None,
         launch=(spec.launch if scheduler and enabled
