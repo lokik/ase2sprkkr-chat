@@ -515,7 +515,7 @@ def test_manifest_persistence_failure_does_not_submit_backend():
             assert not uncertain
             return self.complete(
                 record, state=RunState.FAILED,
-                failure_phase=kwargs["failure_phase"] or FailurePhase.SUBMISSION,
+                failure_phase=FailurePhase.SUBMISSION,
             )
 
 

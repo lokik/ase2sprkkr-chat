@@ -819,6 +819,10 @@ def test_unknown_observation_closes_owned_streams_but_attach_can_recover(tmp_pat
     class ObservedRunner(_RawRunner):
         def __init__(self, *, recovered=False):
             super().__init__()
+            self.spec = ExecutionSpec(
+                argv=(), directory=str(tmp_path), input_file=None,
+                output_file=None,
+            )
             self.recovered = recovered
             self.state = RunState.FINISHED if recovered else RunState.NEW
             self.backend_id = "existing-job" if recovered else None

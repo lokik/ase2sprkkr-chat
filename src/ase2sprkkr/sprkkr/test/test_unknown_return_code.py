@@ -20,11 +20,13 @@ def test_finished_execution_passes_unknown_return_code_to_reader(tmp_path):
 
     reader = SimpleNamespace(read_from_file=read_from_file)
     task = SimpleNamespace(
-        executable="unused", mpi=False,
+        name="SCF", executable="unused", mpi=False,
         output_reader=lambda **kwargs: reader,
     )
     input_parameters = SimpleNamespace(
         task_definition_required=lambda: task,
+        definition_name="SCF",
+        CONTROL=SimpleNamespace(DATASET=SimpleNamespace(result="unknown")),
         input_files=lambda directory: (),
         output_files=lambda directory: (),
         cache_files=lambda directory: (),
