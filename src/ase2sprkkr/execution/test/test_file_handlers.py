@@ -591,6 +591,8 @@ def test_job_files_reconciles_terminal_delivery(tmp_path):
     updated = frozen.with_file_availability(str(path), "available")
     assert updated.outputs[0].availability_state == "available"
     assert old.outputs == (available,)
+    assert frozen.outputs == (pending,)
+    assert updated.outputs == (available,)
 
     path.unlink()
     assert JobFiles.merge_terminal_files(old, frozen).outputs == (pending,)
