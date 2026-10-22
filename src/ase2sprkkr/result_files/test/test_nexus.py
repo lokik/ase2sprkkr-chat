@@ -174,7 +174,7 @@ def test_real_wse2_spectrum(tmp_path):
 
 
 def test_independent_nexus_reader(tmp_path):
-    from nexusformat.nexus import nxopen
+    nxopen = pytest.importorskip("nexusformat.nexus").nxopen
     dest=tmp_path/"reader.nxs"
     with pytest.warns(UserWarning):
         write_arpes_nexus(SPC("kx_ky",2),dest)
