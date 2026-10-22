@@ -377,11 +377,15 @@ def test_discard_capture_keeps_file_delivery_facts(tmp_path):
 
 def test_failed_atomic_completion_discards_captured_versions(tmp_path):
     from dataclasses import replace
+    from ase2sprkkr.common.file_versions import FileVersion
     from ase2sprkkr.execution.base import RunState, FailurePhase
     from ase2sprkkr.execution.manager import ExecutionManager
     from ase2sprkkr.execution.run_model import FileEntry, FileManifest
 
-    path = str(tmp_path / "result")
+    result_path = tmp_path / "result"
+    result_path.write_bytes(b"stale captured contents")
+    version = FileVersion.capture(result_path)
+    path = str(result_path)
     entry = FileEntry(path, "/remote/result", availability_state="pending")
     base = ExecutionManager().new_record(
         task="SCF", directory=tmp_path,
@@ -398,6 +402,7 @@ def test_failed_atomic_completion_discards_captured_versions(tmp_path):
             path, "available", remote_path="/remote/result",
         ),
         captured_at="2026-10-22T00:00:00+00:00",
+        input_versions=(version,), output_versions=(version,),
     )
     completed = latest.with_transition(
         state=RunState.FINISHED, files=captured,
@@ -405,6 +410,7 @@ def test_failed_atomic_completion_discards_captured_versions(tmp_path):
     )
     assert completed.state == RunState.FAILED
     assert completed.failure_phase == FailurePhase.DOWNLOAD
+    assert captured.output_versions == (version,)
     assert completed.files.captured_at is None
     assert completed.files.input_versions == ()
     assert completed.files.output_versions == ()
