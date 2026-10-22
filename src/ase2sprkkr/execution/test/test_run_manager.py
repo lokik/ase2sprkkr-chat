@@ -34,6 +34,9 @@ class _RawRunner:
         self.failure_message = None
         self._done = Event()
 
+    def replace_file_manifest(self, manifest):
+        return self.job_files.replace(manifest)
+
     @property
     def return_code(self):
         return self.result.return_code
