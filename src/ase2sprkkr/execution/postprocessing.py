@@ -11,7 +11,7 @@ from ..common.file_versions import FileState
 from .base import (ExecutionOutcome, FailurePhase, RunState,
                    SubmissionNotStarted, finish_monitor)
 from .file_history import file_is_current
-from .run_hooks import PersistenceError
+from .run_hooks import PersistenceError, RunPersistenceHooks
 
 
 class CalculationRun:
@@ -23,7 +23,7 @@ class CalculationRun:
     """
 
     def __init__(self, runner, process_result, callback=None, *, resources=None,
-                 persistence=None):
+                 persistence: RunPersistenceHooks | None = None):
         self._runner = runner
         self._process_result = process_result
         self.callback = callback
