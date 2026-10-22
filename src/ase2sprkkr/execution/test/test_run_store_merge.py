@@ -355,6 +355,23 @@ def test_terminal_lookup_rejects_foreign_project_identity(tmp_path):
 
 
 
+def test_save_cannot_overwrite_terminal_history(tmp_path):
+    from dataclasses import replace
+
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    original = _record(manager, tmp_path)
+    store.save(original)
+    completed = manager.complete(original, state=RunState.FINISHED, return_code=0)
+
+    for stale in (original, replace(completed, return_code=7)):
+        with pytest.raises(ValueError, match="Cannot overwrite a terminal run"):
+            store.save(stale)
+        assert store.get(original.id) == completed
+
+    assert store.save(completed) == completed
+
+
 def test_non_project_run_identity_is_immutable_across_day_shards(tmp_path):
     from dataclasses import replace
 
