@@ -84,7 +84,16 @@ definition = create_result_file_definition(
         V("NT", int),
         V("NP", int),
         V("COMMENT", Prefixed("#"), name_in_grammar=False),
-        V("RAW_DATA", NumpyArray(shape=(-1, 4), written_shape=(-1, 4)), name_in_grammar=False),
+        V(
+            "RAW_DATA",
+            NumpyArray(
+                float,
+                shape=(-1, 4),
+                written_shape=(-1, 4),
+                trivial_parsing=True,
+            ),
+            name_in_grammar=False,
+        ),
         NV("K_EIG", "RAW_DATA", (slice(None), 0)),
         NV("E_EIG", "RAW_DATA", (slice(None), 1)),
         NV("T_EIG_REAL", "RAW_DATA", (slice(None), 2)),
