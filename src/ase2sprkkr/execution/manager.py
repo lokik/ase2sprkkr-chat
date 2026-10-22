@@ -732,7 +732,7 @@ class ExecutionManager:
             self.executors.for_endpoint(record.execution.endpoint)
             if missing and record.execution.backend_id is not None else None
         )
-        return JobFiles(record.files).retrieve(record, self.store, executor)
+        return JobFiles.retrieve(record, self.store, executor)
 
     @staticmethod
     def _acknowledge_submission(executor, record):
