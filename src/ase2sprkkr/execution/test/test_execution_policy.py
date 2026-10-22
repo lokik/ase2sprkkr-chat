@@ -94,6 +94,9 @@ def test_callback_failure_does_not_change_local_execution_state(tmp_path):
 
 
 class _UnknownRunner:
+    def __init__(self):
+        self.job_files = JobFiles(FileManifest())
+
     callback = None
     result = object()
     backend_id = None
