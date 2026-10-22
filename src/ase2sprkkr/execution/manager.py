@@ -12,7 +12,7 @@ from uuid import uuid4
 from .base import FailurePhase, RunState, RunStatus, SubmissionRecovery
 from .endpoint import ExecutorEndpoint
 from .file_history import capture_result_files, missing_result_files
-from .job_files import JobFiles
+from .historical_restore import retrieve_historical_files
 from .pool import Executors
 from .postprocessing import CalculationRun
 from .run_model import Execution, WorkingDirectory, FileManifest
@@ -426,7 +426,7 @@ class ExecutionManager:
             self.executors.for_endpoint(record.execution.endpoint)
             if missing and record.execution.backend_id is not None else None
         )
-        return JobFiles.retrieve(record, self.store, executor)
+        return retrieve_historical_files(record, self.store, executor)
 
     @staticmethod
     def _acknowledge_submission(executor, record):
