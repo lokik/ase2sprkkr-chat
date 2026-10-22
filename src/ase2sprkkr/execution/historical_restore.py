@@ -29,6 +29,10 @@ def restore_historical_file(record, path, version, executor):
         # Reaffirm durability when a previous publish succeeded but its
         # directory fsync (or the following RunStore update) failed.
         sync_file(path)
+        if not version.is_current():
+            raise HistoricalFileMismatchError(
+                f"Historical file changed during durability verification: {path}"
+            )
         return
     if version is None and os.path.isfile(path):
         return
