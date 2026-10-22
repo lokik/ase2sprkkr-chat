@@ -81,6 +81,9 @@ class _Runner:
         self.submit_error = submit_error
         self._state = RunState.NEW
         self.backend_id = None
+        self.failure_phase = None
+        self.failure_message = None
+        self.files = None
         self.result = ExecutionOutcome(
             input_file=None if spec is None else spec.input_file,
             output_file=None if spec is None else spec.output_file,
@@ -91,6 +94,9 @@ class _Runner:
     @property
     def state(self):
         return self._state
+
+    def set_manifest(self, files):
+        self.files = files
 
     def prepare_submission(self):
         return None
