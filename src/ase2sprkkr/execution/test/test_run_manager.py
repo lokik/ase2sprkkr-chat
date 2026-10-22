@@ -6,6 +6,7 @@ import pytest
 from ase2sprkkr.execution import (
     DuplicateSubmissionError,
     ExecutionOutcome,
+    ExecutionSpec,
     Executor,
     FailurePhase,
     RunState,
@@ -18,7 +19,10 @@ from ase2sprkkr.execution.pool import Executors
 
 
 class _RawRunner:
-    def __init__(self, on_submit=None):
+    def __init__(self, spec, executor, on_submit=None):
+        self.spec = spec
+        self.executor = executor
+        self.files = None
         self.callback = None
         self.on_submit = on_submit
         self.state = RunState.NEW
@@ -32,6 +36,15 @@ class _RawRunner:
     @property
     def return_code(self):
         return self.result.return_code
+
+    def set_manifest(self, manifest):
+        self.files = manifest
+
+    def file_snapshot(self):
+        return self.files
+
+    def prepare_submission(self):
+        pass
 
     def submit(self):
         if self.on_submit:
@@ -77,7 +90,7 @@ class _Executor(Executor):
         self.on_submit = None
 
     def create_project_run(self, spec, *, run_id, callback=None):
-        runner = _RawRunner(on_submit=self.on_submit)
+        runner = _RawRunner(spec, self, on_submit=self.on_submit)
         self.runners.append(runner)
         return runner
 
@@ -87,12 +100,11 @@ class _Executor(Executor):
 
 
 def _spec(tmp_path, *, dataset="case"):
-    return SimpleNamespace(
+    return ExecutionSpec(
+        argv=(),
         directory=str(tmp_path),
         input_file=str(tmp_path / f"{dataset}.inp"),
         output_file=str(tmp_path / f"{dataset}.out"),
-        input_files=(),
-        output_files=(),
     )
 
 
