@@ -241,7 +241,6 @@ def test_executors_are_owned_by_manager_and_keyed_by_endpoint(tmp_path):
     endpoint = manager.executors.register(executor)
     record = manager.new_record(task="DOS", directory=tmp_path, endpoint=endpoint)
     assert manager.executors.for_record(record) is executor
-    assert manager.executors.for_record(record) is executor
 
 
 def test_executor_registries_have_independent_lifetimes():
@@ -293,3 +292,18 @@ def test_explicit_executor_for_run_is_the_registered_instance(tmp_path):
         _spec(tmp_path), endpoint=manager.executors.register(executor), process_result=lambda value: value, task="DOS",
     )
     assert run.hooks.executor is manager.executors.for_record(run.record)
+
+
+def test_executor_registration_normalizes_serialized_endpoint():
+    from dataclasses import asdict
+    from ase2sprkkr.execution import ExecutorEndpoint
+
+    executors = Executors()
+    endpoint = ExecutorEndpoint(executor="custom:test")
+    executor = _Executor()
+    assert executors.register(executor, asdict(endpoint)) == endpoint
+    assert executors.for_endpoint(endpoint) is executor
+    assert executors.for_endpoint(asdict(endpoint)) is executor
+    assert executors.register(executor, endpoint) == endpoint
+    with pytest.raises(ValueError, match="already registered"):
+        executors.register(_Executor(), asdict(endpoint))

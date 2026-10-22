@@ -53,9 +53,12 @@ class Executors:
         self._pool = _ExecutorPool()
 
     def register(self, executor, endpoint=None):
-        from .endpoint import endpoint_for_executor
+        from .endpoint import ExecutorEndpoint, endpoint_for_executor
 
-        endpoint = endpoint or endpoint_for_executor(executor)
+        if endpoint is None:
+            endpoint = endpoint_for_executor(executor)
+        elif isinstance(endpoint, dict):
+            endpoint = ExecutorEndpoint(**endpoint)
         registered = self._pool.get(endpoint, lambda: executor)
         if registered is not executor:
             raise ValueError(f"Another executor is already registered for {endpoint!r}")
