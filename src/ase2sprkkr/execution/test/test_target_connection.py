@@ -42,7 +42,9 @@ def test_ssh_connection_preserves_status_manifest_and_acknowledgements():
         async def run(self, command, input=None):
             import json
             calls.append((command, None if input is None else json.loads(input)))
-            return type("Reply", (), {"stdout": b'{"state":"running"}'})()
+            body = (b'{"acknowledged":true}' if command[2].startswith("ack")
+                    else b'{"state":"running"}')
+            return type("Reply", (), {"stdout": body})()
 
     conn = SSHConnection(
         Transport(), command=("ase2sprkkr", "remote"),
@@ -50,8 +52,8 @@ def test_ssh_connection_preserves_status_manifest_and_acknowledgements():
     )
     files = FileManifest()
     assert asyncio.run(conn.status("job", files)) == {"state": "running"}
-    asyncio.run(conn.acknowledge_submission("run"))
-    asyncio.run(conn.acknowledge("job"))
+    assert asyncio.run(conn.acknowledge_submission("run")) is True
+    assert asyncio.run(conn.acknowledge("job")) is True
     assert calls == [
         (("ase2sprkkr", "remote", "status", "job"),
          json.loads(json.dumps({"files": asdict(files)}))),
@@ -59,6 +61,60 @@ def test_ssh_connection_preserves_status_manifest_and_acknowledgements():
         (("ase2sprkkr", "remote", "ack", "job"), None),
     ]
 
+
+
+def test_local_executor_forwards_acknowledgement_result():
+    from types import SimpleNamespace
+    from ase2sprkkr.execution.local import LocalExecutor
+
+    class Connection:
+        async def acknowledge_submission(self, run_id):
+            assert run_id == "run"
+            return True
+
+        async def acknowledge(self, backend_id):
+            assert backend_id == "job"
+            return False
+
+    executor = LocalExecutor()
+    executor.connection = Connection()
+    record = SimpleNamespace(id="run", execution=SimpleNamespace(backend_id="job"))
+    assert executor.acknowledge_submission(record) is True
+    assert executor.acknowledge(record) is False
+
+
+def test_connections_reject_negative_or_malformed_ack(monkeypatch):
+    from ase2sprkkr.execution import remote_service
+
+    class Transport:
+        def __init__(self, response):
+            self.response = response
+
+        async def run(self, command, input=None):
+            return type("Reply", (), {
+                "stdout": json.dumps(self.response).encode("utf8"),
+            })()
+
+    for reply in (None, False, {}, {"acknowledged": False},
+                  {"acknowledged": None}, {"acknowledged": "true"}):
+        monkeypatch.setattr(remote_service, "acknowledge_remote",
+                            lambda backend_id: reply)
+        monkeypatch.setattr(remote_service, "acknowledge_submission",
+                            lambda run_id: reply)
+        local = LocalConnection()
+        ssh = SSHConnection(Transport(reply), command=("ase2sprkkr", "remote"),
+                            backend="local", backend_options={})
+        for connection in (local, ssh):
+            assert asyncio.run(connection.acknowledge("job")) is False
+            assert asyncio.run(connection.acknowledge_submission("run")) is False
+
+    monkeypatch.setattr(remote_service, "acknowledge_remote",
+                        lambda backend_id: {"acknowledged": True})
+    monkeypatch.setattr(remote_service, "acknowledge_submission",
+                        lambda run_id: {"acknowledged": True})
+    local = LocalConnection()
+    assert asyncio.run(local.acknowledge("job")) is True
+    assert asyncio.run(local.acknowledge_submission("run")) is True
 
 
 def test_ssh_status_serializes_captured_file_versions(tmp_path):

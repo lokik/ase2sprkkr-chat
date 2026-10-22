@@ -379,11 +379,11 @@ class LocalExecutor(Executor):
 
     def acknowledge_submission(self, run):
         from ..common.async_utils import run_coro_sync as _run_sync
-        _run_sync(self.connection.acknowledge_submission(run.id))
+        return _run_sync(self.connection.acknowledge_submission(run.id))
 
     def acknowledge(self, run):
         from ..common.async_utils import run_coro_sync as _run_sync
-        _run_sync(self.connection.acknowledge(run.execution.backend_id))
+        return _run_sync(self.connection.acknowledge(run.execution.backend_id))
 
     def status(self, *runs):
         from .local_project import local_status

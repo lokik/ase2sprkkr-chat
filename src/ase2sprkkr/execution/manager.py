@@ -313,11 +313,10 @@ class ExecutionManager:
         if not record.state.is_terminal or record.execution.backend_id is None:
             return False
         try:
-            executor.acknowledge(record)
+            return executor.acknowledge(record) is True
         except (OSError, RuntimeError, subprocess.CalledProcessError):
             # Backend receipts remain retryable after transport errors.
             return False
-        return True
 
     def complete(
         self,

@@ -17,6 +17,11 @@ from .base import MpiNotFoundWarning
 from .stream_protocol import FramedRunningCommand
 
 
+def _receipt_acknowledged(reply):
+    """Normalize the target service protocol at the connection boundary."""
+    return isinstance(reply, dict) and reply.get("acknowledged") is True
+
+
 class _ObserverStream:
     """The local supervisor accepts byte writers, not a transport process."""
 
@@ -72,11 +77,11 @@ class LocalConnection:
 
     async def acknowledge_submission(self, run_id):
         from .remote_service import acknowledge_submission
-        return await asyncio.to_thread(acknowledge_submission, run_id)
+        return _receipt_acknowledged(await asyncio.to_thread(acknowledge_submission, run_id))
 
     async def acknowledge(self, backend_id):
         from .remote_service import acknowledge_remote
-        return await asyncio.to_thread(acknowledge_remote, backend_id)
+        return _receipt_acknowledged(await asyncio.to_thread(acknowledge_remote, backend_id))
 
 
 class SSHConnection:
@@ -157,10 +162,10 @@ class SSHConnection:
         )
 
     async def acknowledge_submission(self, run_id):
-        return await self._json_request("ack-submit", run_id)
+        return _receipt_acknowledged(await self._json_request("ack-submit", run_id))
 
     async def acknowledge(self, backend_id):
-        return await self._json_request("ack", backend_id)
+        return _receipt_acknowledged(await self._json_request("ack", backend_id))
 
     async def follow(self, backend_id, files, *, offsets=None, on_chunk):
         """Stream decoded calculation bytes to the caller, like LocalConnection.

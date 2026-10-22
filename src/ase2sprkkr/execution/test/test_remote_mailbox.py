@@ -26,8 +26,17 @@ def test_terminal_outcome_survives_reads_until_ack():
     assert remote_mailbox.read_outcome(key) == expected
     assert remote_mailbox.read_outcome(key) == expected
     assert remote_mailbox.acknowledge_outcome(key)
-    assert not remote_mailbox.acknowledge_outcome(key)
+    assert remote_mailbox.acknowledge_outcome(key) is True
     assert remote_mailbox.read_outcome(key) is None
+
+
+@pytest.mark.parametrize("kind", ("outcome", "submission"))
+def test_ack_is_idempotent_when_receipt_was_never_present(kind):
+    key = uuid4().hex
+    acknowledge = (remote_mailbox.acknowledge_outcome if kind == "outcome"
+                   else remote_mailbox.drop_submission)
+    assert acknowledge(key) is True
+    assert acknowledge(key) is True
 
 
 def test_first_writer_wins_even_when_cancel_races_with_completion():
@@ -232,7 +241,6 @@ def test_ack_retries_directory_barrier_after_unlink_fsync_failure(
         acknowledge(key)
     assert not path.exists()
 
-    # Retry confirms durability of the absent directory entry before
-    # reporting that the receipt/ticket had already been acknowledged.
-    assert acknowledge(key) is False
+    # Retry confirms durability of the absent directory entry and succeeds.
+    assert acknowledge(key) is True
     assert syncs == [path.parent, path.parent]

@@ -59,18 +59,21 @@ def read_submission(run_id):
     return _validate_submission(reply)
 
 
-def drop_submission(run_id):
-    path = _validated_path(run_id, "remote-submissions")
+def _acknowledge_file(path):
+    """Durably confirm removal, including a receipt removed by an earlier ACK."""
     try:
         path.unlink()
     except FileNotFoundError:
-        # A previous attempt may have removed the entry but failed its
-        # directory barrier. Re-sync before confirming the absent receipt.
+        # A lost reply (or failed directory barrier) must not prevent retry.
         if path.parent.is_dir():
             fsync_directory(path.parent)
-        return False
-    fsync_directory(path.parent)
+    else:
+        fsync_directory(path.parent)
     return True
+
+
+def drop_submission(run_id):
+    return _acknowledge_file(_validated_path(run_id, "remote-submissions"))
 
 
 def publish_outcome(receipt_id, state, return_code, failure_phase=None, *,
@@ -155,14 +158,4 @@ def read_outcome(receipt_id):
 
 def acknowledge_outcome(receipt_id):
     """Delete only after the client has durably committed its own run state."""
-    path = _path(receipt_id)
-    try:
-        path.unlink()
-    except FileNotFoundError:
-        # A previous attempt may have removed the entry but failed its
-        # directory barrier. Re-sync before confirming the absent receipt.
-        if path.parent.is_dir():
-            fsync_directory(path.parent)
-        return False
-    fsync_directory(path.parent)
-    return True
+    return _acknowledge_file(_path(receipt_id))

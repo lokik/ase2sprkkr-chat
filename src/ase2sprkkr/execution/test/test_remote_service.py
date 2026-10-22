@@ -127,7 +127,7 @@ def test_mailbox_receipt_survives_until_client_ack(tmp_path, monkeypatch):
     assert remote_service.status_remote(remote_id)["state"] == RunState.FINISHED.value
     assert remote_service.status_remote(remote_id)["state"] == RunState.FINISHED.value
     assert remote_service.acknowledge_remote(remote_id) == {"acknowledged": True}
-    assert remote_service.acknowledge_remote(remote_id) == {"acknowledged": False}
+    assert remote_service.acknowledge_remote(remote_id) == {"acknowledged": True}
     assert not outcome.exists()
 
 
@@ -405,7 +405,7 @@ def test_uncertain_submit_uses_only_temporary_identity_ticket(tmp_path, monkeypa
     assert recovered["remote_id"] == handle
     assert remote_service.acknowledge_submission(run_id) == {"acknowledged": True}
     assert remote_service.recover_remote(run_id, {"executor": "local"}) is None
-    assert remote_service.acknowledge_submission(run_id) == {"acknowledged": False}
+    assert remote_service.acknowledge_submission(run_id) == {"acknowledged": True}
 
 
 def test_direct_follow_uses_shared_socket_protocol(tmp_path, monkeypatch):
@@ -1424,7 +1424,7 @@ def test_remote_ack_retries_failed_unlink_barrier_without_losing_terminal_state(
     assert not outcome.exists()
 
     # Retrying the same protocol request durably commits the deletion.
-    assert remote_service.acknowledge_remote(remote_id) == {"acknowledged": False}
+    assert remote_service.acknowledge_remote(remote_id) == {"acknowledged": True}
     assert calls == 2
     assert remote_service.status_remote(remote_id)["state"] == "unknown"
 
@@ -1452,7 +1452,7 @@ def test_submission_ack_retries_failed_unlink_barrier_via_service(
     with pytest.raises(OSError, match="submission removal not synced"):
         remote_service.acknowledge_submission(run_id)
     assert remote_mailbox.read_submission(run_id) is None
-    assert remote_service.acknowledge_submission(run_id) == {"acknowledged": False}
+    assert remote_service.acknowledge_submission(run_id) == {"acknowledged": True}
     assert calls == 2
 
 
@@ -1485,7 +1485,7 @@ def test_submission_to_terminal_receipt_and_both_acks(tmp_path, monkeypatch):
     # Submission ACK must not discard the independently retained result.
     assert remote_service.status_remote(remote_id)["state"] == "finished"
     assert remote_service.acknowledge_remote(remote_id) == {"acknowledged": True}
-    assert remote_service.acknowledge_remote(remote_id) == {"acknowledged": False}
+    assert remote_service.acknowledge_remote(remote_id) == {"acknowledged": True}
     assert remote_service.status_remote(remote_id)["state"] == "unknown"
 
 

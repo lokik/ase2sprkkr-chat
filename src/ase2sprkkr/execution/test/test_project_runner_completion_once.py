@@ -48,10 +48,9 @@ class _Manager:
         if not record.state.is_terminal or record.execution.backend_id is None:
             return False
         try:
-            executor.acknowledge(record)
+            return executor.acknowledge(record) is True
         except (OSError, RuntimeError):
             return False
-        return True
 
 
 class _Runner:
@@ -79,6 +78,7 @@ class _Executor:
 
     def acknowledge(self, record):
         self.acknowledgements += 1
+        return True
 
 
 def test_reading_state_does_not_write_to_store():
@@ -270,6 +270,7 @@ def test_failed_ack_is_retryable_without_rewriting_completion():
             self.attempts += 1
             if self.attempts == 1:
                 raise OSError("lost reply")
+            return True
 
     executor = FlakyExecutor()
     recovered = RunPersistence(manager, executor, record)
@@ -296,10 +297,12 @@ def test_lost_ack_reply_after_receipt_deletion_is_safe_on_retry(tmp_path, monkey
             self.fail_reply = True
 
         def acknowledge(self, record):
-            self.attempts.append(remote_mailbox.acknowledge_outcome(receipt_id))
+            confirmed = remote_mailbox.acknowledge_outcome(receipt_id)
+            self.attempts.append(confirmed)
             if self.fail_reply:
                 self.fail_reply = False
                 raise OSError("response lost after durable receipt deletion")
+            return confirmed
 
     manager, raw, executor = _Manager(), _Runner(), LostReplyExecutor()
     record = SimpleNamespace(
@@ -314,12 +317,11 @@ def test_lost_ack_reply_after_receipt_deletion_is_safe_on_retry(tmp_path, monkey
     assert manager.completions == 1
     assert executor.attempts == [True]
 
-    # The server has no receipt left. Its idempotent ACK returns False, but
-    # successful communication still resolves the client's uncertainty.
+    # The server has no receipt left. The idempotent ACK still succeeds.
     assert persistence.completed(raw) is RunState.FINISHED
     assert persistence.completed(raw) is RunState.FINISHED
     assert manager.completions == 1
-    assert executor.attempts == [True, False]
+    assert executor.attempts == [True, True]
 
 def test_persistent_reservation_rejects_duplicate_before_submitting(tmp_path):
     """The store claim, not another hook-local flag, prevents duplicates."""

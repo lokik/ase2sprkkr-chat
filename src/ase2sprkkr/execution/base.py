@@ -584,9 +584,11 @@ class Executor:
 
     def acknowledge_submission(self, run):
         """No temporary submission receipt for this executor."""
+        return True
 
     def acknowledge(self, run):
         """No terminal receipt for this executor."""
+        return True
 
     def reservation_context(self, spec: ExecutionSpec, files):
         """Prepare canonical run paths before atomic submission reservation."""
