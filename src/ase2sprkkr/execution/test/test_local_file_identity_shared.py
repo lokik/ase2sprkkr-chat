@@ -12,6 +12,45 @@ from ase2sprkkr.execution.file_identity import same_local_file
 from ase2sprkkr.execution.file_reservations import reservation_conflict
 
 
+@pytest.mark.parametrize("policy, side, deleted", (
+    ("both", "local", True), ("both", "remote", True),
+    ("local", "local", True), ("local", "remote", False),
+    ("remote", "local", False), ("remote", "remote", True),
+    ("none", "local", False), ("none", "remote", False),
+))
+def test_output_cleanup_selection(tmp_path, policy, side, deleted):
+    from ase2sprkkr.execution import ExecutionSpec, LaunchSpec
+    from ase2sprkkr.execution.file_availability import prepare_local_files
+
+    old = tmp_path / "old.dat"
+    old.write_text("old")
+    inp = tmp_path / "input.dat"
+    inp.write_text("input")
+    spec = ExecutionSpec(
+        argv=("program",), directory=str(tmp_path), input_file=str(inp),
+        output_file=None, output_files=(str(old),),
+        launch=LaunchSpec(cleanup_outputs=policy),
+    )
+    prepare_local_files(spec, side=side)
+    assert old.exists() != deleted
+    assert inp.read_text() == "input"
+
+
+def test_cleanup_disabled_does_not_disable_collision_validation(tmp_path):
+    from ase2sprkkr.execution import ExecutionSpec, LaunchSpec
+    from ase2sprkkr.execution.file_availability import prepare_local_files
+
+    inp = tmp_path / "input.dat"
+    inp.write_text("input")
+    spec = ExecutionSpec(
+        argv=("program",), directory=str(tmp_path), input_file=str(inp),
+        output_file=str(inp), launch=LaunchSpec(cleanup_outputs="none"),
+    )
+    with pytest.raises(ValueError, match="overlaps protected"):
+        prepare_local_files(spec)
+    assert inp.read_text() == "input"
+
+
 def test_missing_path_lexical_alias_counts_as_same_file(tmp_path):
     a = tmp_path / "missing.dat"
     b = tmp_path / "subdir" / ".." / "missing.dat"

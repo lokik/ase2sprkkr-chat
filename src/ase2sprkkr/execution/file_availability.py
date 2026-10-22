@@ -12,13 +12,30 @@ from .transport import expand_local_candidates, expand_local_files, has_file_mag
 from .file_identity import same_local_file
 
 
+def normalize_output_cleanup(value):
+    """Canonical cleanup policy; booleans are convenient aliases."""
+    if value is None or value is True:
+        return "both"
+    if value is False:
+        return "none"
+    if value not in ("both", "local", "remote", "none"):
+        raise ValueError("cleanup_outputs must be both, local, remote, none or bool")
+    return value
+
+
+def cleanup_enabled(policy, side):
+    if side not in ("local", "remote"):
+        raise ValueError(f"Invalid cleanup side: {side!r}")
+    return normalize_output_cleanup(policy) in ("both", side)
+
+
 def prepare_local_files(spec, *, output_file=None, error_file=None,
-                        preserve_open_streams=False):
-    """Protect inputs and caches, then clear declared outputs before launch."""
+                        preserve_open_streams=False, side="local", manifest=None):
+    """Validate output declarations; clear selected-side outputs on a new launch."""
     from .base import file_path
     from .run_model import FileManifest
 
-    files = FileManifest.from_spec(spec)
+    files = FileManifest.from_spec(spec) if manifest is None else manifest
     # Use the same canonical declarations as staging and run persistence.
     protected = (
         *files.input_files,
@@ -31,6 +48,8 @@ def prepare_local_files(spec, *, output_file=None, error_file=None,
     streams = tuple(path for path in (output, error) if path is not None)
     declared = tuple(entry.local_path for entry in files.outputs)
     validate_output_collisions((*declared, *streams), protected=protected)
+    if not cleanup_enabled(spec.launch.cleanup_outputs, side):
+        return
     # Never unlink streams already open: that would orphan their descriptors.
     outputs = declared if preserve_open_streams else (*declared, *streams)
     protected_paths = (*protected, *streams) if preserve_open_streams else protected
