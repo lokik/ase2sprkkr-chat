@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 from ..base import SubmissionNotStarted
 from ..remote import FileSyncPolicy
 from ..transport import LocalTransport
@@ -301,3 +303,39 @@ def test_missing_optional_scf_startup_pattern_is_not_fatal(tmp_path):
     runner = _processed_run(executor, spec)
     result = runner.run()
     assert result.return_code == 0
+
+
+@pytest.mark.parametrize("optional_first", [True, False])
+def test_overlapping_optional_and_required_wildcards_sync_each_file_once(
+    tmp_path, optional_first,
+):
+    """Distinct wildcard requirements must share one concrete-transfer set."""
+    from ase2sprkkr.input_parameters.task_definition import TaskFile
+    from .test_remote import _SpyTransport
+
+    transport = _SpyTransport()
+    workdir = tmp_path / "local" / "calculation"
+    optional = TaskFile(workdir / "part-*.dat", optional=True)
+    required = TaskFile(workdir / "part-a*.dat")
+    declarations = (optional, required) if optional_first else (required, optional)
+    executor, spec, _, remote_root = _text_run(
+        tmp_path, transport,
+        declared_output_files=declarations,
+        output_files=FileSyncPolicy.ALWAYS,
+        code=(
+            "from pathlib import Path; "
+            "Path('part-a.dat').write_text('a'); "
+            "Path('part-b.dat').write_text('b')"
+        ),
+    )
+    runner = _processed_run(executor, spec)
+    assert runner.run().return_code == 0
+    for filename, expected in (("part-a.dat", "a"), ("part-b.dat", "b")):
+        assert (workdir / filename).read_text() == expected
+        assert sum(
+            source == remote_root / "calculation" / filename
+            for source, _ in transport.get_files
+        ) == 1
+    entries = {item.local_path: item for item in runner.files.outputs}
+    assert entries[str(optional)].availability_state == "available"
+    assert entries[str(required)].availability_state == "available"
