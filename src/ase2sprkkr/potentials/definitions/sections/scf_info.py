@@ -31,16 +31,6 @@ class ScfInfoSection(PotentialSection):
             self.RMSAVB = atoms.info["sprkkr_rmsavb"]
         if "sprkkr_vmtz" in info:
             self.VMTZ = atoms.info["sprkkr_vmtz"]
-        if self.SCFSTATUS() == "START":
-            for i in atoms.sites:
-                for j in i.occupation.atomic_types():
-                    if not j.has_converged_data():
-                        break
-                else:
-                    continue
-                break
-            else:
-                self.SCFSTATUS = "CONVERGED"
 
 
 class ScfInfoSectionDefinition(PotSectionDefinition):

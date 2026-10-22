@@ -1,11 +1,20 @@
 """Potential is object that holds data form SPR-KKR potential file"""
 
+from os import PathLike
+from pathlib import Path
+from io import StringIO
+from typing import Union
+
 from ..sprkkr.configuration import ConfigurationFile
 from ..sprkkr.io_data import ReadIoData, WriteIoData
 from ..common.decorators import class_property, cache
-from io import StringIO
+from ..common.file_fingerprints import file_fingerprint
+from ..common.temporary import temporary_option_value
 from ..sprkkr.sprkkr_atoms import SPRKKRAtoms
-from typing import Union
+
+
+class PotentialFileChanged(RuntimeError):
+    """A potential file changed while it was being parsed."""
 
 
 class Potential(ConfigurationFile):
@@ -22,14 +31,16 @@ class Potential(ConfigurationFile):
         self._atoms = atoms
         self._complete = False
         super().__init__(definition)
-        if set_from_atoms and atoms:
+        if set_from_atoms and atoms is not None:
             self.set_from_atoms()
 
     def read_from_file(self, file, atoms=None, allow_dangerous=False):
         super().read_from_file(file, allow_dangerous=allow_dangerous)
         self.make_complete()
         if atoms is not False:
-            self._atoms = self.update_atoms(atoms or self._atoms)
+            if atoms is None:
+                atoms = self._atoms
+            self._atoms = self.update_atoms(atoms)
 
     def make_complete(self):
         """Call this function, if you set manually all the properties necessary
@@ -49,7 +60,9 @@ class Potential(ConfigurationFile):
     def update_atoms(self, atoms=None):
         """Update the ASE object from the values contained in the sections
         of the potential"""
-        atoms = SPRKKRAtoms.promote_ase_atoms(atoms or self._atoms)
+        if atoms is None:
+            atoms = self._atoms
+        atoms = SPRKKRAtoms.promote_ase_atoms(atoms)
         iodata = ReadIoData()
         readed = set()
 
@@ -61,7 +74,9 @@ class Potential(ConfigurationFile):
             for d in section._depends_on():
                 if d in self:
                     do(self[d])
-            atoms = section._update_atoms(atoms, iodata) or atoms
+            updated_atoms = section._update_atoms(atoms, iodata)
+            if updated_atoms is not None:
+                atoms = updated_atoms
 
         for i in self:
             do(i)
@@ -82,11 +97,24 @@ class Potential(ConfigurationFile):
           that contains e.g. numbering of the sites, atomic types etc.
           If is not set, it is created from the atoms.
         """
-        atoms = atoms or self._atoms
+        if atoms is None:
+            atoms = self._atoms
         atoms = SPRKKRAtoms.promote_ase_atoms(atoms)
         atoms.update_sites_from_symbols()
         super().set_from_atoms(atoms, io_data)
         self.make_complete()
+
+    def is_scf_converged(self, atoms=None):
+        """Return whether this potential represents a converged SCF state."""
+        status = self.SCF_INFO.SCFSTATUS()
+        if status == "CONVERGED":
+            return True
+        if status != "START":
+            return False
+
+        if atoms is None:
+            atoms = self._atoms
+        return atoms is not None and atoms.sprkkr_has_converged_data()
 
     @class_property
     @cache
@@ -97,10 +125,52 @@ class Potential(ConfigurationFile):
         return definition.potential_definition
 
     @staticmethod
-    def from_file(filename, atoms=None, allow_dangerous=False):
-        """Create a potential from a given potential file."""
+    def from_file(
+        filename,
+        atoms=None,
+        allow_dangerous=False,
+        *,
+        check_file_unchanged=False,
+    ):
+        """Create a potential from a given potential file.
+
+        Parameters
+        ----------
+        check_file_unchanged
+          If True, require ``filename`` to be a filesystem path and verify with
+          cheap filesystem fingerprints that it was not replaced or rewritten
+          while being parsed. The check is opt-in because normal potential
+          loading does not require this provenance guarantee.
+        """
+        fingerprint = None
+        path = None
+        if check_file_unchanged:
+            if not isinstance(filename, (str, bytes, PathLike)):
+                raise TypeError(
+                    "check_file_unchanged=True requires a filesystem path"
+                )
+            path = Path(filename)
+            fingerprint = file_fingerprint(path)
+
         pd = Potential.potential_definition
-        return pd.read_from_file(filename, atoms=atoms, allow_dangerous=allow_dangerous)
+        potential = pd.read_from_file(
+            filename,
+            atoms=atoms,
+            allow_dangerous=allow_dangerous,
+        )
+
+        if check_file_unchanged:
+            try:
+                current = file_fingerprint(path)
+            except OSError as exc:
+                raise PotentialFileChanged(
+                    f"Potential file changed while it was being read: {path}"
+                ) from exc
+            if current != fingerprint:
+                raise PotentialFileChanged(
+                    f"Potential file changed while it was being read: {path}"
+                )
+        return potential
 
     @classmethod
     def from_string(cls, string: str, atoms=None, allow_dangerous=False):
@@ -131,9 +201,28 @@ class Potential(ConfigurationFile):
     def __str__(self):
         return "SPRKKR POTENTIAL"
 
-    def save_to_file(self, file, atoms=None, *, validate: Union[str, bool] = "save"):
-        self.set_from_atoms()
-        super().save_to_file(file, atoms, validate=validate)
+    def save_to_file(
+        self,
+        file,
+        atoms=None,
+        *,
+        validate: Union[str, bool] = "save",
+        restart_scf: bool = False,
+    ):
+        """Save the potential, optionally restarting SCF only in serialized output.
+
+        ``restart_scf`` is an execution/serialization intent, not potential state.
+        Synchronization from atoms is performed exactly once before writing. The
+        value written for ``SCFSTATUS`` is then temporarily overridden to
+        ``START`` without changing the canonical status or discarding converged
+        electronic data.
+        """
+        self.set_from_atoms(None if atoms is False else atoms)
+
+        if restart_scf:
+            with temporary_option_value(self.SCF_INFO.SCFSTATUS, "START"):
+                return super().save_to_file(file, False, validate=validate)
+        return super().save_to_file(file, False, validate=validate)
 
 
 # At last - to avoid circular import problem

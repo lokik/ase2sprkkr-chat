@@ -70,7 +70,7 @@ class AtomsRegion:
                 pbc[inherit_cell] = None
         self.incomplete_cell = Cell(cell)
         self.incomplete_pbc = pbc
-        if atoms:
+        if atoms is not None:
             self.set_atoms(atoms, add)
 
     @staticmethod
@@ -123,13 +123,24 @@ class AtomsRegion:
         self.incomplete_pbc = pbc
 
     @property
+    def info(self):
+        """ASE metadata shared with the parent atoms object.
+
+        ``AtomsRegion`` deliberately presents the subset-oriented part of the
+        :class:`ase.Atoms` interface used by symmetry and occupation code. ASE
+        ``info`` is object-level metadata rather than a per-atom array, so the
+        authoritative representation is the parent's dictionary.
+        """
+        return self.atoms.info
+
+    @property
     def slice(self):
         return self._slice
 
     @slice.setter
     def slice(self, slice):
         self._slice = slice
-        self._clear_cache
+        self._clear_cache()
 
     def _clear_cache(self):
         for i in ("ids", "set_of_ids", "arrays"):
@@ -151,6 +162,7 @@ class AtomsRegion:
         atoms = self.atoms[self.slice]
         atoms.cell = self.cell
         atoms.pbc = self.pbc
+        return atoms
 
     @property
     def symbols(self):
@@ -173,7 +185,7 @@ class AtomsRegion:
 
     @cached_property
     def set_of_ids(self):
-        """Returns set of ids of sites that belongs to the region"""
+        """Return ids of sites that belong to the region."""
         return set(self.ids)
 
     @property
@@ -217,13 +229,19 @@ class AtomsRegion:
 
     @property
     def spacegroup_info(self):
-        return self.atoms.spacegroup_info.for_region(self)
+        return self.atoms.spacegroup_info.info_for_region(self)
 
     def copy_for_atoms(self, atoms, slice=None):
-        region = AtomsRegion(
-            self.name, self.slice if slice is None else slice, self.cell, self.pbc, self.inherit_cell, atoms
+        # ``incomplete_cell`` and ``incomplete_pbc`` are the canonical stored
+        # representation of inherited axes.  Copy them directly so implicit
+        # inheritance via a zero cell vector / ``pbc=None`` is preserved too.
+        return AtomsRegion(
+            self.name,
+            self.slice if slice is None else slice,
+            self.incomplete_cell.copy(),
+            np.array(self.incomplete_pbc, dtype=object, copy=True),
+            atoms=atoms,
         )
-        return region
 
     def __repr__(self):
         return f"<AtomsRegion {self.name}>"
