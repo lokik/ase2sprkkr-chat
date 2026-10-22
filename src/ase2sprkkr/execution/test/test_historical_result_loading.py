@@ -411,3 +411,68 @@ def test_uncaptured_restore_publishes_complete_file_atomically(tmp_path):
     assert output.read_bytes() == b"complete data"
     assert retrieved.files.outputs[0].availability_state == "available"
     assert list(tmp_path.glob(".missing.out.*.tmp")) == []
+
+
+@pytest.mark.parametrize("matching", [False, True])
+def test_external_writer_cannot_be_overwritten_during_historical_restore(
+    tmp_path, monkeypatch, matching,
+):
+    import ase2sprkkr.execution.job_files as job_files
+
+    manager, executor, record = _terminal_run(tmp_path)
+    target = tmp_path / "run.out"
+    target.unlink()
+    publish = job_files.durable_publish_new
+
+    def competing_publish(staged, destination):
+        # Simulate a writer not participating in the restoration file lock.
+        target.write_text("original output" if matching else "different contents")
+        return publish(staged, destination)
+
+    monkeypatch.setattr(job_files, "durable_publish_new", competing_publish)
+    if matching:
+        restored = manager.retrieve_result_files(record.id)
+        assert restored.files.availability_state == FileAvailabilityState.AVAILABLE
+        assert target.read_text() == "original output"
+    else:
+        with pytest.raises(HistoricalFileMismatchError, match="appeared during retrieval"):
+            manager.retrieve_result_files(record.id)
+        assert target.read_text() == "different contents"
+    assert list(tmp_path.glob(".run.out.*.tmp")) == []
+
+
+def test_uncaptured_external_file_is_never_overwritten(tmp_path, monkeypatch):
+    import ase2sprkkr.execution.job_files as job_files
+    from ase2sprkkr.execution.run_model import FileEntry
+
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    executor = _HistoryExecutor()
+    endpoint = endpoint_for_executor(executor)
+    manager.executors.register(executor, endpoint)
+    target = tmp_path / "uncaptured.out"
+    record = manager.new_record(
+        task="DOS", directory=tmp_path, endpoint=endpoint,
+        files=FileManifest(outputs=(FileEntry(
+            local_path=str(target), availability_state="pending",
+        ),)),
+    )
+    record = manager.transition(
+        record, state=RunState.FINISHED,
+        execution=record.execution.submitted("job-1"),
+    )
+
+    def fetch(reference, files, *, destinations=None):
+        from pathlib import Path
+        Path(destinations[str(target)]).write_text("downloaded")
+    executor.fetch_result_files = fetch
+    publish = job_files.durable_publish_new
+
+    def competing_publish(staged, destination):
+        target.write_text("external")
+        return publish(staged, destination)
+
+    monkeypatch.setattr(job_files, "durable_publish_new", competing_publish)
+    with pytest.raises(HistoricalFileMismatchError, match="appeared during retrieval"):
+        manager.retrieve_result_files(record.id)
+    assert target.read_text() == "external"
+    assert list(tmp_path.glob(".uncaptured.out.*.tmp")) == []
