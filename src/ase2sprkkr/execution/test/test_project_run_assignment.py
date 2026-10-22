@@ -32,6 +32,9 @@ class _Runner:
         self.backend_id = "native-1"
         self.state = RunState.QUEUED
 
+    def replace_file_manifest(self, manifest):
+        return self.job_files.replace(manifest)
+
     @property
     def return_code(self):
         return self.result.return_code
