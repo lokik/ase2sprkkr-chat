@@ -22,7 +22,7 @@ from ..common.file_utils import Directory
 from ..common.temporary import temporary_option_value
 from ..execution.base import ExecutionResources
 from ..execution.persistence import resolve_project_manager, default_execution_manager
-from ..execution.postprocessing import PostprocessingRunner
+from ..execution.postprocessing import CalculationRun
 from ..input_parameters.input_parameters import InputParameters
 from ..potentials.potentials import Potential
 from .profile import SPRKKRProfile
@@ -932,7 +932,7 @@ def _create_sprkkr_run(
 
         if project_context is None:
             raw_runner = executor.create_run(spec)
-            runner = PostprocessingRunner(
+            runner = CalculationRun(
                 raw_runner,
                 process_result,
                 callback=finalized,

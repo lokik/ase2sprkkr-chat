@@ -5,7 +5,7 @@ from ase2sprkkr.execution import (
     ExecutionOutcome,
     Executor,
     FailurePhase,
-    PostprocessingRunner,
+    CalculationRun,
     RunState,
     RunStatus,
     RunStore,
@@ -125,7 +125,7 @@ def test_postprocessing_is_observable_until_processor_finishes():
         release.wait()
         return SimpleNamespace(return_code=outcome.return_code)
 
-    runner = PostprocessingRunner(raw, process)
+    runner = CalculationRun(raw, process)
     runner.submit()
     completion = Thread(target=raw.complete)
     completion.start()
@@ -169,7 +169,7 @@ def test_failed_wait_keeps_original_error_when_backend_status_is_unavailable():
         def wait(self):
             raise ValueError("original execution failure")
 
-    runner = PostprocessingRunner(InaccessibleRunner(), lambda outcome: outcome)
+    runner = CalculationRun(InaccessibleRunner(), lambda outcome: outcome)
     runner.submit()
     try:
         import pytest

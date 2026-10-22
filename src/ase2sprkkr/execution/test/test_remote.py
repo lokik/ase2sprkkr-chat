@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from ..base import ExecutionSpec, FailurePhase, LaunchSpec, RunState, SubmissionNotStarted
-from ..postprocessing import PostprocessingRunner
+from ..postprocessing import CalculationRun
 from ..remote import FileSyncPolicy
 from ..remote_endpoint import RemoteEndpointExecutor
 from ..transport import LocalTransport
@@ -46,7 +46,7 @@ def _processed_run(executor, spec):
             error=error,
         )
 
-    return PostprocessingRunner(executor.create_run(spec), process)
+    return CalculationRun(executor.create_run(spec), process)
 
 
 def _executor(transport=None, **kwargs):

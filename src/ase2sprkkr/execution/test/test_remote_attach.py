@@ -9,7 +9,7 @@ from ..base import ExecutionSpec, LaunchSpec, RunState
 from ..manager import RunRecord
 from ..run_model import Execution, WorkingDirectory, FileManifest
 from ..endpoint import endpoint_for_executor
-from ..postprocessing import PostprocessingRunner
+from ..postprocessing import CalculationRun
 from ..remote_endpoint import RemoteEndpointExecutor
 from ..transport import LocalTransport
 
@@ -52,7 +52,7 @@ def _processed(raw):
             ),
         )
 
-    runner = PostprocessingRunner(raw, process)
+    runner = CalculationRun(raw, process)
     runner.start()
     return runner
 
@@ -105,7 +105,7 @@ def test_remote_executor_attach_reconnects_running_run_and_restores_stage_out(tm
         launch=_launch(local_root, remote_root),
     )
     original_raw = first_executor.create_run(spec)
-    original = PostprocessingRunner(original_raw, lambda outcome: outcome)
+    original = CalculationRun(original_raw, lambda outcome: outcome)
     original.submit()
     _wait_for_state(original, RunState.RUNNING)
 

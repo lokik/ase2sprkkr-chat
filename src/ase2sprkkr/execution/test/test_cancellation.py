@@ -6,7 +6,7 @@ from threading import Event, Thread
 import pytest
 
 from ase2sprkkr.execution.base import ExecutionResources, RunState
-from ase2sprkkr.execution.postprocessing import PostprocessingRunner
+from ase2sprkkr.execution.postprocessing import CalculationRun
 from ase2sprkkr.execution.manager import PersistentRun
 
 
@@ -84,7 +84,7 @@ def _runner():
     backend = _BackendRunner()
     backend.release_submit.set()
     resource = _Resource()
-    return PostprocessingRunner(backend, lambda outcome: outcome, resources=ExecutionResources(resource)), backend, resource
+    return CalculationRun(backend, lambda outcome: outcome, resources=ExecutionResources(resource)), backend, resource
 
 
 def test_public_runner_latches_cancel_before_submit():
@@ -104,7 +104,7 @@ def test_public_runner_latches_cancel_before_submit():
 def test_cancel_during_submit_is_dispatched_after_submission():
     backend = _BackendRunner()
     resource = _Resource()
-    runner = PostprocessingRunner(backend, lambda outcome: outcome, resources=ExecutionResources(resource))
+    runner = CalculationRun(backend, lambda outcome: outcome, resources=ExecutionResources(resource))
     errors = []
 
     def submit():
@@ -151,7 +151,7 @@ def test_late_cancel_never_reaches_terminal_backend(owned, final_state):
     backend.state = final_state
     resource = _Resource()
     resources = ExecutionResources(resource) if owned else None
-    runner = PostprocessingRunner(backend, lambda outcome: outcome, resources=resources)
+    runner = CalculationRun(backend, lambda outcome: outcome, resources=resources)
 
     assert runner.cancel() is None
     assert runner.cancel() is None
@@ -205,7 +205,7 @@ def test_project_cancel_returns_while_backend_submission_is_blocked():
 
     backend = Backend()
     resource = _Resource()
-    processed = PostprocessingRunner(
+    processed = CalculationRun(
         backend, lambda outcome: outcome, resources=ExecutionResources(resource),
     )
     store = Store()
@@ -291,7 +291,7 @@ def test_project_cancellation_during_prelaunch_is_durable_and_nonblocking(phase)
 
     backend = Backend()
     resource = _Resource()
-    processed = PostprocessingRunner(
+    processed = CalculationRun(
         backend, lambda result: result, resources=ExecutionResources(resource),
     )
     manager = Manager()

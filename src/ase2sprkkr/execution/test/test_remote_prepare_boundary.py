@@ -129,7 +129,7 @@ def test_remote_file_preparation_rejects_duplicate_paths_before_mapping(tmp_path
 @pytest.mark.parametrize("method", ("submit", "start"))
 def test_postprocessing_rejected_submit_preserves_error_and_does_not_monitor(method):
     from ase2sprkkr.execution.base import SubmissionNotStarted
-    from ase2sprkkr.execution.postprocessing import PostprocessingRunner
+    from ase2sprkkr.execution.postprocessing import CalculationRun
 
     failure = SubmissionNotStarted("preflight refused")
 
@@ -139,7 +139,7 @@ def test_postprocessing_rejected_submit_preserves_error_and_does_not_monitor(met
         def submit(self):
             raise failure
 
-    runner = PostprocessingRunner(RejectedRunner(), lambda result: result)
+    runner = CalculationRun(RejectedRunner(), lambda result: result)
     with pytest.raises(SubmissionNotStarted, match="preflight refused") as caught:
         getattr(runner, method)()
     assert caught.value is failure

@@ -18,7 +18,7 @@ from ase2sprkkr.execution.manager import (
     PersistentRun,
     RunStore,
 )
-from ase2sprkkr.execution.postprocessing import PostprocessingRunner
+from ase2sprkkr.execution.postprocessing import CalculationRun
 from ase2sprkkr.execution.run_model import (
     FileAvailabilityState, FileManifest, FileEntry,
 )
@@ -62,7 +62,7 @@ def test_postprocessing_failure_does_not_change_raw_execution_state(tmp_path):
     def fail(_outcome):
         raise ValueError("parser failed")
 
-    runner = PostprocessingRunner(raw, fail)
+    runner = CalculationRun(raw, fail)
     runner.submit()
 
     with pytest.raises(ValueError, match="parser failed"):
@@ -114,7 +114,7 @@ class _UnknownRunner:
 def test_unknown_raw_state_is_preserved_and_not_postprocessed():
     raw = _UnknownRunner()
     processed = []
-    runner = PostprocessingRunner(raw, lambda outcome: processed.append(outcome))
+    runner = CalculationRun(raw, lambda outcome: processed.append(outcome))
 
     runner.submit()
     assert runner.wait() is raw.result
@@ -177,7 +177,7 @@ def _project_wrapper(tmp_path, runner):
         directory=tmp_path,
         endpoint=endpoint,
     )
-    processed = PostprocessingRunner(runner, lambda outcome: outcome)
+    processed = CalculationRun(runner, lambda outcome: outcome)
     processed.hooks = PersistentRun(manager, executor, record)
     return manager, processed
 

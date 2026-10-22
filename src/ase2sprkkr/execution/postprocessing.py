@@ -539,8 +539,6 @@ class CalculationRun:
         return self._dispatch_cancel()
 
 
-# Keep the published import while consolidating the lifecycle.
-PostprocessingRunner = CalculationRun
 
 
 def claim_historical_postprocessing(latest):

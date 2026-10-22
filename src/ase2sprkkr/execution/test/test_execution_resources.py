@@ -11,7 +11,7 @@ from ase2sprkkr.execution.base import (
     RunState,
     SubmissionNotStarted,
 )
-from ase2sprkkr.execution.postprocessing import PostprocessingRunner
+from ase2sprkkr.execution.postprocessing import CalculationRun
 from ase2sprkkr.execution.manager import PersistentRun
 
 
@@ -168,7 +168,7 @@ def test_files_are_closed_when_submission_fails_before_start():
         output_file,
     )
 
-    assert isinstance(runner, PostprocessingRunner)
+    assert isinstance(runner, CalculationRun)
     assert not input_file.closed
     assert not output_file.closed
 
@@ -214,7 +214,7 @@ def test_cancel_started_run_does_not_close_resources_before_monitor_finishes():
     underlying = _Runner()
     underlying._state = RunState.RUNNING
     resources = ExecutionResources(input_file)
-    runner = PostprocessingRunner(underlying, lambda outcome: outcome, resources=resources)
+    runner = CalculationRun(underlying, lambda outcome: outcome, resources=resources)
 
     runner.cancel()
 
@@ -226,7 +226,7 @@ def test_cancel_started_run_does_not_close_resources_before_monitor_finishes():
 def test_cancel_unstarted_run_releases_resources():
     input_file = io.BytesIO(b"input")
     resources = ExecutionResources(input_file)
-    runner = PostprocessingRunner(_Runner(), lambda outcome: outcome, resources=resources)
+    runner = CalculationRun(_Runner(), lambda outcome: outcome, resources=resources)
 
     runner.cancel()
 
@@ -245,7 +245,7 @@ def test_uncertain_submission_preserves_resources_and_prevents_resubmit():
             attempts.append("submit")
             raise ConnectionError("backend reply lost")
 
-    runner = PostprocessingRunner(
+    runner = CalculationRun(
         AmbiguousRunner(), lambda outcome: outcome, resources=resources,
     )
     with pytest.raises(ConnectionError, match="reply lost"):
@@ -266,7 +266,7 @@ def test_uncertain_submission_preserves_resources_and_prevents_resubmit():
 def test_cancel_before_submission_never_starts_backend():
     input_file = io.BytesIO(b"input")
     resources = ExecutionResources(input_file)
-    runner = PostprocessingRunner(_Runner(), lambda outcome: outcome, resources=resources)
+    runner = CalculationRun(_Runner(), lambda outcome: outcome, resources=resources)
     runner.cancel()
     assert runner.state is RunState.CANCELLED
     assert resources.closed
@@ -279,7 +279,7 @@ def test_failed_project_reservation_releases_prepared_resources():
 
     input_file = io.BytesIO(b"input")
     resources = ExecutionResources(input_file)
-    postprocessed = PostprocessingRunner(
+    postprocessed = CalculationRun(
         _Runner(), lambda outcome: outcome, resources=resources,
     )
 
@@ -309,7 +309,7 @@ def test_preparation_error_releases_resources_before_submission():
         def submit(self):
             submitted.append(True)
 
-    runner = PostprocessingRunner(
+    runner = CalculationRun(
         FailedPreflight(), lambda outcome: outcome, resources=resources,
     )
     with pytest.raises(SubmissionNotStarted, match="staging failed") as error:
@@ -334,7 +334,7 @@ def test_explicit_close_prevents_later_run():
             submitted.append(True)
             super().submit()
 
-    runner = PostprocessingRunner(
+    runner = CalculationRun(
         ObservedRun(), lambda outcome: outcome, resources=resources,
     )
     runner.close()
@@ -371,7 +371,7 @@ def test_cancel_during_submit_waits_for_submission_then_requests_cancel():
             self._state = RunState.CANCELLED
             stopped.set()
 
-    runner = PostprocessingRunner(
+    runner = CalculationRun(
         RacingRunner(), lambda outcome: outcome, resources=resources,
     )
 
@@ -420,7 +420,7 @@ def test_project_cancel_during_reservation_does_not_close_in_use_inputs():
             raise ValueError("reservation rejected")
 
     raw = _Runner()
-    processed = PostprocessingRunner(
+    processed = CalculationRun(
         raw, lambda outcome: outcome, resources=resources,
     )
     project = _tracked(
@@ -467,7 +467,7 @@ def test_callback_persists_before_prepared_resources_are_closed():
         def submit(self):
             self._state = RunState.FINISHED
 
-    runner = PostprocessingRunner(
+    runner = CalculationRun(
         CompletedRunner(), lambda outcome: outcome,
         callback=lambda result: observed.append(resources.closed),
         resources=resources,
@@ -506,7 +506,7 @@ def test_manifest_persistence_failure_does_not_submit_backend():
             completed.append(kwargs)
             return SimpleNamespace(state=kwargs["state"], id="reserved")
 
-    processed = PostprocessingRunner(
+    processed = CalculationRun(
         PreparedBackend(), lambda outcome: outcome, resources=resources,
     )
     project = _tracked(
@@ -538,7 +538,7 @@ def test_cancel_during_preflight_does_not_close_inputs_until_preflight_ends():
             assert release.wait(5)
             assert not input_file.closed
 
-    runner = PostprocessingRunner(
+    runner = CalculationRun(
         BlockingPreflight(), lambda outcome: outcome, resources=resources,
     )
 
@@ -597,7 +597,7 @@ def test_project_cancel_during_manifest_staging_never_submits_backend():
             completions.append(changes)
             return SimpleNamespace(state=changes["state"], id="run")
 
-    processed = PostprocessingRunner(Backend(), lambda outcome: outcome, resources=resources)
+    processed = CalculationRun(Backend(), lambda outcome: outcome, resources=resources)
     project = _tracked(Store(), None, processed, SimpleNamespace(
         state=RunState.NEW, id="run", updated_at="new", files=None,
     ))
@@ -639,7 +639,7 @@ def test_ambiguous_submit_without_resources_cannot_be_retried():
             attempts.append("submitted")
             raise ConnectionError("reply lost")
 
-    runner = PostprocessingRunner(LostReply(), lambda result: result)
+    runner = CalculationRun(LostReply(), lambda result: result)
     with pytest.raises(ConnectionError, match="reply lost"):
         runner.submit()
     with pytest.raises(RuntimeError, match="Submission outcome is uncertain"):
