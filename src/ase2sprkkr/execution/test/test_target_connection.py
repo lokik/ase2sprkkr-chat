@@ -63,10 +63,10 @@ def test_ssh_follow_delivers_decoded_chunks_without_exposing_transport(monkeypat
 
     seen = []
     class Framed:
-        stdout = asyncio.StreamReader()
-        stderr = asyncio.StreamReader()
         terminal = {"state": "finished", "return_code": 0}
         def __init__(self, process):
+            self.stdout = asyncio.StreamReader()
+            self.stderr = asyncio.StreamReader()
             self.stdout.feed_data(b"standard")
             self.stdout.feed_eof()
             self.stderr.feed_data(b"diagnostic")
