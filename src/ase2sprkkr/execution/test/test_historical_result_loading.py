@@ -66,7 +66,7 @@ def _terminal_run(tmp_path, *, state=RunState.FINISHED, return_code=0, task="DOS
     executor.output_file = str(output_file)
 
     endpoint = endpoint_for_executor(executor)
-    manager.register_executor(executor, endpoint)
+    manager.executors.register(executor, endpoint)
     record = manager.new_record(
         task=task,
         directory=tmp_path,
