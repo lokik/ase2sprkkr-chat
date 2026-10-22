@@ -27,12 +27,21 @@ def _launch(local_root, remote_root):
 
 
 def _record(runner):
+    files = runner.file_snapshot()
+    execution = Execution(
+        endpoint_for_executor(runner.executor),
+        WorkingDirectory(
+            runner.spec.directory,
+            files.mapping.map_path(runner.spec.directory),
+        ),
+        runner.backend_id,
+    )
     return RunRecord(
         id=runner.backend_id, task="SCF", state=RunState.RUNNING,
         created_at="2026-10-13T08:00:00+00:00",
         updated_at="2026-10-13T08:00:00+00:00",
-        execution=runner.execution,
-        files=runner.files,
+        execution=execution,
+        files=files,
     )
 
 
