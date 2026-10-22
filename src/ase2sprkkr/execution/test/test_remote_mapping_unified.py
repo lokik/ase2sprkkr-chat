@@ -80,7 +80,7 @@ def test_staging_uses_reserved_input_not_new_spec(tmp_path):
     changed = replace(spec, input_file="not-reserved.in")
     executor = RemoteEndpointExecutor(LocalTransport())
     staged = asyncio.run(executor.file_handler.prepare(mapping, changed, frozen))
-    assert staged.primary_input == frozen.primary_input
+    assert staged.inputs == frozen.inputs
     assert (tmp_path / "remote" / "original.in").read_text() == "submitted"
     assert not (tmp_path / "remote" / "not-reserved.in").exists()
 

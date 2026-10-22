@@ -196,10 +196,9 @@ class FileMapping:
         return local
 
 
-def _validate_file_declarations(entries, *, primary_input=None):
+def _validate_file_declarations(entries):
     """Reject duplicate file identities, except intentionally merged streams.
 
-    primary_input is a reference to an inputs entry, not an extra declaration.
     Remote-only cache baselines are metadata, not file declarations.
     """
     import os
@@ -221,7 +220,7 @@ def _validate_file_declarations(entries, *, primary_input=None):
                 == posixpath.normpath(previous.remote_path)
             )
             roles = {role, previous_role}
-            if roles in ({"input", "stdin"}, {"stdout", "output"}, {"stderr", "output"}):
+            if roles in ({"stdout", "output"}, {"stderr", "output"}):
                 for literal, pattern in ((entry.local_path, previous.local_path),
                                          (previous.local_path, entry.local_path)):
                     if (literal is not None and pattern is not None
@@ -240,11 +239,6 @@ def _validate_file_declarations(entries, *, primary_input=None):
                                                    posixpath.normpath(pattern))):
                         same_remote = True
             if not same_local and not same_remote:
-                continue
-            if (roles == {"input", "stdin"} and primary_input is not None
-                    and same_local
-                    and same_local_file(entry.local_path, primary_input.local_path)
-                    and same_local_file(previous.local_path, primary_input.local_path)):
                 continue
             # An expanded wildcard may repeat an exact output/cache member,
             # but the same local destination must not have different sources.
@@ -288,8 +282,7 @@ class FileManifest:
     input_versions: tuple[FileVersion, ...] = ()
     output_versions: tuple[FileVersion, ...] = ()
     captured_at: Optional[str] = None
-    primary_input: Optional[FileEntry] = None
-    stdin: Optional[FileEntry] = None
+    stdin: bool = False
 
     @classmethod
     def from_spec(cls, spec):
@@ -307,12 +300,25 @@ class FileManifest:
                 if (path := file_path(value, directory)) is not None
             )
 
-        primary = file_path(spec.input_file, directory)
-        # Every independent input declaration is validated, never coalesced.
-        # primary_input is only a reference to the first entry, and stdin may
-        # explicitly reference that same primary file.
-        inputs = entries(spec.input_file, *spec.input_files)
-        stdin = file_path(spec.stdin, directory)
+        # stdin names the first input, not a second file declaration.
+        # Keep distinct regular inputs in their original order, moving stdin
+        # to the front when the caller supplied a separate stream.
+        values = [value for value in (spec.input_file, *spec.input_files)
+                  if value is not None]
+        stdin = spec.stdin is not None
+        if stdin:
+            stdin_path = file_path(spec.stdin, directory, required=True)
+            from .file_identity import same_local_file
+            position = next(
+                (i for i, value in enumerate(values)
+                 if same_local_file(file_path(value, directory), stdin_path)),
+                None,
+            )
+            if position is None:
+                values.insert(0, spec.stdin)
+            elif position:
+                values.insert(0, values.pop(position))
+        inputs = entries(*values)
         stdout = file_path(spec.output_file, directory)
         stderr = file_path(spec.error_file, directory)
         outputs = entries(*spec.output_files)
@@ -320,8 +326,7 @@ class FileManifest:
 
         return cls(
             inputs=inputs,
-            primary_input=None if primary is None else FileEntry(local_path=primary),
-            stdin=None if stdin is None else FileEntry(local_path=stdin),
+            stdin=stdin,
             outputs=outputs,
             caches=caches,
             stdout=None if stdout is None else FileEntry(local_path=stdout),
@@ -337,7 +342,7 @@ class FileManifest:
                     for item in getattr(self, name)
                 ),
             )
-        for name in ("stdout", "stderr", "primary_input", "stdin"):
+        for name in ("stdout", "stderr"):
             item = getattr(self, name)
             if isinstance(item, dict):
                 object.__setattr__(self, name, FileEntry(**item))
@@ -351,14 +356,23 @@ class FileManifest:
                     for version in getattr(self, name)
                 ),
             )
+        if type(self.stdin) is not bool:
+            raise TypeError("FileManifest.stdin must be a bool")
+        if self.stdin:
+            from .transport import has_file_magic
+            if not self.inputs:
+                raise ValueError("stdin=True requires at least one input")
+            first = self.inputs[0]
+            if any(has_file_magic(path) for path in
+                   (first.local_path, first.remote_path) if path is not None):
+                raise ValueError("The first input used as stdin cannot be a wildcard")
         _validate_file_declarations((
             *(("input", entry) for entry in self.inputs),
-            ("stdin", self.stdin),
             ("stdout", self.stdout),
             ("stderr", self.stderr),
             *(("output", entry) for entry in self.outputs),
             *(("cache", entry) for entry in self.caches),
-        ), primary_input=self.primary_input)
+        ))
 
     @property
     def files(self):
@@ -423,8 +437,6 @@ class FileManifest:
         return replace(
             self,
             inputs=tuple(mapped(entry) for entry in self.inputs),
-            primary_input=mapped(self.primary_input),
-            stdin=mapped(self.stdin),
             outputs=tuple(mapped(entry) for entry in self.outputs),
             caches=tuple(mapped(entry) for entry in self.caches),
             stdout=mapped(self.stdout),
@@ -552,12 +564,12 @@ class FileManifest:
 
     @property
     def input_file(self):
-        return None if self.primary_input is None else self.primary_input.local_path
+        return self.inputs[0].local_path if self.inputs else None
 
     @property
     def input_entries(self):
-        """All read inputs, including stdin without making it primary."""
-        return (*self.inputs, self.stdin) if self.stdin is not None else self.inputs
+        """Declared inputs; stdin is a reference to the first entry."""
+        return self.inputs
 
     @property
     def output_file(self):

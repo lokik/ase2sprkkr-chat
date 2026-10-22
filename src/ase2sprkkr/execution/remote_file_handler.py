@@ -150,37 +150,28 @@ class RemoteFileHandler:
             entry.local_path: entry.optional
             for entry in manifest.inputs if entry.local_path is not None
         }
-        primary = (None if manifest.primary_input is None
-                   else manifest.primary_input.local_path)
-        # Stage mandatory references first, before optional overlapping globs.
-        for reference in (manifest.primary_input, manifest.stdin):
-            if reference is not None and reference.local_path is not None:
-                await self._stage_file(mapping, reference.local_path, used)
-        for entry in manifest.inputs:
+        # stdin is the first input, never another declaration. Stage every
+        # member, then coalesce wildcard/exact overlaps without changing order.
+        for index, entry in enumerate(manifest.inputs):
             source = entry.local_path
-            if source is None or source == primary:
+            if source is None:
                 continue
+            required = not entry.optional or (index == 0 and manifest.stdin)
             if has_file_magic(source):
                 matches = await self._stage_input_pattern(
-                    mapping, source, used, required=not entry.optional,
+                    mapping, source, used, required=required,
                 )
                 for match in matches:
                     optional[match] = optional.get(match, True) and entry.optional
             else:
-                await self._stage_file(
-                    mapping, source, used, required=not entry.optional,
-                )
-        for reference in (manifest.primary_input, manifest.stdin):
-            if reference is not None and reference.local_path is not None:
-                optional[reference.local_path] = False
+                await self._stage_file(mapping, source, used, required=required)
+                if index == 0 and manifest.stdin:
+                    optional[source] = False
 
         declared = {entry.local_path: entry for entry in manifest.inputs}
         inputs = []
         for local in dict.fromkeys((*declared, *used.values())):
             if local is None or has_file_magic(local):
-                continue
-            if (manifest.stdin is not None and local == manifest.stdin.local_path
-                    and local not in declared):
                 continue
             inputs.append(FileEntry(
                 local_path=local, remote_path=mapping.map_path(local),
@@ -199,7 +190,6 @@ class RemoteFileHandler:
         declared = {
             entry.local_path for entry in (
                 *manifest.inputs, *manifest.caches,
-                manifest.primary_input, manifest.stdin,
             )
             if entry is not None and entry.local_path is not None
         }

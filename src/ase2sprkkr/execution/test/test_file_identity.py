@@ -60,15 +60,11 @@ def test_stream_and_output_wildcard_overlap_rejected(role):
         ))
 
 
-def test_stdin_and_auxiliary_input_rejected():
-    path = "/local/main.inp"
-    with pytest.raises(ValueError, match="Duplicate file declaration"):
-        FileManifest(inputs=(FileEntry(path),), stdin=FileEntry(path))
-
-
-def test_primary_input_may_feed_stdin():
+def test_stdin_is_a_boolean_reference_to_first_input():
     entry = FileEntry("/local/main.inp")
-    files = FileManifest(inputs=(entry,), primary_input=entry, stdin=entry)
+    files = FileManifest(inputs=(entry,), stdin=True)
+    assert files.stdin is True
+    assert files.input_file == entry.local_path
     assert files.input_files == (entry.local_path,)
 
 
@@ -114,14 +110,14 @@ def test_declared_output_availability_updates_preserve_source():
     assert updated.outputs[0].source == entry.source
 
 
-def test_stdin_and_auxiliary_input_wildcard_overlap_rejected():
+def test_stdin_with_auxiliary_wildcard_does_not_duplicate_first_input():
     primary = FileEntry("/local/main.inp")
-    with pytest.raises(ValueError, match="Duplicate file declaration"):
-        FileManifest(
-            inputs=(primary, FileEntry("/local/*.inp", optional=True)),
-            primary_input=primary,
-            stdin=primary,
-        )
+    files = FileManifest(
+        inputs=(primary, FileEntry("/local/*.inp", optional=True)),
+        stdin=True,
+    )
+    assert files.stdin is True
+    assert len(files.inputs) == 2
 
 
 def test_materialized_output_cannot_duplicate_stdout():

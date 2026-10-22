@@ -186,7 +186,7 @@ class RemoteRunner(ManagedRunner):
             # The runner owns backend identity, command construction and the
             # submission protocol. FileHandler knows only file locations.
             mapped = {entry.local_path: entry.remote_path
-                      for entry in (*manifest.inputs, *manifest.caches, manifest.stdin)
+                      for entry in (*manifest.inputs, *manifest.caches)
                       if entry is not None
                       if entry.local_path is not None}
             def argv(args):
@@ -198,10 +198,12 @@ class RemoteRunner(ManagedRunner):
                 "executor_options": self.executor.backend_options,
                 "directory": remote_directory,
                 **self.spec.command_request(argv),
-                "input_file": (None if manifest.primary_input is None
-                               else manifest.primary_input.remote_path),
-                "stdin": (None if manifest.stdin is None
-                          else manifest.stdin.remote_path),
+                "input_file": (
+                    manifest.inputs[0].remote_path if manifest.inputs else None
+                ),
+                "stdin": (
+                    manifest.inputs[0].remote_path if manifest.stdin else None
+                ),
                 "output_file": (None if manifest.stdout is None
                                 else manifest.stdout.remote_path),
                 "error_file": (None if manifest.stderr is None

@@ -34,8 +34,8 @@ def test_mapping_is_idempotent_for_every_manifest_role(tmp_path):
     assert mapped.with_mapping(mapping) == mapped
     assert mapped.mapping == mapping
     for entry in (
-        *mapped.inputs, mapped.primary_input, mapped.stdin,
-        *mapped.outputs, *mapped.caches, mapped.stdout, mapped.stderr,
+        *mapped.inputs, *mapped.outputs, *mapped.caches,
+        mapped.stdout, mapped.stderr,
     ):
         assert entry.remote_path == mapping.map_path(entry.local_path)
     assert local.mapping is None
@@ -43,7 +43,7 @@ def test_mapping_is_idempotent_for_every_manifest_role(tmp_path):
 
 
 @pytest.mark.parametrize("role", (
-    "inputs", "primary_input", "stdin", "outputs", "caches", "stdout", "stderr",
+    "inputs", "outputs", "caches", "stdout", "stderr",
 ))
 def test_mapping_rejects_changed_reserved_path_for_all_roles(tmp_path, role):
     manifest = FileManifest.from_spec(_spec(tmp_path))
@@ -93,10 +93,10 @@ def test_remote_submission_uses_reserved_primary_input_and_stdin(tmp_path):
     runner.spec = replace(spec, input_file="wrong.in", stdin="wrong.stdin",
                           input_files=("unreserved.in",))
     request, prepared = asyncio.run(runner._prepare_async())
-    assert prepared.primary_input == reserved.primary_input
-    assert prepared.stdin == reserved.stdin
-    assert request["input_file"] == reserved.primary_input.remote_path
-    assert request["stdin"] == reserved.stdin.remote_path
+    assert prepared.inputs == reserved.inputs
+    assert prepared.stdin is True
+    assert request["input_file"] == reserved.inputs[0].remote_path
+    assert request["stdin"] == reserved.inputs[0].remote_path
     assert "wrong.in" not in str(request["files"])
     assert "unreserved.in" not in str(request["files"])
     assert {path.name for path in remote.iterdir()} == {
@@ -129,7 +129,8 @@ def test_local_submission_uses_reserved_file_declarations(tmp_path):
                           output_file="wrong.out", error_file="wrong.err")
     request = runner._request()
     assert request["input_file"] == reserved.input_file
-    assert request["stdin"] == reserved.stdin.local_path
+    assert request["stdin"] == reserved.inputs[0].local_path
     assert request["output_file"] == reserved.output_file
     assert request["error_file"] == reserved.stderr.local_path
-    assert request["files"]["primary_input"]["local_path"] == reserved.input_file
+    assert request["files"]["stdin"] is True
+    assert "primary_input" not in request["files"]

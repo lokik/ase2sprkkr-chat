@@ -124,7 +124,7 @@ class LocalRunner:
             return None
         return (info.st_dev, info.st_ino)
 
-    def _open_streams(self):
+    def _open_streams(self, *, stdin):
         targets = (("out", self.spec.output_file),
                    ("err", self.spec.error_file))
         by_inode = {}
@@ -158,7 +158,6 @@ class LocalRunner:
             by_path[path] = handle
             self._stream_handles[kind] = handle
 
-        stdin = self.spec.stdin
         if isinstance(stdin, (str, bytes, os.PathLike)):
             self._owned_stdin = open(file_path(stdin, self.spec.directory), "rb")
             return self._owned_stdin
@@ -201,8 +200,9 @@ class LocalRunner:
                 self.spec, preserve_open_streams=True,
             )
             try:
-                stdin = self._open_streams()
-                self._process = await start_local_process(self.spec, stdin=stdin)
+                runtime_spec = materialize_local_spec(self.spec)
+                stdin = self._open_streams(stdin=runtime_spec.stdin)
+                self._process = await start_local_process(runtime_spec, stdin=stdin)
             except BaseException as exc:
                 self._failure_phase = FailurePhase.LAUNCH
                 self._failure_message = str(exc)
@@ -344,7 +344,8 @@ class LocalExecutor(Executor):
         return True
 
     def create_run(self, spec: ExecutionSpec, callback=None):
-        return LocalRunner(materialize_local_spec(spec), callback=callback)
+        # Freeze the original file declarations before selecting serial/MPI.
+        return LocalRunner(spec, callback=callback)
 
     def create_project_run(
         self, spec: ExecutionSpec, *, run_id: str, callback=None

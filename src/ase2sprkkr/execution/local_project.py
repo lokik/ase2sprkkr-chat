@@ -153,8 +153,9 @@ class LocalProjectRunner(ManagedRunner):
             "directory": os.fspath(self.spec.directory),
             **self.spec.command_request(),
             "input_file": files.input_file,
-            "stdin": (None if files.stdin is None
-                      else files.stdin.local_path),
+            "stdin": (
+                files.inputs[0].local_path if files.stdin else None
+            ),
             "output_file": files.output_file,
             "error_file": (None if files.stderr is None
                            else files.stderr.local_path),

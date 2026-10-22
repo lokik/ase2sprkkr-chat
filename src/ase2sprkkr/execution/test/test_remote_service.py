@@ -1476,7 +1476,7 @@ def test_request_spec_does_not_duplicate_primary_input():
     primary = FileEntry("/local/main.in", "/remote/main.in")
     auxiliary = FileEntry("/local/extra.in", "/remote/extra.in")
     manifest = FileManifest(
-        inputs=(primary, auxiliary), primary_input=primary, stdin=primary,
+        inputs=(primary, auxiliary), stdin=True,
     )
     spec = remote_service._request_spec({
         "argv": ("true",), "directory": "/remote",

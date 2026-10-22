@@ -278,3 +278,42 @@ def test_reader_file_not_found_is_not_relabelled_as_missing_executable(
 
     assert prepared.closed
     assert prepared.input_file.closed
+
+
+
+def test_anonymous_temporary_input_materializes_without_taking_ownership(tmp_path):
+    import tempfile
+    from ase2sprkkr.sprkkr.calculation import _materialize_anonymous_input
+
+    with tempfile.TemporaryFile(mode="w+b") as original:
+        original.write(b"original input data")
+        original.seek(4)
+        materialized = _materialize_anonymous_input(
+            original, directory=str(tmp_path), save_input=False,
+        )
+        try:
+            assert materialized.name
+            assert materialized.read() == b"original input data"
+            assert original.tell() == 4
+            assert not original.closed
+        finally:
+            name = materialized.name
+            materialized.close()
+        assert not __import__("os").path.exists(name)
+
+
+def test_anonymous_generated_input_uses_named_temporary_file(tmp_path):
+    import tempfile
+    from ase2sprkkr.sprkkr.calculation import _materialize_anonymous_input
+
+    with tempfile.TemporaryFile(mode="w+") as original:
+        materialized = _materialize_anonymous_input(
+            original, directory=str(tmp_path), save_input=True,
+        )
+        try:
+            materialized.write("INPUT\n")
+            materialized.seek(0)
+            assert materialized.read() == "INPUT\n"
+        finally:
+            materialized.close()
+        assert not original.closed

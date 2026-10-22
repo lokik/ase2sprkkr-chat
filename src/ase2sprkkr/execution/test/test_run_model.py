@@ -49,7 +49,6 @@ def test_empty_backend_identity_and_pathless_file_are_invalid():
 def test_manifest_versions_and_availability_roundtrip():
     manifest = FileManifest(
         inputs=(FileEntry("/local/in", "/remote/in"),),
-        primary_input=FileEntry("/local/in", "/remote/in"),
         outputs=(FileEntry("/local/data", "/remote/data"),),
         stdout=FileEntry("/local/stdout", "/remote/stdout"),
         stderr=FileEntry("/local/stderr", "/remote/stderr"),
@@ -275,7 +274,7 @@ def test_independent_duplicate_inputs_are_rejected(tmp_path, extras, stdin):
         FileManifest.from_spec(spec)
 
 
-def test_stdin_may_reference_primary_input_but_not_auxiliary_input(tmp_path):
+def test_stdin_refers_to_first_input_and_reorders_auxiliary_input(tmp_path):
     from types import SimpleNamespace
     spec = SimpleNamespace(
         directory=str(tmp_path), input_file="input.inp", input_files=("other.inp",),
@@ -283,15 +282,15 @@ def test_stdin_may_reference_primary_input_but_not_auxiliary_input(tmp_path):
         output_files=(), cache_files=(),
     )
     files = FileManifest.from_spec(spec)
-    assert files.primary_input == files.inputs[0]
-    assert files.stdin.local_path == str(tmp_path / "input.inp") or (
-        files.stdin.local_path == str(tmp_path / "./input.inp")
-    )
+    assert files.stdin is True
+    assert files.inputs[0].local_path == str(tmp_path / "input.inp")
     assert len(files.inputs) == 2
     assert FileManifest(**asdict(files)) == files
     spec.stdin = "other.inp"
-    with pytest.raises(ValueError, match="Duplicate file declaration"):
-        FileManifest.from_spec(spec)
+    reordered = FileManifest.from_spec(spec)
+    assert reordered.stdin is True
+    assert reordered.inputs[0].local_path == str(tmp_path / "other.inp")
+    assert reordered.inputs[1].local_path == str(tmp_path / "input.inp")
 
 
 def test_only_stdout_and_stderr_may_share_a_file():
@@ -410,3 +409,22 @@ def test_materialized_output_cache_collision_rejected():
     cache = FileEntry("/local/data.dat", "/remote/data.dat")
     with pytest.raises(ValueError, match="Duplicate file declaration"):
         FileManifest(outputs=(member,), caches=(cache,))
+
+
+
+def test_stdin_boolean_requires_nonempty_inputs_and_literal_first_entry():
+    with pytest.raises(ValueError, match="at least one input"):
+        FileManifest(stdin=True)
+    with pytest.raises(ValueError, match="wildcard"):
+        FileManifest(inputs=(FileEntry("/tmp/*.inp"),), stdin=True)
+    with pytest.raises(ValueError, match="wildcard"):
+        FileManifest(
+            inputs=(FileEntry("/tmp/run.inp", "/remote/*.inp"),), stdin=True,
+        )
+    with pytest.raises(TypeError, match="bool"):
+        FileManifest(inputs=(FileEntry("/tmp/input.inp"),), stdin=0)
+
+    # The manifest checks structure, not whether the path currently exists.
+    files = FileManifest(inputs=(FileEntry("/does/not/exist.inp"),), stdin=True)
+    assert files.stdin is True
+    assert FileManifest(**asdict(files)) == files

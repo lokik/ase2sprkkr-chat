@@ -21,7 +21,7 @@ from ..bindings.empty_spheres import add_empty_spheres
 from ..common.file_utils import Directory
 from ..common.temporary import temporary_option_value
 from ..execution.base import ExecutionResources
-from ..execution.persistence import resolve_project_manager, default_executors
+from ..execution.persistence import resolve_project_manager, default_execution_manager
 from ..execution.postprocessing import CalculationRun
 from ..input_parameters.input_parameters import InputParameters
 from ..potentials.potentials import Potential
@@ -140,6 +140,40 @@ def _named_file_name(value):
         return os.fspath(name)
     except TypeError:
         return None
+
+
+def _materialize_anonymous_input(stream, *, directory, save_input):
+    """Turn an unnamed input stream into a path-backed, owned temporary file.
+
+    The runner must be able to reopen the input by pathname for MPI, SSH and
+    persistent runs.  Do not transfer ownership of a caller-provided stream.
+    """
+    if save_input:
+        return _TemporaryNamedFile(directory=directory, mode="w+")
+    try:
+        position = stream.tell()
+        stream.seek(0)
+    except (AttributeError, OSError, ValueError) as exc:
+        raise ValueError("Anonymous input stream must be seekable") from exc
+    try:
+        first = stream.read(65536)
+        if not isinstance(first, (str, bytes)):
+            raise TypeError("Anonymous input stream must return str or bytes")
+        target = _TemporaryNamedFile(
+            directory=directory, mode="w+b" if isinstance(first, bytes) else "w+",
+        )
+        try:
+            while first:
+                target.write(first)
+                first = stream.read(65536)
+            target.flush()
+            target.seek(0)
+            return target
+        except BaseException:
+            target.close()
+            raise
+    finally:
+        stream.seek(position)
 
 
 def _require_named_file(value, role):
@@ -568,6 +602,10 @@ class PreparedCalculation:
                 create_subdirs=create_subdirs,
                 mode="w+" if save_input else "r",
             )
+            if _named_file_name(opened_input) is None:
+                opened_input = _materialize_anonymous_input(
+                    opened_input, directory=work_directory, save_input=save_input,
+                )
             _require_named_file(opened_input, "input_file")
             _own_file(file_resources, owned_file_ids, opened_input)
 
@@ -870,11 +908,11 @@ def _create_sprkkr_run(
         project_context = resolve_project_manager(project)
         explicit_executor = executor is not None
         if executor is None:
-            executors = (
-                project_context[0].executors if project_context is not None
-                else default_executors()
+            manager = (
+                project_context[0] if project_context is not None
+                else default_execution_manager()
             )
-            executor = executors.for_endpoint(profile.endpoint)
+            executor = manager.executors.for_endpoint(profile.endpoint)
         if project_context is not None:
             manager, project_id = project_context
             executor_endpoint = (

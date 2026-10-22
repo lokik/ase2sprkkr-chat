@@ -136,7 +136,7 @@ def test_remote_manifest_is_sole_authority_for_input_declarations(tmp_path):
     request, manifest = asyncio.run(run._prepare_async())
     assert "input_files" not in request
     assert _request_spec(request).input_files == ()
-    assert _request_spec(request).input_file == manifest.primary_input.remote_path
+    assert _request_spec(request).input_file == manifest.inputs[0].remote_path
     assert manifest.input_files == (str(inp),)
 
 

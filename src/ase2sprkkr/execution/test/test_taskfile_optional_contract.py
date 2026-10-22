@@ -72,12 +72,12 @@ def test_repeated_output_is_not_silently_coalesced(tmp_path):
         ))
 
 
-def test_primary_input_can_feed_stdin_but_auxiliary_alias_is_invalid(tmp_path):
+def test_first_input_can_feed_stdin_but_duplicate_input_alias_is_invalid(tmp_path):
     primary = tmp_path / "input.inp"
     files = FileManifest.from_spec(spec(tmp_path, stdin=primary))
     assert len(files.inputs) == 1
-    assert files.primary_input.local_path == str(primary)
-    assert files.stdin.local_path == str(primary)
+    assert files.inputs[0].local_path == str(primary)
+    assert files.stdin is True
     with pytest.raises(ValueError, match="Duplicate file declaration"):
         FileManifest.from_spec(spec(tmp_path, input_files=(primary,), stdin=primary))
 
@@ -157,9 +157,10 @@ def test_optional_alias_cannot_weaken_mandatory_stdin(tmp_path):
         tmp_path, stdin=missing,
         input_files=(DeclaredPath(str(missing), optional=True),),
     )
-    with pytest.raises(ValueError, match="Duplicate file declaration"):
-        FileManifest.from_spec(spec_obj)
-    spec_obj = spec(tmp_path, stdin=missing)
+    files = FileManifest.from_spec(spec_obj)
+    assert files.stdin is True
+    assert files.inputs[0].local_path == str(missing)
+    # The staging layer still treats stdin as mandatory.
     mapping = FileMapping(str(tmp_path), str(remote))
     handler = RemoteFileHandler(LocalTransport())
     with pytest.raises(FileNotFoundError, match="neither locally nor remotely"):

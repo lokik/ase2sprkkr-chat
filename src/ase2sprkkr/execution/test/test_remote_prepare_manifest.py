@@ -140,7 +140,6 @@ def test_never_accepts_remote_only_input(tmp_path):
     prepared = asyncio.run(
         RemoteEndpointExecutor(NoUpload()).file_handler.prepare(mapping, spec)
     )
-    assert prepared.primary_input.remote_path == str(remote / source.name)
     assert prepared.inputs[0].remote_path == str(remote / source.name)
     assert not source.exists()
 
