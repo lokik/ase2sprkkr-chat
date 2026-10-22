@@ -363,3 +363,36 @@ def test_manifest_rejects_cache_aliasing_stdout(tmp_path):
     )
     with pytest.raises(ValueError, match="Duplicate file declaration"):
         FileManifest.from_spec(spec)
+
+
+def test_manifest_preserves_cache_optionality_and_roundtrips(tmp_path):
+    from types import SimpleNamespace
+    from ase2sprkkr.input_parameters.task_definition import TaskFile
+
+    spec = SimpleNamespace(
+        directory=str(tmp_path), input_file=None, input_files=(),
+        output_file=None, error_file=None, stdin=None, output_files=(),
+        cache_files=(
+            TaskFile(tmp_path / "optional-cache.pot", optional=True),
+            TaskFile(tmp_path / "required-cache.pot"),
+        ),
+    )
+    manifest = FileManifest.from_spec(spec)
+    assert tuple(cache.file.optional for cache in manifest.caches) == (True, False)
+    assert FileManifest(**asdict(manifest)) == manifest
+
+
+@pytest.mark.parametrize("colliding_role", ["stdout", "output", "cache"])
+def test_manifest_rejects_named_stdin_write_collisions(tmp_path, colliding_role):
+    from types import SimpleNamespace
+
+    spec = SimpleNamespace(
+        directory=str(tmp_path), input_file=None, input_files=(),
+        stdin="shared.dat",
+        output_file="shared.dat" if colliding_role == "stdout" else "other.out",
+        error_file=None,
+        output_files=("shared.dat",) if colliding_role == "output" else (),
+        cache_files=("shared.dat",) if colliding_role == "cache" else (),
+    )
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest.from_spec(spec)
