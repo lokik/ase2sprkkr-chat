@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..common.module_registry import RegistryEntryNotFound
-from ..execution import FailurePhase, FileState, RunState
+from ..execution import FailurePhase, FileState, RunState, JobFiles
 from ..execution.manager import HistoricalFileMismatchError
 from ..input_parameters.input_parameters import InputParameters
 from ..input_parameters.task_definition import TaskMismatchError
@@ -38,7 +38,7 @@ def _task_definition_for_record(record):
 def _input_parameters_for_record(manager, record, task_definition):
     result_files = record.files
     input_file = None if result_files is None else result_files.input_file
-    if input_file is None or not record.job_files.input_file_is_current():
+    if input_file is None or not JobFiles(record.files).input_file_is_current():
         return None
     if record.input_definition is None:
         return None
@@ -201,7 +201,7 @@ def load_project_result(manager, run):
         raise ProjectResultUnavailableError(record, message)
 
     output_file = result_files.output_file
-    output_available = record.job_files.output_file_is_current()
+    output_available = JobFiles(record.files).output_file_is_current()
     if not output_available:
         raise ProjectResultUnavailableError(
             record, "output result file is unavailable"
@@ -213,7 +213,7 @@ def load_project_result(manager, run):
         return_code = 0 if record.state == RunState.FINISHED else 1
 
     input_file = None
-    if record.job_files.input_file_is_current() and (
+    if JobFiles(record.files).input_file_is_current() and (
         getattr(reader, "input_parameters", None) is not None
     ):
         input_file = result_files.input_file
