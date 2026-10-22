@@ -154,6 +154,31 @@ def test_remote_follow_creates_missing_named_output_without_losing_bytes(
     assert observed == [("out", "ready\n"), ("out", "finished\n")]
 
 
+def test_remote_follow_preserves_existing_bytes_on_reconnect(tmp_path, monkeypatch):
+    """An attached observer starts at EOF and cannot truncate existing output."""
+    output = tmp_path / "run.out"
+    output.write_bytes(b"already written\n")
+    executor = _executor()
+    runner = executor.create_project_run(
+        ExecutionSpec(
+            argv=("unused",), input_file=None, output_file=str(output),
+            directory=str(tmp_path), stdin=False,
+        ),
+        run_id="reconnect-existing-output",
+    )
+    runner._backend_id = "backend-id"
+
+    async def follow(backend_id, manifest, *, offsets, on_chunk):
+        assert offsets == {"out": len(b"already written\n"), "err": None}
+        assert output.read_bytes() == b"already written\n"
+        on_chunk("out", b"next chunk\n")
+        return {"state": "finished", "return_code": 0}
+
+    monkeypatch.setattr(executor.connection, "follow", follow)
+    asyncio.run(runner._follow_once())
+    assert output.read_bytes() == b"already written\nnext chunk\n"
+
+
 def test_remote_executor_local_transport_streams_output(tmp_path):
     input_file = (tmp_path / "input.txt").open("w+b")
     input_file.write(b"hello")
