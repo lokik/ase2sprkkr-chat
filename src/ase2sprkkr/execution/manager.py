@@ -23,7 +23,8 @@ from .base import (
     RunState,
     RunStatus,
 )
-from .job_files import JobFiles, HistoricalFileMismatchError
+from .job_files import JobFiles
+from .historical_restore import HistoricalFileMismatchError
 from .file_reservations import reservation_conflict
 from .endpoint import ExecutorEndpoint
 from .pool import Executors
