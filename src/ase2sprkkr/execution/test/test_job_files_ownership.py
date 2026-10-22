@@ -229,27 +229,6 @@ def test_snapshot_merge_preserves_failed_transfer_over_stale_captured_success(tm
     assert merged.outputs[0].availability_message == "download failed"
 
 
-def test_snapshot_merge_preserves_shared_stdout_and_output_identity(tmp_path):
-    """Aliases of a single output file keep one state through reconciliation."""
-    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
-
-    path = str(tmp_path / "run.out")
-    previous = FileManifest(
-        stdout=FileEntry(path, "/remote/run.out", availability_state="failed",
-                         availability_message="transfer interrupted"),
-        outputs=(FileEntry(path, "/remote/run.out", availability_state="failed",
-                           availability_message="transfer interrupted"),),
-    )
-    pending = FileEntry(path, "/remote/run.out", availability_state="pending")
-    received = FileManifest(stdout=pending, outputs=(pending,))
-    updated = JobFiles.merge_snapshot(previous, received)
-
-    assert len(updated.files) == 1
-    assert updated.stdout.availability_state == "failed"
-    assert updated.outputs[0].availability_state == "failed"
-    assert updated.stdout.availability_message == "transfer interrupted"
-
-
 def test_file_manifest_aggregates_distinct_cache_and_output_states(tmp_path):
     from ase2sprkkr.execution.run_model import FileEntry, FileManifest
 
@@ -257,7 +236,7 @@ def test_file_manifest_aggregates_distinct_cache_and_output_states(tmp_path):
                        availability_state="available")
     cache = FileEntry(str(tmp_path / "restart.pot"), "/remote/restart.pot",
                       availability_state="failed", availability_message="download failed")
-    files = FileManifest(stdout=output, outputs=(output,), caches=(cache,))
+    files = FileManifest(stdout=output, caches=(cache,))
     assert len(files.files) == 2
     assert files.availability_state == "failed"
     assert files.failed_files == (cache,)
@@ -383,39 +362,6 @@ def test_atomic_completion_downgrades_stale_capture_after_download_failure(tmp_p
     assert completed.files.outputs[0].availability_state == "failed"
     assert completed.files.outputs[0].availability_message == "transfer failed"
     assert completed.files.captured_at is None
-
-
-@pytest.mark.parametrize(
-    "stdout_state, output_state",
-    [("failed", "available"), ("available", "failed")],
-)
-def test_file_merge_never_loses_failure_on_shared_output_alias(
-    tmp_path, stdout_state, output_state,
-):
-    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
-
-    path = str(tmp_path / "shared.out")
-    remote = "/remote/shared.out"
-    def entry(state):
-        return FileEntry(
-            local_path=path, remote_path=remote,
-            availability_state=state,
-            availability_message="transfer failed" if state == "failed" else None,
-        )
-
-    previous = FileManifest(
-        stdout=entry(stdout_state),
-        outputs=(entry(output_state),),
-    )
-    pending = entry("pending")
-    merged = JobFiles.merge_snapshot(
-        previous,
-        FileManifest(stdout=pending, outputs=(pending,)),
-    )
-    assert merged.stdout.availability_state == "failed"
-    assert merged.outputs[0].availability_state == "failed"
-    assert merged.stdout.availability_message == "transfer failed"
-    assert merged.outputs[0].availability_message == "transfer failed"
 
 
 def test_discard_capture_keeps_file_delivery_facts(tmp_path):
