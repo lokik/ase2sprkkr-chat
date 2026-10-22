@@ -24,6 +24,7 @@ from .base import (
     RunStatus,
 )
 from .job_files import JobFiles, HistoricalFileMismatchError
+from .file_history import capture_result_files, missing_result_files, sync_result_files
 from .file_reservations import reservation_conflict
 from .endpoint import ExecutorEndpoint
 from .pool import Executors
@@ -359,7 +360,7 @@ class RunStore:
                     raise RuntimeError("Run changed during file reservation")
                 # Do not sync inputs from a stale claim. Persist the claim
                 # only after the current manifest's inputs are durable.
-                JobFiles(record.files).sync_inputs()
+                sync_result_files(record.files.input_files)
                 return replace(
                     latest, state=RunState.SUBMITTING,
                     updated_at=_now(),
@@ -653,7 +654,7 @@ class ExecutionManager:
 
         if files_available:
             try:
-                result_files = JobFiles(record.files).capture(result_files)
+                result_files = capture_result_files(result_files)
             except OSError as exc:
                 state = RunState.FAILED
                 phase = FailurePhase.FILES
@@ -727,7 +728,7 @@ class ExecutionManager:
         record = self.store.get(run if isinstance(run, str) else run.id)
         if not record.state.is_terminal:
             raise RuntimeError(f"Run {record.id} is not finished")
-        missing = JobFiles(record.files).missing_files()
+        missing = missing_result_files(record.files)
         executor = (
             self.executors.for_endpoint(record.execution.endpoint)
             if missing and record.execution.backend_id is not None else None
