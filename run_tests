@@ -1,14 +1,20 @@
 #!/bin/bash
 set -e
 
-# The wheel installed by the preceding build step must be tested.  A CI-wide
+# The wheel installed by the preceding build step must be tested. A CI-wide
 # PYTHONPATH pointing at ``src`` would shadow its compiled extension modules.
 unset PYTHONPATH
 
-# The repository root contains ``ase2sprkkr -> src/ase2sprkkr``.  Since the
-# current directory is always sys.path[0], run from a fresh directory so that
-# this compatibility symlink cannot shadow the installed wheel.
+# Keep pytest configuration from the checkout while running the actual tests
+# against the installed wheel from an otherwise clean working directory.
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+PYTEST_CONFIG="$SCRIPT_DIR/pyproject.toml"
+
+# Run from a fresh directory so the repository checkout cannot accidentally
+# satisfy imports or receive files created by tests intended for the installed
+# wheel.
 TEST_WORKDIR=$(mktemp -d)
+trap 'rm -rf "$TEST_WORKDIR"' EXIT
 cd "$TEST_WORKDIR"
 
 # Fail early and explicitly if the wheel did not provide its compiled modules.
@@ -29,4 +35,4 @@ for module, required_function in (
         )
 PY
 
-python3 -m ase2sprkkr.tools.ase2sprkkr test "$@"
+python3 -m ase2sprkkr.tools.ase2sprkkr test -c "$PYTEST_CONFIG" "$@"

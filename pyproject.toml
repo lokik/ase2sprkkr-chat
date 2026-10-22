@@ -5,15 +5,14 @@ requires = [
     "cython",
 		"numpy"
 ]
-#build-backend = "setuptools.build_meta"
 
 [project.scripts]
 ase2sprkkr = "ase2sprkkr.tools.ase2sprkkr:run"
 
 [project]
 name = "ase2sprkkr"
-version = "3.5.1-beta"
-requires-python = ">=3.8"
+version = "3.6.0-beta1"
+requires-python = ">=3.9"
 authors = [
   { name = "Matyáš Novák", email = "novakmat@fzu.cz" },
   { name = "Jano Minár" },
@@ -21,7 +20,7 @@ authors = [
   { email = "ase2sprkkr@ntc.zcu.cz" }
 ]
 readme = "README.md"
-description = "Wrapper/calculator for SPRKKR to be used within ASE (Atomic Simulation Environment)"
+description = "Wrapper/calculator for SPR-KKR to be used within ASE (Atomic Simulation Environment)"
 license-files = ["LICENCE"]
 
 dependencies = [
@@ -32,8 +31,11 @@ dependencies = [
     "elementy",
     "platformdirs",
     "packaging",
+    # Intentionally a runtime dependency: `ase2sprkkr test` runs the installed
+    # package's self-tests so users can verify that their installation works.
     "pytest",
     "pyyaml",
+    "ruamel.yaml>=0.18.16",
     "requests",
     "argcomplete",
     "unyt",
@@ -43,6 +45,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+nexus = ["h5py>=3.8"]
 jupyter = [
     "jupyterlab",
     "nbformat",
@@ -53,6 +56,14 @@ mendeleev = [
 ]
 es_finder = [
     "pymatgen",
+]
+plotting = [
+    "matplotlib",
+    "scipy",
+    "scikit-image",
+]
+psij = [
+    "psij-python>=0.9.11",
 ]
 
 [project.urls]
@@ -68,10 +79,8 @@ SPRKKR = "ase2sprkkr.ase.register:SPRKKRFormat"
 SPRKKR = "ase2sprkkr.ase.register"
 
 [tool.scikit-build]
-logging.level = "DEBUG"
 ninja.make-fallback = false
 cmake.version = ">=3.15"
-build.verbose = true
 wheel.packages = ["src/ase2sprkkr"]
 sdist.exclude = [
 	"**/*",
@@ -82,19 +91,25 @@ sdist.exclude = [
 ]
 sdist.include = [
 	"src/ase2sprkkr/input_parameters/examples/*.in",
+	"src/ase2sprkkr/input_parameters/examples/*.inp",
 	"src/ase2sprkkr/potentials/examples/*.pot",
-	"src/ase2sprkkr/output_files/examples/*.bsf",
-	"src/ase2sprkkr/output_files/examples/*.rat",
-	"src/ase2sprkkr/output_files/examples/*.dat",
-	"src/ase2sprkkr/output_files/examples/*.spc",
-	"src/ase2sprkkr/output_files/examples/*.dos",
-	"src/ase2sprkkr/output_files/test/xas_Cu_L23*.agr",
+	"src/ase2sprkkr/result_files/examples/*.bsf",
+	"src/ase2sprkkr/result_files/examples/*.rat",
+	"src/ase2sprkkr/result_files/examples/*.dat",
+	"src/ase2sprkkr/result_files/examples/*.spc",
+	"src/ase2sprkkr/result_files/examples/*.dos",
+	"src/ase2sprkkr/result_files/test/xas_Cu_L23*.agr",
+	"src/ase2sprkkr/result_files/test/data/*.bsf",
+	"src/ase2sprkkr/result_files/test/data/*.spc",
+	"src/ase2sprkkr/result_files/test/data/*.md",
 	"src/ase2sprkkr/outputs/examples/*.out",
+	"src/ase2sprkkr/outputs/examples/*.sfn",
 	"src/ase2sprkkr/examples/README",
 
 	"src/ase2sprkkr/sprkkr/test/*.cif",
 	"src/ase2sprkkr/bindings/xband/tests/*.pot",
-	"src/ase2sprkkr/run_tests",
+	"src/ase2sprkkr/execution/test/docker/*",
+	"src/ase2sprkkr/execution/test/slurm/*",
 
 	"src/ase2sprkkr/**/*.py",
 	"src/ase2sprkkr/**/*.pyx",
@@ -110,7 +125,7 @@ sdist.include = [
 	"docs/**",
 
 	"pyproject.toml",
-  "meta.yaml"
+	"meta.yaml",
 ]
 wheel.exclude = [
 	"**/*.pyx",
