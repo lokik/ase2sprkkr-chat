@@ -173,36 +173,35 @@ def _manifest_accesses(record):
     return reads, writes
 
 
-def _path_overlap(a, b, *, local=False):
-    """Conservatively compare paths, glob patterns and local hardlinks."""
-    a_magic, b_magic = has_file_magic(a), has_file_magic(b)
-    if not a_magic and not b_magic:
-        if a == b:
-            return True
-        if local:
-            try:
-                return os.path.samefile(a, b)
-            except (FileNotFoundError, NotADirectoryError):
-                pass
-        return False
-    if not a_magic:
-        return fnmatch.fnmatchcase(a, b)
-    if not b_magic:
-        return fnmatch.fnmatchcase(b, a)
-    if a == b:
-        return True
-
-    # Only disjoint literal prefixes prove that two glob patterns cannot overlap.
+def _paths_overlap(first, second, *, check_hardlinks=False):
+    """Conservatively detect overlapping declared paths and glob patterns."""
     def prefix(pattern):
         return pattern[:min((pattern.find(c) for c in "*?[" if c in pattern),
                             default=len(pattern))]
 
-    pa, pb = prefix(a), prefix(b)
-    return pa.startswith(pb) or pb.startswith(pa)
-
-
-def _paths_overlap(first, second, *, local=False):
-    return any(_path_overlap(a, b, local=local) for a in first for b in second)
+    for a in first:
+        for b in second:
+            if a == b:
+                return True
+            a_magic, b_magic = has_file_magic(a), has_file_magic(b)
+            if not a_magic and not b_magic:
+                if check_hardlinks:
+                    try:
+                        if os.path.samefile(a, b):
+                            return True
+                    except (FileNotFoundError, NotADirectoryError):
+                        pass
+            elif not a_magic:
+                if fnmatch.fnmatchcase(a, b):
+                    return True
+            elif not b_magic:
+                if fnmatch.fnmatchcase(b, a):
+                    return True
+            elif (prefix(a).startswith(prefix(b))
+                  or prefix(b).startswith(prefix(a))):
+                # Intersecting literal prefixes cannot rule out overlap.
+                return True
+    return False
 
 
 def submission_conflicts(left: RunRecord, right: RunRecord) -> bool:
@@ -220,8 +219,8 @@ def submission_conflicts(left: RunRecord, right: RunRecord) -> bool:
         return True
     left_reads, left_writes = _manifest_accesses(left)
     right_reads, right_writes = _manifest_accesses(right)
-    if (_paths_overlap(left_writes, right_reads | right_writes, local=local)
-            or _paths_overlap(right_writes, left_reads, local=local)):
+    if (_paths_overlap(left_writes, right_reads | right_writes, check_hardlinks=local)
+            or _paths_overlap(right_writes, left_reads, check_hardlinks=local)):
         return True
     # Without declared writes, preserve namespace-based protection for generic
     # executors that cannot describe their output footprint.
