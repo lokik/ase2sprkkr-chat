@@ -167,8 +167,12 @@ def test_project_cancel_returns_while_backend_submission_is_blocked():
     class Execution:
         endpoint = "test"
 
+        def __init__(self):
+            self.backend_id = None
+
         def submitted(self, backend_id):
             assert backend_id == "job-1"
+            self.backend_id = backend_id
             return self
 
     class Backend(_BackendRunner):
