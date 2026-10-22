@@ -97,7 +97,16 @@ class RunStore:
                     f"unsupported schema version {version!r}; "
                     f"expected {_RUN_RECORD_SCHEMA_VERSION}"
                 )
-            return RunRecord(**data)
+            record = RunRecord(**data)
+            if record.id != path.stem:
+                raise ValueError(
+                    f"Record ID {record.id!r} does not match filename {path.name!r}"
+                )
+            if RunStore._bucket(record.created_at) != path.parent.name:
+                raise ValueError(
+                    f"Record creation date does not match shard {path.parent.name!r}"
+                )
+            return record
         except CorruptRunRecord:
             raise
         except (json.JSONDecodeError, TypeError, ValueError, KeyError) as exc:

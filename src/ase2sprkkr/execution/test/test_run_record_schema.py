@@ -128,6 +128,37 @@ def test_run_store_rejects_unsafe_id_lookups(tmp_path, bad_id):
     assert not store.directory.exists()
 
 
+
+@pytest.mark.parametrize("field,value,error", [
+    ("id", "other-safe-id", "does not match filename"),
+    ("created_at", "2026-10-19T12:34:56+00:00",
+     "creation date does not match shard"),
+])
+def test_run_store_rejects_identity_mismatch_on_disk(
+    tmp_path, field, value, error,
+):
+    """Valid-looking JSON may not borrow the identity of its pathname."""
+    store = RunStore(tmp_path / "runs")
+    record = RunRecord(
+        id="run-original", state=RunState.NEW,
+        created_at="2026-10-17T12:34:56+00:00",
+        updated_at="2026-10-17T12:34:56+00:00", task="DOS",
+        execution=Execution(ExecutorEndpoint(), WorkingDirectory(str(tmp_path))),
+        files=FileManifest(),
+    )
+    store.save(record)
+    path = store.directory / "2026-10-17" / "run-original.json"
+    data = json.loads(path.read_text())
+    data[field] = value
+    path.write_text(json.dumps(data))
+
+    with pytest.raises(CorruptRunRecord, match=error):
+        store.get(record.id)
+    with pytest.raises(CorruptRunRecord, match=error):
+        store.runs(strict=True)
+
+
+
 def test_run_store_rejects_unsafe_id_in_persisted_record(tmp_path):
     store = RunStore(tmp_path / "runs")
     record = RunRecord(
