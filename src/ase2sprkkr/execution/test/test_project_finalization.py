@@ -682,6 +682,7 @@ def test_postprocessing_retry_accepts_unchanged_output_with_stale_input(
     assert current.files == failed.files
 
 
+@pytest.mark.parametrize("callback_fails", [False, True])
 def test_concurrent_wait_and_completion_callback_persist_only_once(
     tmp_path, monkeypatch, callback_fails,
 ):
