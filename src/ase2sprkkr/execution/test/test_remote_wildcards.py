@@ -357,3 +357,34 @@ def test_missing_optional_exact_remote_output_is_not_fatal(tmp_path):
     assert result.return_code == 0
     entries = {entry.local_path: entry for entry in runner.files.outputs}
     assert entries[str(optional_file)].availability_state == "skipped"
+
+
+@pytest.mark.parametrize("pattern", [False, True])
+def test_remote_missing_optional_input_is_not_staged(tmp_path, pattern):
+    """A declared optional input is not sent when neither side has it."""
+    from ase2sprkkr.input_parameters.task_definition import TaskFile
+
+    workdir = tmp_path / "local" / "calculation"
+    pathname = "optional-*.pot" if pattern else "optional.pot"
+    missing = workdir / pathname
+    executor, spec, _, remote_root = _text_run(
+        tmp_path, declared_input_files=(TaskFile(missing, optional=True),),
+        code="print('ok')",
+    )
+    runner = _processed_run(executor, spec)
+    assert runner.run().return_code == 0
+    assert not tuple((remote_root / "calculation").glob("optional*.pot"))
+
+
+def test_mandatory_input_alias_cannot_be_made_optional(tmp_path):
+    """A required input wins over an optional declaration of the same file."""
+    from ase2sprkkr.input_parameters.task_definition import TaskFile
+
+    workdir = tmp_path / "local" / "calculation"
+    missing = workdir / "mandatory.pot"
+    executor, spec, _, _ = _text_run(
+        tmp_path,
+        declared_input_files=(TaskFile(missing, optional=True), missing),
+    )
+    with pytest.raises(SubmissionNotStarted, match="neither locally nor remotely"):
+        _processed_run(executor, spec).run()
