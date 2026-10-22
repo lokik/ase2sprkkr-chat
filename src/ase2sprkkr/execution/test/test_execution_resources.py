@@ -370,6 +370,8 @@ def test_cancel_during_submit_waits_for_submission_then_requests_cancel():
             attempts.append("cancel")
             self._state = RunState.CANCELLED
             stopped.set()
+            if self.callback is not None:
+                self.callback(self.result)
 
     runner = CalculationRun(
         RacingRunner(), lambda outcome: outcome, resources=resources,
