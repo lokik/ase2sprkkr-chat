@@ -10,7 +10,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 
 from ..common.file_locks import FileLock
-from ._durability import durable_replace, sync_file
+from ._durability import durable_publish_new, sync_file
 from ..common.file_versions import file_digest
 from .run_model import FileAvailabilityState
 from .transport import has_file_magic
@@ -293,7 +293,16 @@ class JobFiles:
                         # before both file contents and its directory entry
                         # have crossed the durability barrier.
                         sync_file(staged)
-                        durable_replace(staged, path)
+                        try:
+                            durable_publish_new(staged, path)
+                        except FileExistsError:
+                            # An unrelated writer published the path without
+                            # participating in our advisory restore lock.
+                            # Never overwrite it even when its bytes match.
+                            if version is None or not version.is_current():
+                                raise HistoricalFileMismatchError(
+                                    f"Historical destination appeared during retrieval: {path}"
+                                )
                 except OSError as exc:
                     if path in tracked:
                         JobFiles(store.get(record.id)).update_availability(
