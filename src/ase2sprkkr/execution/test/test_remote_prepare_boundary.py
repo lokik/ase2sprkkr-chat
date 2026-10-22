@@ -91,7 +91,7 @@ def test_remote_manifest_uses_same_declarations_as_local(tmp_path):
     manifest = asyncio.run(runner._submitted_manifest({
         "client_sync": {"output_file": str(remote / "local" / "main.out"),
                         "error_file": str(remote / "local" / "main.err")},
-    }))
+    }, local))
     assert tuple(e.local_path for e in manifest.inputs) == (
         str(directory / "main.inp"), str(directory / "extra.inp"),
     )
@@ -112,8 +112,8 @@ def test_remote_manifest_uses_same_declarations_as_local(tmp_path):
     assert len(manifest.caches) == 1
 
 
-def test_remote_file_preparation_deduplicates_paths_before_mapping(tmp_path):
-    """Exact and wildcard declarations share the same normalization rules."""
+def test_remote_file_preparation_uses_validated_manifest(tmp_path):
+    """The validated manifest owns exact paths and wildcard declarations."""
     import asyncio
 
     directory = tmp_path / "work"
@@ -124,21 +124,20 @@ def test_remote_file_preparation_deduplicates_paths_before_mapping(tmp_path):
         argv=("ignored",), directory=str(directory),
         input_file=None, output_file="stdout.out",
         output_files=(
-            None, "stdout.out", "one.dat", "./one.dat",
-            "cut-*.dat", "./cut-*.dat",
+            None, "stdout.out", "one.dat", "cut-*.dat",
         ),
         cache_files=(
-            None, "restart.dat", "./restart.dat",
-            "checkpoint-*.dat", "./checkpoint-*.dat",
+            None, "restart.dat", "checkpoint-*.dat",
         ),
         launch=LaunchSpec(local_root=str(tmp_path), remote_root=str(remote)),
     )
     runner = executor.create_run(spec)
+    manifest = FileManifest.from_spec(spec)
 
     async def prepare():
         used = {}
-        await runner._prepare_cache_files(used)
-        await runner._prepare_output_files()
+        await runner._prepare_cache_files(used, manifest)
+        await runner._prepare_output_files(manifest)
         return used
 
     used = asyncio.run(prepare())

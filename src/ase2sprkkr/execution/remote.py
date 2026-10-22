@@ -281,24 +281,16 @@ class RemoteRunner:
                 await self.executor._resolved_remote_root(),
             )
 
-    def _unique_declared_paths(self, values, *, excluded=()):
-        """Yield normalized file declarations once, preserving their order."""
-        seen = set(excluded)
-        for value in values:
-            local = self._local_path(value)
-            if local is not None and local not in seen:
-                seen.add(local)
-                yield local, has_file_magic(local)
-
-    async def _prepare_cache_files(self, used):
+    async def _prepare_cache_files(self, used, manifest):
         targets = {}
         patterns = []
         pattern_before = {}
         output_policy = self.executor.output_files
         remote_root = await self.executor._resolved_remote_root()
 
-        for local, pattern in self._unique_declared_paths(self.spec.cache_files):
-            if pattern:
+        for cache in manifest.caches:
+            local = cache.file.local_path
+            if has_file_magic(local):
                 remote_pattern = await self.executor.map_path(local)
                 patterns.append(remote_pattern)
                 # Cache patterns use the same transfer logic as inputs,
@@ -330,20 +322,14 @@ class RemoteRunner:
         self._cache_patterns = tuple(patterns)
         self._cache_before = pattern_before
 
-    async def _prepare_output_files(self):
-        primary = {
-            path
-            for path in (self.result.output_file, self.result.error_file)
-            if path is not None
-        }
+    async def _prepare_output_files(self, manifest):
         targets = {}
         patterns = []
 
-        for local, pattern in self._unique_declared_paths(
-            self.spec.output_files, excluded=primary,
-        ):
+        for entry in manifest.outputs:
+            local = entry.local_path
             remote = await self.executor.map_path(local)
-            if pattern:
+            if has_file_magic(local):
                 patterns.append(remote)
             else:
                 targets[local] = remote
@@ -531,9 +517,9 @@ class RemoteRunner:
             else:
                 await self._stage_file(value, used, required=required)
 
-        await self._prepare_cache_files(used)
+        await self._prepare_cache_files(used, manifest)
         staged = {source: target for target, source in used.items()}
-        await self._prepare_output_files()
+        await self._prepare_output_files(manifest)
 
         output_target = (
             await self.executor.map_path(self.result.output_file)

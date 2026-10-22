@@ -128,9 +128,7 @@ class _RemoteRun(RemoteRunner):
                 raise
         return result
 
-    async def _submitted_manifest(self, request, local=None):
-        if local is None:
-            local = FileManifest.from_spec(self.spec)
+    async def _submitted_manifest(self, request, local):
 
         async def mapped(entry):
             return replace(entry, remote_path=await self.executor.map_path(entry.local_path))
