@@ -39,6 +39,17 @@ def test_profile_uses_execution_endpoint_value():
     )
 
 
+def test_ssh_default_remote_command_preserves_endpoint_identity():
+    for backend in (None, "slurm"):
+        endpoint = SPRKKRProfile(
+            executor="ssh", host="cluster", psij_backend=backend,
+        ).endpoint
+        executor = Executors().for_endpoint(endpoint)
+        assert endpoint.remote_command == ("ase2sprkkr", "remote")
+        assert executor.command == endpoint.remote_command
+        assert endpoint_for_executor(executor) == endpoint
+
+
 def test_run_store_roundtrips_endpoint(tmp_path):
     store = RunStore(tmp_path / "runs")
     manager = ExecutionManager(store, executors=Executors())

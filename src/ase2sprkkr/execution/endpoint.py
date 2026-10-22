@@ -37,6 +37,9 @@ class ExecutorEndpoint:
             else:
                 value = tuple(value)
             object.__setattr__(self, name, value)
+        if self.executor == "ssh" and not self.remote_command:
+            # Keep persisted endpoint identity aligned with the SSH executor default.
+            object.__setattr__(self, "remote_command", ("ase2sprkkr", "remote"))
 
 
 def endpoint_for_executor(executor) -> ExecutorEndpoint:
