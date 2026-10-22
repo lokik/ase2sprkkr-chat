@@ -213,7 +213,7 @@ def test_staged_input_wildcard_members_preserve_optionality(tmp_path, required_a
         declarations += (local / "part-a.dat",)
     execution = ExecutionSpec(
         argv=("true",), directory=str(local), input_file=None,
-        input_files=declarations,
+        output_file=None, input_files=declarations,
     )
     mapping = FileMapping(str(local), str(remote))
     files = asyncio.run(RemoteFileHandler(LocalTransport()).prepare(
