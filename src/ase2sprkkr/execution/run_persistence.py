@@ -110,7 +110,7 @@ class RunPersistence:
         """A durable terminal record cannot be cancelled by a stale observer."""
         return not self._record.state.is_terminal
 
-    def _acknowledge_terminal(self, run):
+    def _acknowledge_terminal(self):
         if not self._terminal_acknowledged:
             self._terminal_acknowledged = self.manager.acknowledge_terminal(
                 self.executor, self._record,
@@ -120,7 +120,7 @@ class RunPersistence:
         """Persist one observation, taking idempotence from the durable record."""
         with self._completion_lock:
             if self._record.state.is_terminal:
-                self._acknowledge_terminal(run)
+                self._acknowledge_terminal()
                 return self._record.state
             message = run.failure_message
             if message is None and run.exception is not None:
@@ -138,7 +138,7 @@ class RunPersistence:
             self._record = updated
             if updated.state.is_terminal:
                 # The backend receipt may be retried by a new observer.
-                self._acknowledge_terminal(run)
+                self._acknowledge_terminal()
             return self._record.state
 
     def refresh(self):
