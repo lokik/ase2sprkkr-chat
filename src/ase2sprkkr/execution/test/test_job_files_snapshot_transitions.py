@@ -40,25 +40,17 @@ def test_stale_observation_is_filtered_before_manifest_conflict(tmp_path):
     assert manager.store.get(record.id) == record
 
 
-def test_stale_pending_observation_preserves_concurrent_file_availability(tmp_path):
-    from ase2sprkkr.execution.run_model import FileEntry
-
-    path = str(tmp_path / "result.out")
-    pending = FileManifest(outputs=(FileEntry(path, availability_state="pending"),))
-    recorded = pending.with_file_availability(path, "failed", "download error")
-    merged = merge_snapshot(recorded, pending)
-    assert merged.outputs[0].availability_state == "failed"
-    assert merged.outputs[0].availability_message == "download error"
-
-
-def test_explicit_file_status_update_is_not_discarded(tmp_path):
+@pytest.mark.parametrize("stale_observation", (False, True))
+def test_snapshot_merge_keeps_explicit_file_failure(tmp_path, stale_observation):
     from ase2sprkkr.execution.run_model import FileEntry
 
     path = str(tmp_path / "result.out")
     pending = FileManifest(outputs=(FileEntry(path, availability_state="pending"),))
     failed = pending.with_file_availability(path, "failed", "download error")
-    merged = merge_snapshot(pending, failed)
+    existing, incoming = (failed, pending) if stale_observation else (pending, failed)
+    merged = merge_snapshot(existing, incoming)
     assert merged.outputs[0].availability_state == "failed"
+    assert merged.outputs[0].availability_message == "download error"
 
 
 def test_snapshot_capture_failure_preserves_unverified_files(tmp_path, monkeypatch):
