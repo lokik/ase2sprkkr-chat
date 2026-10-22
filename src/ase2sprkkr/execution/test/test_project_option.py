@@ -17,9 +17,13 @@ from ase2sprkkr.sprkkr.profile import SPRKKRProfile
 
 class _Runner:
     def __init__(self, callback=None, *, spec=None):
-        self._callback = callback
+        self.callback = callback
         self.state = RunState.NEW
         self.backend_id = None
+        self.spec = spec
+        self.files = None
+        self.failure_phase = None
+        self.failure_message = None
         self.result = ExecutionOutcome(
             input_file=None if spec is None else spec.input_file,
             output_file=None if spec is None else spec.output_file,
@@ -28,14 +32,27 @@ class _Runner:
         )
         self.exception = None
 
+    def set_manifest(self, files):
+        self.files = files
+
+    def file_snapshot(self):
+        return self.files
+
+    def prepare_submission(self):
+        return None
+
+    @property
+    def return_code(self):
+        return self.result.return_code
+
     def submit(self):
         self.backend_id = "job-1"
         self.state = RunState.QUEUED
 
     def wait(self):
         self.state = RunState.FINISHED
-        if self._callback:
-            self._callback(self.result)
+        if self.callback:
+            self.callback(self.result)
         return self.result
 
     def run(self):
@@ -46,6 +63,9 @@ class _Runner:
         self.state = RunState.CANCELLED
 
     def add_output_listener(self, callback):
+        pass
+
+    def add_output_error_listener(self, callback):
         pass
 
 
@@ -211,15 +231,24 @@ def test_run_level_profile_selects_executor_instead_of_calculator_executor(
     prepared = _Prepared(parameters, input_file, output_file, tmp_path)
 
     monkeypatch.setattr(calculator, "prepare", lambda **kwargs: prepared)
+    selected_endpoints = []
+
+    def select_profile_endpoint(endpoint):
+        selected_endpoints.append(endpoint)
+        return profile_executor
+
     monkeypatch.setattr(
         calculation_module,
-        "executor_from_profile",
-        lambda selected: profile_executor,
+        "default_execution_manager",
+        lambda: SimpleNamespace(
+            executors=SimpleNamespace(for_endpoint=select_profile_endpoint),
+        ),
     )
 
     runner = calculator.create_run(profile=profile)
     try:
         assert len(profile_executor.runners) == 1
         assert calculator_executor.runners == []
+        assert selected_endpoints == [profile.endpoint]
     finally:
         runner.close()
