@@ -7,20 +7,30 @@ import pytest
 from ase2sprkkr.execution.run_model import FileEntry, FileManifest
 
 
-@pytest.mark.parametrize("roles", ["output-cache", "different-output-sources"])
-def test_distinct_files_cannot_target_one_local_file(roles):
-    path = "/local/shared.dat"
+@pytest.mark.parametrize(
+    "roles", ("output-cache", "different-output-sources", "different-cache-sources"),
+)
+def test_distinct_files_cannot_target_one_local_file(tmp_path, roles):
+    shared = tmp_path / "shared.dat"
+    shared.write_text("preserve")
+    path = str(shared)
     with pytest.raises(ValueError, match="Duplicate file declaration"):
         if roles == "output-cache":
             FileManifest(
                 outputs=(FileEntry(path, "/remote/result.dat"),),
                 caches=(FileEntry(path, "/remote/cache.dat"),),
             )
-        else:
+        elif roles == "different-output-sources":
             FileManifest(outputs=(
                 FileEntry(path, "/remote/first.dat"),
                 FileEntry(path, "/remote/second.dat"),
             ))
+        else:
+            FileManifest(caches=(
+                FileEntry(path, "/remote/cache-a.pot"),
+                FileEntry(path, "/remote/cache-b.pot"),
+            ))
+    assert shared.read_text() == "preserve"
 
 
 def test_merged_streams_require_same_remote_destination():

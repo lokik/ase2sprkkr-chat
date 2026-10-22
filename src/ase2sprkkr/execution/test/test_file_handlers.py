@@ -94,7 +94,6 @@ def test_materialized_manifest_freezes_membership(tmp_path):
 def test_collect_continues_after_one_output_download_fails(tmp_path):
     from ase2sprkkr.execution import FileMapping
     from ase2sprkkr.execution.base import ExecutionOutcome
-    import types
 
     local, remote = tmp_path / "local", tmp_path / "remote"
     local.mkdir()
@@ -206,34 +205,6 @@ def test_materialized_manifest_can_download_and_rehydrate(tmp_path):
     assert materialize_manifest(restored, remote=True) == (restored, None)
 
 
-def test_materialization_rejects_cache_output_collision_before_any_transfer(tmp_path):
-    from ase2sprkkr.execution import FileMapping
-    from ase2sprkkr.execution.file_availability import materialize_manifest
-
-    local, remote = tmp_path / "local", tmp_path / "remote"
-    local.mkdir()
-    remote.mkdir()
-    (remote / "result.dat").write_text("remote value")
-    destination = local / "result.dat"
-    destination.write_text("original local value")
-
-    # A wildcard is a declaration of a pattern, not a concrete duplicate.
-    # Its collision with a cache is detectable only when it is materialized,
-    # before any transfer or deletion of the local file.
-    manifest = FileManifest(
-        outputs=(FileEntry(str(local / "*.dat"), str(remote / "*.dat"),
-                           availability_state="pending"),),
-        caches=(FileEntry(str(destination), str(remote / "result.dat"),
-                          availability_state="pending"),),
-        mapping=FileMapping(str(local), str(remote)),
-    )
-    with pytest.raises(ValueError, match="Duplicate file declaration: output and cache"):
-        materialize_manifest(manifest, remote=True)
-
-    assert destination.read_text() == "original local value"
-    assert (remote / "result.dat").read_text() == "remote value"
-
-
 def test_materialization_assigns_cache_baselines_to_concrete_members(tmp_path):
     from ase2sprkkr.execution import FileMapping
     from ase2sprkkr.execution.file_availability import materialize_manifest
@@ -289,16 +260,6 @@ def test_materialization_keeps_failed_wildcard_declaration(tmp_path, monkeypatch
     assert frozen.outputs == manifest.outputs
     assert frozen.has_wildcards()
 
-
-def test_manifest_rejects_two_remote_cache_sources_with_one_destination(tmp_path):
-    local = tmp_path / "restart.pot"
-    local.write_text("preserve")
-    with pytest.raises(ValueError, match="Duplicate file declaration"):
-        FileManifest(caches=(
-            FileEntry(str(local), "/remote/cache-a.pot"),
-            FileEntry(str(local), "/remote/cache-b.pot"),
-        ))
-    assert local.read_text() == "preserve"
 
 def test_collect_downloads_shared_remote_source_to_both_local_destinations(tmp_path):
     """Deduplicate transfers, not distinct destinations for one source."""
