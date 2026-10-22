@@ -35,6 +35,6 @@ def test_wait_and_run_async_return_completed_monitor_result(tmp_path, runner_cla
     )
     runner = runner_class(SimpleNamespace(file_handler=None), spec)
     runner._thread = object()  # A monitor is already running/attached.
-    runner._done.set()
+    runner._completion.set_result(runner.result)
     assert runner.wait() is runner.result
     assert asyncio.run(runner.run_async()) is runner.result
