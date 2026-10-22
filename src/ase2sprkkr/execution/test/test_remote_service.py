@@ -1509,6 +1509,24 @@ def test_request_spec_does_not_duplicate_primary_input():
     )
 
 
+def test_disabled_stdin_is_not_materialized_as_filename(tmp_path):
+    from ase2sprkkr.execution import ExecutionSpec
+
+    assert remote_service._absolute(tmp_path, False) is None
+    spec = ExecutionSpec(
+        argv=("program",), directory=str(tmp_path),
+        input_file=None, output_file=None,
+    )
+    request = {
+        "directory": str(tmp_path),
+        "argv": list(spec.argv),
+        "stdin": None,
+    }
+    recovered = remote_service._request_spec(request)
+    assert recovered.stdin is False
+    assert remote_service._absolute(tmp_path, recovered.stdin) is None
+
+
 def test_target_ipc_failure_does_not_delete_declared_outputs(tmp_path, monkeypatch):
     """Target cleanup belongs after IPC preparation, just before Popen."""
     from ase2sprkkr.execution.base import SubmissionNotStarted

@@ -931,7 +931,7 @@ def test_psij_mpi_respects_explicit_stdin_policy(monkeypatch, tmp_path):
         launch=LaunchSpec.from_mpi(2),
         input_file=None, output_file=None, directory=str(tmp_path),
         stdin=str(tmp_path / "stdin.dat"),
-        mpi_stdin=None,
+        mpi_stdin=False,
     )
     runner = executor.create_run(spec)
     assert runner._job.spec.stdin_path is None

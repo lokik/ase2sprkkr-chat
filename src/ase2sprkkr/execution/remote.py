@@ -41,6 +41,7 @@ class RemoteRunner(ManagedRunner):
         state=RunState.NEW,
         run_id=None,
     ):
+        # Never redo the launch choice, including for an attached run.
         super().__init__(
             executor, spec, callback, output_listener=output_listener,
             backend_id=backend_id, state=state, files=files,

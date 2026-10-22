@@ -37,31 +37,35 @@ def _mpi_command(launch):
 
 
 def select_mpi_spec(spec: ExecutionSpec, launcher=None, *, scheduler=False):
-    """Select exactly one command and stdin before creating a file manifest.
+    """Select the actual command and stdin before file manifest creation.
 
-    Scheduler jobs keep launch metadata so PSI/J can configure resources.
-    The unused command and stdin never enter the persistent execution state.
+    MPI-specific None means inherit the serial value; explicit False means
+    no stdin. The resulting spec has no alternative variant to stage.
     """
-    if spec.mpi_argv is None:
+    if not spec.launch and spec.mpi_argv is None and spec.mpi_stdin is None:
         return spec
+
     enabled = scheduler or launcher is not None
+    command = spec.mpi_argv if spec.mpi_argv is not None else spec.argv
     if scheduler:
-        argv = tuple(spec.mpi_argv)
+        argv = tuple(command)
     elif launcher is not None:
-        argv = (*launcher, *spec.mpi_argv)
+        argv = (*launcher, *command)
     else:
         argv = spec.argv
+
+    stdin = (spec.stdin if not enabled or spec.mpi_stdin is None
+             else spec.mpi_stdin)
     return replace(
-        spec, argv=argv, stdin=spec.mpi_stdin if enabled else spec.stdin,
+        spec, argv=argv, stdin=stdin,
         mpi_argv=None, mpi_stdin=None,
-        launch=(spec.launch if enabled else replace(spec.launch, mpi=MpiSpec())),
+        launch=(spec.launch if scheduler and enabled
+                else replace(spec.launch, mpi=MpiSpec())),
     )
 
 
 def materialize_local_spec(spec: ExecutionSpec) -> ExecutionSpec:
-    """Choose serial/MPI before file reservation and local process creation."""
-    if spec.mpi_argv is None:
-        return spec
+    """Resolve local MPI before declaring or reserving any input files."""
     if not spec.launch:
         return select_mpi_spec(spec)
     return select_mpi_spec(spec, _mpi_command(spec.launch))
@@ -78,6 +82,8 @@ async def start_local_process(
     """Start a local process with caller-selected standard streams."""
     if stdin is _DEFAULT_STDIN:
         stdin = spec.stdin
+    if stdin is False:
+        stdin = asyncio.subprocess.DEVNULL
     return await asyncio.create_subprocess_exec(
         *spec.argv,
         stdin=stdin,

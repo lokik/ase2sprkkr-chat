@@ -93,7 +93,7 @@ def _load_psij():
 
 
 def _path(value, directory=None):
-    if value is None:
+    if value is None or value is False:
         return None
     try:
         return file_path(value, directory, required=True)
@@ -307,7 +307,7 @@ class PsijRunner(ManagedRunner):
         run_id=None,
         cleanup_side="local",
     ):
-        spec = executor.resolve_spec(spec)
+        # The executor factory selects the concrete variant before construction.
         # File names must be concrete for PSI/J; execution monitoring and
         # public runner lifecycle are inherited from ManagedRunner.
         self._stdout_path = _path(spec.output_file, spec.directory)
@@ -590,18 +590,19 @@ class PsijExecutor(Executor):
 
     def resolve_spec(self, spec: ExecutionSpec) -> ExecutionSpec:
         from .local_process import select_mpi_spec
-        if spec.mpi_argv is None:
-            return spec
         return select_mpi_spec(spec, scheduler=bool(spec.launch))
 
     def create_run(self, spec: ExecutionSpec, callback=None, *, cleanup_side="local"):
-        return PsijRunner(self, spec, callback=callback, cleanup_side=cleanup_side)
+        return PsijRunner(
+            self, self.resolve_spec(spec), callback=callback,
+            cleanup_side=cleanup_side,
+        )
 
     def create_project_run(
         self, spec: ExecutionSpec, *, run_id, callback=None, cleanup_side="local"
     ):
         return PsijRunner(
-            self, spec, callback=callback, run_id=run_id,
+            self, self.resolve_spec(spec), callback=callback, run_id=run_id,
             cleanup_side=cleanup_side,
         )
 

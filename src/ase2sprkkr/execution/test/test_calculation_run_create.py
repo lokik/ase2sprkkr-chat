@@ -58,3 +58,29 @@ def test_project_factory_reserves_only_chosen_input(tmp_path):
     assert run.spec.stdin == "parallel.in"
     assert run.record.files.input_files == (str(tmp_path / "parallel.in"),)
     assert run.job_files.manifest.input_files == run.record.files.input_files
+
+
+def test_run_factory_resolves_only_once_for_untracked_and_project(tmp_path):
+    for tracked in (False, True):
+        executor = _Executor()
+        calls = []
+        original = executor.resolve_spec
+
+        def once(spec):
+            calls.append(spec)
+            assert len(calls) == 1
+            return original(spec)
+
+        executor.resolve_spec = once
+        kwargs = {}
+        if tracked:
+            projects = ProjectRepository(tmp_path / "project-single-resolution")
+            project = projects.create("Single resolution")
+            manager = ExecutionManager(project_repository=projects, executors=Executors())
+            kwargs.update(project=(manager, project.id), task="SCF")
+        run = CalculationRun.create(
+            _spec(tmp_path), executor=executor,
+            process_result=lambda value: value, **kwargs,
+        )
+        assert run.spec.argv == ("mpirun", "parallel")
+        assert len(calls) == 1

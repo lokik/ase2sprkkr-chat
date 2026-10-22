@@ -197,7 +197,7 @@ class RemoteFileHandler:
             if entry is not None and entry.local_path is not None
         }
         for value in (spec.input_file, spec.stdin, *spec.input_files, *spec.cache_files):
-            if value is None:
+            if value is None or value is False:
                 continue
             try:
                 path = file_path(value, spec.directory, required=True)
