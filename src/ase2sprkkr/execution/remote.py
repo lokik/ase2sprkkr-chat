@@ -152,7 +152,7 @@ class RemoteRunner(ManagedRunner):
                 FileManifest(**status["files"])
                 if status.get("files") is not None else self._job_files.manifest
             )
-            observed, transfer_error = await JobFiles.collect_terminal_remote(
+            observed, transfer_error = await JobFiles.collect_remote(
                 self._job_files.manifest, frozen, self.file_handler, self.result, self.spec,
                 required=backend_state == RunState.FINISHED,
                 materialization_error=status.get("materialization_error"),

@@ -68,7 +68,7 @@ def test_job_files_coordinates_remote_collection_and_verification():
 
     handler = Handler()
     out, error = asyncio.run(JobFiles.collect_remote(
-        pending, handler, SimpleNamespace(), SimpleNamespace(), required=True,
+        None, pending, handler, SimpleNamespace(), SimpleNamespace(), required=True,
     ))
     assert error is None
     assert out.outputs[0].availability_state == "available"
@@ -95,7 +95,7 @@ def test_job_files_verifies_streams_after_failed_transfer():
             return manifest, None
 
     updated, error = asyncio.run(JobFiles.collect_remote(
-        files, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
+        None, files, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
     ))
     assert error is cause
     assert updated.outputs[0].availability_state == "failed"
@@ -124,7 +124,7 @@ def test_job_files_preserves_transfer_error_and_verified_stream(tmp_path):
             ), None
 
     final, error = asyncio.run(JobFiles.collect_remote(
-        files, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
+        None, files, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
     ))
     assert error is cause
     assert final.outputs[0].availability_state == "failed"
@@ -152,7 +152,7 @@ def test_job_files_verifies_streams_after_collection_preflight_error(tmp_path):
             ), None
 
     actual, error = asyncio.run(JobFiles.collect_remote(
-        initial, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
+        None, initial, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
     ))
     assert error is cause
     assert actual.stdout.availability_state == "available"
@@ -276,7 +276,7 @@ def test_stream_verification_exception_preserves_partial_download(tmp_path):
             raise OSError("stream verification unavailable")
 
     saved, error = asyncio.run(JobFiles.collect_remote(
-        initial, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
+        None, initial, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
     ))
     assert isinstance(error, OSError)
     assert str(error) == "stream verification unavailable"
