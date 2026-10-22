@@ -130,14 +130,14 @@ def test_reserve_syncs_inputs_before_submitting_record(tmp_path, monkeypatch):
         "sync_file",
         lambda path: events.append(("sync", Path(path).name)),
     )
-    real_transition = manager.transition
+    real_write = manager_module.durable_write_json
 
-    def tracked_transition(current, **changes):
-        if changes.get("state") == RunState.SUBMITTING:
+    def tracked_write(path, data, **options):
+        if data["state"] == RunState.SUBMITTING:
             events.append(("state", "submitting"))
-        return real_transition(current, **changes)
+        return real_write(path, data, **options)
 
-    monkeypatch.setattr(manager, "transition", tracked_transition)
+    monkeypatch.setattr(manager_module, "durable_write_json", tracked_write)
 
     reserved = manager.reserve(record)
 
