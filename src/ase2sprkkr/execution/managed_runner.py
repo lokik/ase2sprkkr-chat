@@ -49,8 +49,8 @@ class ManagedRunner:
     def backend_id(self):
         return self._backend_id
 
-    @property
-    def files(self):
+    def file_snapshot(self):
+        """Return the current staging/delivery snapshot for durable reconciliation."""
         return self._files
 
     @property
