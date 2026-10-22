@@ -99,8 +99,43 @@ class JobFiles:
         return missing_result_files(self.manifest)
 
     @staticmethod
+    def _merge_availability(previous, received, preserve):
+        """Reconcile availability for matching file identities and roles once.
+
+        The prior manifest is evidence, never a source of new members. Output
+        and cache identities remain separate even when their paths coincide.
+        """
+        recorded = {
+            (role, entry.local_path, entry.remote_path): entry
+            for role, entries in (
+                ("output", (previous.stdout, previous.stderr, *previous.outputs)),
+                ("cache", previous.caches),
+            )
+            for entry in entries if entry is not None
+        }
+
+        def merged(entry, role):
+            if entry is None:
+                return None
+            prior = recorded.get((role, entry.local_path, entry.remote_path))
+            if prior is None or not preserve(prior, entry):
+                return entry
+            return replace(
+                entry, availability_state=prior.availability_state,
+                availability_message=prior.availability_message,
+            )
+
+        return replace(
+            received,
+            stdout=merged(received.stdout, "output"),
+            stderr=merged(received.stderr, "output"),
+            outputs=tuple(merged(entry, "output") for entry in received.outputs),
+            caches=tuple(merged(entry, "cache") for entry in received.caches),
+        )
+
+    @staticmethod
     def merge_snapshot(current, requested):
-        """Preserve captured historical file evidence on stale updates."""
+        """Do not let stale observations erase independently persisted delivery."""
         from .run_model import FileManifest
 
         if isinstance(requested, dict):
@@ -111,55 +146,39 @@ class JobFiles:
             if requested != current:
                 raise ValueError("Cannot replace a captured file manifest")
             return current
-        # A concurrently persisted file delivery must not be reset to
-        # pending by an older backend status assembled before that delivery.
-        previous = {
-            (entry.local_path, entry.remote_path): entry
-            for entry in current.files
-        }
 
-        def preserve(entry):
-            if entry is None or entry.availability_state != "pending":
-                return entry
-            prior = previous.get((entry.local_path, entry.remote_path))
-            if prior is None or prior.availability_state not in (
-                "available", "failed", "skipped",
-            ):
-                return entry
-            return replace(
-                entry, availability_state=prior.availability_state,
-                availability_message=prior.availability_message,
+        def preserve(prior, entry):
+            if prior.availability_state not in ("available", "failed", "skipped"):
+                return False
+            if entry.availability_state == "pending":
+                return True
+            # A concurrent failed transfer invalidates speculative capture.
+            return (
+                requested.captured_at is not None
+                and entry.availability_state == "available"
+                and prior.availability_state == "failed"
             )
 
-        return requested._map_files(preserve)
+        return JobFiles._merge_availability(current, requested, preserve)
 
     @staticmethod
     def merge_terminal_files(previous, received):
-        """Preserve completed local deliveries in frozen terminal facts."""
+        """Retain only still-present local deliveries in terminal facts."""
         if previous is None:
             return received
-        delivered = {
-            (entry.local_path, entry.remote_path): entry
-            for entry in previous.files
-        }
 
-        def preserve(entry):
-            if entry is None or entry.availability_state in ("failed", "skipped"):
-                return entry
-            prior = delivered.get((entry.local_path, entry.remote_path))
-            if prior is None or prior.availability_state not in ("available", "skipped"):
-                return entry
-            if (prior.availability_state == "available"
-                    and (entry.local_path is None
-                         or not os.path.isfile(entry.local_path))):
-                return entry
-            return replace(
-                entry, availability_state=prior.availability_state,
-                availability_message=prior.availability_message,
+        def preserve(prior, entry):
+            if entry.availability_state in ("failed", "skipped"):
+                return False
+            if prior.availability_state == "skipped":
+                return True
+            return (
+                prior.availability_state == "available"
+                and entry.local_path is not None
+                and os.path.isfile(entry.local_path)
             )
 
-        return received._map_files(preserve)
-
+        return JobFiles._merge_availability(previous, received, preserve)
 
     @classmethod
     async def collect_terminal_remote(

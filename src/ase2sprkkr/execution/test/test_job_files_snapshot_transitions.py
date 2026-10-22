@@ -60,7 +60,7 @@ def test_explicit_file_status_update_is_not_discarded(tmp_path):
     assert merged.outputs[0].availability_state == "failed"
 
 
-def test_snapshot_capture_failure_records_failed_files(tmp_path, monkeypatch):
+def test_snapshot_capture_failure_preserves_unverified_files(tmp_path, monkeypatch):
     from ase2sprkkr.execution.base import FailurePhase, RunState
     from ase2sprkkr.execution.job_files import JobFiles
     from ase2sprkkr.execution.run_model import FileEntry
@@ -82,8 +82,8 @@ def test_snapshot_capture_failure_records_failed_files(tmp_path, monkeypatch):
     )
     assert completed.state == RunState.FAILED
     assert completed.failure_phase == FailurePhase.FILES
-    assert completed.files.outputs[0].availability_state == "failed"
-    assert completed.files.outputs[0].availability_message == "capture failed"
+    assert completed.files.outputs[0].availability_state == "pending"
+    assert completed.files.outputs[0].availability_message is None
 
 
 def test_concurrent_persisted_download_failure_overrides_stale_success(tmp_path):

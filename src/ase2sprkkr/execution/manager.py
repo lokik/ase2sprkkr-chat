@@ -633,7 +633,8 @@ class ExecutionManager:
                 state = RunState.FAILED
                 phase = FailurePhase.FILES
                 message = str(exc)
-                result_files = JobFiles.mark_pending_failed(result_files, message)
+                # Capture never verified the remaining pending files.
+                # Preserve their recorded availability rather than invent failures.
 
         return self.transition(
             record,
