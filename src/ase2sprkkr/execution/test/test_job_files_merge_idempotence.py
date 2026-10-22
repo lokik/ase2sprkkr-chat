@@ -71,3 +71,25 @@ def test_status_only_available_merge_preserves_verified_identity(tmp_path):
     path.write_bytes(b"changed")
     stale = merge_snapshot(current, status_only)
     assert stale.outputs[0].verified_local_version is None
+
+
+
+def test_terminal_merge_promotes_skipped_to_new_verified_delivery(tmp_path):
+    from ase2sprkkr.common.file_versions import FileVersion
+
+    path = tmp_path / "delivered.dat"
+    path.write_bytes(b"remote contents")
+    version = FileVersion.capture(path, require_digest=True)
+    skipped = FileManifest(outputs=(FileEntry(
+        str(path), "/remote/delivered.dat", availability_state="skipped",
+    ),))
+    downloaded = FileManifest(outputs=(FileEntry(
+        str(path), "/remote/delivered.dat", availability_state="available",
+        verified_local_version=version,
+    ),))
+
+    assert merge_terminal_files(skipped, downloaded).outputs[0].availability_state == "available"
+    assert merge_terminal_files(skipped, downloaded).outputs[0].verified_local_version == version
+
+    pending = skipped.with_file_availability(str(path), "pending")
+    assert merge_terminal_files(skipped, pending).outputs[0].availability_state == "skipped"

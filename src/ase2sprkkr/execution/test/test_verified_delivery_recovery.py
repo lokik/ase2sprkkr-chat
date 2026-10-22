@@ -80,10 +80,69 @@ def test_missing_policy_requires_matching_remote_copy(tmp_path):
     altered, error = asyncio.run(handler.collect(
         mapping, pending, ExecutionOutcome(), required=True,
     ))
-    assert isinstance(error, RuntimeError)
-    assert altered.outputs[0].availability_state == "failed"
+    assert error is None
+    assert altered.outputs[0].availability_state == "skipped"
+    assert altered.outputs[0].availability_message is None
+    assert altered.outputs[0].verified_local_version is None
     assert local.read_bytes() == b"stale local data"
     assert remote.read_bytes() == b"original result"
+    assert merge_terminal_files(altered, pending).outputs[0].availability_state == "skipped"
+    assert merge_snapshot(altered, pending).outputs[0].availability_state == "skipped"
+    # Reattach does not re-download an intentionally skipped file.
+    again, error = asyncio.run(handler.collect(
+        mapping, merge_terminal_files(altered, pending),
+        ExecutionOutcome(), required=True,
+    ))
+    assert error is None
+    assert again.outputs[0].availability_state == "skipped"
+
+
+def test_missing_skip_allows_finished_run_without_capturing_stale_file(tmp_path):
+    from ase2sprkkr.execution.base import RunState
+    from ase2sprkkr.execution.manager import ExecutionManager
+    from ase2sprkkr.execution.run_store import RunStore
+    from ase2sprkkr.execution.file_history import missing_result_files
+
+    local, remote, _, pending, mapping = _case(tmp_path)
+    local.write_bytes(b"stale result from an earlier run")
+    valid_remote = remote.with_name("other.dat")
+    valid_remote.write_bytes(b"new result")
+    valid_local = local.with_name("other.dat")
+    files = FileManifest(
+        outputs=(
+            pending.outputs[0],
+            FileEntry(str(valid_local), str(valid_remote), availability_state="pending"),
+        ),
+        mapping=FileMapping(mapping.local_root, mapping.remote_root, output_sync="missing"),
+    )
+    observed, error = asyncio.run(RemoteFileHandler(LocalTransport()).collect(
+        files.mapping, files, ExecutionOutcome(), required=True,
+    ))
+    assert error is None
+    assert [entry.availability_state for entry in observed.outputs] == [
+        "skipped", "available",
+    ]
+    assert observed.availability_state == "available"
+    assert valid_local.read_bytes() == b"new result"
+    assert local.read_bytes() == b"stale result from an earlier run"
+
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    record = store.save(manager.new_record(
+        task="DOS", directory=local.parent, files=files,
+    ))
+    finished = manager.complete(
+        record, state=RunState.FINISHED, return_code=0,
+        files_available=True, files=observed,
+    )
+    assert finished.state == RunState.FINISHED
+    assert finished.files.outputs[0].availability_state == "skipped"
+    assert finished.files.outputs[0].verified_local_version is None
+    assert finished.files.captured_at is not None
+    assert [str(version.path) for version in finished.files.output_versions] == [
+        str(valid_local),
+    ]
+    assert missing_result_files(finished.files) == ()
 
 
 def test_final_capture_rejects_replaced_remote_copy(tmp_path):

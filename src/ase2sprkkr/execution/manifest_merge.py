@@ -94,7 +94,9 @@ def merge_terminal_files(previous, received):
         if entry.availability_state in ("failed", "skipped"):
             return prior.verified_delivery_is_current()
         if prior.availability_state == "skipped":
-            return True
+            # Preserve an intentionally skipped transfer across reattach, but
+            # never let it override a newly verified successful delivery.
+            return entry.availability_state == "pending"
         return prior.verified_delivery_is_current()
 
     return _merge_availability(previous, received, preserve)

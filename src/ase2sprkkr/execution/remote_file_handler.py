@@ -231,9 +231,10 @@ class RemoteFileHandler:
                 return "skipped"
             if remote_digest == file_digest(local, missing_ok=True):
                 return "available"
-            raise RuntimeError(
-                f"Local output differs from remote under MISSING policy: {local}"
-            )
+            # MISSING must leave the existing local file untouched. It is
+            # not the remote result, so report an intentionally skipped
+            # delivery rather than treating it as available or as a run error.
+            return "skipped"
 
         if is_cache:
             after = await self.transport.file_signature(remote)
