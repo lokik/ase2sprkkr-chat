@@ -227,11 +227,12 @@ def test_explicit_local_executor_overrides_remote_profile(tmp_path, monkeypatch)
             seen["spec"] = spec
             return runner
 
-    def must_not_resolve_default_manager():
+    def must_not_resolve_default_executors():
         raise AssertionError("explicit executor was replaced by the profile backend")
 
     monkeypatch.setattr(
-        calculation_module, "default_execution_manager", must_not_resolve_default_manager,
+        "ase2sprkkr.execution.persistence.default_executors",
+        must_not_resolve_default_executors,
     )
 
     profile = SPRKKRProfile(executor="ssh", host="cluster", mpi="auto")
