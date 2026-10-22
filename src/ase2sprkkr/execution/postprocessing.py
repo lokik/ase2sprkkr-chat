@@ -92,9 +92,14 @@ class CalculationRun:
     def backend_id(self):
         return self._runner.backend_id
 
-    @property
-    def job_files(self):
-        return self._runner.job_files
+    def file_snapshot(self):
+        return self._runner.file_snapshot()
+
+    def replace_file_manifest(self, manifest):
+        return self._runner.replace_file_manifest(manifest)
+
+    def merge_file_manifest(self, observed):
+        return self._runner.merge_file_manifest(observed)
 
     @property
     def exception(self):
