@@ -372,52 +372,50 @@ class RunStore:
             if path.is_file() and self._decode(path).project_id != record.project_id:
                 raise ValueError("Run write cannot change persistent project identity")
 
-    def save(self, record: RunRecord):
+    @contextmanager
+    def _locked_run(self, record):
+        """Serialize durable access and validate the run's project."""
         with self._lock, FileLock(self._run_lock_path(record)):
             self._check_persisted_project(record)
             with self._project_guard(record):
-                return self._write_unlocked(record)
+                yield
+
+    def save(self, record: RunRecord):
+        with self._locked_run(record):
+            return self._write_unlocked(record)
 
     def update(self, record: RunRecord, updater):
-        with self._lock, FileLock(self._run_lock_path(record)):
-            self._check_persisted_project(record)
-            with self._project_guard(record):
-                path = self._path(record)
-                latest = self._decode(path) if path.is_file() else record
-                updated = updater(latest)
-                if (updated.id != latest.id or updated.created_at != latest.created_at
-                        or updated.project_id != latest.project_id):
-                    raise ValueError("Run update cannot change persistent identity")
-                if updated is latest:
-                    # A previous atomic rename may have succeeded just before
-                    # fsync failed. Reaffirm durability without rewriting the
-                    # terminal record or changing its update timestamp.
-                    if latest.state.is_terminal and path.is_file():
-                        sync_file(path)
-                    return latest
-                return self._write_unlocked(updated)
+        with self._locked_run(record):
+            path = self._path(record)
+            latest = self._decode(path) if path.is_file() else record
+            updated = updater(latest)
+            if (updated.id != latest.id or updated.created_at != latest.created_at
+                    or updated.project_id != latest.project_id):
+                raise ValueError("Run update cannot change persistent identity")
+            if updated is latest:
+                # A previous atomic rename may have succeeded just before
+                # fsync failed. Reaffirm durability without rewriting the
+                # terminal record or changing its update timestamp.
+                if latest.state.is_terminal and path.is_file():
+                    sync_file(path)
+                return latest
+            return self._write_unlocked(updated)
 
     def terminal_record(self, record):
-        """Return a crash-durable terminal record, if one already exists.
-
-        Take the same per-run lock as writers: visibility after an atomic
-        rename does not by itself imply that the directory is durable.
-        """
-        with self._lock, FileLock(self._run_lock_path(record)):
-            self._check_persisted_project(record)
-            with self._project_guard(record):
-                path = self._path(record)
-                if not path.is_file():
-                    return None
-                latest = self._decode(path)
-                if (latest.id != record.id
-                        or latest.created_at != record.created_at
-                        or latest.project_id != record.project_id):
-                    raise ValueError("Terminal lookup cannot change persistent identity")
-                if not latest.state.is_terminal:
-                    return None
-                sync_file(path)
-                return latest
+        """Return a crash-durable terminal record, if one already exists."""
+        with self._locked_run(record):
+            path = self._path(record)
+            if not path.is_file():
+                return None
+            latest = self._decode(path)
+            if (latest.id != record.id
+                    or latest.created_at != record.created_at
+                    or latest.project_id != record.project_id):
+                raise ValueError("Terminal lookup cannot change persistent identity")
+            if not latest.state.is_terminal:
+                return None
+            sync_file(path)
+            return latest
 
     def get(self, run_id):
         return self._decode(self._path_for_id(run_id))
