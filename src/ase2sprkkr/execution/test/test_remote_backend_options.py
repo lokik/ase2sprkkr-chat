@@ -154,7 +154,7 @@ def test_remote_spec_ignores_remote_only_cache_baselines(tmp_path):
     manifest = FileManifest(caches=(
         FileEntry(local_path=str(exact), remote_path=str(exact)),
         FileEntry(local_path=str(pattern), remote_path=str(pattern)),
-        FileEntry(remote_path=str(exact), pre_run_signature=(7, 42)),
+        FileEntry(remote_path=str(exact), source=str(pattern), pre_run_signature=(7, 42)),
     ))
     assert len(manifest.caches) == 3
     spec = _request_spec({
@@ -162,6 +162,11 @@ def test_remote_spec_ignores_remote_only_cache_baselines(tmp_path):
         "files": asdict(manifest),
     })
     assert spec.cache_files == (str(exact), str(pattern))
+    remote_only = FileManifest(caches=(FileEntry(remote_path=str(exact)),))
+    assert _request_spec({
+        "directory": str(directory), "argv": ("program",),
+        "files": asdict(remote_only),
+    }).cache_files == (str(exact),)
     # The original frozen manifest still carries the remote baseline.
     assert manifest.caches[2].pre_run_signature == (7, 42)
     assert FileManifest.from_spec(spec).caches == (
