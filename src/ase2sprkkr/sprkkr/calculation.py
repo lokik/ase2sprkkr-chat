@@ -874,8 +874,11 @@ def _create_sprkkr_run(
         )
         if executor is None:
             executor = manager.executors.for_profile(profile)
+            executor_endpoint = profile.endpoint
         elif project_context is not None:
-            manager.executors.register(executor, profile.endpoint)
+            executor_endpoint = manager.executors.register(executor)
+        else:
+            executor_endpoint = None
 
         execution_profile = profile
         if task.mpi:
@@ -937,7 +940,7 @@ def _create_sprkkr_run(
             manager, project_id = project_context
             runner = manager.create_run(
                 spec,
-                endpoint=profile.endpoint,
+                endpoint=executor_endpoint,
                 process_result=process_result,
                 task=task.name,
                 input_definition=input_parameters.definition_name,
