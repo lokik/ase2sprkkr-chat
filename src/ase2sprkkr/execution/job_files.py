@@ -119,9 +119,14 @@ class JobFiles:
         The handler owns I/O. The returned manifest is the sole file state;
         successfully delivered files survive a later transfer failure.
         """
-        manifest, error = await handler.collect(
-            manifest.mapping, manifest, outcome, required=required,
-        )
+        try:
+            manifest, error = await handler.collect(
+                manifest.mapping, manifest, outcome, required=required,
+            )
+        except Exception as exc:
+            # A preflight failure precedes any transfer. Keep the exact
+            # manifest and still assess independently delivered FOLLOW streams.
+            error = exc
         if not required or manifest is None:
             return manifest, error
         # A failed output/cache transfer does not imply failed FOLLOW streams.

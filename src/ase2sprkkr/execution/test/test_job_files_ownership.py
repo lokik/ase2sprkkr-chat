@@ -129,3 +129,31 @@ def test_job_files_preserves_transfer_error_and_verified_stream(tmp_path):
     assert error is cause
     assert final.outputs[0].availability_state == "failed"
     assert final.stdout.availability_state == "available"
+
+
+def test_job_files_verifies_streams_after_collection_preflight_error(tmp_path):
+    import asyncio
+    from types import SimpleNamespace
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+
+    output = FileEntry(str(tmp_path / "result"), "/remote/result", "pending")
+    stream = FileEntry(str(tmp_path / "stdout"), "/remote/stdout", "pending")
+    initial = FileManifest(stdout=stream, outputs=(output,))
+    cause = ValueError("destination collision")
+
+    class Handler:
+        async def collect(self, mapping, manifest, outcome, *, required):
+            raise cause
+
+        async def verify_stream_availability(self, manifest, spec):
+            assert manifest == initial
+            return manifest.with_file_availability(
+                stream.local_path, "available", remote_path=stream.remote_path,
+            ), None
+
+    actual, error = asyncio.run(JobFiles.collect_remote(
+        initial, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
+    ))
+    assert error is cause
+    assert actual.stdout.availability_state == "available"
+    assert actual.outputs[0].availability_state == "pending"
