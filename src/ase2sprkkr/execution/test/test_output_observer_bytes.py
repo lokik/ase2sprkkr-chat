@@ -133,3 +133,29 @@ def test_observer_failure_does_not_prevent_other_byte_listeners():
     observers.emit_bytes(b"second", "out")
     assert received == [("first", "out"), ("second", "out")]
     assert failures == [(broken, "listener failed")]
+
+def test_local_project_follow_delivers_bytes_through_shared_decoder():
+    """Detached local follow uses the same byte observation policy as SSH."""
+    from ase2sprkkr.execution.local_project import LocalProjectRunner
+
+    received = []
+    frozen_files = object()
+
+    class Connection:
+        async def follow(self, backend_id, files, *, on_chunk):
+            assert backend_id == "opaque-backend"
+            assert files is frozen_files
+            on_chunk("out", "výstup".encode("utf8"))
+            on_chunk("err", b"warning:\xff")
+            return "follow-finished"
+
+    runner = object.__new__(LocalProjectRunner)
+    runner.executor = SimpleNamespace(connection=Connection())
+    runner._backend_id = "opaque-backend"
+    runner._files = frozen_files
+    runner._output_observers = OutputObservers(
+        lambda text, kind: received.append((text, kind))
+    )
+
+    assert asyncio.run(runner._follow_once()) == "follow-finished"
+    assert received == [("výstup", "out"), ("warning:\ufffd", "err")]
