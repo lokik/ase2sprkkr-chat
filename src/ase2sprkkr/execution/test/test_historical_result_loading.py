@@ -48,7 +48,6 @@ def _spec(tmp_path):
         input_file=str(input_file),
         output_file=str(output_file),
         input_files=(str(input_file),),
-        output_files=(str(output_file),),
     )
 
 
