@@ -24,7 +24,7 @@ from .base import (
 from ..common.async_utils import run_coro_sync as _run_sync
 from ..common.file_versions import file_digest
 from .transport import expand_local_files, has_file_magic
-from .run_model import FileSyncPolicy
+from .run_model import FileManifest, FileSyncPolicy
 
 
 class RemoteRunner:
