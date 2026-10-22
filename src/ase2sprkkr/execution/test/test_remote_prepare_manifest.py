@@ -32,7 +32,9 @@ def test_staging_does_not_flush_new_unreserved_source_handle(tmp_path):
     )
     mapping = FileMapping(str(local), str(remote))
     reserved = FileManifest.from_spec(spec).with_mapping(mapping)
-    changed = replace(spec, input_files=(UnexpectedSource(),))
+    changed = replace(
+        spec, input_file=str(extra), input_files=(UnexpectedSource(),),
+    )
     executor = RemoteEndpointExecutor(LocalTransport())
     prepared = asyncio.run(
         executor.file_handler.prepare(mapping, changed, reserved),
