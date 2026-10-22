@@ -233,7 +233,7 @@ class RunRecord:
                 changes["message"] = completed_files.availability_message or message
                 if (completed_files.captured_at is not None
                         and self.files.captured_at is None):
-                    changes["files"] = replace(completed_files, captured_at=None)
+                    changes["files"] = JobFiles.discard_capture(completed_files)
         return replace(self, **changes)
 
 
