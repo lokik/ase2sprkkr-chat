@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 import os
 import warnings
 from contextlib import contextmanager
@@ -17,7 +18,7 @@ from .base import RunState
 from .file_reservations import reservation_conflict
 from .file_history import sync_result_files
 from .projects import _project_id
-from .run_record import RunRecord, _RUN_RECORD_SCHEMA_VERSION, _now, _run_id
+from .run_record import RunRecord, SubmissionPhase, _RUN_RECORD_SCHEMA_VERSION, _now, _run_id
 
 
 class CorruptRunRecord(RuntimeError):
@@ -134,6 +135,29 @@ class RunStore:
         with self._lock, FileLock(self.directory / ".submit.lock"):
             yield
 
+    @contextmanager
+    def submission_owner(self, record):
+        """Nonblocking ownership of one submission, released on all exits."""
+        digest = sha256(record.id.encode("utf8")).hexdigest()
+        lock = FileLock(self.directory / f".submission-{digest}.lock")
+        if not lock.acquire(blocking=False):
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            lock.release()
+
+    def begin_dispatch(self, record):
+        """Durably cross the uncertain backend launch boundary."""
+        def dispatch(latest):
+            if (latest != record or latest.state != RunState.SUBMITTING
+                    or latest.submission_phase != SubmissionPhase.PREPARING
+                    or latest.execution.backend_id is not None):
+                raise RuntimeError("Submission reservation was lost before dispatch")
+            return replace(latest, submission_phase=SubmissionPhase.DISPATCHING, updated_at=_now())
+        return self.update(record, dispatch)
+
     def reserve_files(self, record):
         """Atomically check file conflicts and commit a new run's submission."""
         with self.submission_lock():
@@ -156,6 +180,7 @@ class RunStore:
                 sync_result_files(record.files.input_files)
                 return replace(
                     latest, state=RunState.SUBMITTING,
+                    submission_phase=SubmissionPhase.PREPARING,
                     updated_at=_now(),
                 )
             return self.update(record, claim), ()
