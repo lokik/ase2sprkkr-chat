@@ -67,7 +67,19 @@ def compact_bsf(text, max_e=8, max_k=12):
         if numbers.size != channels * ne * nk * nq:
             raise ValueError(f"Wrong raw size {numbers.size} vs {channels * ne * nk * nq}")
         energy = regular_subset(ne, max_e)
-        k = regular_subset(nk, max_k)
+        # Preserve every K-direction junction, including the last point of
+        # each segment, when reducing a multi-segment band path.
+        boundaries = [int(v) for v in re.findall(
+            r"(?m)^\\s*INDKDIR\\s+(\\d+)\\s*$", header)]
+        ndir = field(header, "NKDIR")
+        if len(boundaries) != ndir or not boundaries or boundaries[-1] != nk:
+            raise ValueError("Inconsistent K-direction boundaries")
+        if any(a >= b for a, b in zip((0, *boundaries[:-1]), boundaries)):
+            raise ValueError("Nonincreasing K-direction boundaries")
+        junctions = {0, nk - 1}
+        for begin, end in zip((0, *boundaries[:-1]), boundaries):
+            junctions.update((begin, end - 1))
+        k = np.array(sorted(set(regular_subset(nk, max_k)) | junctions))
         if keyword == "BSF":
             first = numbers[:2 * ne * nq * nk].reshape(ne, 2, nq, nk)
             second = numbers[2 * ne * nq * nk:].reshape(ne, nq, nk)
@@ -85,9 +97,13 @@ def compact_bsf(text, max_e=8, max_k=12):
             raise ValueError(f"K-grid has {len(k_lines)} rows, expected {nk}")
         entries[after_nk:-1] = [k_lines[i] for i in k]
         header = "".join(entries)
-        if field(header, "NKDIR") != 1:
-            raise ValueError("Multiple K direction segments must be handled separately")
-        header = set_field(header, "INDKDIR", len(k))
+        positions = iter(int(np.searchsorted(k, edge - 1, side="right"))
+                         for edge in boundaries)
+        header = re.sub(
+            r"(?m)^(\\s*INDKDIR\\s+)\\d+(\\s*)$",
+            lambda match: match[1] + str(next(positions)) + match[2],
+            header,
+        )
         m = re.search(r"(?m)^(EMIN EMAX\s+)(\S+)(\s+)(\S+)(\s*)$", header)
         if not m:
             raise ValueError("No EMIN/EMAX header")
