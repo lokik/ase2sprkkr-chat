@@ -246,8 +246,8 @@ def test_parallel_run_stores_merge_independent_file_updates(tmp_path):
         # Independent stores model clients reopening the same persisted run.
         client_store = RunStore(directory)
         barrier.wait(timeout=10)
-        return JobFiles(record.files).update_availability(
-        record, client_store, path, state, message,
+        return JobFiles.update_availability(
+            record, client_store, path, state, message,
         )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
