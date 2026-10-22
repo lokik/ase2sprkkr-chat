@@ -35,18 +35,6 @@ def test_definite_cancel_is_durable_without_launch(manager, tmp_path):
     assert manager.store.get(record.id).failure_phase is None
 
 
-def test_failed_run_without_phase_is_execution_failure(manager, tmp_path):
-    record = manager.new_record(task="DOS", directory=tmp_path)
-    completed = manager.record_observation(
-        record, state=RunState.FAILED, execution=None,
-        return_code=2, message="backend failed",
-        failure_phase=None, files=record.files,
-        expected_updated_at=record.updated_at,
-    )
-    assert completed.state == RunState.FAILED
-    assert completed.failure_phase == FailurePhase.EXECUTION
-
-
 def test_unknown_observation_cannot_overwrite_newer_status(manager, tmp_path):
     record = manager.new_record(task="DOS", directory=tmp_path)
     newer = manager.transition(record, state=RunState.RUNNING)
@@ -178,8 +166,11 @@ def test_uncertain_submission_without_backend_id_remains_recoverable(manager, tm
     assert manager.store.get(record.id).finished_at is None
 
 
-def test_failed_backend_observation_uses_execution_failure_phase(manager, tmp_path):
-    record = manager.reserve(manager.new_record(task="DOS", directory=tmp_path))
+@pytest.mark.parametrize("reserved", (False, True))
+def test_failed_backend_observation_uses_execution_failure_phase(manager, tmp_path, reserved):
+    record = manager.new_record(task="DOS", directory=tmp_path)
+    if reserved:
+        record = manager.reserve(record)
     updated = manager.record_observation(
         record, state=RunState.FAILED, execution=None,
         return_code=2, message="solver exited",
@@ -188,7 +179,8 @@ def test_failed_backend_observation_uses_execution_failure_phase(manager, tmp_pa
     )
     assert updated.state == RunState.FAILED
     assert updated.failure_phase == FailurePhase.EXECUTION
-    assert manager.store.get(record.id) == updated
+    if reserved:
+        assert manager.store.get(record.id) == updated
 
 def test_uncertain_synchronous_completion_does_not_publish_terminal_state(manager, tmp_path):
     record = manager.reserve(manager.new_record(task="DOS", directory=tmp_path))

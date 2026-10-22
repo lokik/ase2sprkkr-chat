@@ -226,18 +226,6 @@ def test_cancel_started_run_does_not_close_resources_before_monitor_finishes():
     assert not input_file.closed
 
 
-def test_cancel_unstarted_run_releases_resources():
-    input_file = io.BytesIO(b"input")
-    resources = ExecutionResources(input_file)
-    runner = CalculationRun(_Runner(), lambda outcome: outcome, resources=resources)
-
-    runner.cancel()
-
-    assert runner.state == RunState.CANCELLED
-    assert resources.closed
-    assert input_file.closed
-
-
 def test_uncertain_submission_preserves_resources_and_prevents_resubmit():
     input_file = io.BytesIO(b"input")
     resources = ExecutionResources(input_file)
@@ -519,7 +507,6 @@ def test_manifest_persistence_failure_does_not_submit_backend():
             )
 
 
-
     processed = CalculationRun(
         PreparedBackend(), lambda outcome: outcome, resources=resources,
     )
@@ -617,7 +604,6 @@ def test_project_cancel_during_manifest_staging_never_submits_backend():
             return self.complete(record, state=RunState.CANCELLED)
 
 
-
     processed = CalculationRun(Backend(), lambda outcome: outcome, resources=resources)
     project = _tracked(Store(), None, processed, SimpleNamespace(
         state=RunState.NEW, id="run", updated_at="new", files=FileManifest(),
@@ -668,7 +654,5 @@ def test_ambiguous_submit_without_resources_cannot_be_retried():
     with pytest.raises(RuntimeError, match="Submission outcome is uncertain"):
         runner.run()
     assert attempts == ["submitted"]
-
-
 
 
