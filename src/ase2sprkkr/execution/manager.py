@@ -24,6 +24,7 @@ from .base import (
     RunStatus,
 )
 from .job_files import JobFiles, HistoricalFileMismatchError
+from .file_reservations import reservation_conflict
 from .endpoint import ExecutorEndpoint
 from .pool import Executors
 from .projects import _project_id
@@ -344,7 +345,7 @@ class RunStore:
                 active for active in self.runs(active=True, strict=True)
                 if active.id != record.id
                 and active.state != RunState.NEW
-                and record.job_files.conflicts_with(active.job_files)
+                and reservation_conflict(record, active)
             )
             if conflicts:
                 return None, conflicts

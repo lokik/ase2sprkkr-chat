@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import fnmatch
 from pathlib import Path
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -13,7 +12,6 @@ from .run_model import FileAvailabilityState
 from .historical_restore import (
     HistoricalFileMismatchError, restore_historical_file,
 )
-from .transport import has_file_magic
 
 from .file_history import (
     capture_result_files, file_is_current, missing_result_files, sync_result_files,
@@ -29,55 +27,6 @@ class JobFiles:
     @property
     def manifest(self):
         return self.record.files
-
-    def _accesses(self):
-        """Resolve this job's declared filesystem read/write accesses."""
-        files = self.manifest
-        directory = self.record.execution.directory
-        remote = directory.remote is not None
-
-        def path(entry):
-            if entry is None:
-                return None
-            value = entry.remote_path if remote else entry.local_path
-            if value is None:
-                return None
-            resolved = value if os.path.isabs(value) else os.path.join(directory.target, value)
-            return os.path.normpath(resolved) if remote else os.path.realpath(resolved)
-
-        inputs = {path(entry) for entry in files.input_entries} - {None}
-        caches = {path(entry) for entry in files.caches} - {None}
-        reads = inputs | caches
-        writes = {path(entry) for entry in (files.stdout, files.stderr, *files.outputs)} - {None}
-        writes.update(caches)
-        if remote and (files.mapping is None or files.mapping.input_sync != "never"):
-            writes.update(inputs)
-        return reads, writes
-
-    def conflicts_with(self, other):
-        """Conservatively reject conflicting filesystem operations."""
-        left, right = self.record, other.record
-        a, b = left.execution, right.execution
-        if a.endpoint != b.endpoint:
-            return False
-        local = a.directory.remote is None and b.directory.remote is None
-        same_directory = (
-            os.path.realpath(a.directory.target) == os.path.realpath(b.directory.target)
-            if local else a.directory.target == b.directory.target
-        )
-        if same_directory and (left.task == "SCF" or right.task == "SCF"):
-            return True
-        left_reads, left_writes = self._accesses()
-        right_reads, right_writes = other._accesses()
-        if (_paths_overlap(left_writes, right_reads | right_writes, check_hardlinks=local)
-                or _paths_overlap(right_writes, left_reads, check_hardlinks=local)):
-            return True
-        return (
-            (not left_writes or not right_writes)
-            and same_directory
-            and left.task == right.task
-            and left.dataset == right.dataset
-        )
 
     def input_file_is_current(self):
         files = self.manifest
@@ -297,36 +246,3 @@ class JobFiles:
                         store, path, FileAvailabilityState.AVAILABLE,
                     )
         return store.get(record.id)
-
-
-def _paths_overlap(first, second, *, check_hardlinks=False):
-    """Conservatively detect overlapping declared paths and glob patterns."""
-    def prefix(pattern):
-        return pattern[:min((pattern.find(c) for c in "*?[" if c in pattern),
-                            default=len(pattern))]
-
-    for a in first:
-        for b in second:
-            if a == b:
-                return True
-            a_magic, b_magic = has_file_magic(a), has_file_magic(b)
-            if not a_magic and not b_magic:
-                if check_hardlinks:
-                    try:
-                        if os.path.samefile(a, b):
-                            return True
-                    except (FileNotFoundError, NotADirectoryError):
-                        pass
-            elif not a_magic:
-                if fnmatch.fnmatchcase(a, b):
-                    return True
-            elif not b_magic:
-                if fnmatch.fnmatchcase(b, a):
-                    return True
-            elif (prefix(a).startswith(prefix(b))
-                  or prefix(b).startswith(prefix(a))):
-                # Intersecting literal prefixes cannot rule out overlap.
-                return True
-    return False
-
-
