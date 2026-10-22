@@ -6,8 +6,7 @@ import pytest
 from ase2sprkkr.execution import CorruptRunRecord, RunRecord, RunState, RunStore, Execution, WorkingDirectory, ExecutorEndpoint, FileManifest
 
 
-@pytest.mark.parametrize("schema_version", [0, 1, 2, 4, 5])
-def test_only_current_run_record_schema_is_supported(tmp_path, schema_version):
+def test_noncurrent_run_record_schema_is_rejected(tmp_path):
     store = RunStore(tmp_path / "runs")
     created_at = "2026-10-17T12:34:56+00:00"
     directory = store.directory / "2026-10-17"
@@ -22,7 +21,7 @@ def test_only_current_run_record_schema_is_supported(tmp_path, schema_version):
                 "updated_at": created_at,
                 "task": "DOS",
                 "directory": str(tmp_path),
-                "schema_version": schema_version,
+                "schema_version": 3,  # Previous schema intentionally rejected.
             }
         )
     )
@@ -51,7 +50,7 @@ def test_current_schema_round_trips_with_one_execution_identity(tmp_path, backen
     loaded = store.get(record.id)
 
     assert loaded == record
-    assert loaded.schema_version == 3
+    assert loaded.schema_version == 4
     assert loaded.execution.backend_id == backend_id
     for obsolete in (
         "backend_state", "requested_task", "reference", "submission",
@@ -78,26 +77,101 @@ def test_persisted_execution_identity_cannot_be_replaced(tmp_path):
     assert manager.store.get(record.id).execution.backend_id == "job-42"
 
 
-def test_run_store_lookup_prefers_newest_record(tmp_path):
+def test_run_store_rejects_reused_id_with_different_creation_time(tmp_path):
     store = RunStore(tmp_path / "runs")
     created = "2026-10-17T12:34:56+00:00"
-    old = RunRecord(
+    original = RunRecord(
         id="same-id", state=RunState.RUNNING,
         created_at=created, updated_at=created, task="DOS",
         execution=Execution(ExecutorEndpoint(), WorkingDirectory(str(tmp_path))),
         files=FileManifest(),
     )
-    newest = replace(
-        old, created_at="2026-10-19T12:34:56+00:00",
-        updated_at="2026-10-19T12:34:56+00:00", task="BSF",
+    forged = replace(
+        original, created_at="2026-10-19T12:34:56+00:00",
+        updated_at="2026-10-19T12:34:56+00:00",
     )
-    store.save(old)
-    store.save(newest)
+    store.save(original)
+    with pytest.raises(ValueError, match="persistent creation time"):
+        store.save(forged)
     (store.directory / "unrelated-file.txt").write_text("not a shard")
 
-    assert store.get("same-id") == newest
+    assert store.get("same-id") == original
 
 
 def test_run_store_lookup_preserves_missing_directory_error(tmp_path):
     with pytest.raises(FileNotFoundError, match="missing-run"):
         RunStore(tmp_path / "absent").get("missing-run")
+
+
+
+@pytest.mark.parametrize("bad_id", [
+    "", ".", "..", "../escape", "/tmp/escape", "nested/run",
+    r"nested\\run", ".hidden", "with space", "bad\u0000id", 123,
+    "x" * 129,
+])
+def test_run_record_rejects_unsafe_path_ids(tmp_path, bad_id):
+    with pytest.raises(ValueError, match="Invalid run ID"):
+        RunRecord(
+            id=bad_id, state=RunState.NEW,
+            created_at="2026-10-17T12:34:56+00:00",
+            updated_at="2026-10-17T12:34:56+00:00", task="DOS",
+            execution=Execution(ExecutorEndpoint(), WorkingDirectory(str(tmp_path))),
+            files=FileManifest(),
+        )
+
+
+@pytest.mark.parametrize("bad_id", ["../escape", "/tmp/escape", r"nested\\run", ""])
+def test_run_store_rejects_unsafe_id_lookups(tmp_path, bad_id):
+    store = RunStore(tmp_path / "runs")
+    with pytest.raises(ValueError, match="Invalid run ID"):
+        store.get(bad_id)
+    assert not store.directory.exists()
+
+
+
+@pytest.mark.parametrize("field,value,error", [
+    ("id", "other-safe-id", "does not match filename"),
+    ("created_at", "2026-10-19T12:34:56+00:00",
+     "creation date does not match shard"),
+])
+def test_run_store_rejects_identity_mismatch_on_disk(
+    tmp_path, field, value, error,
+):
+    """Valid-looking JSON may not borrow the identity of its pathname."""
+    store = RunStore(tmp_path / "runs")
+    record = RunRecord(
+        id="run-original", state=RunState.NEW,
+        created_at="2026-10-17T12:34:56+00:00",
+        updated_at="2026-10-17T12:34:56+00:00", task="DOS",
+        execution=Execution(ExecutorEndpoint(), WorkingDirectory(str(tmp_path))),
+        files=FileManifest(),
+    )
+    store.save(record)
+    path = store.directory / "2026-10-17" / "run-original.json"
+    data = json.loads(path.read_text())
+    data[field] = value
+    path.write_text(json.dumps(data))
+
+    with pytest.raises(CorruptRunRecord, match=error):
+        store.get(record.id)
+    with pytest.raises(CorruptRunRecord, match=error):
+        store.runs(strict=True)
+
+
+
+def test_run_store_rejects_unsafe_id_in_persisted_record(tmp_path):
+    store = RunStore(tmp_path / "runs")
+    record = RunRecord(
+        id="safe-run", state=RunState.NEW,
+        created_at="2026-10-17T12:34:56+00:00",
+        updated_at="2026-10-17T12:34:56+00:00", task="DOS",
+        execution=Execution(ExecutorEndpoint(), WorkingDirectory(str(tmp_path))),
+        files=FileManifest(),
+    )
+    store.save(record)
+    path = store.directory / "2026-10-17" / "safe-run.json"
+    data = json.loads(path.read_text())
+    data["id"] = "../escape"
+    path.write_text(json.dumps(data))
+    with pytest.raises(CorruptRunRecord, match="Invalid run ID"):
+        store.get("safe-run")

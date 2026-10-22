@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from ase2sprkkr.execution import ExecutionSpec
@@ -11,7 +13,7 @@ def test_remote_cancel_before_submit_is_rejected(tmp_path):
         output_file=None,
         directory=str(tmp_path),
     )
-    runner = RemoteRunner(object(), spec)
+    runner = RemoteRunner(SimpleNamespace(file_handler=None), spec)
 
     with pytest.raises(RuntimeError, match="not been submitted"):
         runner.cancel()

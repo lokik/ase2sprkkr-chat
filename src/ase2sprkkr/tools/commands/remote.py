@@ -82,7 +82,9 @@ def run(args, global_args):
         request["directory"] = args.directory
         _print_json(submit_remote(request))
     elif args.remote_action == "status":
-        _print_json(status_remote(args.remote_id))
+        payload = "" if sys.stdin.isatty() else sys.stdin.read()
+        request = json.loads(payload) if payload.strip() else {}
+        _print_json(status_remote(args.remote_id, request.get("files")))
     elif args.remote_action == "cancel":
         _print_json(cancel_remote(args.remote_id))
     elif args.remote_action == "follow":
@@ -128,11 +130,13 @@ def run(args, global_args):
     elif args.remote_action == "ack":
         _print_json(acknowledge_remote(args.remote_id))
     elif args.remote_action == "resolve-mpi":
-        from ...execution.base import LaunchSpec
+        from ...execution.base import LaunchSpec, MpiSpec
         from ...execution.mpi import resolve_mpi_command
 
         request = json.load(sys.stdin)
-        launch = LaunchSpec.from_mpi(request.get("mpi"))
+        mpi = request.get("mpi")
+        launch = (LaunchSpec(mpi=MpiSpec(**mpi)) if isinstance(mpi, dict)
+                  else LaunchSpec.from_mpi(mpi))
         _print_json({"mpi": resolve_mpi_command(launch.mpi)})
     else:
         raise ValueError("Unknown remote action: {}".format(args.remote_action))

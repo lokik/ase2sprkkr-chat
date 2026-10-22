@@ -3,13 +3,13 @@
 import asyncio
 from io import BytesIO
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
 from ase2sprkkr.execution.base import OutputObservers
+from ase2sprkkr.execution.job_files import JobFiles
+from ase2sprkkr.execution.run_model import FileManifest
 from ase2sprkkr.execution.local import LocalRunner
-from ase2sprkkr.execution.local_project import _ObserverSink
 from ase2sprkkr.execution.psij import PsijRunner
 from ase2sprkkr.execution.remote import RemoteRunner
 
@@ -30,12 +30,33 @@ def test_emit_bytes_decodes_nonempty_chunks(data, expected):
     assert received == expected
 
 
+def test_incremental_utf8_decoder_keeps_streams_separate_and_flushes_partial_bytes():
+    received = []
+    observers = OutputObservers(lambda text, kind: received.append((kind, text)))
+
+    euro = "€".encode("utf8")
+    observers.emit_bytes(euro[:1], "out")
+    observers.emit_bytes(b"error", "err")
+    observers.emit_bytes(euro[1:], "out")
+    observers.emit_bytes(euro[:1], "err")
+    assert received == [("err", "error"), ("out", "€")]
+
+    observers.finish_bytes()
+    assert received == [("err", "error"), ("out", "€"), ("err", "\ufffd")]
+
+    # After finalization, a new observation starts with fresh decoders.
+    observers.emit_bytes("ž".encode("utf8"), "out")
+    observers.finish_bytes()
+    assert received[-1] == ("out", "ž")
+
+
 @pytest.mark.parametrize("kind", ("out", "err"))
 def test_local_forward_output_persists_and_observes_bytes(kind):
     received = []
     output = BytesIO()
     runner = object.__new__(LocalRunner)
     runner.spec = SimpleNamespace(output_file=output, error_file=None)
+    runner._stream_handles = {"out": output, "err": None}
     runner._output_observers = OutputObservers(
         lambda text, stream: received.append((text, stream))
     )
@@ -47,18 +68,15 @@ def test_local_forward_output_persists_and_observes_bytes(kind):
     assert received == [("message:\ufffd", kind)]
 
 
-def test_remote_pump_delivers_bytes_without_runner_decoder():
+def test_remote_follow_chunk_persists_and_observes_bytes():
     received, written = [], []
     runner = object.__new__(RemoteRunner)
     runner._output_observers = OutputObservers(
         lambda text, kind: received.append((text, kind))
     )
     runner._write_output = lambda data, kind: written.append((data, kind))
-    source = SimpleNamespace(
-        read=AsyncMock(side_effect=[b"remote:\xff", b""])
-    )
 
-    asyncio.run(runner._pump(source, "out"))
+    runner._on_follow_chunk("out", b"remote:\xff")
 
     assert written == [(b"remote:\xff", "out")]
     assert received == [("remote:\ufffd", "out")]
@@ -69,7 +87,7 @@ def test_psij_monitor_forwards_follow_bytes(monkeypatch):
 
     received = []
 
-    async def follow(paths, on_chunk, terminal, poll_interval):
+    async def follow(paths, on_chunk, terminal, *, poll_interval=None, wakeup=None):
         assert paths == {"out": "job.out", "err": "job.err"}
         on_chunk("out", "výstup".encode("utf8"))
         on_chunk("err", b"warning:\xff")
@@ -89,7 +107,7 @@ def test_psij_monitor_forwards_follow_bytes(monkeypatch):
         lambda text, kind: received.append((text, kind))
     )
     runner.result = SimpleNamespace(return_code=None)
-    runner._files = None
+    runner.job_files = JobFiles(FileManifest())
     runner._observed_state = None
     from threading import Event, Lock
     runner._observation_stopped = Event()
@@ -100,17 +118,6 @@ def test_psij_monitor_forwards_follow_bytes(monkeypatch):
 
     assert result.return_code == 0
     assert received == [("výstup", "out"), ("warning:\ufffd", "err")]
-
-
-def test_local_project_sink_uses_shared_bytes_policy():
-    received = []
-    sink = _ObserverSink(
-        OutputObservers(lambda text, kind: received.append((text, kind))), "out"
-    )
-    sink.write("výstup".encode("utf8"))
-    sink.write(b"")
-    sink.flush()
-    assert received == [("výstup", "out")]
 
 
 def test_observer_failure_does_not_prevent_other_byte_listeners():
@@ -128,3 +135,29 @@ def test_observer_failure_does_not_prevent_other_byte_listeners():
     observers.emit_bytes(b"second", "out")
     assert received == [("first", "out"), ("second", "out")]
     assert failures == [(broken, "listener failed")]
+
+def test_local_project_follow_delivers_bytes_through_shared_decoder():
+    """Detached local follow uses the same byte observation policy as SSH."""
+    from ase2sprkkr.execution.local_project import LocalProjectRunner
+
+    received = []
+    frozen_files = FileManifest()
+
+    class Connection:
+        async def follow(self, backend_id, files, *, on_chunk):
+            assert backend_id == "opaque-backend"
+            assert files is frozen_files
+            on_chunk("out", "výstup".encode("utf8"))
+            on_chunk("err", b"warning:\xff")
+            return "follow-finished"
+
+    runner = object.__new__(LocalProjectRunner)
+    runner.executor = SimpleNamespace(connection=Connection())
+    runner._backend_id = "opaque-backend"
+    runner.job_files = JobFiles(frozen_files)
+    runner._output_observers = OutputObservers(
+        lambda text, kind: received.append((text, kind))
+    )
+
+    assert asyncio.run(runner._follow_once()) == "follow-finished"
+    assert received == [("výstup", "out"), ("warning:\ufffd", "err")]

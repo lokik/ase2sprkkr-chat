@@ -1,22 +1,22 @@
 import pytest
 
-from ase2sprkkr.execution import ExecutorPool
-from ase2sprkkr.sprkkr.profile import SPRKKRProfile, executor_from_profile
+from ase2sprkkr.execution import Executors
+from ase2sprkkr.sprkkr.profile import SPRKKRProfile
 
 
-def test_executor_pool_reuses_backend_by_endpoint():
-    pool = ExecutorPool()
+def test_executors_reuse_backend_by_endpoint():
+    pool = Executors()
     first_profile = SPRKKRProfile(executor="local", mpi=8)
     second_profile = SPRKKRProfile(executor="local", mpi=64)
 
-    first = pool.for_profile(first_profile)
-    second = pool.for_profile(second_profile)
+    first = pool.for_endpoint(first_profile.endpoint)
+    second = pool.for_endpoint(second_profile.endpoint)
 
     assert first is second
 
 
 def test_ssh_profiles_with_different_staging_share_endpoint_executor():
-    pool = ExecutorPool()
+    pool = Executors()
     first_profile = SPRKKRProfile(
         executor="ssh",
         host="cluster",
@@ -34,85 +34,62 @@ def test_ssh_profiles_with_different_staging_share_endpoint_executor():
 
     assert first_profile.endpoint == second_profile.endpoint
     assert first_profile.launch_parameters != second_profile.launch_parameters
-    assert pool.for_profile(first_profile) is pool.for_profile(second_profile)
+    assert pool.for_endpoint(first_profile.endpoint) is pool.for_endpoint(second_profile.endpoint)
 
 
-def test_executor_from_profile_uses_process_default_pool():
+def test_separate_executors_own_separate_pools():
     profile = SPRKKRProfile(executor="local", mpi=8)
 
-    assert executor_from_profile(profile) is executor_from_profile(profile)
+    first = Executors()
+    second = Executors()
+    assert first.for_endpoint(profile.endpoint) is first.for_endpoint(profile.endpoint)
+    assert first.for_endpoint(profile.endpoint) is not second.for_endpoint(profile.endpoint)
 
 
-def test_executor_pool_can_restart_discarded_backend():
-    pool = ExecutorPool()
-    profile = SPRKKRProfile(executor="local")
+def test_explicit_registration_becomes_endpoint_authority():
+    from ase2sprkkr.execution.local import LocalExecutor
 
-    first = pool.for_profile(profile)
-    assert pool.discard_profile(profile) is first
-    second = pool.for_profile(profile)
+    executors = Executors()
+    backend = LocalExecutor()
+    endpoint = executors.register(backend)
 
-    assert second is not first
-
-
-def test_executor_pool_close_attempts_all_after_failure():
-    """One failing backend must not prevent cleanup of the remaining backends."""
-    pool = ExecutorPool()
-    closed = []
-    backends = {}
-
-    class Executor:
-        def __init__(self, key, error=None):
-            self.key = key
-            self.error = error
-
-        def close(self):
-            closed.append(self.key)
-            if self.error is not None:
-                raise self.error
-
-    first_error = OSError("first close failed")
-    for key, error in (
-        ("first", first_error),
-        ("second", RuntimeError("second close failed")),
-        ("third", None),
-    ):
-        backend = Executor(key, error)
-        backends[key] = backend
-        assert pool.get(key, lambda backend=backend: backend) is backend
-
-    with pytest.raises(OSError, match="first close failed") as caught:
-        pool.close()
-
-    assert caught.value is first_error
-    assert closed == ["first", "second", "third"]
-    replacement = object()
-    assert pool.get("first", lambda: replacement) is replacement
-    assert replacement is not backends["first"]
-    pool.close()
-    assert closed == ["first", "second", "third"]
+    assert executors.for_endpoint(endpoint) is backend
+    assert executors.for_endpoint(SPRKKRProfile(executor="local").endpoint) is backend
 
 
-def test_executor_pool_close_accepts_backends_without_close():
-    pool = ExecutorPool()
-    executor = object()
-    pool.get("no-close", lambda: executor)
+def test_duplicate_registration_for_same_endpoint_is_rejected():
+    from ase2sprkkr.execution.local import LocalExecutor
 
-    pool.close()
+    executors = Executors()
+    original = LocalExecutor()
+    endpoint = executors.register(original)
+    assert executors.register(original, endpoint=endpoint) == endpoint
 
-    assert pool.get("no-close", object) is not executor
+    with pytest.raises(ValueError, match="already registered"):
+        executors.register(LocalExecutor(), endpoint=endpoint)
+    assert executors.for_endpoint(endpoint) is original
 
 
-def test_executor_pool_closes_shared_backend_only_once():
-    """A backend may be cached under several keys but is one owned object."""
-    pool = ExecutorPool()
-    calls = []
+def test_persisted_endpoint_identity_uses_registered_executor():
+    from types import SimpleNamespace
+    from ase2sprkkr.execution.local import LocalExecutor
 
-    class Shared:
-        def close(self):
-            calls.append("closed")
+    executors = Executors()
+    backend = LocalExecutor()
+    endpoint = executors.register(backend)
+    record = SimpleNamespace(execution=SimpleNamespace(endpoint=endpoint))
 
-    shared = Shared()
-    assert pool.get("a", lambda: shared) is shared
-    assert pool.get("b", lambda: shared) is shared
-    pool.close()
-    assert calls == ["closed"]
+    assert executors.for_endpoint(record.execution.endpoint) is backend
+    assert executors.for_endpoint(vars(endpoint)) is backend
+
+
+def test_parallel_lookup_reuses_one_executor():
+    from concurrent.futures import ThreadPoolExecutor
+    from ase2sprkkr.execution.endpoint import ExecutorEndpoint
+
+    executors = Executors()
+    endpoint = ExecutorEndpoint(executor="local")
+    with ThreadPoolExecutor(max_workers=12) as workers:
+        instances = list(workers.map(executors.for_endpoint, [endpoint] * 48))
+
+    assert all(instance is instances[0] for instance in instances)

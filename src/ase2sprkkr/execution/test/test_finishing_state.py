@@ -4,15 +4,16 @@ from types import SimpleNamespace
 from ase2sprkkr.execution import (
     ExecutionOutcome,
     Executor,
-    ExecutorPool,
     FailurePhase,
-    PostprocessingRunner,
+    CalculationRun,
     RunState,
     RunStatus,
     RunStore,
 )
 
 from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.job_files import JobFiles
+from ase2sprkkr.execution.run_model import FileManifest
 
 
 class _Executor(Executor):
@@ -39,12 +40,17 @@ class _Executor(Executor):
 
 class _RawRunner:
     def __init__(self):
+        self.callback = None
+        self.job_files = JobFiles(FileManifest())
         self.result = ExecutionOutcome(return_code=0)
         self.state = RunState.NEW
         self.backend_id = "job-1"
         self.exception = None
         self.failure_phase = None
         self._done = Event()
+
+    def prepare_submission(self):
+        return None
 
     def submit(self):
         self.state = RunState.RUNNING
@@ -55,6 +61,9 @@ class _RawRunner:
         return self.result
 
     def complete(self):
+        self.state = RunState.FINISHED
+        if self.callback is not None:
+            self.callback(self.result)
         self._done.set()
 
     def cancel(self):
@@ -70,9 +79,9 @@ class _RawRunner:
 
 def _record(tmp_path, executor, state=RunState.RUNNING):
     manager = ExecutionManager(
-        RunStore(tmp_path / "runs"), executor_pool=ExecutorPool()
+        RunStore(tmp_path / "runs")
     )
-    endpoint = manager.register_executor(executor)
+    endpoint = manager.executors.register(executor)
     record = manager.new_record(
         task="DOS",
         directory=str(tmp_path),
@@ -119,15 +128,18 @@ def test_postprocessing_is_observable_until_processor_finishes():
         release.wait()
         return SimpleNamespace(return_code=outcome.return_code)
 
-    runner = PostprocessingRunner(raw, process)
+    runner = CalculationRun(raw, process)
     runner.submit()
-    raw.complete()
+    completion = Thread(target=raw.complete)
+    completion.start()
 
     assert entered.wait(1)
     assert runner.state == RunState.POSTPROCESSING
 
     release.set()
     result = runner.wait()
+    completion.join(timeout=2)
+    assert not completion.is_alive()
 
     assert result.return_code == 0
     assert runner.state == RunState.FINISHED
@@ -135,12 +147,15 @@ def test_postprocessing_is_observable_until_processor_finishes():
 
 def test_failed_wait_keeps_original_error_when_backend_status_is_unavailable():
     class InaccessibleRunner:
+        callback = None
         backend_id = "job-1"
         exception = None
         failure_phase = None
+        failure_message = None
         result = None
 
         def __init__(self):
+            self.job_files = JobFiles(FileManifest())
             self.started = False
 
         @property
@@ -149,13 +164,16 @@ def test_failed_wait_keeps_original_error_when_backend_status_is_unavailable():
                 return RunState.NEW
             raise OSError("backend status unavailable")
 
+        def prepare_submission(self):
+            return None
+
         def submit(self):
             self.started = True
 
         def wait(self):
             raise ValueError("original execution failure")
 
-    runner = PostprocessingRunner(InaccessibleRunner(), lambda outcome: outcome)
+    runner = CalculationRun(InaccessibleRunner(), lambda outcome: outcome)
     runner.submit()
     try:
         import pytest

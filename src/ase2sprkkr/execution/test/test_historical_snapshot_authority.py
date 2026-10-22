@@ -1,8 +1,6 @@
-from types import SimpleNamespace
-
 import pytest
 
-from ase2sprkkr.execution import RunState, RunStore, FileManifest
+from ase2sprkkr.execution import RunState, RunStore, FileManifest, ExecutionSpec
 from ase2sprkkr.execution.manager import ExecutionManager
 from ase2sprkkr.outputs.project_results import (
     ProjectResultUnavailableError,
@@ -16,12 +14,13 @@ def test_later_primary_output_is_not_mistaken_for_uncaptured_history(tmp_path):
     input_file = tmp_path / "run.inp"
     output_file = tmp_path / "run.out"
     input_file.write_text("input")
-    spec = SimpleNamespace(
+    spec = ExecutionSpec(
+        argv=(),
         directory=str(tmp_path),
         input_file=str(input_file),
         output_file=str(output_file),
-        input_files=(str(input_file),),
-        output_files=(str(output_file),),
+        error_file=None,
+        stdin=None,
         cache_files=(),
     )
     record = manager.new_record(
@@ -30,7 +29,7 @@ def test_later_primary_output_is_not_mistaken_for_uncaptured_history(tmp_path):
         files=FileManifest.from_spec(spec),
     )
     store.save(record)
-    record = manager.complete(record, state=RunState.FINISHED, return_code=0, artifacts_available=False)
+    record = manager.complete(record, state=RunState.FINISHED, return_code=0, files_available=False)
 
     # The original run produced no output. Reusing the directory later must not
     # make this unrelated file part of the historical result.

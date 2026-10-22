@@ -1,9 +1,9 @@
 import pytest
 
-import ase2sprkkr.execution.manager as manager_module
+import ase2sprkkr.execution.file_history as file_history_module
 from ase2sprkkr.execution.manager import ExecutionManager
 from ase2sprkkr.execution import (
-    ArtifactAvailabilityState,
+    FileAvailabilityState,
     FailurePhase,
     FileManifest,
     FileEntry,
@@ -12,7 +12,7 @@ from ase2sprkkr.execution import (
 )
 
 
-def test_result_snapshot_sync_failure_is_artifact_failure(tmp_path, monkeypatch):
+def test_result_snapshot_sync_failure_is_file_failure(tmp_path, monkeypatch):
     output = tmp_path / "result.out"
     output.write_text("result")
     store = RunStore(tmp_path / "runs")
@@ -29,19 +29,21 @@ def test_result_snapshot_sync_failure_is_artifact_failure(tmp_path, monkeypatch)
     def fail_sync(_path):
         raise OSError("cannot synchronize result snapshot")
 
-    monkeypatch.setattr(manager_module, "sync_file", fail_sync)
+    monkeypatch.setattr(file_history_module, "sync_file", fail_sync)
 
     failed = manager.complete(
         record,
         state=RunState.FINISHED,
         return_code=0,
-        artifacts_available=True,
+        files_available=True,
     )
 
     assert failed.state == RunState.FAILED
-    assert failed.failure_phase == FailurePhase.ARTIFACTS
+    assert failed.failure_phase == FailurePhase.FILES
     assert failed.return_code == 0
     assert failed.finished_at is not None
     assert failed.files.captured_at is None
-    assert failed.files.availability_state == ArtifactAvailabilityState.FAILED
+    # A failed snapshot fsync does not prove the output transfer failed.
+    # Do not overwrite the independent per-file availability observation.
+    assert failed.files.availability_state == FileAvailabilityState.PENDING
     assert "cannot synchronize result snapshot" in failed.message

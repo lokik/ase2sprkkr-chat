@@ -9,6 +9,7 @@ import os
 import posixpath
 import shlex
 import shutil
+import stat as stat_module
 import subprocess
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
@@ -16,6 +17,13 @@ from pathlib import Path, PurePosixPath
 from ..common.file_versions import file_digest
 from typing import Optional, Protocol
 from uuid import uuid4
+
+
+# A file delivery error may be recorded per file and retried. Programming
+# failures (e.g. TypeError) must not be misclassified as download failures.
+FILE_DELIVERY_ERRORS = (
+    OSError, RuntimeError, ValueError, subprocess.CalledProcessError,
+)
 
 
 class RunningCommand(Protocol):
@@ -174,6 +182,10 @@ class Transport:
     Wildcards are always expanded on the source side of the transfer.
     """
 
+    # A local target has no host name; remote transports expose a real host.
+    # Endpoint identity must not rely on optional dynamic attributes.
+    host: str | None = None
+
     async def run(self, argv, *, cwd=None, input=None, check=True):
         raise NotImplementedError
 
@@ -215,6 +227,8 @@ def local_file_signature(path):
         stat = os.stat(path)
     except FileNotFoundError:
         return None
+    if not stat_module.S_ISREG(stat.st_mode):
+        return None
     return stat.st_size, stat.st_mtime_ns
 
 
@@ -226,9 +240,6 @@ def _parse_remote_file_signature(raw):
         fraction = timestamp.split(".", 1)[1].split(None, 1)[0]
     nanoseconds = int((fraction + "000000000")[:9]) if fraction else 0
     return int(size), int(seconds) * 1_000_000_000 + nanoseconds
-
-
-# Kept temporarily for code using the helper inside the execution package.
 
 
 async def _completed_process(process, argv, input=None, check=True):
@@ -454,17 +465,9 @@ class SshTransport(Transport):
 
             prefix = _literal_prefix(pattern)
             search_root = posixpath.join(root, *prefix) if prefix else root
-            exists = await self.run(
-                ("sh", "-c", '[ -d "$1" ] || exit 3', "sh", search_root),
-                check=False,
-            )
-            if exists.returncode == 3:
-                continue
+            exists = await self.run(("test", "-d", search_root), check=False)
             if exists.returncode:
-                raise subprocess.CalledProcessError(
-                    exists.returncode, exists.args,
-                    output=exists.stdout, stderr=exists.stderr,
-                )
+                continue
             result = await self.run(("find", search_root, "-type", "f", "-print0"))
             for item in result.stdout.decode("utf8").split("\0"):
                 if not item:

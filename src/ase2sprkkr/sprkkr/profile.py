@@ -18,8 +18,8 @@ from ..execution import (
     ExecutorEndpoint,
     LaunchSpec,
 )
-from ..execution.endpoint import create_executor_from_endpoint
 from ..profiles import ase_command_profile_values
+from ..execution.file_availability import normalize_output_cleanup
 
 
 @dataclass(frozen=True)
@@ -33,6 +33,7 @@ class LaunchParameters:
     remote_root: Any = None
     input_sync: str = "changed"
     output_sync: str = "changed"
+    cleanup_outputs: str = "both"
     mpi_warning: bool = True
 
 
@@ -56,8 +57,10 @@ class SPRKKRProfile:
     remote_command: Any = ()
     input_sync: str = "changed"
     output_sync: str = "changed"
+    cleanup_outputs: str = "both"
     psij_backend: Any = None
     psij_url: Any = None
+    psij_poll_interval: Any = None
     mpi_warning: bool = True
     ssh_zstd: bool = False
 
@@ -71,6 +74,7 @@ class SPRKKRProfile:
             remote_command=self.remote_command,
             psij_backend=self.psij_backend,
             psij_url=self.psij_url,
+            psij_poll_interval=self.psij_poll_interval,
         )
 
     @property
@@ -83,6 +87,7 @@ class SPRKKRProfile:
             remote_root=self.remote_root,
             input_sync=self.input_sync,
             output_sync=self.output_sync,
+            cleanup_outputs=normalize_output_cleanup(self.cleanup_outputs),
             mpi_warning=self.mpi_warning,
         )
 
@@ -129,6 +134,7 @@ class SPRKKRProfile:
             remote_root=self.remote_root,
             input_sync=self.input_sync,
             output_sync=self.output_sync,
+            cleanup_outputs=self.cleanup_outputs,
         )
         argv = [executable]
         mpi_argv = None
@@ -162,8 +168,8 @@ class SPRKKRProfile:
             output_files=tuple(output_files),
             cache_files=tuple(cache_files),
             mpi_argv=None if mpi_argv is None else tuple(mpi_argv),
+            mpi_stdin=None,
             launch=launch,
-            mpi_uses_stdin=False if mpi_argv is not None else True,
         )
 
 
@@ -232,6 +238,9 @@ def _configured_profile(profile, configuration):
             changes["input_sync"] = "changed"
         if not profile.output_sync:
             changes["output_sync"] = "changed"
+        policy = normalize_output_cleanup(profile.cleanup_outputs)
+        if policy != profile.cleanup_outputs:
+            changes["cleanup_outputs"] = policy
         return replace(profile, **changes) if changes else profile
 
     if getattr(profile, "source", None) == "ase":
@@ -265,21 +274,12 @@ def _configured_profile(profile, configuration):
         remote_command=_shell_argv(_profile_value(profile, "remote_command")),
         input_sync=_profile_value(profile, "input_sync") or "changed",
         output_sync=_profile_value(profile, "output_sync") or "changed",
+        cleanup_outputs=normalize_output_cleanup(_profile_value(profile, "cleanup_outputs")),
         psij_backend=_profile_value(profile, "psij_backend"),
         psij_url=_profile_value(profile, "psij_url"),
+        psij_poll_interval=_profile_value(profile, "psij_poll_interval"),
         mpi_warning=mpi_warning,
     )
-
-
-def create_executor_from_profile(profile: SPRKKRProfile):
-    """Construct a new execution backend from endpoint identity only."""
-    return create_executor_from_endpoint(profile.endpoint)
-
-
-def executor_from_profile(profile: SPRKKRProfile):
-    from ..execution.pool import default_executor_pool
-
-    return default_executor_pool().for_profile(profile)
 
 
 def resolve_sprkkr_profile(profile=None, *, configuration=None):

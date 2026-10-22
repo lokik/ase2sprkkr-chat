@@ -14,7 +14,7 @@ class ExecutorEndpoint:
     staging policy deliberately live elsewhere so one executor can be shared
     by profiles that differ only in how individual calculations are launched.
     The value is serializable and hashable, so it can also be persisted with a
-    run and used as an :class:`ExecutorPool` key after process restart.
+    run and used as an :class:`Executors` key after process restart.
     """
 
     executor: str = "local"
@@ -23,6 +23,7 @@ class ExecutorEndpoint:
     remote_command: Any = ()
     psij_backend: Any = None
     psij_url: Any = None
+    psij_poll_interval: Any = None
     ssh_zstd: bool = False
 
     def __post_init__(self):
@@ -36,6 +37,9 @@ class ExecutorEndpoint:
             else:
                 value = tuple(value)
             object.__setattr__(self, name, value)
+        if self.executor == "ssh" and not self.remote_command:
+            # Keep persisted endpoint identity aligned with the SSH executor default.
+            object.__setattr__(self, "remote_command", ("ase2sprkkr", "remote"))
 
 
 def endpoint_for_executor(executor) -> ExecutorEndpoint:
@@ -52,6 +56,7 @@ def endpoint_for_executor(executor) -> ExecutorEndpoint:
             executor="psij",
             psij_backend=executor.backend,
             psij_url=executor.url,
+            psij_poll_interval=executor.poll_interval,
         )
     if isinstance(executor, RemoteEndpointExecutor):
         transport = executor.transport
@@ -76,7 +81,7 @@ def endpoint_for_executor(executor) -> ExecutorEndpoint:
                         executor.name or "remote",
                     )
                 ),
-                host=getattr(transport, "host", None),
+                host=transport.host,
                 remote_command=executor.command,
                 psij_backend=psij_backend,
                 psij_url=psij_url,
@@ -118,6 +123,7 @@ def create_executor_from_endpoint(endpoint: ExecutorEndpoint):
         return PsijExecutor(
             endpoint.psij_backend or "slurm",
             url=endpoint.psij_url,
+            poll_interval=endpoint.psij_poll_interval,
         )
     if endpoint.executor == "ssh":
         if not endpoint.host:

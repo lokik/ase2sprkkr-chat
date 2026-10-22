@@ -11,7 +11,6 @@ import ctypes
 import os
 import sys
 from pathlib import Path
-from threading import Thread
 
 
 # Directory watches also detect an output file created after observation starts
@@ -30,7 +29,7 @@ class GrowingFileTail:
 
     def __init__(self, paths, *, offsets=None, watch_paths=(),
                  poll_interval=1.0, chunk_size=65536):
-        if poll_interval <= 0:
+        if poll_interval is not None and poll_interval <= 0:
             raise ValueError("poll_interval must be positive")
         self.paths = dict(paths)
         self.offsets = offsets if offsets is not None else {
@@ -146,10 +145,13 @@ class GrowingFileTail:
     async def wait_for_change(self, *, wakeup=None):
         """Wake on file changes, optional terminal future, or filesystem timeout."""
         if wakeup is None:
-            try:
-                await asyncio.wait_for(self._changed.wait(), self.poll_interval)
-            except asyncio.TimeoutError:
-                pass
+            if self.poll_interval is None:
+                await self._changed.wait()
+            else:
+                try:
+                    await asyncio.wait_for(self._changed.wait(), self.poll_interval)
+                except asyncio.TimeoutError:
+                    pass
         else:
             file_change = asyncio.create_task(self._changed.wait())
             try:
@@ -209,52 +211,3 @@ async def follow_growing_files(paths, on_chunk, terminal, *, offsets=None,
                 await asyncio.sleep(0)
             else:
                 await tail.wait_for_change(wakeup=wakeup)
-
-async def follow_job_files(paths, on_chunk, wait, *, terminal=None, offsets=None,
-                           poll_interval=1.0):
-    """Follow scheduler output while one blocking job.wait() runs in a thread.
-
-    The optional async terminal callback maps the native job status to the
-    caller's terminal facts. The common follower drains output before returning
-    those facts. Cancelling observation does not cancel the scheduler job.
-    """
-    # A failed or cancelled observation must not make asyncio.run() wait
-    # for a still-running scheduler calculation. Keep wait in a daemon thread.
-    loop = asyncio.get_running_loop()
-    waiting = loop.create_future()
-
-    def deliver(value, error):
-        if waiting.done():
-            return
-        if error is not None:
-            waiting.set_exception(error)
-        else:
-            waiting.set_result(value)
-
-    def invoke_wait():
-        try:
-            value, error = wait(), None
-        except BaseException as exc:
-            value, error = None, exc
-        try:
-            loop.call_soon_threadsafe(deliver, value, error)
-        except RuntimeError:
-            if not loop.is_closed():
-                raise
-
-    Thread(target=invoke_wait, daemon=True, name="psij-job-wait").start()
-
-    async def outcome():
-        if not waiting.done():
-            return None
-        status = await waiting
-        return await terminal(status) if terminal is not None else status
-
-    try:
-        return await follow_growing_files(
-            paths, on_chunk, outcome, offsets=offsets,
-            poll_interval=poll_interval,
-        )
-    finally:
-        if not waiting.done():
-            waiting.cancel()

@@ -420,36 +420,6 @@ def test_ssh_file_probes_use_same_absent_and_error_contract(
     ]
 
 
-@pytest.mark.parametrize("status", (0, 3, 255))
-def test_ssh_glob_directory_probe_distinguishes_missing_and_transport_error(status):
-    calls = []
-
-    class FakeSsh(SshTransport):
-        async def run(self, argv, *, cwd=None, input=None, check=True):
-            calls.append(tuple(argv))
-            if argv[0] == "sh":
-                return subprocess.CompletedProcess(
-                    argv, status, b"", b"ssh connection failed",
-                )
-            assert argv[0] == "find"
-            return subprocess.CompletedProcess(argv, 0, b"", b"")
-
-    async def check():
-        return await FakeSsh("example-host").expand_files("results/*.dat", "/root")
-
-    if status == 255:
-        with pytest.raises(subprocess.CalledProcessError) as error:
-            asyncio.run(check())
-        assert error.value.returncode == status
-        assert error.value.stderr == b"ssh connection failed"
-    else:
-        assert asyncio.run(check()) == ()
-    assert calls[0] == (
-        "sh", "-c", '[ -d "$1" ] || exit 3', "sh", "/root/results",
-    )
-    assert len(calls) == (2 if status == 0 else 1)
-
-
 @pytest.mark.parametrize("zstd", (False, True))
 def test_ssh_batch_tar_uses_explicit_compression_without_probing(tmp_path, zstd):
     source = tmp_path / "source"
@@ -584,3 +554,10 @@ def test_ssh_download_preserves_original_error_when_temp_unlink_fails(
     asyncio.run(check())
     assert cleanup_calls == [True]
     assert not (tmp_path / "result").exists()
+
+
+def test_local_transport_file_signature_rejects_directory(tmp_path):
+    """A directory cannot satisfy a required remote-file declaration."""
+    directory = tmp_path / "input.in"
+    directory.mkdir()
+    assert asyncio.run(LocalTransport().file_signature(directory)) is None

@@ -20,12 +20,11 @@ from ..ase.symbols import filename_from_symbols
 from ..bindings.empty_spheres import add_empty_spheres
 from ..common.file_utils import Directory
 from ..common.temporary import temporary_option_value
-from ..execution.base import ExecutionResources, ResourceOwnedRunner
-from ..execution.persistence import resolve_project_manager
-from ..execution.postprocessing import PostprocessingRunner
+from ..execution.base import ExecutionResources
+from ..execution.postprocessing import CalculationRun
 from ..input_parameters.input_parameters import InputParameters
 from ..potentials.potentials import Potential
-from .profile import SPRKKRProfile, executor_from_profile
+from .profile import SPRKKRProfile
 from .sprkkr_atoms import SPRKKRAtoms
 
 
@@ -81,7 +80,7 @@ class _TemporaryNamedFile:
     created with ``delete=False`` and this small owner removes it explicitly.
     ``close_file()`` closes only the descriptor while retaining the pathname;
     it is used after POTFIL serialization while the prepared calculation still
-    owns the temporary artifact.
+    owns the temporary file.
     """
 
     def __init__(self, *, directory, mode):
@@ -140,6 +139,40 @@ def _named_file_name(value):
         return os.fspath(name)
     except TypeError:
         return None
+
+
+def _materialize_anonymous_input(stream, *, directory, save_input):
+    """Turn an unnamed input stream into a path-backed, owned temporary file.
+
+    The runner must be able to reopen the input by pathname for MPI, SSH and
+    persistent runs.  Do not transfer ownership of a caller-provided stream.
+    """
+    if save_input:
+        return _TemporaryNamedFile(directory=directory, mode="w+")
+    try:
+        position = stream.tell()
+        stream.seek(0)
+    except (AttributeError, OSError, ValueError) as exc:
+        raise ValueError("Anonymous input stream must be seekable") from exc
+    try:
+        first = stream.read(65536)
+        if not isinstance(first, (str, bytes)):
+            raise TypeError("Anonymous input stream must return str or bytes")
+        target = _TemporaryNamedFile(
+            directory=directory, mode="w+b" if isinstance(first, bytes) else "w+",
+        )
+        try:
+            while first:
+                target.write(first)
+                first = stream.read(65536)
+            target.flush()
+            target.seek(0)
+            return target
+        except BaseException:
+            target.close()
+            raise
+    finally:
+        stream.seek(position)
 
 
 def _require_named_file(value, role):
@@ -568,6 +601,10 @@ class PreparedCalculation:
                 create_subdirs=create_subdirs,
                 mode="w+" if save_input else "r",
             )
+            if _named_file_name(opened_input) is None:
+                opened_input = _materialize_anonymous_input(
+                    opened_input, directory=work_directory, save_input=save_input,
+                )
             _require_named_file(opened_input, "input_file")
             _own_file(file_resources, owned_file_ids, opened_input)
 
@@ -867,41 +904,25 @@ def _create_sprkkr_run(
             print_output=print_output,
             directory=prepared.directory,
         )
-        if executor is None:
-            executor = executor_from_profile(profile)
-        manager = resolve_project_manager(project)
 
-        execution_profile = profile
-        if task.mpi:
-            execution_profile = profile.with_overrides(
-                mpi=executor.resolve_mpi(profile.mpi)
-            )
-
+        # Primary input and streams already have their own declaration fields.
+        # Repeating them in auxiliary declarations is an error, not an alias.
         input_files = tuple(
-            file
-            for file in (
-                prepared.input_file,
+            file for file in (
                 prepared.potential_file,
                 *input_parameters.input_files(prepared.directory),
-            )
-            if file is not None
+            ) if file is not None
         )
         output_files = tuple(
-            file
-            for file in (
-                prepared.output_file,
-                opened_error if opened_error is not prepared.output_file else None,
-                *input_parameters.output_files(prepared.directory),
-            )
+            file for file in input_parameters.output_files(prepared.directory)
             if file is not None
         )
         cache_files = tuple(
-            file
-            for file in input_parameters.cache_files(prepared.directory)
+            file for file in input_parameters.cache_files(prepared.directory)
             if file is not None
         )
 
-        spec = execution_profile.create_execution(
+        spec = profile.create_execution(
             task.executable,
             prepared.input_file,
             prepared.output_file,
@@ -918,38 +939,24 @@ def _create_sprkkr_run(
             return reader.read_from_file(
                 outcome.output_file,
                 outcome.error_file,
-                return_code=(
-                    0 if outcome.return_code is None else outcome.return_code
-                ),
+                return_code=outcome.return_code,
                 input_file=outcome.input_file,
             )
 
         def finalized(out):
-            resources.close(suppress_errors=True)
             if callback:
                 callback(out)
 
-        if manager is None:
-            raw_runner = executor.create_run(spec)
-            runner = PostprocessingRunner(
-                raw_runner,
-                process_result,
-                callback=finalized,
-            )
-        else:
-            runner = manager.create_run(
-                executor,
-                spec,
-                process_result=process_result,
-                task=task.name,
-                input_definition=input_parameters.definition_name,
-                dataset=input_parameters.CONTROL.DATASET.result,
-                callback=finalized,
-            )
+        runner = CalculationRun.create(
+            spec, endpoint=profile.endpoint, executor=executor, project=project,
+            process_result=process_result, task=task.name,
+            input_definition=input_parameters.definition_name,
+            dataset=input_parameters.CONTROL.DATASET.result,
+            callback=finalized, resources=resources,
+        )
         if read_callback:
             runner.add_output_listener(read_callback)
 
-        runner = ResourceOwnedRunner(runner, resources)
         handed_off = True
         return runner
     finally:

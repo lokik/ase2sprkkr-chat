@@ -1,4 +1,5 @@
 import asyncio
+import os
 import subprocess
 import threading
 from dataclasses import replace
@@ -7,11 +8,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from ase2sprkkr.execution.base import ExecutionSpec, LaunchSpec, RunState
+from ase2sprkkr.execution.base import ExecutionSpec, LaunchSpec, RunState, ObservationDetached
 from ase2sprkkr.execution import (
     RunRecord, Execution, WorkingDirectory, ExecutorEndpoint, FileManifest, FileEntry,
 )
 from ase2sprkkr.execution import psij as psij_backend
+from ase2sprkkr.execution.endpoint import endpoint_for_executor
 
 
 class _Result:
@@ -62,6 +64,7 @@ class _Status:
     def __init__(self, name="NEW", exit_code=None):
         self.state = SimpleNamespace(name=name)
         self.exit_code = exit_code
+        self.message = None
 
 
 class _JobSpec:
@@ -165,13 +168,14 @@ def _executor(monkeypatch, backend):
     )
 
 
-def _psij_run(directory, backend_id=None):
+def _psij_run(directory, backend_id=None, *, executor=None):
     return RunRecord(
         id="psij-run", task="DOS", state=RunState.RUNNING,
         created_at="2026-10-13T08:00:00+00:00",
         updated_at="2026-10-13T08:00:00+00:00",
         execution=Execution(
-            ExecutorEndpoint(executor="psij", psij_backend="slurm"),
+            (endpoint_for_executor(executor) if executor is not None
+             else ExecutorEndpoint(executor="psij", psij_backend="slurm")),
             WorkingDirectory(str(directory)), backend_id,
         ),
         files=FileManifest(
@@ -389,12 +393,12 @@ def test_psij_project_manifest_marks_concrete_and_wildcard_files(monkeypatch, tm
         argv=("program",), input_file=None, directory=str(tmp_path),
         output_file=str(tmp_path / "run.out"),
     ), run_id="manifest")
-    runner.set_manifest(files)
+    runner.job_files.replace(files)
     runner.submit()
     runner.wait()
-    assert runner.files.stdout.availability_state == "available"
-    assert runner.files.outputs[0].availability_state == "available"
-    matches = [entry for entry in runner.files.outputs if entry.source_pattern is not None]
+    assert runner.job_files.manifest.stdout.availability_state == "available"
+    assert runner.job_files.manifest.outputs[0].availability_state == "available"
+    matches = [entry for entry in runner.job_files.manifest.outputs if entry.source is not None]
     assert len(matches) == 1
     assert matches[0].availability_state == "available"
 
@@ -408,44 +412,64 @@ def test_psij_missing_optional_output_is_skipped(monkeypatch, tmp_path):
         argv=("program",), input_file=None, directory=str(tmp_path),
         output_file=None,
     ), run_id="optional")
-    runner.set_manifest(files)
+    runner.job_files.replace(files)
     runner.submit()
     runner.wait()
-    assert runner.files.outputs[0].availability_state == "skipped"
+    assert runner.job_files.manifest.outputs[0].availability_state == "skipped"
 
 
-@pytest.mark.parametrize(
-    "mpi, process_count",
-    [(16, 16), ("auto", None)],
-)
-def test_psij_mpi_job_uses_mpi_executable_and_requested_resources(
-    monkeypatch, tmp_path, mpi, process_count,
-):
-    executor = _executor(monkeypatch, _Backend())
-    input_path = tmp_path / "run.inp"
-    with input_path.open("w+b") as input_file, (tmp_path / "run.out").open("wb") as output_file:
-        spec = ExecutionSpec(
-            argv=("program",),
-            mpi_argv=("programMPI", str(input_path)),
-            launch=LaunchSpec.from_mpi(mpi),
-            input_file=input_file,
-            output_file=output_file,
-            directory=str(tmp_path),
-            stdin=input_file,
-        )
+def test_psij_mpi_process_count_becomes_resource_spec(monkeypatch, tmp_path):
+    backend = _Backend()
+    executor = _executor(monkeypatch, backend)
+    input_file = open(tmp_path / "run.inp", "wb+")
+    output_file = open(tmp_path / "run.out", "wb")
+    spec = ExecutionSpec(
+        argv=("program",),
+        mpi_argv=("programMPI", str(tmp_path / "run.inp")),
+        launch=LaunchSpec.from_mpi(16),
+        input_file=input_file,
+        output_file=output_file,
+        directory=str(tmp_path),
+        stdin=input_file,
+        mpi_stdin=input_file,
+    )
 
-        runner = executor.create_run(spec)
-        job_spec = runner._job.spec
+    runner = executor.create_run(spec)
+    job_spec = runner._job.spec
 
-        assert job_spec.executable == "programMPI"
-        assert job_spec.arguments == [str(input_path)]
-        assert job_spec.launcher == "srun"
-        assert job_spec.stdin_path == str(input_path)
-        if process_count is None:
-            assert job_spec.resources is None
-        else:
-            assert job_spec.resources.process_count == process_count
+    assert job_spec.executable == "programMPI"
+    assert job_spec.arguments == [str(tmp_path / "run.inp")]
+    assert job_spec.resources.process_count == 16
+    assert job_spec.launcher == "srun"
+    assert job_spec.stdin_path == str(tmp_path / "run.inp")
+    input_file.close()
+    output_file.close()
 
+
+def test_psij_auto_uses_mpi_without_fixed_process_count(monkeypatch, tmp_path):
+    backend = _Backend()
+    executor = _executor(monkeypatch, backend)
+    input_file = open(tmp_path / "run.inp", "wb+")
+    output_file = open(tmp_path / "run.out", "wb")
+    spec = ExecutionSpec(
+        argv=("program",),
+        mpi_argv=("programMPI", str(tmp_path / "run.inp")),
+        launch=LaunchSpec.from_mpi("auto"),
+        input_file=input_file,
+        output_file=output_file,
+        directory=str(tmp_path),
+        stdin=input_file,
+        mpi_stdin=input_file,
+    )
+
+    runner = executor.create_run(spec)
+    job_spec = runner._job.spec
+
+    assert job_spec.executable == "programMPI"
+    assert job_spec.resources is None
+    assert job_spec.launcher == "srun"
+    input_file.close()
+    output_file.close()
 
 def test_psij_status_is_nonblocking_and_explicit_wait_synchronizes(monkeypatch):
     executor = _executor(monkeypatch, _Backend())
@@ -549,7 +573,7 @@ def test_psij_local_slurm_explicit_wait_uses_native_job_wait(monkeypatch):
 def test_psij_status_and_attach_check_complete_endpoint(monkeypatch, tmp_path):
     executor = _executor(monkeypatch, _Backend())
     executor.url = "ssh://cluster-a"
-    run = _psij_run(tmp_path, "456")
+    run = _psij_run(tmp_path, "456", executor=executor)
     foreign = replace(
         run,
         execution=replace(
@@ -564,34 +588,27 @@ def test_psij_status_and_attach_check_complete_endpoint(monkeypatch, tmp_path):
     with pytest.raises(ValueError, match="PSI/J endpoint"):
         executor.attach(foreign, start=False)
 
-    matching = replace(
-        run,
-        execution=replace(
-            run.execution,
-            endpoint=ExecutorEndpoint(
-                executor="psij", psij_backend="slurm", psij_url=executor.url
-            ),
-        ),
-    )
-    seen = []
-    state = psij_backend.RunStatus(RunState.RUNNING, backend_id="456")
-
-    def status_native(native_id):
-        seen.append(native_id)
-        return state
-
-    monkeypatch.setattr(executor, "status_native", status_native)
-    assert executor.status(matching) == (state,)
+    matching = run
+    expected = psij_backend.RunStatus(RunState.RUNNING, backend_id="456")
+    monkeypatch.setattr(executor, "status_native", lambda native_id: expected)
+    assert executor.status(matching) == (expected,)
     attached = executor.attach(matching, start=False)
     assert attached.backend_id == "456"
-    assert seen == ["456"]
 
-    # A completed native result must also propagate its return code.
-    state = psij_backend.RunStatus(
+
+def test_psij_record_status_uses_native_status(monkeypatch, tmp_path):
+    executor = _executor(monkeypatch, _Backend())
+    expected = psij_backend.RunStatus(
         RunState.FINISHED, backend_id="456", return_code=0,
     )
-    assert executor.status(matching) == (state,)
-    assert seen == ["456", "456"]
+    seen = []
+    def status_native(native_id):
+        seen.append(native_id)
+        return expected
+
+    monkeypatch.setattr(executor, "status_native", status_native)
+    assert executor.status(_psij_run(tmp_path, "456", executor=executor)) == (expected,)
+    assert seen == ["456"]
 
 
 def test_psij_uncertain_submit_without_native_id_stays_recoverable(monkeypatch, tmp_path):
@@ -664,7 +681,7 @@ def test_psij_executor_attaches_to_native_job(monkeypatch, tmp_path):
     error = tmp_path / "run.err"
     output.write_bytes(b"old output\n")
     error.write_bytes(b"")
-    run = _psij_run(tmp_path, "456")
+    run = _psij_run(tmp_path, "456", executor=executor)
     runner = executor.attach(run)
     result = runner.wait()
 
@@ -678,7 +695,7 @@ def test_psij_executor_attaches_to_native_job(monkeypatch, tmp_path):
 def test_psij_attach_to_stderr_only(monkeypatch, tmp_path):
     executor = _executor(monkeypatch, _Backend())
     from dataclasses import replace
-    run = _psij_run(tmp_path, "456")
+    run = _psij_run(tmp_path, "456", executor=executor)
     run = replace(run, files=replace(run.files, stdout=None))
     (tmp_path / "run.err").write_bytes(b"existing error\n")
 
@@ -690,12 +707,12 @@ def test_psij_attach_to_stderr_only(monkeypatch, tmp_path):
 def test_psij_attach_without_recorded_streams(monkeypatch, tmp_path):
     executor = _executor(monkeypatch, _Backend())
     from dataclasses import replace
-    run = _psij_run(tmp_path, "456")
+    run = _psij_run(tmp_path, "456", executor=executor)
     run = replace(run, files=replace(run.files, stdout=None, stderr=None))
     attached = executor.attach(run, start=False)
     assert attached.spec.output_file is None
     assert attached.spec.error_file is None
-    assert attached.files == run.files
+    assert attached.job_files.manifest == run.files
 
 
 def test_psij_recovers_live_slurm_submission_by_run_id(monkeypatch, tmp_path):
@@ -914,11 +931,12 @@ def test_psij_mpi_respects_explicit_stdin_policy(monkeypatch, tmp_path):
         launch=LaunchSpec.from_mpi(2),
         input_file=None, output_file=None, directory=str(tmp_path),
         stdin=str(tmp_path / "stdin.dat"),
-        mpi_uses_stdin=False,
+        mpi_stdin=None,
     )
     runner = executor.create_run(spec)
     assert runner._job.spec.stdin_path is None
-    assert replace(spec, mpi_uses_stdin=True).mpi_uses_stdin
+    enabled = executor.create_run(replace(spec, mpi_stdin=str(tmp_path / "mpi.in")))
+    assert enabled._job.spec.stdin_path == str(tmp_path / "mpi.in")
 
 
 @pytest.mark.parametrize("merged", (False, True))
@@ -985,7 +1003,8 @@ def test_psij_wait_terminal_status_overrides_stale_job_status(
 
 
 def test_psij_attached_new_status_does_not_resubmit(monkeypatch, tmp_path):
-    from ase2sprkkr.execution.manager import ExecutionManager, RunStore
+    from ase2sprkkr.execution.manager import ExecutionManager
+    from ase2sprkkr.execution.run_store import RunStore
 
     class PendingAttachBackend(_Backend):
         def submit(self, job):
@@ -1000,15 +1019,16 @@ def test_psij_attached_new_status_does_not_resubmit(monkeypatch, tmp_path):
     executor = _executor(monkeypatch, backend)
     output = tmp_path / "run.out"
     output.write_bytes(b"existing output")
-    record = _psij_run(tmp_path, "456")
+    record = _psij_run(tmp_path, "456", executor=executor)
     manager = ExecutionManager(RunStore(tmp_path / "history"))
     manager.store.save(record)
+    manager.executors.register(executor)
     run = manager.attach(
-        record, executor=executor, process_result=lambda outcome: outcome,
+        record, process_result=lambda outcome: outcome,
     )
-    assert run._runner._runner.state is RunState.UNKNOWN
+    assert run._runner.state is RunState.UNKNOWN
     assert output.read_bytes() == b"existing output"
-    job = run._runner._runner._job
+    job = run._runner._job
     job.status = _Status("COMPLETED", 0)
     run.wait()
     assert output.read_bytes() == b"existing output"
@@ -1070,7 +1090,8 @@ def test_psij_terminal_wait_without_exit_does_not_use_stale_status(monkeypatch, 
 def test_psij_confirmed_completion_is_not_undone_by_unknown_refresh(
     monkeypatch, tmp_path,
 ):
-    from ase2sprkkr.execution.manager import ExecutionManager, RunStore
+    from ase2sprkkr.execution.manager import ExecutionManager
+    from ase2sprkkr.execution.run_store import RunStore
     from ase2sprkkr.execution.base import RunStatus
     executor = _executor(monkeypatch, _Backend())
     manager = ExecutionManager(RunStore(tmp_path / "history"))
@@ -1125,6 +1146,110 @@ def test_psij_subscriptions_share_job_and_detach_independently(monkeypatch):
 
 
 
+@pytest.mark.parametrize("native_name, expected", [
+    ("COMPLETED", RunState.FINISHED),
+    ("FAILED", RunState.FAILED),
+    ("CANCELED", RunState.CANCELLED),
+])
+def test_psij_late_subscriber_replays_terminal_native_status(
+    monkeypatch, native_name, expected,
+):
+    """A subscriber joining after completion must not wait for another event."""
+    executor = _executor(monkeypatch, _Backend())
+    job = _Job()
+    job.native_id = "shared"
+    job.status = _Status("ACTIVE")
+    executor._cache_submitted_job(job)
+
+    delivered = []
+    first = executor._observe_job(
+        job, lambda status: delivered.append(("first", status)),
+    )
+    terminal = _Status(native_name, 0 if expected is RunState.FINISHED else 1)
+    job.emit(terminal)  # Deliberately leave job.status at ACTIVE.
+    assert job.status.state.name == "ACTIVE"
+    assert delivered == [("first", terminal)]
+
+    # _observe_job must replay before returning, independent of job.status.
+    second = executor._observe_job(
+        job, lambda status: delivered.append(("second", status)),
+    )
+    assert delivered == [("first", terminal), ("second", terminal)]
+    assert executor._terminal_observations[job] is terminal
+
+    # Stale/duplicate native callbacks must not undo confirmed completion.
+    job.emit(_Status("ACTIVE"))
+    job.emit(_Status(native_name, 17))
+    assert delivered == [("first", terminal), ("second", terminal)]
+
+    first()
+    assert job in executor._observers
+    assert executor.attach_native_job("shared") is job
+    second()
+    assert job not in executor._observers
+    assert job not in executor._terminal_observations
+    assert "shared" not in executor._jobs
+
+
+def test_psij_late_subscriber_callback_failure_detaches(monkeypatch):
+    """Failed synchronous replay must not leak an unusable subscription."""
+    executor = _executor(monkeypatch, _Backend())
+    job = _Job()
+    initial = lambda _: None
+    first = executor._observe_job(job, initial)
+    job.emit(_Status("COMPLETED", 0))
+
+    def broken(_):
+        raise ValueError("observer rejected completion")
+
+    with pytest.raises(ValueError, match="observer rejected"):
+        executor._observe_job(job, broken)
+    assert executor._observers[job] == {initial}
+    first()
+    assert job not in executor._observers
+
+
+@pytest.mark.parametrize("native_name, expected", [
+    ("COMPLETED", RunState.FINISHED),
+    ("FAILED", RunState.FAILED),
+    ("CANCELED", RunState.CANCELLED),
+])
+def test_psij_terminal_callback_evicts_stale_native_job(
+    monkeypatch, native_name, expected,
+):
+    """The delivered callback, not stale job.status, determines cache eviction."""
+    executor = _executor(monkeypatch, _Backend())
+    executor.backend = "pbs"
+    executor.url = "ssh://pbs-cluster"
+    job = _Job()
+    job.native_id = "shared"
+    job.status = _Status("ACTIVE")
+    executor._cache_submitted_job(job)
+
+    observed = []
+    first = executor._observe_job(job, lambda status: observed.append(status))
+    second = executor._observe_job(job, lambda status: observed.append(status))
+    terminal = _Status(native_name, 0 if expected is RunState.FINISHED else 1)
+
+    # PSI/J can deliver the terminal status before job.status is updated.
+    job.emit(terminal)
+    assert job.status.state.name == "ACTIVE"
+    assert observed == [terminal, terminal]
+    assert executor.status_native("shared").state is expected
+    assert executor.attach_native_job("shared") is job
+
+    first()
+    assert "shared" in executor._jobs
+    assert job in executor._terminal_observations
+    second()
+    assert "shared" not in executor._jobs
+    assert job not in executor._observers
+    assert job not in executor._terminal_observations
+
+    # A subsequent attach creates a fresh PSI/J object, never reuses stale ACTIVE.
+    assert executor.attach_native_job("shared") is not job
+
+
 def test_psij_simultaneous_attaches_share_callback_and_finish(monkeypatch, tmp_path):
     executor = _executor(monkeypatch, _Backend())
     job = _Job()
@@ -1132,7 +1257,7 @@ def test_psij_simultaneous_attaches_share_callback_and_finish(monkeypatch, tmp_p
     job.status = _Status("ACTIVE")
     executor._cache_submitted_job(job)
 
-    run = _psij_run(tmp_path, "shared")
+    run = _psij_run(tmp_path, "shared", executor=executor)
     first = executor.attach(run, start=False)
     second = executor.attach(run, start=False)
     assert first._job is second._job is job
@@ -1182,13 +1307,25 @@ def test_psij_stop_observation_ends_monitor_without_cancel(monkeypatch, tmp_path
         output_file=None,
     ))
     runner._job.status = _Status("ACTIVE")
-    async def exercise():
-        task = asyncio.create_task(runner._monitor())
-        await asyncio.sleep(0)
-        runner.stop_observation()
-        await asyncio.wait_for(task, 2)
-    asyncio.run(exercise())
-    assert runner.state is RunState.UNKNOWN
+    runner._job.native_id = "123"
+    subscribed = threading.Event()
+    subscribe = executor._observe_job
+
+    def observe(job, listener):
+        unsubscribe = subscribe(job, listener)
+        subscribed.set()
+        return unsubscribe
+
+    monkeypatch.setattr(executor, "_observe_job", observe)
+    runner.start()
+    assert subscribed.wait(3)
+    assert runner.stop_observation()
+    runner._thread.join(3)
+    assert not runner._thread.is_alive()
+    with pytest.raises(ObservationDetached):
+        runner.wait()
+    assert runner.detached
+    assert runner.state is RunState.RUNNING
     assert runner._job.status.state.name == "ACTIVE"
     assert runner._job._status_callback is psij_backend._ignore_job_status
 
@@ -1206,7 +1343,8 @@ def test_psij_status_only_cache_is_bounded(monkeypatch):
 def test_project_observer_detaches_without_stopping_other_attached_client(
     monkeypatch, tmp_path,
 ):
-    from ase2sprkkr.execution.manager import ExecutionManager, RunStore
+    from ase2sprkkr.execution.manager import ExecutionManager
+    from ase2sprkkr.execution.run_store import RunStore
 
     class ActiveBackend(_Backend):
         def attach(self, job, native_id):
@@ -1215,10 +1353,11 @@ def test_project_observer_detaches_without_stopping_other_attached_client(
             job.status = _Status("ACTIVE")
 
     executor = _executor(monkeypatch, ActiveBackend())
-    record = _psij_run(tmp_path, "running-job")
+    record = _psij_run(tmp_path, "running-job", executor=executor)
     store = RunStore(tmp_path / "history")
     manager = ExecutionManager(store)
     store.save(record)
+    manager.executors.register(executor)
 
     subscribed = threading.Event()
     num_subscribers = 0
@@ -1236,18 +1375,20 @@ def test_project_observer_detaches_without_stopping_other_attached_client(
 
     monkeypatch.setattr(executor, "_observe_job", observe)
     first = manager.attach(
-        record, executor=executor, process_result=lambda outcome: outcome,
+        record, process_result=lambda outcome: outcome,
     )
     second = manager.attach(
-        record, executor=executor, process_result=lambda outcome: outcome,
+        record, process_result=lambda outcome: outcome,
     )
     try:
         assert subscribed.wait(3)
-        job = first._runner._runner._job
-        assert second._runner._runner._job is job
-        first.stop_observation()
-        first.wait()
-        assert first._runner.state is RunState.UNKNOWN
+        job = first._runner._job
+        assert second._runner._job is job
+        assert first.stop_observation()
+        with pytest.raises(ObservationDetached):
+            first.wait()
+        assert first.detached
+        assert first._runner.state is RunState.RUNNING
         assert job.status.state.name == "ACTIVE"
         assert not second._runner._done.is_set()
         assert len(executor._observers[job]) == 1
@@ -1356,7 +1497,7 @@ def test_psij_preparation_reuses_declared_outputs_for_check_and_cleanup(
         argv=("program",), directory=str(tmp_path),
         input_file=str(input_file), output_file=str(output_file),
         error_file=str(error_file),
-        output_files=("result-*.dat", "run.out"),
+        output_files=("result-*.dat",),
         cache_files=("restart.pot",),
     ))
     runner._prepare_io()
@@ -1366,3 +1507,37 @@ def test_psij_preparation_reuses_declared_outputs_for_check_and_cleanup(
     assert output_file.read_bytes() == b""
     assert error_file.read_bytes() == b""
     assert not extra_output.exists()
+
+
+def test_psij_run_async_does_not_block_event_loop_during_submit(monkeypatch, tmp_path):
+    class BlockingBackend(_Backend):
+        def __init__(self):
+            super().__init__()
+            self.entered = threading.Event()
+            self.release = threading.Event()
+
+        def submit(self, job):
+            self.entered.set()
+            if not self.release.wait(5):
+                raise TimeoutError("PSI/J submission blocked the event loop")
+            super().submit(job)
+
+    backend = BlockingBackend()
+    runner = _executor(monkeypatch, backend).create_run(ExecutionSpec(
+        argv=("program",), directory=str(tmp_path),
+        input_file=None, output_file=None, error_file=None,
+    ))
+
+    async def exercise():
+        running = asyncio.create_task(runner.run_async())
+        try:
+            assert await asyncio.wait_for(
+                asyncio.to_thread(backend.entered.wait, 3), 4,
+            )
+            assert not running.done(), "PSI/J submission blocked the event loop"
+        finally:
+            backend.release.set()
+        return await asyncio.wait_for(running, 5)
+
+    assert asyncio.run(exercise()).return_code == 0
+    assert runner.state == RunState.FINISHED

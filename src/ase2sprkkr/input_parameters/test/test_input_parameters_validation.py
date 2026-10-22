@@ -26,17 +26,17 @@ from ._test_callbacks import (
 V = cd.InputValueDefinition
 
 
-@pytest.mark.parametrize("copy_values", [False, True])
-def test_copy_preserves_requested_and_effective_task_views(copy_values):
+def test_copy_preserves_requested_and_effective_task_views():
     parameters = input_parameters.InputParameters.create("bsfek")
 
-    copied = parameters.copy(copy_values=copy_values)
+    for copy_values in (False, True):
+        copied = parameters.copy(copy_values=copy_values)
 
-    assert copied.requested_task_name == "BSFEK"
-    assert copied.task_name == "BSFEK"
-    assert copied.task_definition.name == "BSFEK"
-    assert copied.TASK.TASK() == "BSF"
-    np.testing.assert_array_equal(copied.ENERGY.NE(), [200])
+        assert copied.requested_task_name == "BSFEK"
+        assert copied.task_name == "BSFEK"
+        assert copied.task_definition.name == "BSFEK"
+        assert copied.TASK.TASK() == "BSF"
+        np.testing.assert_array_equal(copied.ENERGY.NE(), [200])
 
 
 def test_section_delimiter_value():

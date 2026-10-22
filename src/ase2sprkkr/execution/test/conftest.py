@@ -7,8 +7,6 @@ import subprocess
 
 import pytest
 
-from ase2sprkkr.execution import pool as execution_pool
-
 
 @dataclass(frozen=True)
 class DockerExecutionImage:
@@ -26,18 +24,6 @@ def _package_mount_root() -> Path:
     if package_parent.name == "src":
         return package_parent.parent
     return package_parent
-
-
-@pytest.fixture(autouse=True)
-def isolated_default_executor_pool():
-    """Keep the process-wide executor pool from leaking between test cases."""
-    previous = execution_pool._DEFAULT_EXECUTOR_POOL
-    execution_pool._DEFAULT_EXECUTOR_POOL = execution_pool.ExecutorPool()
-    try:
-        yield
-    finally:
-        execution_pool._DEFAULT_EXECUTOR_POOL.close()
-        execution_pool._DEFAULT_EXECUTOR_POOL = previous
 
 
 @pytest.fixture(scope="session")

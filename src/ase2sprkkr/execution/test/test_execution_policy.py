@@ -13,14 +13,14 @@ from ase2sprkkr.execution.base import (
 )
 from ase2sprkkr.execution.endpoint import endpoint_for_executor
 from ase2sprkkr.execution.local import LocalExecutor, LocalRunner
-from ase2sprkkr.execution.manager import (
-    ArtifactAvailabilityState,
-    ExecutionManager,
-    ProjectRunner,
-    RunStore,
+from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.run_persistence import RunPersistence
+from ase2sprkkr.execution.run_store import RunStore
+from ase2sprkkr.execution.postprocessing import CalculationRun
+from ase2sprkkr.execution.run_model import (
+    FileAvailabilityState, FileManifest, FileEntry,
 )
-from ase2sprkkr.execution.postprocessing import PostprocessingRunner
-from ase2sprkkr.execution.run_model import FileManifest, FileEntry
+from ase2sprkkr.execution.job_files import JobFiles
 from ase2sprkkr.execution.transport import LocalTransport
 
 
@@ -55,13 +55,21 @@ def test_output_observer_failure_is_reported_but_does_not_fail_process(tmp_path)
     assert str(observer_errors[0][1]) == "observer failed"
 
 
+def test_arbitrary_processed_result_keeps_backend_return_code(tmp_path):
+    raw = LocalRunner(_local_spec(tmp_path))
+    run = CalculationRun(raw, lambda outcome: b"parsed content")
+    run.submit()
+    assert run.wait() == b"parsed content"
+    assert run.return_code == 0
+
+
 def test_postprocessing_failure_does_not_change_raw_execution_state(tmp_path):
     raw = LocalRunner(_local_spec(tmp_path))
 
     def fail(_outcome):
         raise ValueError("parser failed")
 
-    runner = PostprocessingRunner(raw, fail)
+    runner = CalculationRun(raw, fail)
     runner.submit()
 
     with pytest.raises(ValueError, match="parser failed"):
@@ -86,12 +94,19 @@ def test_callback_failure_does_not_change_local_execution_state(tmp_path):
 
 
 class _UnknownRunner:
+    def __init__(self):
+        self.job_files = JobFiles(FileManifest())
+
+    callback = None
     result = object()
     backend_id = None
     state = RunState.NEW
     exception = None
     failure_phase = None
     failure_message = None
+
+    def prepare_submission(self):
+        return None
 
     def submit(self):
         self.state = RunState.UNKNOWN
@@ -109,7 +124,7 @@ class _UnknownRunner:
 def test_unknown_raw_state_is_preserved_and_not_postprocessed():
     raw = _UnknownRunner()
     processed = []
-    runner = PostprocessingRunner(raw, lambda outcome: processed.append(outcome))
+    runner = CalculationRun(raw, lambda outcome: processed.append(outcome))
 
     runner.submit()
     assert runner.wait() is raw.result
@@ -122,12 +137,19 @@ def test_unknown_raw_state_is_preserved_and_not_postprocessed():
 
 
 class _NotStartedRunner:
+    callback = None
+    def __init__(self):
+        self.job_files = JobFiles(FileManifest())
+
     backend_id = None
     result = None
     state = RunState.NEW
     exception = None
     failure_phase = None
     failure_message = None
+
+    def prepare_submission(self):
+        return None
 
     def submit(self):
         raise SubmissionNotStarted("input staging failed")
@@ -137,6 +159,14 @@ class _NotStartedRunner:
 
     def add_output_error_listener(self, callback):
         pass
+
+
+class _PreflightNotStartedRunner(_NotStartedRunner):
+    def prepare_submission(self):
+        raise SubmissionNotStarted("input staging failed")
+
+    def submit(self):
+        pytest.fail("Rejected preflight must not reach backend submission")
 
 
 class _UncertainRunner(_NotStartedRunner):
@@ -153,11 +183,14 @@ def _project_wrapper(tmp_path, runner):
         directory=tmp_path,
         endpoint=endpoint,
     )
-    return manager, ProjectRunner(manager, executor, runner, record)
+    processed = CalculationRun(runner, lambda outcome: outcome)
+    processed.persistence = RunPersistence(manager, executor, record)
+    return manager, processed
 
 
-def test_definite_pre_submit_failure_becomes_submission_failure(tmp_path):
-    manager, runner = _project_wrapper(tmp_path, _NotStartedRunner())
+@pytest.mark.parametrize("runner_type", (_PreflightNotStartedRunner, _NotStartedRunner))
+def test_definite_pre_submit_failure_becomes_submission_failure(tmp_path, runner_type):
+    manager, runner = _project_wrapper(tmp_path, runner_type())
 
     with pytest.raises(SubmissionNotStarted, match="input staging failed"):
         runner.submit()
@@ -180,7 +213,7 @@ def test_uncertain_submit_without_reference_stays_submitting(tmp_path):
     assert record.execution.backend_id is None
 
 
-def test_artifact_availability_failure_does_not_change_finished_state(tmp_path):
+def test_file_availability_failure_does_not_change_finished_state(tmp_path):
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
     record = manager.new_record(
         task="SCF",
@@ -190,14 +223,14 @@ def test_artifact_availability_failure_does_not_change_finished_state(tmp_path):
     record = manager.store.save(record)
     record = manager.transition(record, state=RunState.FINISHED)
 
-    record = manager.update_artifact_availability(
-        record, str(tmp_path / "out"), ArtifactAvailabilityState.FAILED, "ssh disconnected"
+    record = JobFiles(record.files).update_availability(
+        record, manager.store, str(tmp_path / "out"), FileAvailabilityState.FAILED, "ssh disconnected"
     )
 
     assert record.state == RunState.FINISHED
     assert (
         record.files.availability_state
-        == ArtifactAvailabilityState.FAILED
+        == FileAvailabilityState.FAILED
     )
     assert record.files.availability_message == "ssh disconnected"
 
@@ -261,23 +294,16 @@ def test_file_path_strict_contract_preserves_optional_none(tmp_path):
         file_path(object(), tmp_path, required=True)
 
 
-def test_strict_runner_path_errors_remain_backend_specific(tmp_path):
+def test_required_path_validation_and_psij_policy(tmp_path):
     from ase2sprkkr.execution.psij import _path as psij_path
-    from ase2sprkkr.execution.remote import RemoteRunner
 
-    spec = ExecutionSpec(
-        argv=(), input_file=None, output_file=None, directory=str(tmp_path),
-    )
-    runner = RemoteRunner(object(), spec)
-    with pytest.raises(ValueError, match="Remote execution requires named files"):
-        runner._local_path(object())
-    with pytest.raises(ValueError, match="Remote execution requires named files"):
-        runner._local_path(1)
+    for invalid in (object(), 1):
+        with pytest.raises(ValueError, match="named file"):
+            file_path(invalid, tmp_path, required=True)
     with pytest.raises(ValueError, match="PSI/J execution requires named"):
         psij_path(object(), tmp_path)
-    assert runner._local_path(None) is None
+    assert file_path(None, tmp_path, required=True) is None
     assert psij_path(None, tmp_path) is None
-
 
 
 def test_common_command_request_preserves_mpi_and_launch_contract(tmp_path):
@@ -286,7 +312,7 @@ def test_common_command_request_preserves_mpi_and_launch_contract(tmp_path):
     spec = ExecutionSpec(
         argv=("serial", "input.inp"),
         mpi_argv=("parallel", "input.inp"),
-        mpi_uses_stdin=False,
+        mpi_stdin=None,
         input_file=None, output_file=None,
         directory=str(tmp_path),
         launch=LaunchSpec.from_mpi(2),
@@ -294,7 +320,7 @@ def test_common_command_request_preserves_mpi_and_launch_contract(tmp_path):
     request = spec.command_request()
     assert request["argv"] == ["serial", "input.inp"]
     assert request["mpi_argv"] == ["parallel", "input.inp"]
-    assert request["mpi_uses_stdin"] is False
+    assert "mpi_uses_stdin" not in request
 
     transformed = spec.command_request(
         lambda command: [arg.upper() for arg in command]
@@ -302,5 +328,5 @@ def test_common_command_request_preserves_mpi_and_launch_contract(tmp_path):
     assert transformed["argv"] == ["SERIAL", "INPUT.INP"]
     assert transformed["mpi_argv"] == ["PARALLEL", "INPUT.INP"]
     assert transformed["launch"] == request["launch"]
-    assert transformed["mpi_uses_stdin"] is False
+    assert "mpi_uses_stdin" not in transformed
     assert spec.argv == ("serial", "input.inp")

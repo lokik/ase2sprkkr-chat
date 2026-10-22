@@ -44,11 +44,19 @@ def test_absolute_task_defaults_are_preserved(task, emin, emax):
     assert p.ENERGY.EMIN() == emin
 
 
-@pytest.mark.parametrize('task,theta,phi,spol', [('ARPES', 0., 0., 2), ('SPLEED', 45., 270., 1)])
-def test_spectroscopy_defaults_follow_reader(task, theta, phi, spol):
+@pytest.mark.parametrize(
+    'steps',
+    [
+        (('SPLEED', 45., 270., 1),),
+        (('ARPES', 0., 0., 2), ('SPLEED', 45., 270., 1)),
+    ],
+    ids=['direct-spleed-selection', 'arpes-to-spleed'],
+)
+def test_spectroscopy_defaults_follow_task_selection(steps):
     p = InputParameters.create('arpes')
-    p.TASK.TASK = task
-    assert tuple(p.SPEC_EL.THETA()) == (theta, theta)
-    assert tuple(p.SPEC_EL.PHI()) == (phi, phi)
-    assert p.SPEC_EL.NT() == p.SPEC_EL.NP() == 1
-    assert p.SPEC_EL.SPOL() == spol
+    for task, theta, phi, spol in steps:
+        p.TASK.TASK = task
+        assert tuple(p.SPEC_EL.THETA()) == (theta, theta), task
+        assert tuple(p.SPEC_EL.PHI()) == (phi, phi), task
+        assert p.SPEC_EL.NT() == p.SPEC_EL.NP() == 1, task
+        assert p.SPEC_EL.SPOL() == spol, task
