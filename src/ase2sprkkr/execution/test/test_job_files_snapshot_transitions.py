@@ -6,7 +6,7 @@ import pytest
 
 from ase2sprkkr.execution.manager import ExecutionManager
 from ase2sprkkr.execution.run_store import RunStore
-from ase2sprkkr.execution.job_files import JobFiles
+from ase2sprkkr.execution.historical_restore import update_historical_availability
 from ase2sprkkr.execution.manifest_merge import merge_snapshot, merge_terminal_files
 from ase2sprkkr.execution.run_model import FileManifest
 
@@ -41,7 +41,6 @@ def test_stale_observation_is_filtered_before_manifest_conflict(tmp_path):
 
 
 def test_stale_pending_observation_preserves_concurrent_file_availability(tmp_path):
-    from ase2sprkkr.execution.job_files import JobFiles
     from ase2sprkkr.execution.run_model import FileEntry
 
     path = str(tmp_path / "result.out")
@@ -53,7 +52,6 @@ def test_stale_pending_observation_preserves_concurrent_file_availability(tmp_pa
 
 
 def test_explicit_file_status_update_is_not_discarded(tmp_path):
-    from ase2sprkkr.execution.job_files import JobFiles
     from ase2sprkkr.execution.run_model import FileEntry
 
     path = str(tmp_path / "result.out")
@@ -65,7 +63,6 @@ def test_explicit_file_status_update_is_not_discarded(tmp_path):
 
 def test_snapshot_capture_failure_preserves_unverified_files(tmp_path, monkeypatch):
     from ase2sprkkr.execution.base import FailurePhase, RunState
-    from ase2sprkkr.execution.job_files import JobFiles
     from ase2sprkkr.execution.run_model import FileEntry
 
     path = str(tmp_path / "result.dat")
@@ -102,7 +99,7 @@ def test_concurrent_persisted_download_failure_overrides_stale_success(tmp_path)
     ))
     # Another client has already persisted a failed transfer, while the
     # completing client still holds the previous pending manifest.
-    current = JobFiles.update_availability(record, manager.store, path, "failed", "lost download")
+    current = update_historical_availability(record, manager.store, path, "failed", "lost download")
     completed = manager.complete(
         record, state=RunState.FINISHED, files_available=False,
         return_code=0,
@@ -124,7 +121,7 @@ def test_concurrent_delivery_does_not_force_failed_completion(tmp_path):
     record = manager.store.save(manager.new_record(
         task="DOS", directory=tmp_path, files=manifest,
     ))
-    current = JobFiles.update_availability(record, manager.store, path, "available")
+    current = update_historical_availability(record, manager.store, path, "available")
     completed = manager.complete(
         record, state=RunState.FINISHED, files_available=False, return_code=0,
     )
@@ -134,7 +131,6 @@ def test_concurrent_delivery_does_not_force_failed_completion(tmp_path):
 
 def test_captured_completion_respects_newer_failed_file_state(tmp_path, monkeypatch):
     from ase2sprkkr.execution.base import FailurePhase, RunState
-    from ase2sprkkr.execution.job_files import JobFiles
     from ase2sprkkr.execution.run_model import FileEntry
 
     path = str(tmp_path / "output.dat")
@@ -143,7 +139,7 @@ def test_captured_completion_respects_newer_failed_file_state(tmp_path, monkeypa
     record = manager.store.save(manager.new_record(
         task="DOS", directory=tmp_path, files=manifest,
     ))
-    JobFiles.update_availability(record, manager.store, path, "failed", "download failed")
+    update_historical_availability(record, manager.store, path, "failed", "download failed")
 
     from ase2sprkkr.common.file_versions import FileVersion
 
@@ -169,7 +165,6 @@ def test_captured_completion_respects_newer_failed_file_state(tmp_path, monkeypa
 
 
 def test_snapshot_discard_preserves_failed_transfer_for_retry(tmp_path):
-    from ase2sprkkr.execution.job_files import JobFiles
     from ase2sprkkr.execution.run_model import FileEntry
 
     path = str(tmp_path / "result.dat")
@@ -197,7 +192,7 @@ def test_independent_availability_update_does_not_change_terminal_outcome(tmp_pa
         files=FileManifest(outputs=(FileEntry(output, availability_state="pending"),)),
     ))
     finished = manager.complete(record, state=RunState.FINISHED, return_code=0)
-    changed = JobFiles.update_availability(
+    changed = update_historical_availability(
         record, manager.store, output, "failed", "historical fetch error",
     )
     assert changed.state == RunState.FINISHED
@@ -205,7 +200,7 @@ def test_independent_availability_update_does_not_change_terminal_outcome(tmp_pa
     assert changed.files.failed_files[0].availability_message == "historical fetch error"
 
 
-def test_stale_job_files_updater_preserves_other_file_status(tmp_path):
+def test_stale_historical_updater_preserves_other_file_status(tmp_path):
     from ase2sprkkr.execution.run_model import FileEntry
 
     first = str(tmp_path / "first.dat")
@@ -217,8 +212,8 @@ def test_stale_job_files_updater_preserves_other_file_status(tmp_path):
             FileEntry(second, availability_state="pending"),
         )),
     ))
-    first_update = JobFiles.update_availability(record, manager.store, first, "available")
-    second_update = JobFiles.update_availability(
+    first_update = update_historical_availability(record, manager.store, first, "available")
+    second_update = update_historical_availability(
         record, manager.store, second, "failed", "missing",
     )
     assert first_update.files.outputs[0].availability_state == "available"
@@ -250,7 +245,7 @@ def test_parallel_run_stores_merge_independent_file_updates(tmp_path):
         # Independent stores model clients reopening the same persisted run.
         client_store = RunStore(directory)
         barrier.wait(timeout=10)
-        return JobFiles.update_availability(
+        return update_historical_availability(
             record, client_store, path, state, message,
         )
 
