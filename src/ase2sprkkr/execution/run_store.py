@@ -15,7 +15,7 @@ from ..common.file_locks import FileLock
 from ._durability import durable_mkdir, durable_write_json, sync_file
 from .base import RunState
 from .file_reservations import reservation_conflict
-from .job_files import JobFiles
+from .file_history import sync_result_files
 from .projects import _project_id
 from .run_record import RunRecord, _RUN_RECORD_SCHEMA_VERSION, _now
 
@@ -153,7 +153,7 @@ class RunStore:
                     raise RuntimeError("Run changed during file reservation")
                 # Do not sync inputs from a stale claim. Persist the claim
                 # only after the current manifest's inputs are durable.
-                JobFiles.sync_inputs(record.files)
+                sync_result_files(record.files.input_files)
                 return replace(
                     latest, state=RunState.SUBMITTING,
                     updated_at=_now(),
