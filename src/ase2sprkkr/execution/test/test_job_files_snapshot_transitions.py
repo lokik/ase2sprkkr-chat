@@ -98,7 +98,7 @@ def test_concurrent_persisted_download_failure_overrides_stale_success(tmp_path)
     ))
     # Another client has already persisted a failed transfer, while the
     # completing client still holds the previous pending manifest.
-    current = manager.update_file_availability(record, path, "failed", "lost download")
+    current = record.job_files.update_availability(manager.store, path, "failed", "lost download")
     completed = manager.complete(
         record, state=RunState.FINISHED, files_available=False,
         return_code=0,
@@ -120,7 +120,7 @@ def test_concurrent_delivery_does_not_force_failed_completion(tmp_path):
     record = manager.store.save(manager.new_record(
         task="DOS", directory=tmp_path, files=manifest,
     ))
-    current = manager.update_file_availability(record, path, "available")
+    current = record.job_files.update_availability(manager.store, path, "available")
     completed = manager.complete(
         record, state=RunState.FINISHED, files_available=False, return_code=0,
     )
@@ -139,7 +139,7 @@ def test_captured_completion_respects_newer_failed_file_state(tmp_path, monkeypa
     record = manager.store.save(manager.new_record(
         task="DOS", directory=tmp_path, files=manifest,
     ))
-    manager.update_file_availability(record, path, "failed", "download failed")
+    record.job_files.update_availability(manager.store, path, "failed", "download failed")
 
     def capture(self, manifest=None):
         return replace(manifest, captured_at="2026-10-22T00:00:00+00:00")
