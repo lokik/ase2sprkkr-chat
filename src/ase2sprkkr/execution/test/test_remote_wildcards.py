@@ -157,7 +157,7 @@ def test_exact_and_wildcard_outputs_share_availability_tracking(tmp_path):
     runner = _processed_run(executor, spec)
     runner.run()
 
-    entries = {entry.local_path: entry for entry in runner.file_snapshot().outputs}
+    entries = {entry.local_path: entry for entry in runner.job_files.manifest.outputs}
     assert exact.read_text() == "exact"
     assert overlap.read_text() == "a"
     for name, expected in (("part-b.dat", "b"), ("part-c.dat", "c")):
@@ -198,7 +198,7 @@ def test_exact_and_wildcard_caches_keep_individual_sync_states(tmp_path):
     runner = _processed_run(executor, spec)
     runner.run()
 
-    entries = {entry.local_path: entry for entry in runner.file_snapshot().caches}
+    entries = {entry.local_path: entry for entry in runner.job_files.manifest.caches}
     assert exact.read_text() == "before"
     assert unchanged.read_text() == "unchanged"
     assert (workdir / "generated-new.dat").read_text() == "new"
@@ -280,7 +280,7 @@ def test_overlapping_exact_and_wildcard_caches_are_transferred_once(tmp_path):
     remote_b = remote_root / "calculation" / "restart-b.dat"
     assert sum(src == remote_a for src, _ in transport.get_files) == 1
     assert sum(src == remote_b for src, _ in transport.get_files) == 1
-    entries = {item.local_path: item for item in runner.file_snapshot().caches}
+    entries = {item.local_path: item for item in runner.job_files.manifest.caches}
     assert entries[str(exact)].availability_state == "available"
     assert exact.read_text() == "new"
 
@@ -300,7 +300,7 @@ def test_remote_completed_run_keeps_missing_optional_wildcard_skipped(tmp_path):
     result = runner.run()
     assert result.return_code == 0
     missing = [
-        e for e in runner.file_snapshot().outputs
+        e for e in runner.job_files.manifest.outputs
         if e.local_path == str(workdir / "optional-*.dat")
     ]
     assert len(missing) == 1
@@ -321,7 +321,7 @@ def test_remote_completed_run_fails_on_missing_mandatory_wildcard(tmp_path):
                        match="required-\\*\\.dat|remote output pattern"):
         runner.run()
     missing = [
-        e for e in runner.file_snapshot().outputs
+        e for e in runner.job_files.manifest.outputs
         if e.local_path == str(workdir / "required-*.dat")
     ]
     assert len(missing) == 1
