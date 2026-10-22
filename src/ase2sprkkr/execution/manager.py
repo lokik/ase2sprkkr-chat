@@ -26,9 +26,8 @@ from .base import (
     RunStatus,
     SubmissionNotStarted,
 )
-from .file_history import (
-    capture_result_files, file_is_current, missing_result_files, sync_result_files,
-)
+from .job_files import JobFiles
+from .file_history import missing_result_files
 from .endpoint import ExecutorEndpoint, endpoint_for_executor
 from .pool import Executors
 from .projects import _project_id
@@ -143,6 +142,9 @@ class RunRecord:
                 f"unsupported schema version {self.schema_version}; "
                 f"expected {_RUN_RECORD_SCHEMA_VERSION}"
             )
+    @property
+    def job_files(self):
+        return JobFiles(self)
 
 
 def _manifest_accesses(record):
@@ -444,17 +446,11 @@ class ExecutionManager:
 
     def input_file_is_current(self, run):
         record = self.store.get(run) if isinstance(run, str) else self.store.get(run.id)
-        result_files = record.files
-        return file_is_current(
-            result_files, result_files.input_file, result_files.input_versions,
-        )
+        return record.job_files.input_file_is_current()
 
     def output_file_is_current(self, run):
         record = self.store.get(run) if isinstance(run, str) else self.store.get(run.id)
-        result_files = record.files
-        return file_is_current(
-            result_files, result_files.output_file, result_files.output_versions,
-        )
+        return record.job_files.output_file_is_current()
 
     def new_record(
         self, *, task, directory, dataset=None, endpoint=None,
@@ -645,7 +641,7 @@ class ExecutionManager:
                     and submission_conflicts(record, active)
                 )
                 if not conflicts:
-                    sync_result_files(record.files.input_files)
+                    record.job_files.sync_inputs()
                     return self.transition(
                         record,
                         state=RunState.SUBMITTING,
@@ -725,17 +721,12 @@ class ExecutionManager:
 
         if files_available:
             try:
-                result_files = capture_result_files(result_files)
+                result_files = record.job_files.capture(result_files)
             except OSError as exc:
                 state = RunState.FAILED
                 phase = FailurePhase.FILES
                 message = str(exc)
-                result_files = result_files._map_files(
-                    lambda item: replace(
-                        item, availability_state="failed",
-                        availability_message=message,
-                    ) if item.availability_state in (None, "pending") else item
-                )
+                result_files = JobFiles.mark_pending_failed(result_files, message)
 
         return self.transition(
             record,
@@ -767,12 +758,7 @@ class ExecutionManager:
                 raise ValueError("Only failed downloads of successful backend jobs can be retried")
             # Keep already transferred files and all bytes on disk.
             # Only failed transfers become eligible for a fresh attempt.
-            files = latest.files._map_files(
-                lambda item: replace(
-                    item, availability_state="pending",
-                    availability_message=None,
-                ) if item.availability_state == "failed" else item
-            )
+            files = latest.job_files.retry_failed_downloads()
             return replace(
                 latest, state=RunState.DOWNLOADING, finished_at=None,
                 failure_phase=None, message=None, files=files, updated_at=_now(),
