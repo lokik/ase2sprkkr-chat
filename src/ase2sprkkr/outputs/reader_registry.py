@@ -113,7 +113,7 @@ class OutputReaderRegistry(ModuleRegistry):
         """Construct the registered output reader for *task*."""
         self._validate_input_parameters(task, input_parameters)
         if directory is None and calculator is not None:
-            directory = getattr(calculator, "directory", None)
+            directory = calculator.directory
         self._validate_directory(directory)
         reader = self.class_for_task(task)(
             input_parameters,
