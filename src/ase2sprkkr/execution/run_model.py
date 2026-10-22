@@ -308,29 +308,18 @@ class FileManifest:
             )
 
         primary = file_path(spec.input_file, directory)
-        inputs = []
-        for entry in entries(spec.input_file, *spec.input_files):
-            if primary is not None and same_local_file(entry.local_path, primary):
-                entry = replace(entry, optional=False)
-            for index, prior in enumerate(inputs):
-                if same_local_file(entry.local_path, prior.local_path):
-                    inputs[index] = replace(prior, optional=prior.optional and entry.optional)
-                    break
-            else:
-                inputs.append(entry)
+        # Every independent input declaration is validated, never coalesced.
+        # primary_input is only a reference to the first entry, and stdin may
+        # explicitly reference that same primary file.
+        inputs = entries(spec.input_file, *spec.input_files)
         stdin = file_path(spec.stdin, directory)
-        if stdin is not None and any(
-            same_local_file(stdin, file_path(value, directory))
-            for value in spec.input_files
-        ):
-            raise ValueError("Duplicate file declaration: input and stdin refer to the same file")
         stdout = file_path(spec.output_file, directory)
         stderr = file_path(spec.error_file, directory)
         outputs = entries(*spec.output_files)
         caches = entries(*spec.cache_files)
 
         return cls(
-            inputs=tuple(inputs),
+            inputs=inputs,
             primary_input=None if primary is None else FileEntry(local_path=primary),
             stdin=None if stdin is None else FileEntry(local_path=stdin),
             outputs=outputs,
