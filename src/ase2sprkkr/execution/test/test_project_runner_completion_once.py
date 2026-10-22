@@ -61,7 +61,7 @@ def test_reading_state_does_not_write_to_store():
     manager, raw, executor = _Manager(), _Runner(), _Executor()
     record = SimpleNamespace(id="run", state=RunState.RUNNING,
                              updated_at="2026-10-20T10:00:00+00:00",
-                             execution=_execution()
+                             execution=_execution())
     run = PersistentRun(manager, executor, record)
     assert run.record.state == RunState.RUNNING
     assert manager.transitions == 0
@@ -71,7 +71,7 @@ def test_finalization_is_once_even_if_wait_and_callback_both_request_it():
     manager, raw, executor = _Manager(), _Runner(), _Executor()
     record = SimpleNamespace(id="run", state=RunState.RUNNING,
                              updated_at="2026-10-20T10:00:00+00:00",
-                             execution=_execution()
+                             execution=_execution())
     run = PersistentRun(manager, executor, record)
     raw.state = RunState.FINISHED
     run.completed(raw)
@@ -84,7 +84,7 @@ def test_unknown_observation_is_written_once_but_not_finalized():
     manager, raw, executor = _Manager(), _Runner(), _Executor()
     record = SimpleNamespace(id="run", state=RunState.RUNNING,
                              updated_at="2026-10-20T10:00:00+00:00",
-                             execution=_execution()
+                             execution=_execution())
     run = PersistentRun(manager, executor, record)
     raw.state = RunState.UNKNOWN
     raw.failure_message = "scheduler disconnected"
@@ -101,7 +101,7 @@ def test_unknown_observation_does_not_fire_completion_callback():
     manager, raw, executor = _Manager(), _Runner(), _Executor()
     record = SimpleNamespace(id="run", state=RunState.RUNNING,
                              updated_at="2026-10-20T10:00:00+00:00",
-                             execution=_execution()
+                             execution=_execution())
     run = PersistentRun(manager, executor, record)
     delivered = []
     raw.state = RunState.UNKNOWN
