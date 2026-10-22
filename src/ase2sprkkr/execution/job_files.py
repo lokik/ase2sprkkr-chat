@@ -304,15 +304,3 @@ class JobFiles:
         return store.get(record.id)
 
 
-class JobFilesOwner:
-    """Expose file-state operations without leaking the mutable JobFiles owner."""
-
-    def file_snapshot(self) -> FileManifest:
-        """Return a stable immutable manifest snapshot."""
-        return self._job_files.manifest
-
-    def replace_file_manifest(self, manifest: FileManifest) -> FileManifest:
-        return self._job_files.replace(manifest)
-
-    def merge_file_manifest(self, observed: FileManifest) -> FileManifest:
-        return self._job_files.merge(observed)
