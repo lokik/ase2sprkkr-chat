@@ -16,7 +16,7 @@ from ..common.file_locks import FileLock
 from .run_model import FileAvailabilityState, FileManifest
 from .transport import has_file_magic
 from .historical_restore import (
-    HistoricalFileMismatchError, restore_historical_file,
+    restore_historical_file,
 )
 
 from .file_history import (
