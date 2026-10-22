@@ -9,6 +9,7 @@ from uuid import uuid4
 from dataclasses import replace
 from datetime import datetime, timezone
 
+from ..common.file_locks import FileLock
 from ..common.file_versions import file_digest
 from .run_model import FileAvailabilityState
 from .transport import has_file_magic
@@ -253,54 +254,70 @@ class JobFiles:
         }
         for path in missing:
             path = os.path.abspath(os.fspath(path))
-            version = versions.get(path)
-            staged = (
-                Path(path).with_name(f".{Path(path).name}.{uuid4().hex}.tmp")
-                if version is not None and version.digest is not None else None
-            )
-            try:
-                if staged is None:
-                    executor.fetch_result_files(record, (path,))
-                else:
-                    executor.fetch_result_files(
-                        record, (path,), destinations={path: os.fspath(staged)},
-                    )
-                    if not staged.is_file():
-                        raise FileNotFoundError(
-                            f"Historical file was not retrieved: {path}"
-                        )
-                    if file_digest(staged) != version.digest:
+            # All restorers, including other processes or runs sharing this
+            # destination, serialize through a filesystem lock. Never hold
+            # the RunStore record lock during network transfer.
+            lock_path = Path(path).with_name(f".{Path(path).name}.restore.lock")
+            with FileLock(lock_path):
+                version = versions.get(path)
+                staged = (
+                    Path(path).with_name(f".{Path(path).name}.{uuid4().hex}.tmp")
+                    if version is not None and version.digest is not None else None
+                )
+                try:
+                    # A previous restorer might already have completed while
+                    # this caller was waiting for the filesystem lock.
+                    if version is not None and version.is_current():
+                        pass
+                    elif version is None and os.path.isfile(path):
+                        pass
+                    elif version is not None and os.path.lexists(path):
                         raise HistoricalFileMismatchError(
-                            f"Historical result files have been overwritten: {path}"
+                            f"Historical result file was modified: {path}"
                         )
-                    os.replace(staged, path)
-            except OSError as exc:
-                if path in tracked:
-                    self.update_availability(
-                        store, path, FileAvailabilityState.FAILED, str(exc),
-                    )
-                raise
-            finally:
-                if staged is not None:
-                    staged.unlink(missing_ok=True)
-            refreshed = store.get(record.id)
-            still_missing = path in missing_result_files(refreshed.files)
-            if path not in tracked:
-                # There is no per-input availability record to update. A
-                # failed restore must be reported, not turned into a KeyError
-                # from the output/cache availability API.
-                if still_missing:
-                    raise FileNotFoundError(
-                        f"Historical input file is still missing: {path}"
-                    )
-                record = refreshed
-                continue
-            record = JobFiles(refreshed).update_availability(
-                store, path,
-                FileAvailabilityState.FAILED if still_missing
-                else FileAvailabilityState.AVAILABLE,
-                "Historical file is still missing" if still_missing else None,
-            )
+                    elif staged is None:
+                        executor.fetch_result_files(record, (path,))
+                    else:
+                        executor.fetch_result_files(
+                            record, (path,),
+                            destinations={path: os.fspath(staged)},
+                        )
+                        if not staged.is_file():
+                            raise FileNotFoundError(
+                                f"Historical file was not retrieved: {path}"
+                            )
+                        if file_digest(staged) != version.digest:
+                            raise HistoricalFileMismatchError(
+                                f"Historical result files have been overwritten: {path}"
+                            )
+                        os.replace(staged, path)
+                except OSError as exc:
+                    if path in tracked:
+                        JobFiles(store.get(record.id)).update_availability(
+                            store, path, FileAvailabilityState.FAILED, str(exc),
+                        )
+                    raise
+                finally:
+                    if staged is not None:
+                        staged.unlink(missing_ok=True)
+
+                refreshed = store.get(record.id)
+                still_missing = path in missing_result_files(refreshed.files)
+                if path not in tracked:
+                    # Inputs have captured file versions but no per-file
+                    # availability state in the manifest.
+                    if still_missing:
+                        raise FileNotFoundError(
+                            f"Historical input file is still missing: {path}"
+                        )
+                    record = refreshed
+                    continue
+                record = JobFiles(refreshed).update_availability(
+                    store, path,
+                    FileAvailabilityState.FAILED if still_missing
+                    else FileAvailabilityState.AVAILABLE,
+                    "Historical file is still missing" if still_missing else None,
+                )
         return record
 
 
