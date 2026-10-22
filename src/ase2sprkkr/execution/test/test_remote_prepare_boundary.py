@@ -133,6 +133,10 @@ def test_postprocessing_rejected_submit_preserves_error_and_does_not_monitor(met
 
     class RejectedRunner:
         state = RunState.NEW
+        callback = None
+
+        def prepare_submission(self):
+            pass
 
         def submit(self):
             raise failure
