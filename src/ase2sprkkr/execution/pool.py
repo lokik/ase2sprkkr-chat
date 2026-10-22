@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from threading import RLock
 
-from .base import _close_distinct
-
 
 class _ExecutorPool:
     """Process-local cache of reusable execution backends."""
@@ -29,13 +27,6 @@ class _ExecutorPool:
         if isinstance(endpoint, dict):
             endpoint = ExecutorEndpoint(**endpoint)
         return self.get(endpoint, lambda: create_executor_from_endpoint(endpoint))
-
-    def close(self):
-        """Close every pooled executor, propagating the first close failure."""
-        with self._lock:
-            executors = tuple(self._executors.values())
-            self._executors.clear()
-        _close_distinct(executors)
 
 
 class Executors:
@@ -65,5 +56,3 @@ class Executors:
     def for_profile(self, profile):
         return self.for_endpoint(profile.endpoint)
 
-    def close(self):
-        self._pool.close()

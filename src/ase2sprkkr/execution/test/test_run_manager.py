@@ -243,33 +243,16 @@ def test_executors_are_owned_by_manager_and_keyed_by_endpoint(tmp_path):
     assert manager.executors.for_record(record) is executor
 
 
-def test_executor_registries_have_independent_lifetimes():
+def test_executor_registries_isolate_endpoint_instances():
     from ase2sprkkr.execution import ExecutorEndpoint
 
-    class ClosableExecutor:
-        def __init__(self):
-            self.closed = 0
-
-        def close(self):
-            self.closed += 1
-
     first, second = Executors(), Executors()
-    local = ExecutorEndpoint()
-    remote = ExecutorEndpoint(executor="ssh", host="example.org")
-    one, two, other = ClosableExecutor(), ClosableExecutor(), ClosableExecutor()
-
-    first.register(one, local)
-    first.register(two, remote)
-    second.register(other, local)
-    assert first.for_endpoint(local) is one
-    assert first.for_endpoint(remote) is two
-    assert second.for_endpoint(local) is other
-
-    first.close()
-    assert (one.closed, two.closed, other.closed) == (1, 1, 0)
-    assert second.for_endpoint(local) is other
-    second.close()
-    assert other.closed == 1
+    endpoint = ExecutorEndpoint()
+    first_executor, second_executor = _Executor(), _Executor()
+    first.register(first_executor, endpoint)
+    second.register(second_executor, endpoint)
+    assert first.for_endpoint(endpoint) is first_executor
+    assert second.for_endpoint(endpoint) is second_executor
 
 
 def test_register_executor_rejects_conflicting_instance():
