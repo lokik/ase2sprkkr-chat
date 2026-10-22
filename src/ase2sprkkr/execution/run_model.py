@@ -193,12 +193,6 @@ class FileManifest:
 
         directory = os.path.abspath(os.fspath(spec.directory))
 
-        def paths(*values):
-            return tuple(dict.fromkeys(
-                path for value in values
-                if (path := file_path(value, directory)) is not None
-            ))
-
         inputs = declared_file_paths(
             (getattr(spec, "input_file", None), *getattr(spec, "input_files", ())),
             directory,
@@ -218,13 +212,30 @@ class FileManifest:
                 raise ValueError(f"Duplicate file declaration: output {path}")
             output_paths.add(path)
             outputs.append((path, not getattr(value, "optional", False)))
-        caches = paths(*getattr(spec, "cache_files", ()))
+        # Input declarations may refer to the same physical input (including
+        # the primary file), and stdout/stderr may share a destination. Other
+        # declaration collisions are errors, not silent deduplication.
+        input_paths = {path for path, _required in inputs}
+        if input_paths & output_paths:
+            raise ValueError("Duplicate file declaration: input/output collision")
+        cache_paths = []
+        seen_caches = set()
+        for value in getattr(spec, "cache_files", ()):
+            path = file_path(value, directory)
+            if path is None:
+                continue
+            if path in seen_caches:
+                raise ValueError(f"Duplicate file declaration: cache {path}")
+            seen_caches.add(path)
+            if path in input_paths or path in output_paths or path in (stdout, stderr):
+                raise ValueError(f"Duplicate file declaration: cache collision {path}")
+            cache_paths.append(path)
         return cls(
             inputs=tuple(FileEntry(local_path=path, optional=not required)
                          for path, required in inputs),
             outputs=tuple(FileEntry(local_path=path, optional=not required)
                           for path, required in outputs),
-            caches=tuple(CacheEntry(FileEntry(local_path=x)) for x in caches),
+            caches=tuple(CacheEntry(FileEntry(local_path=x)) for x in cache_paths),
             stdout=None if stdout is None else FileEntry(local_path=stdout),
             stderr=None if stderr is None else FileEntry(local_path=stderr),
         ).initialize_availability()

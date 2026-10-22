@@ -82,7 +82,7 @@ def test_remote_manifest_uses_same_declarations_as_local(tmp_path):
         input_file="main.inp", input_files=("main.inp", "main.inp", "extra.inp", "extra.inp"),
         output_file="main.out", error_file="main.err",
         output_files=("main.out", "main.err", "one.dat", "two.dat"),
-        cache_files=("restart.pot", "restart.pot"),
+        cache_files=("restart.pot",),
         launch=LaunchSpec(local_root=str(tmp_path), remote_root=str(remote)),
     )
     local = FileManifest.from_spec(spec)

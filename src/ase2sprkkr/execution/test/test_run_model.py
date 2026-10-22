@@ -234,7 +234,7 @@ def test_manifest_from_spec_normalizes_stream_overlaps(tmp_path):
         input_files=("input.inp", "other.inp", "other.inp", None, object(), 1),
         output_file="stdout.out", error_file="stderr.err",
         output_files=("stdout.out", "stderr.err", "result.dat", None, object()),
-        cache_files=("restart.pot", "restart.pot", None, object()),
+        cache_files=("restart.pot", None, object()),
     )
     files = FileManifest.from_spec(spec)
     assert files.input_files == (str(tmp_path / "input.inp"), str(tmp_path / "other.inp"))
@@ -324,3 +324,42 @@ def test_launch_sync_policies_are_validated_and_serialized(name, policy):
 def test_launch_rejects_unknown_sync_policies(name):
     with pytest.raises(ValueError, match="synchronization policy"):
         LaunchSpec(**{name: "unsupported"})
+
+
+@pytest.mark.parametrize(
+    ("input_files", "output_files", "cache_files"),
+    (
+        ((), (), ("same.cache", "./same.cache")),
+        (("same.pot",), (), ("same.pot",)),
+        ((), ("same.dat",), ("same.dat",)),
+        (("same.dat",), ("same.dat",), ()),
+    ),
+)
+def test_manifest_rejects_duplicate_non_stream_file_roles(
+    tmp_path, input_files, output_files, cache_files,
+):
+    from types import SimpleNamespace
+
+    spec = SimpleNamespace(
+        directory=str(tmp_path),
+        input_file=None,
+        input_files=input_files,
+        output_file="standard.out",
+        error_file="standard.err",
+        output_files=output_files,
+        cache_files=cache_files,
+    )
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest.from_spec(spec)
+
+
+def test_manifest_rejects_cache_aliasing_stdout(tmp_path):
+    from types import SimpleNamespace
+
+    spec = SimpleNamespace(
+        directory=str(tmp_path), input_file=None, input_files=(),
+        output_file="standard.out", error_file=None,
+        output_files=(), cache_files=("standard.out",),
+    )
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest.from_spec(spec)
