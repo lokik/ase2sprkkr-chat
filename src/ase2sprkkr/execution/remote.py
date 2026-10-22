@@ -56,6 +56,8 @@ class RemoteRunner(ManagedRunner):
 
     @property
     def state(self):
+        if self.detached:
+            return self._detached_state
         # Once monitoring has started, only the client monitor may advance from
         # backend execution into DOWNLOADING. A direct backend query must never
         # expose FINISHED before files are locally available.
