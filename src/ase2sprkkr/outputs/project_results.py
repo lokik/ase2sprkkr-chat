@@ -213,7 +213,7 @@ def load_project_result(manager, run):
         return_code = 0 if record.state == RunState.FINISHED else 1
 
     input_file = None
-    if JobFiles(record.files).input_file_is_current() and (
+    if JobFiles.input_file_is_current(record) and (
         reader.input_parameters is not None
     ):
         input_file = result_files.input_file
