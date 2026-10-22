@@ -84,3 +84,20 @@ def test_run_factory_resolves_only_once_for_untracked_and_project(tmp_path):
         )
         assert run.spec.argv == ("mpirun", "parallel")
         assert len(calls) == 1
+
+
+def test_live_project_factory_uses_own_repository(tmp_path):
+    projects = ProjectRepository(tmp_path / "projects")
+    project = projects.create_project("Live project")
+    manager = projects.manager
+    executor = _Executor()
+
+    run = CalculationRun.create(
+        _spec(tmp_path), executor=executor, project=project,
+        task="SCF", process_result=lambda value: value,
+    )
+
+    assert run.persistence.manager is manager
+    assert run.record.project_id == project.id
+    assert run.spec.stdin == "parallel.in"
+    assert run.job_files.manifest.input_files == run.record.files.input_files
