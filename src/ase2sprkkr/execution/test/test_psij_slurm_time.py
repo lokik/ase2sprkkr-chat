@@ -49,6 +49,7 @@ def test_unknown_slurm_needs_new_output_before_inference(tmp_path, monkeypatch):
     status = psij._slurm_status_native(
         "42", submitted_at=submitted_at, output_paths=(str(result),))
     assert status.state == RunState.FINISHED
+    assert status.return_code is None  # No native exit status was observed.
 
     status = psij._slurm_status_native("42", output_paths=(str(result),))
     assert status.state == RunState.UNKNOWN

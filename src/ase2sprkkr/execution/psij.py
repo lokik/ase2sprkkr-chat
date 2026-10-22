@@ -268,6 +268,7 @@ def _slurm_status_native(native_id, *, submitted_at=None, output_paths=()):
                 return_code = _slurm_exit_code(fields[2].strip())
                 break
 
+    inferred_completion = False
     if (state == RunState.UNKNOWN and not scheduler_record_found
             and submitted_at is not None):
         # A missing scheduler record and fresh output are merely hints.
@@ -276,9 +277,10 @@ def _slurm_status_native(native_id, *, submitted_at=None, output_paths=()):
         if (_slurm_new_output_since(output_paths, submitted_at)
                 and _slurm_absent_from_queue(native_id)):
             state = RunState.FINISHED
+            inferred_completion = True
     if not state.is_terminal:
         return_code = None
-    elif state == RunState.FINISHED and return_code is None:
+    elif state == RunState.FINISHED and return_code is None and not inferred_completion:
         return_code = 0
     elif state == RunState.FINISHED and return_code != 0:
         state = RunState.FAILED

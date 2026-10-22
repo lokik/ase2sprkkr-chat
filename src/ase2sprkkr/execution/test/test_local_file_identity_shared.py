@@ -109,3 +109,40 @@ def test_nonexistent_symlink_directory_alias_is_protected(tmp_path):
             FileEntry(local_path=str(target)),
             FileEntry(local_path=str(linked)),
         ))
+
+
+def test_cleanup_replaces_named_stdout_without_touching_hardlink(tmp_path):
+    from ase2sprkkr.execution import ExecutionSpec, LaunchSpec
+    from ase2sprkkr.execution.file_availability import prepare_local_files
+
+    stdout = tmp_path / "run.out"
+    external = tmp_path / "retained"
+    external.write_text("prior output")
+    os.link(external, stdout)
+    spec = ExecutionSpec(
+        argv=("program",), directory=str(tmp_path), input_file=None,
+        output_file=str(stdout), launch=LaunchSpec(cleanup_outputs="both"),
+    )
+    prepare_local_files(spec, preserve_open_streams=True)
+    assert stdout.read_bytes() == b""
+    assert external.read_text() == "prior output"
+
+
+def test_cleanup_preserves_open_stdout_descriptor(tmp_path):
+    from ase2sprkkr.execution import ExecutionSpec, LaunchSpec
+    from ase2sprkkr.execution.file_availability import prepare_local_files
+
+    stdout = tmp_path / "run.out"
+    with stdout.open("w+b") as handle:
+        handle.write(b"existing open output")
+        handle.flush()
+        spec = ExecutionSpec(
+            argv=("program",), directory=str(tmp_path), input_file=None,
+            output_file=handle, launch=LaunchSpec(cleanup_outputs="both"),
+        )
+        prepare_local_files(spec, preserve_open_streams=True)
+        assert stdout.read_bytes() == b"existing open output"
+        handle.seek(0, os.SEEK_END)
+        handle.write(b" next")
+        handle.flush()
+        assert stdout.read_bytes() == b"existing open output next"

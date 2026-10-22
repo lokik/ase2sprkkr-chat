@@ -50,10 +50,20 @@ def prepare_local_files(spec, *, output_file=None, error_file=None,
     validate_output_collisions((*declared, *streams), protected=protected)
     if not cleanup_enabled(spec.launch.cleanup_outputs, side):
         return
-    # Never unlink streams already open: that would orphan their descriptors.
-    outputs = declared if preserve_open_streams else (*declared, *streams)
-    protected_paths = (*protected, *streams) if preserve_open_streams else protected
-    clear_declared_outputs(outputs, protected=protected_paths)
+    # Open stream handles must keep their inode. Named paths, however, must
+    # start empty: FOLLOW derives its initial offset from their current size.
+    # Replace existing named streams (rather than truncate) to avoid touching
+    # the targets of symlinks or hardlinks.
+    if preserve_open_streams:
+        clear_declared_outputs(declared, protected=(*protected, *streams))
+        for value, path in ((spec.output_file, output), (spec.error_file, error)):
+            if (path is not None and isinstance(value, (str, bytes, os.PathLike))
+                    and os.path.isfile(path)):
+                os.unlink(path)
+                with open(path, "xb"):
+                    pass
+    else:
+        clear_declared_outputs((*declared, *streams), protected=protected)
 
 
 
