@@ -794,15 +794,13 @@ class PersistentRun:
     """Durable transaction participant for one CalculationRun.
 
     CalculationRun sequences execution and public completion. This object
-    serializes durable reservation and completion commits. Its submission
-    guard and completion lock protect distinct transactional boundaries,
-    not a second runner lifecycle state machine.
+    serializes durable commits. The completion lock protects refresh and
+    finalization; submission uniqueness is owned by CalculationRun and the
+    atomically reserving RunStore, not by a second lifecycle state machine.
     """
 
     def __init__(self, manager, executor, record, *, spec=None):
         self._spec = spec
-        self._lifecycle_lock = Lock()
-        self._submission_in_progress = False
         self.manager = manager
         self.executor = executor
         self._record = record
@@ -828,32 +826,23 @@ class PersistentRun:
         return record.execution.submitted(run.backend_id)
 
     def before_submit(self, run: CalculationRun):
-        """Reserve the run atomically before any backend file staging."""
-        with self._lifecycle_lock:
-            if self._submission_in_progress or self._record.state != RunState.NEW:
-                raise RuntimeError(f"Run is already {self._record.state.value}")
-            self._submission_in_progress = True
-        try:
-            if self._spec is not None:
-                files, remote_directory = self.executor.reservation_context(
-                    self._spec, self._record.files,
+        """Reserve atomically before any backend file staging."""
+        if self._record.state != RunState.NEW:
+            raise RuntimeError(f"Run is already {self._record.state.value}")
+        if self._spec is not None:
+            files, remote_directory = self.executor.reservation_context(
+                self._spec, self._record.files,
+            )
+            execution = self._record.execution
+            if remote_directory is not None:
+                execution = replace(
+                    execution,
+                    directory=replace(execution.directory, remote=remote_directory),
                 )
-                execution = self._record.execution
-                if remote_directory is not None:
-                    execution = replace(
-                        execution,
-                        directory=replace(
-                            execution.directory, remote=remote_directory,
-                        ),
-                    )
-                self._record = replace(self._record, files=files, execution=execution)
-            self._record = self.manager.reserve(self._record)
-            run.set_manifest(self._record.files)
-            self._monitor_record_version = self._record.updated_at
-        except BaseException:
-            with self._lifecycle_lock:
-                self._submission_in_progress = False
-            raise
+            self._record = replace(self._record, files=files, execution=execution)
+        self._record = self.manager.reserve(self._record)
+        run.set_manifest(self._record.files)
+        self._monitor_record_version = self._record.updated_at
 
     def prepared(self, run: CalculationRun):
         """Commit the exact staged layout before the backend is launched."""
@@ -866,62 +855,52 @@ class PersistentRun:
 
     def submitted(self, run: CalculationRun):
         """Persist backend identity before clearing its temporary ticket."""
-        try:
-            backend_id = run.backend_id
-            if backend_id is None:
-                raise RuntimeError("Executor submit returned without a backend ID")
-            with self._completion_lock:
-                if not self._record.state.is_terminal:
-                    observed = run.state
-                    if observed.is_terminal:
-                        # A backend may complete synchronously inside submit().
-                        # The public completion callback is deferred until its
-                        # identity is durable; do not commit a terminal record
-                        # without its return code, error and file snapshot.
-                        observed = RunState.SUBMITTING
-                    self._record = self.manager.transition(
-                        self._record, state=observed, execution=self._execution_for(run, self._record),
-                        failure_phase=(None if observed == RunState.SUBMITTING
-                                       else _failure_phase(run.failure_phase)),
-                        files=run.file_snapshot(),
-                    )
-                    self._monitor_record_version = self._record.updated_at
-            self.manager._acknowledge_submission(self.executor, self._record)
-        finally:
-            with self._lifecycle_lock:
-                self._submission_in_progress = False
+        if run.backend_id is None:
+            raise RuntimeError("Executor submit returned without a backend ID")
+        with self._completion_lock:
+            if not self._record.state.is_terminal:
+                observed = run.state
+                if observed.is_terminal:
+                    # The backend may finish synchronously in submit().
+                    # Its completion callback waits for durable identity.
+                    observed = RunState.SUBMITTING
+                self._record = self.manager.transition(
+                    self._record, state=observed,
+                    execution=self._execution_for(run, self._record),
+                    failure_phase=(None if observed == RunState.SUBMITTING
+                                   else _failure_phase(run.failure_phase)),
+                    files=run.file_snapshot(),
+                )
+                self._monitor_record_version = self._record.updated_at
+        self.manager._acknowledge_submission(self.executor, self._record)
 
     def submission_failed(
         self, run: CalculationRun, error: BaseException, *, uncertain: bool,
     ):
         """Record definite non-launches and preserve uncertain submissions."""
-        try:
-            if not uncertain:
-                if self._record.state == RunState.NEW:
-                    return  # Reservation was refused; nothing was launched.
-                if isinstance(error, asyncio.CancelledError):
-                    self._record = self.manager.complete(
-                        self._record, state=RunState.CANCELLED,
-                        files_available=False,
+        if not uncertain:
+            if self._record.state == RunState.NEW:
+                return  # Reservation was refused; nothing was launched.
+            if isinstance(error, asyncio.CancelledError):
+                self._record = self.manager.complete(
+                    self._record, state=RunState.CANCELLED,
+                    files_available=False,
+                )
+            else:
+                phase = _failure_phase(run.failure_phase) or FailurePhase.SUBMISSION
+                message = run.failure_message or str(error)
+                self._record = self.manager.complete(
+                    self._record, state=RunState.FAILED, message=message,
+                    failure_phase=phase, files_available=False,
+                )
+        elif run.backend_id is not None:
+            with self._completion_lock:
+                if not self._record.state.is_terminal:
+                    self._record = self.manager.transition(
+                        self._record, state=run.state,
+                        execution=self._execution_for(run, self._record),
+                        failure_phase=_failure_phase(run.failure_phase),
                     )
-                else:
-                    phase = _failure_phase(run.failure_phase) or FailurePhase.SUBMISSION
-                    message = run.failure_message or str(error)
-                    self._record = self.manager.complete(
-                        self._record, state=RunState.FAILED, message=message,
-                        failure_phase=phase, files_available=False,
-                    )
-            elif run.backend_id is not None:
-                with self._completion_lock:
-                    if not self._record.state.is_terminal:
-                        self._record = self.manager.transition(
-                            self._record, state=run.state,
-                            execution=self._execution_for(run, self._record),
-                            failure_phase=_failure_phase(run.failure_phase),
-                        )
-        finally:
-            with self._lifecycle_lock:
-                self._submission_in_progress = False
 
     def attached(self, run: CalculationRun):
         """Synchronize an attached observation without resubmitting its job."""

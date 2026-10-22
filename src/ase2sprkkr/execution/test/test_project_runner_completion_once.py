@@ -295,29 +295,19 @@ def test_lost_ack_reply_after_receipt_deletion_is_safe_on_retry(tmp_path, monkey
     assert manager.completions == 1
     assert executor.attempts == [True, False]
 
-def test_persistent_reservation_rejects_duplicate_before_submitting():
-    """Persistent reservation cannot be repeated while the first is active."""
-    from ..run_model import FileManifest
+def test_persistent_reservation_rejects_duplicate_before_submitting(tmp_path):
+    """The store claim, not another hook-local flag, prevents duplicates."""
     import pytest
+    from ..manager import ExecutionManager, RunStore
 
-    class ReservingManager(_Manager):
-        reservations = 0
-
-        def reserve(self, record):
-            self.reservations += 1
-            return record
-
-    manager = ReservingManager()
-    record = SimpleNamespace(
-        id="run", state=RunState.NEW,
-        updated_at="2026-10-20T10:00:00+00:00",
-        files=FileManifest(),
-    )
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    record = manager.store.save(manager.new_record(task="DOS", directory=tmp_path))
     persistence = PersistentRun(manager, _Executor(), record)
     published = []
     runner = SimpleNamespace(set_manifest=published.append)
     persistence.before_submit(runner)
+    assert persistence.record.state is RunState.SUBMITTING
     with pytest.raises(RuntimeError, match="already"):
         persistence.before_submit(runner)
-    assert manager.reservations == 1
     assert published == [record.files]
+    assert manager.store.get(record.id).state is RunState.SUBMITTING
