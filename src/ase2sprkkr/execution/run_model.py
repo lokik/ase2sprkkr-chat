@@ -230,6 +230,15 @@ def _validate_file_declarations(entries, *, primary_input=None):
                             and fnmatch.fnmatchcase(os.path.normpath(literal),
                                                    os.path.normpath(pattern))):
                         same_local = True
+            if roles in ({"stdout", "output"}, {"stderr", "output"}):
+                for literal, pattern in ((entry.remote_path, previous.remote_path),
+                                         (previous.remote_path, entry.remote_path)):
+                    if (literal is not None and pattern is not None
+                            and not has_file_magic(literal)
+                            and has_file_magic(pattern)
+                            and fnmatch.fnmatchcase(posixpath.normpath(literal),
+                                                   posixpath.normpath(pattern))):
+                        same_remote = True
             if not same_local and not same_remote:
                 continue
             if (roles == {"input", "stdin"} and primary_input is not None
