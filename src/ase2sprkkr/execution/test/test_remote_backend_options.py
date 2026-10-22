@@ -173,3 +173,35 @@ def test_remote_spec_ignores_remote_only_cache_baselines(tmp_path):
         FileEntry(local_path=str(exact), availability_state="pending"),
         FileEntry(local_path=str(pattern), availability_state="pending"),
     )
+
+
+def test_remote_psij_selects_mpi_stdin_without_alternate_command(tmp_path):
+    local_root = tmp_path / "local"
+    directory = local_root / "calculation"
+    directory.mkdir(parents=True)
+    (directory / "mpi.in").write_text("mpi input")
+
+    executor = RemoteExecutor(
+        LocalTransport(), backend="psij",
+        backend_options={"backend": "slurm", "url": None},
+    )
+    spec = ExecutionSpec(
+        argv=("program",), mpi_argv=None,
+        directory=str(directory),
+        input_file=None, output_file=None,
+        stdin=str(directory / "serial.in"),
+        mpi_stdin=str(directory / "mpi.in"),
+        launch=LaunchSpec(
+            mpi=MpiSpec(required=True, autodetect=True, process_count=4),
+            local_root=str(local_root), remote_root=str(tmp_path / "remote"),
+        ),
+    )
+    runner = executor.create_run(spec)
+    assert runner.spec.stdin == str(directory / "mpi.in")
+    assert runner.spec.mpi_stdin is None
+    request, manifest = asyncio.run(runner._prepare_async())
+    assert request["argv"] == ["program"]
+    assert request["stdin"].endswith("/calculation/mpi.in")
+    assert request["mpi_argv"] is None
+    assert manifest.input_files == (str(directory / "mpi.in"),)
+    assert not any("serial.in" in str(path) for path in manifest.input_files)

@@ -37,31 +37,38 @@ def _mpi_command(launch):
 
 
 def select_mpi_spec(spec: ExecutionSpec, launcher=None, *, scheduler=False):
-    """Select exactly one command and stdin before creating a file manifest.
+    """Freeze one command and stdin before manifest construction.
 
-    Scheduler jobs keep launch metadata so PSI/J can configure resources.
-    The unused command and stdin never enter the persistent execution state.
+    Without a separate MPI command, launch the ordinary argv under MPI.
+    In that case a supplied mpi_stdin overrides the ordinary stdin. Scheduler metadata survives for PSI/J; the prefix
+    used by subprocess backends must not be resolved a second time.
     """
-    if spec.mpi_argv is None:
-        return spec
+    if spec.mpi_argv is None and not spec.launch:
+        return spec if spec.mpi_stdin is None else replace(spec, mpi_stdin=None)
+
     enabled = scheduler or launcher is not None
+    mpi_command = spec.mpi_argv if spec.mpi_argv is not None else spec.argv
     if scheduler:
-        argv = tuple(spec.mpi_argv)
+        argv = tuple(mpi_command)
     elif launcher is not None:
-        argv = (*launcher, *spec.mpi_argv)
+        argv = (*launcher, *mpi_command)
     else:
         argv = spec.argv
+
     return replace(
-        spec, argv=argv, stdin=spec.mpi_stdin if enabled else spec.stdin,
+        spec,
+        argv=argv,
+        stdin=(spec.mpi_stdin if enabled and
+               (spec.mpi_argv is not None or spec.mpi_stdin is not None)
+               else spec.stdin),
         mpi_argv=None, mpi_stdin=None,
-        launch=(spec.launch if enabled else replace(spec.launch, mpi=MpiSpec())),
+        launch=(spec.launch if scheduler and enabled
+                else replace(spec.launch, mpi=MpiSpec())),
     )
 
 
 def materialize_local_spec(spec: ExecutionSpec) -> ExecutionSpec:
-    """Choose serial/MPI before file reservation and local process creation."""
-    if spec.mpi_argv is None:
-        return spec
+    """Resolve requested local MPI before file reservation and staging."""
     if not spec.launch:
         return select_mpi_spec(spec)
     return select_mpi_spec(spec, _mpi_command(spec.launch))

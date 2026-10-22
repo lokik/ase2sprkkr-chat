@@ -592,8 +592,6 @@ class PsijExecutor(Executor):
 
     def resolve_spec(self, spec: ExecutionSpec) -> ExecutionSpec:
         from .local_process import select_mpi_spec
-        if spec.mpi_argv is None:
-            return spec
         return select_mpi_spec(spec, scheduler=bool(spec.launch))
 
     def create_run(self, spec: ExecutionSpec, callback=None, *, cleanup_side="local"):

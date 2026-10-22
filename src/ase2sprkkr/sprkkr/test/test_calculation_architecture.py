@@ -208,7 +208,10 @@ def test_nonproject_run_without_explicit_executor_uses_shared_registry(
             return _Executor()
 
     registry = Registry()
-    monkeypatch.setattr(calculation, "default_executors", lambda: registry)
+    monkeypatch.setattr(
+        "ase2sprkkr.execution.persistence.default_executors",
+        lambda: registry,
+    )
     calculator = SPRKKR(
         atoms=fe_bulk.copy(),
         directory=tmp_path,

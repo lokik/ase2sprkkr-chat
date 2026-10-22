@@ -71,8 +71,9 @@ class _Executor(Executor):
     def __init__(self):
         self.runners = []
 
-    def resolve_mpi(self, mpi=None):
-        return False
+    def resolve_spec(self, spec):
+        # This test executor does not execute processes; avoid host MPI probing.
+        return spec
 
     def create_run(self, spec, callback=None):
         runner = _Runner(callback, spec=spec)
