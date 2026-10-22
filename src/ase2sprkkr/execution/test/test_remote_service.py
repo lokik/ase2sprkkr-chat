@@ -726,18 +726,26 @@ def test_supervisor_stdin_close_failure_preserves_terminal_receipt(
         assert "stdin close failed" in receipt["error"]
 
 
-@pytest.mark.parametrize("failure_point", ("socket_directory", "first_pipe", "second_pipe"))
-def test_remote_submit_ipc_setup_failure_closes_every_fd(
-    tmp_path, monkeypatch, failure_point,
+@pytest.mark.parametrize(
+    "failure_point, expected_created",
+    [
+        ("socket_directory", 0),
+        ("first_pipe", 0),
+        ("second_pipe", 2),
+        ("json", 4),
+    ],
+)
+def test_remote_submit_prelaunch_failure_releases_ipc(
+    tmp_path, monkeypatch, failure_point, expected_created,
 ):
-    """No supervisor can have started; all owned prelaunch IPC must be released."""
+    """No failed setup may launch a supervisor or leak an IPC descriptor."""
     import os
     from ase2sprkkr.execution.base import SubmissionNotStarted
 
     directory = tmp_path / "socket-directory"
     created = []
     real_pipe = os.pipe
-    attempts = []
+    attempts = 0
 
     def directory_factory(*, prefix):
         assert prefix.startswith("ase2sprkkr-follow-")
@@ -747,9 +755,10 @@ def test_remote_submit_ipc_setup_failure_closes_every_fd(
         return str(directory)
 
     def pipe():
-        attempts.append(True)
+        nonlocal attempts
+        attempts += 1
         if failure_point == "first_pipe" or (
-            failure_point == "second_pipe" and len(attempts) == 2
+            failure_point == "second_pipe" and attempts == 2
         ):
             raise OSError("cannot allocate pipe")
         pair = real_pipe()
@@ -762,54 +771,18 @@ def test_remote_submit_ipc_setup_failure_closes_every_fd(
         remote_service.subprocess, "Popen",
         lambda *args, **kwargs: pytest.fail("supervisor must not start"),
     )
+    if failure_point == "json":
+        def broken_json(*args, **kwargs):
+            raise TypeError("invalid worker specification")
 
-    with pytest.raises(SubmissionNotStarted, match="cannot allocate"):
-        remote_service._local_submit({
-            "argv": ("never-executed",),
-            "directory": str(tmp_path),
-            "detached": True,
-        })
+        monkeypatch.setattr(remote_service.json, "dumps", broken_json)
 
-    assert not directory.exists()
-    assert len(created) == {
-        "socket_directory": 0, "first_pipe": 0, "second_pipe": 2,
-    }[failure_point]
-    for fd in created:
-        with pytest.raises(OSError):
-            os.fstat(fd)
-
-
-def test_remote_submit_json_setup_failure_cleans_pipes_and_directory(
-    tmp_path, monkeypatch,
-):
-    """Even a non-I/O failure before Popen cannot strand raw pipe ends."""
-    import os
-
-    directory = tmp_path / "socket-directory"
-    real_pipe = os.pipe
-    created = []
-
-    def directory_factory(*, prefix):
-        directory.mkdir()
-        return str(directory)
-
-    def pipe():
-        pair = real_pipe()
-        created.extend(pair)
-        return pair
-
-    def broken_json(*args, **kwargs):
-        raise TypeError("invalid worker specification")
-
-    monkeypatch.setattr(remote_service.tempfile, "mkdtemp", directory_factory)
-    monkeypatch.setattr(remote_service.os, "pipe", pipe)
-    monkeypatch.setattr(remote_service.json, "dumps", broken_json)
-    monkeypatch.setattr(
-        remote_service.subprocess, "Popen",
-        lambda *args, **kwargs: pytest.fail("supervisor must not start"),
+    expected_error = TypeError if failure_point == "json" else SubmissionNotStarted
+    expected_message = (
+        "invalid worker specification" if failure_point == "json"
+        else "cannot allocate"
     )
-
-    with pytest.raises(TypeError, match="invalid worker specification"):
+    with pytest.raises(expected_error, match=expected_message):
         remote_service._local_submit({
             "argv": ("never-executed",),
             "directory": str(tmp_path),
@@ -817,7 +790,7 @@ def test_remote_submit_json_setup_failure_cleans_pipes_and_directory(
         })
 
     assert not directory.exists()
-    assert len(created) == 4
+    assert len(created) == expected_created
     for fd in created:
         with pytest.raises(OSError):
             os.fstat(fd)
