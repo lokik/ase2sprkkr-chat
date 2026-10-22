@@ -695,7 +695,6 @@ class ExecutionManager:
                 state = RunState.FAILED
                 phase = FailurePhase.FILES
                 message = str(exc)
-                result_files = JobFiles.mark_pending_failed(result_files, message)
 
         return self.transition(
             record,

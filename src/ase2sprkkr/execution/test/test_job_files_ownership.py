@@ -169,3 +169,31 @@ def test_captured_snapshot_rejects_conflicting_update():
     with pytest.raises(ValueError, match="Cannot replace a captured"):
         JobFiles.merge_snapshot(captured, fresh)
     assert JobFiles.merge_snapshot(fresh, captured) is captured
+
+def test_capture_failure_does_not_falsely_mark_unprocessed_files_failed(monkeypatch):
+    import pytest
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from ase2sprkkr.execution import manager as manager_module
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+    from ase2sprkkr.execution.base import RunState, FailurePhase
+
+    files = FileManifest(outputs=(
+        FileEntry("/tmp/untouched", "/remote/untouched", "pending"),
+    ))
+    class Store:
+        def terminal_record(self, record):
+            return None
+    manager = manager_module.ExecutionManager(Store())
+    record = SimpleNamespace(files=files, job_files=SimpleNamespace(
+        capture=lambda manifest: (_ for _ in ()).throw(OSError("capture failed")),
+    ))
+    seen = {}
+    def transition(record, **kwargs):
+        seen.update(kwargs)
+        return kwargs
+    monkeypatch.setattr(manager, "transition", transition)
+    manager.complete(record, state=RunState.FINISHED, files_available=True)
+    assert seen["state"] == RunState.FAILED
+    assert seen["failure_phase"] == FailurePhase.FILES
+    assert seen["files"].outputs[0].availability_state == "pending"

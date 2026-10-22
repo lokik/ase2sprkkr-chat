@@ -63,14 +63,6 @@ class JobFiles:
         return requested
 
     @staticmethod
-    def mark_pending_failed(manifest, message):
-        return manifest._map_files(
-            lambda item: replace(
-                item, availability_state="failed", availability_message=message,
-            ) if item.availability_state in (None, "pending") else item
-        )
-
-    @staticmethod
     def merge_terminal_files(previous, received):
         """Preserve completed local deliveries in frozen terminal facts."""
         if previous is None:
