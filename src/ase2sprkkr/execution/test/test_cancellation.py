@@ -188,7 +188,7 @@ def test_project_cancel_returns_while_backend_submission_is_blocked():
         def __init__(self):
             self.transitions = []
 
-        def reserve(self, record):
+        def reserve(self, record, *, spec=None, executor=None):
             return SimpleNamespace(state=RunState.SUBMITTING, id=record.id,
                                    updated_at="reserved", execution=record.execution,
                                    files=record.files)
@@ -280,7 +280,7 @@ def test_project_cancellation_during_prelaunch_is_durable_and_nonblocking(phase)
                 **vars(record), **changes, "updated_at": "later",
             })
 
-        def reserve(self, record):
+        def reserve(self, record, *, spec=None, executor=None):
             if phase == "reservation":
                 entered.set()
                 if not release.wait(5):
