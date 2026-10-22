@@ -145,6 +145,28 @@ def test_reserve_syncs_inputs_before_submitting_record(tmp_path, monkeypatch):
     assert events[:2] == [("sync", "input.inp"), ("state", "submitting")]
 
 
+
+def test_input_sync_failure_never_commits_submission(tmp_path, monkeypatch):
+    input_file = tmp_path / "input.inp"
+    input_file.write_text("input")
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    record = manager.new_record(
+        task="SCF", directory=tmp_path,
+        files=FileManifest(inputs=(FileEntry(local_path=str(input_file)),)),
+    )
+
+    def fail_sync(path):
+        raise OSError("input fsync failed")
+
+    monkeypatch.setattr(file_history, "sync_file", fail_sync)
+    with pytest.raises(OSError, match="input fsync failed"):
+        manager.reserve(record)
+    with pytest.raises(FileNotFoundError):
+        store.get(record.id)
+
+
+
 def test_file_publication_syncs_outputs_before_terminal_record(tmp_path, monkeypatch):
     output_file = tmp_path / "output.out"
     output_file.write_text("result")
