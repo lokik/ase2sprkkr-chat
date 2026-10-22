@@ -280,7 +280,8 @@ def _slurm_status_native(native_id, *, submitted_at=None, output_paths=()):
         return_code = None
     elif state == RunState.FINISHED and return_code is None and not inferred_completion:
         return_code = 0
-    elif state == RunState.FINISHED and return_code != 0:
+    elif (state == RunState.FINISHED and return_code is not None
+          and return_code != 0):
         state = RunState.FAILED
     return RunStatus(
         state=state,
