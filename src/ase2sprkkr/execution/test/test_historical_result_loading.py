@@ -14,7 +14,10 @@ from ase2sprkkr.execution import (
 )
 from ase2sprkkr.execution.endpoint import endpoint_for_executor
 from ase2sprkkr.execution.manager import ExecutionManager
-from ase2sprkkr.execution.historical_restore import HistoricalFileMismatchError
+from ase2sprkkr.execution.historical_restore import (
+    HistoricalFileMismatchError, retrieve_historical_files,
+    update_historical_availability,
+)
 from ase2sprkkr.outputs import project_results
 from ase2sprkkr.outputs.project_results import (
     ProjectResultUnavailableError,
@@ -639,11 +642,10 @@ def test_history_reconciles_durable_file_after_failed_directory_fsync(tmp_path, 
 
 
 def test_failed_published_history_reconciles_without_executor(tmp_path):
-    from ase2sprkkr.execution.job_files import JobFiles
 
     manager, executor, record = _terminal_run(tmp_path)
     output = tmp_path / "run.out"
-    failed = JobFiles.update_availability(record,
+    failed = update_historical_availability(record,
         manager.store, str(output), "failed", "directory fsync failed",
     )
 
@@ -651,22 +653,21 @@ def test_failed_published_history_reconciles_without_executor(tmp_path):
         raise AssertionError("Verified published bytes must not download")
 
     executor.fetch_result_files = unexpected_fetch
-    recovered = JobFiles.retrieve(failed, manager.store, executor=None)
+    recovered = retrieve_historical_files(failed, manager.store, executor=None)
     assert recovered.files.availability_state == FileAvailabilityState.AVAILABLE
     assert recovered.state is RunState.FINISHED
     assert output.read_text() == "original output"
 
 
 def test_failed_published_history_remains_failed_without_backend_if_missing(tmp_path):
-    from ase2sprkkr.execution.job_files import JobFiles
 
     manager, _, record = _terminal_run(tmp_path)
     output = tmp_path / "run.out"
-    failed = JobFiles.update_availability(record,
+    failed = update_historical_availability(record,
         manager.store, str(output), "failed", "download failed",
     )
     output.unlink()
-    unchanged = JobFiles.retrieve(failed, manager.store, executor=None)
+    unchanged = retrieve_historical_files(failed, manager.store, executor=None)
     assert unchanged.files.availability_state == FileAvailabilityState.FAILED
     assert not output.exists()
 
