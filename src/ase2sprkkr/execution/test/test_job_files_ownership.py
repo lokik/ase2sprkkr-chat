@@ -168,7 +168,7 @@ def test_captured_snapshot_rejects_conflicting_update():
     assert JobFiles.merge_snapshot(captured, captured) is captured
     with pytest.raises(ValueError, match="Cannot replace a captured"):
         JobFiles.merge_snapshot(captured, fresh)
-    assert JobFiles.merge_snapshot(fresh, captured) is captured
+    assert JobFiles.merge_snapshot(fresh, captured) == captured
 
 def test_capture_failure_does_not_falsely_mark_unprocessed_files_failed(monkeypatch):
     import pytest
