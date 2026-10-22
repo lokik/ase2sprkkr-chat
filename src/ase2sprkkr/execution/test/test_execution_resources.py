@@ -10,6 +10,7 @@ from ase2sprkkr.execution.base import (
     ExecutionOutcome,
     RunState,
     SubmissionNotStarted,
+    FailurePhase,
 )
 from ase2sprkkr.execution import FileManifest
 from ase2sprkkr.execution.job_files import JobFiles
@@ -513,7 +514,8 @@ def test_manifest_persistence_failure_does_not_submit_backend():
         def record_submission_failure(self, record, *, error, uncertain, **kwargs):
             assert not uncertain
             return self.complete(
-                record, state=RunState.FAILED, failure_phase=kwargs["failure_phase"],
+                record, state=RunState.FAILED,
+                failure_phase=kwargs["failure_phase"] or FailurePhase.SUBMISSION,
             )
 
 
