@@ -230,3 +230,34 @@ def test_remote_attach_preserves_existing_partial_stream(tmp_path, monkeypatch):
     assert runner.spec.output_file.tell() == len(b"partial")
     runner.spec.output_file.close()
     assert local_output.read_bytes() == b"partial"
+
+def test_remote_status_preserves_frozen_file_manifest():
+    from dataclasses import asdict, replace
+
+    from ..run_model import FileEntry, FileManifest
+
+    files = FileManifest(outputs=(FileEntry(
+        local_path="/work/result.out", remote_path="/remote/result.out",
+        availability_state="available",
+    ),))
+
+    class Connection:
+        async def status(self, backend_id, requested_files):
+            assert backend_id == "job-1"
+            assert requested_files is original_files
+            return {"state": "finished", "return_code": 0,
+                    "files": asdict(files)}
+
+    executor = RemoteEndpointExecutor.__new__(RemoteEndpointExecutor)
+    executor.connection = Connection()
+    executor._validate_run = lambda run: None
+    original_files = FileManifest()
+    run = SimpleNamespace(
+        execution=SimpleNamespace(backend_id="job-1"), files=original_files,
+    )
+
+    status, = executor.status(run)
+
+    assert status.files.outputs == files.outputs
+    assert status.state is RunState.DOWNLOADING
+    assert status.return_code == 0
