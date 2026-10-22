@@ -75,10 +75,11 @@ def test_snapshot_capture_failure_preserves_unverified_files(tmp_path, monkeypat
     )
     record = manager.store.save(record)
 
-    def fail_capture(self, manifest=None):
+    def fail_capture(manifest):
         raise OSError("capture failed")
 
-    monkeypatch.setattr(JobFiles, "capture", fail_capture)
+    import ase2sprkkr.execution.manager as manager_module
+    monkeypatch.setattr(manager_module, "capture_result_files", fail_capture)
     completed = manager.complete(
         record, state=RunState.FINISHED, files_available=True,
     )
@@ -153,7 +154,8 @@ def test_captured_completion_respects_newer_failed_file_state(tmp_path, monkeypa
             input_versions=(version,), output_versions=(version,),
         )
 
-    monkeypatch.setattr(JobFiles, "capture", capture)
+    import ase2sprkkr.execution.manager as manager_module
+    monkeypatch.setattr(manager_module, "capture_result_files", capture)
     completed = manager.complete(
         record, state=RunState.FINISHED, files_available=True, return_code=0,
     )
