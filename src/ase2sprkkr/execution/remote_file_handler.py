@@ -391,11 +391,13 @@ class RemoteFileHandler:
             raise RuntimeError(f"Remote {kind} output changed during verification")
         os.utime(entry.local_path, ns=(stat.st_atime_ns, signature[1]))
 
-    async def restore(self, run, paths, *, destinations=None):
-        """Restore persisted concrete files, preflighting the entire request.
+    @staticmethod
+    def plan_restore(run, paths, *, destinations=None):
+        """Validate the complete historical request without filesystem writes.
 
-        The manifest is the sole source of historical file membership and
-        target paths. Validation completes before any transfer takes place.
+        The manifest owns membership and canonical source identities. The
+        returned plan is also used by restore(), so preflight and transfer
+        enforce precisely the same rules.
         """
         destinations = {} if destinations is None else {
             os.path.abspath(os.fspath(p)): os.fspath(target)
@@ -464,6 +466,13 @@ class RemoteFileHandler:
                 raise FileExistsError(
                     f"Historical staging destination already exists: {target}"
                 )
-        for remote, target in planned.values():
+        return tuple(planned.values()), staged_targets
+
+    async def restore(self, run, paths, *, destinations=None):
+        """Restore the preflighted batch, without changing its file identities."""
+        planned, staged_targets = self.plan_restore(
+            run, paths, destinations=destinations,
+        )
+        for remote, target in planned:
             if target in staged_targets or not os.path.isfile(target):
                 await self.transport.get_file(remote, target)
