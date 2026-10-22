@@ -1,6 +1,7 @@
 """ARPES task input parameters definition"""
 
-from ...common.grammar_types import SetOf, DefKeyword, Keyword, Range, Array, flag
+import numpy as np
+from ...common.grammar_types import Integer, SetOf, DefKeyword, Keyword, Range, Array, flag
 from .sections import CONTROL, TAU, ENERGY, SITES
 from ..input_parameters_definitions import (
     InputParametersDefinition as InputParameters,
@@ -8,25 +9,94 @@ from ..input_parameters_definitions import (
     InputSectionDefinition as Section,
 )
 from ...sprkkr.sprkkr_grammar_types import Site
+from ...common.warnings import DataValidityError
 
 
-def input_parameters():
-    return InputParameters(
+class ArpesInputParametersDefinition(InputParameters):
+    """Shared SPEC_INPUT schema for ARPES-family tasks."""
+
+    task_selectors = ("ARPES",)
+
+    def task_definition_name(self, parameters):
+        return str(parameters.TASK.TASK() or "ARPES").upper()
+
+
+def _task_default(option):
+    """Default the shared TASK selector from the requested task context."""
+    parameters = option._get_root_container()
+    return parameters.requested_task_name or "ARPES"
+
+
+def _electron_angle_default(option):
+    """SPEC_INPUT defaults differ for photoemission and SPLEED."""
+    angle = (45.0 if option.name == 'THETA' else 270.0) if option._container._container.TASK.TASK() == 'SPLEED' else 0.0
+    return [angle, angle]
+
+
+def _electron_spol_default(option):
+    return 1 if option._container._container.TASK.TASK() == 'SPLEED' else 2
+
+
+def angular_scan_errors(parameters):
+    """Return inconsistencies rejected by SPEC_INPUT, using its unset defaults."""
+    task, electron = parameters.TASK, parameters.SPEC_EL
+    if task.INPVER() == 0 or task.TASK() != 'ARPES' or electron.K1() is not None:
+        return []
+    errors = []
+    for angle, count in (('THETA', 'NT'), ('PHI', 'NP')):
+        bounds = electron[angle]()
+        span = 0. if bounds is None else abs(bounds[-1] - bounds[0])
+        points = electron[count]()
+        points = 1 if points is None else points
+        if (span > 1e-5) != (points > 1):
+            if angle == 'PHI' and span <= 1e-5 and 'BETA1' in electron and electron.BETA1() is not None:
+                continue
+            errors.append(f'SPEC_EL.{angle} and SPEC_EL.{count} must specify a consistent angular scan: '
+                          'a nonzero range requires more than one point, and vice versa.')
+    return errors
+
+
+def _validate_angular_scan(parameters, _container, why):
+    if why != 'set':
+        errors = [DataValidityError(message) for message in angular_scan_errors(parameters)]
+        if parameters.TASK.INPVER() == 0:
+            return errors
+        for section, names in ((parameters.ENERGY, ("EWORK_EV", "IMV_INI_EV", "IMV_FIN_EV")), (parameters.SPEC_PH, ("EPHOT",))):
+            for name in names:
+                value = section[name]()
+                if not np.isfinite(value) or value < 0 or (name == "EPHOT" and value == 0):
+                    errors.append(DataValidityError(f"{section.name}.{name} must be finite and nonnegative (EPHOT strictly positive)."))
+        electron = parameters.SPEC_EL
+        if parameters.TASK.TASK() == "ARPES" and any(electron[name]() is not None for name in ("K3", "K4", "NK3", "NK4")):
+            errors.append(DataValidityError("SPR-KKR 9.7 SPEC_INPUT does not read K3/K4/NK3/NK4; use K1/K2."))
+        if electron.K1() is not None:
+            for vector, count in (("K1", "NK1"), ("K2", "NK2")):
+                if electron[vector]() is not None and electron[count]() is None:
+                    errors.append(DataValidityError(f"SPEC_EL.{vector} requires {count}."))
+        for name in ("THETA", "PHI", "KA", "K1", "K2"):
+            value = electron[name]()
+            if value is not None and not np.all(np.isfinite(value)):
+                errors.append(DataValidityError(f"SPEC_EL.{name} must be finite."))
+        return errors
+
+
+def input_parameters_definition():
+    return ArpesInputParametersDefinition(
         "arpes",
         [
             CONTROL("ARPES"),
             TAU,
             ENERGY(
-                emin=(None, "Minimum of the energy window in eV with respect to the Fermi level", -8.0),
-                emax=(None, "Maximum of the energy window in eV with respect to the Fermi level", 5.0),
+                emin=(None, "Minimum of the energy window in Ry (absolute energy)", -8.0),
+                emax=(None, "Maximum of the energy window in Ry (absolute energy)", 5.0),
                 add=[
                     V("EWORK_EV", 4.2, info="Inner potential of the bulk crystal in eV"),
                     V(
                         "IMV_INI_EV", 0.05, info="Imaginary part of the potential in eV (initial state)"
-                    ),  # alternatively you can use VIL (in eV) or IMV_INI (in Ry)'),
+                    ),
                     V(
                         "IMV_FIN_EV", 2.0, info="Imaginary part of the potential in eV (final state)"
-                    ),  # alternatively you can use VIH (in eV) or IMV_FIN (in Ry)'),
+                    ),
                 ],
                 defaults={"GRID": 1, "NE": 300},
             ),
@@ -44,6 +114,8 @@ def input_parameters():
                                 "BAND": "band structure calculations (experimental feature)",
                             }
                         ),
+                        _task_default,
+                        is_required=True,
                         name_in_grammar=False,
                         info="Type of the calculation",
                     ),
@@ -52,6 +124,7 @@ def input_parameters():
                     V("CRYS_VEC", True, info="Miller indices with respect to crystalographic primitive vectors"),
                     V(
                         "STRVER",
+                        Integer(min=0, max=1),
                         1,
                         is_expert=True,
                         is_always_added=True,
@@ -59,6 +132,7 @@ def input_parameters():
                     ),
                     V(
                         "INPVER",
+                        Integer(min=0, max=1),
                         1,
                         is_expert=True,
                         is_always_added=True,
@@ -73,7 +147,6 @@ def input_parameters():
                     V("PHI", 0.0, info="Direction of the photon (the azimuth coordinate)"),
                     V("POL_P", DefKeyword("P", "S", "C+", "C-"), info="Polarization of the light"),
                     V("EPHOT", 25.0, info="Photon energy in eV"),
-                    # Expert
                     V("ALQ", expert=45.0, info="Alignment of polarization vector or pol.ellipsis"),
                     V(
                         "DELQ",
@@ -131,17 +204,19 @@ def input_parameters():
             Section(
                 "SPEC_EL",
                 [
-                    V("THETA", Range(float), info="Scattering angle", is_required=False),
-                    V("PHI", Range(float), info="Scattering angle", is_required=False),
+                    V("THETA", Range(float), _electron_angle_default, info="Scattering angle", is_required=False),
+                    V("PHI", Range(float), _electron_angle_default, info="Scattering angle", is_required=False),
                     V(
                         "NT",
-                        int,
+                        Integer(min=1),
+                        1,
                         info="Number of angular values for a rotation in polar coordinate.",
                         is_required=False,
                     ),
                     V(
                         "NP",
-                        int,
+                        Integer(min=1),
+                        1,
                         info="Number of angular values for a rotation in azimuth coordinate.",
                         is_required=False,
                     ),
@@ -152,35 +227,34 @@ def input_parameters():
                         info="Translating vector of the scatering in momentum space ",
                         is_required=False,
                     ),
-                    V("NK1", int, info="Number of momentum steps for the integration", is_required=False),
+                    V("NK1", Integer(min=1), info="Number of momentum steps for the integration", is_required=False),
                     V(
                         "K2",
                         Range(float),
                         info="Translating vector 2 of the scatering in momentum space ",
                         is_required=False,
                     ),
-                    V("NK2", int, info="Number of momentum steps 2 for the integration", is_required=False),
+                    V("NK2", Integer(min=1), info="Number of momentum steps 2 for the integration", is_required=False),
                     V(
                         "K3",
                         Range(float),
                         info="Translating vector 3 of the scatering in momentum space ",
                         is_required=False,
                     ),
-                    V("NK3", int, info="Number of momentum steps 3 for the integration", is_required=False),
+                    V("NK3", Integer(min=1), info="Number of momentum steps 3 for the integration", is_required=False),
                     V(
                         "K4",
                         Range(float),
                         info="Translating vector 4 of the scatering in momentum space ",
                         is_required=False,
                     ),
-                    V("NK4", int, info="Number of momentum steps 4 for the integration", is_required=False),
+                    V("NK4", Integer(min=1), info="Number of momentum steps 4 for the integration", is_required=False),
                     V("POL_E", DefKeyword("PZ")),
-                    V("SPOL", int, is_required=False),
+                    V("SPOL", int, _electron_spol_default, is_required=False),
                     V("PSPIN", SetOf(float, length=3), is_required=False),
                     V("BETA1", float, is_required=False, info="Begin of the rotation"),
                     V("BETA2", float, is_required=False, info="End of the rotation"),
                     V("ROTAXIS", SetOf(int, length=3), is_required=False, info="Axis of the rotation"),
-                    # expert
                     V(
                         "TYP",
                         Keyword(
@@ -196,9 +270,9 @@ def input_parameters():
                         expert=1,
                         info="Crystal coordinats in splout, xpsrun, or upsrun",
                     ),
-                    V("ISTR", Array(int, length=2), expert=[0, 0], info="beam number (h,k)"),
-                    V("POL0", Array(int, length=3), expert=[0, 0, 0], info="initial pol."),
-                    V("POL0L", Array(int, length=3), expert=[0, 0, 0], info="initial pol. in the laboratory system"),
+                    V("ISTR", SetOf(int, length=2), expert=[0, 0], info="beam number (h,k)"),
+                    V("POL0", SetOf(int, length=3), expert=[0, 0, 0], info="initial pol."),
+                    V("POL0L", SetOf(int, length=3), expert=[0, 0, 0], info="initial pol. in the laboratory system"),
                     V(
                         "Q1",
                         complex,
@@ -228,15 +302,15 @@ def input_parameters():
             Section(
                 "SPEC_STR",
                 [
-                    V("N_LAYDBL", SetOf(int), [10, 10]),
-                    V("NLAT_G_VEC", 57),
-                    V("N_LAYER", 50),
+                    V("N_LAYDBL", SetOf(Integer(min=0), length=2), [10, 10]),
+                    V("NLAT_G_VEC", Integer(min=1), 57),
+                    V("N_LAYER", Integer(min=1), 50),
                     V("SURF_BAR", SetOf(float), [0.25, 0.25]),
                     V("TRANSP_BAR", flag, False),
                 ],
             ),
         ],
-        executable="kkrspec",
+        validators=_validate_angular_scan,
         info="ARPES - Angle resolved photoemission spectroscopy",
     )
 
