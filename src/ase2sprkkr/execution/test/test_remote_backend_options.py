@@ -38,7 +38,7 @@ def test_remote_request_carries_target_executor_options(tmp_path):
         output_file=output_file,
         directory=str(directory),
         stdin=input_file,
-        input_files=(input_file, potential),
+        input_files=(potential,),
     )
     runner = executor.create_run(spec)
     request, _manifest = asyncio.run(runner._prepare_async())
