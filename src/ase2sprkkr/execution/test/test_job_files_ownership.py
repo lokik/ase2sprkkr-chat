@@ -278,3 +278,33 @@ def test_merge_snapshot_preserves_remote_only_cache_baseline_status():
     merged = JobFiles.merge_snapshot(previous, pending)
     assert merged.caches[0].availability_state == "failed"
     assert merged.caches[0].availability_message == "remote scan failed"
+
+def test_capture_failure_does_not_change_individual_file_availability(monkeypatch):
+    from types import SimpleNamespace
+    from ase2sprkkr.execution import manager as manager_module
+    from ase2sprkkr.execution.base import FailurePhase, RunState
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+
+    manifest = FileManifest(outputs=(
+        FileEntry("/tmp/untouched", "/remote/untouched", "pending"),
+    ))
+
+    class Store:
+        def terminal_record(self, record):
+            return None
+
+    manager = manager_module.ExecutionManager(Store())
+    record = SimpleNamespace(files=manifest, job_files=SimpleNamespace(
+        capture=lambda files: (_ for _ in ()).throw(OSError("capture failed")),
+    ))
+    result = {}
+
+    def transition(record, **kwargs):
+        result.update(kwargs)
+        return kwargs
+
+    monkeypatch.setattr(manager, "transition", transition)
+    manager.complete(record, state=RunState.FINISHED, files_available=True)
+    assert result["state"] == RunState.FAILED
+    assert result["failure_phase"] == FailurePhase.FILES
+    assert result["files"].outputs[0].availability_state == "pending"
