@@ -374,3 +374,38 @@ def test_discard_capture_keeps_file_delivery_facts(tmp_path):
     assert updated.captured_at is None
     assert updated.input_versions == updated.output_versions == ()
     assert updated.outputs == original.outputs
+
+def test_failed_atomic_completion_discards_captured_versions(tmp_path):
+    from dataclasses import replace
+    from ase2sprkkr.execution.base import RunState, FailurePhase
+    from ase2sprkkr.execution.manager import ExecutionManager
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+
+    path = str(tmp_path / "result")
+    entry = FileEntry(path, "/remote/result", availability_state="pending")
+    base = ExecutionManager().new_record(
+        task="SCF", directory=tmp_path,
+        files=FileManifest(outputs=(entry,)),
+    )
+    latest = replace(
+        base, state=RunState.POSTPROCESSING,
+        files=base.files.with_file_availability(
+            path, "failed", "transfer failed", remote_path="/remote/result",
+        ),
+    )
+    captured = replace(
+        base.files.with_file_availability(
+            path, "available", remote_path="/remote/result",
+        ),
+        captured_at="2026-10-22T00:00:00+00:00",
+    )
+    completed = latest.with_transition(
+        state=RunState.FINISHED, files=captured,
+        validate_completed_files=True,
+    )
+    assert completed.state == RunState.FAILED
+    assert completed.failure_phase == FailurePhase.DOWNLOAD
+    assert completed.files.captured_at is None
+    assert completed.files.input_versions == ()
+    assert completed.files.output_versions == ()
+    assert completed.files.outputs[0].availability_state == "failed"
