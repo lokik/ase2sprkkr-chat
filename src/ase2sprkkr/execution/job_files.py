@@ -16,6 +16,10 @@ from .file_history import (
 )
 
 
+class HistoricalFileMismatchError(OSError):
+    """Restored file contents differ from the captured digest."""
+
+
 class JobFiles:
     """Operate on one run's manifest without duplicating its persistent state."""
 
@@ -113,7 +117,7 @@ class JobFiles:
 
         return store.update(self.record, update)
 
-    def retrieve(self, store, executor=None, *, mismatch_error=OSError):
+    def retrieve(self, store, executor=None):
         """Restore historical files without modifying the terminal run outcome."""
         record = self.record
         if not record.state.is_terminal:
@@ -147,7 +151,7 @@ class JobFiles:
                             f"Historical file was not retrieved: {path}"
                         )
                     if file_digest(staged) != version.digest:
-                        raise mismatch_error(
+                        raise HistoricalFileMismatchError(
                             f"Historical result files have been overwritten: {path}"
                         )
                     os.replace(staged, path)
