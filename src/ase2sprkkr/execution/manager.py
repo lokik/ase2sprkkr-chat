@@ -146,7 +146,12 @@ class ExecutionManager:
 
             executor = self.executors.for_endpoint(record.execution.endpoint)
             if record.submission_phase == SubmissionPhase.PREPARING:
-                if not executor.abandoned_preparation_is_safe():
+                try:
+                    safe = executor.abandoned_preparation_is_safe()
+                except (NotImplementedError, OSError, subprocess.CalledProcessError):
+                    # A failed check cannot prove that preparation stopped.
+                    return record
+                if safe is not True:
                     return record
                 return self.store.update(record, mark_absent)
             try:

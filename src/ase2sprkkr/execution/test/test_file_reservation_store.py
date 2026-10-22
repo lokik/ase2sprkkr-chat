@@ -1,6 +1,7 @@
 """Atomic file namespace reservation for persistent execution."""
 
 from dataclasses import replace
+from subprocess import CalledProcessError
 from types import SimpleNamespace
 
 import pytest
@@ -312,6 +313,38 @@ def test_abandoned_preparing_requires_executor_safety(tmp_path, monkeypatch, saf
         assert manager.store.get(first.id) == first
         assert second.state == RunState.NEW
     assert calls == ["preparing"]
+
+
+@pytest.mark.parametrize("result", (
+    NotImplementedError("unsupported"),
+    OSError("transient filesystem failure"),
+    CalledProcessError(1, ("ssh", "check")),
+    "unconfirmed",
+))
+def test_uncertain_abandoned_preparation_keeps_file_reservation(
+    tmp_path, monkeypatch, result,
+):
+    """Without positive safety evidence another job must not take the files."""
+    manager = ExecutionManager(RunStore(tmp_path / "runs"), submitting_grace=0)
+    first = manager.reserve(manager.new_record(task="SCF", directory=tmp_path))
+    second = manager.new_record(task="SCF", directory=tmp_path)
+
+    def preparation_is_safe():
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    monkeypatch.setattr(
+        manager.executors, "for_endpoint",
+        lambda endpoint: SimpleNamespace(
+            abandoned_preparation_is_safe=preparation_is_safe,
+        ),
+    )
+    assert manager.recover_submitting(first) == first
+    with pytest.raises(DuplicateSubmissionError):
+        manager.reserve(second)
+    assert manager.store.get(first.id) == first
+    assert second.state == RunState.NEW
 
 
 @pytest.mark.parametrize("phase", (SubmissionPhase.PREPARING, SubmissionPhase.DISPATCHING))
