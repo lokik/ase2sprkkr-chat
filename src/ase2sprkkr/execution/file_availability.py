@@ -15,22 +15,20 @@ def prepare_local_files(spec, *, output_file=None, error_file=None,
                         preserve_open_streams=False):
     """Protect inputs and caches, then clear declared outputs before launch."""
     from .base import file_path
-    directory = spec.directory
+    from .run_model import FileManifest
 
-    def paths(values):
-        return tuple(
-            path for value in values
-            if (path := file_path(value, directory)) is not None
-        )
-
-    protected = paths((
-        spec.input_file, spec.stdin, *spec.input_files, *spec.cache_files,
-    ))
-    streams = paths((
-        spec.output_file if output_file is None else output_file,
-        spec.error_file if error_file is None else error_file,
-    ))
-    declared = paths(spec.output_files)
+    files = FileManifest.from_spec(spec)
+    # Use the same canonical declarations as staging and run persistence.
+    protected = (
+        *files.input_files,
+        *(entry.local_path for entry in files.caches),
+    )
+    output = files.output_file if output_file is None else file_path(output_file, spec.directory)
+    error = (
+        None if files.stderr is None else files.stderr.local_path
+    ) if error_file is None else file_path(error_file, spec.directory)
+    streams = tuple(path for path in (output, error) if path is not None)
+    declared = tuple(entry.local_path for entry in files.outputs)
     validate_output_collisions((*declared, *streams), protected=protected)
     # Never unlink streams already open: that would orphan their descriptors.
     outputs = declared if preserve_open_streams else (*declared, *streams)

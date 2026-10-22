@@ -684,3 +684,39 @@ def test_collect_does_not_mark_untouched_streams_available(tmp_path):
     )
     assert error is None
     assert updated.stdout.availability_state == "pending"
+
+
+def test_preparation_uses_manifest_paths_and_effective_streams(tmp_path):
+    """Relative stdin, extra inputs and caches survive wildcard cleanup."""
+    protected = ("main.in", "stdin.in", "extra.in", "cache.pot")
+    removed = ("obsolete.dat", "redirect.out", "redirect.err")
+    untouched = ("original.out", "original.err")
+    for name in (*protected, *removed, *untouched):
+        (tmp_path / name).write_text(name)
+    spec = ExecutionSpec(
+        argv=(), directory=str(tmp_path), input_file="main.in", stdin="stdin.in",
+        input_files=("extra.in",), cache_files=("cache.pot",),
+        output_files=("*.dat",), output_file="original.out", error_file="original.err",
+    )
+
+    prepare_local_files(spec, output_file="redirect.out", error_file="redirect.err")
+
+    assert all((tmp_path / name).read_text() == name for name in (*protected, *untouched))
+    assert all(not (tmp_path / name).exists() for name in removed)
+
+
+def test_preparation_preserves_open_streams_inside_output_wildcard(tmp_path):
+    """Keep opened stdout/stderr while clearing other matching old outputs."""
+    for name in ("stdout.log", "stderr.log", "obsolete.log"):
+        (tmp_path / name).write_text(name)
+    spec = ExecutionSpec(
+        argv=(), directory=str(tmp_path), input_file=None,
+        output_file="stdout.log", error_file="stderr.log",
+        output_files=("*.log",),
+    )
+
+    prepare_local_files(spec, preserve_open_streams=True)
+
+    assert (tmp_path / "stdout.log").read_text() == "stdout.log"
+    assert (tmp_path / "stderr.log").read_text() == "stderr.log"
+    assert not (tmp_path / "obsolete.log").exists()
