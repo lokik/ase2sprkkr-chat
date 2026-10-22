@@ -216,9 +216,12 @@ class FileManifest:
         # the primary file), and stdout/stderr may share a destination. Other
         # declaration collisions are errors, not silent deduplication.
         input_paths = {path for path, _required in inputs}
-        if input_paths & output_paths:
+        stdin = file_path(getattr(spec, "stdin", None), directory)
+        read_paths = input_paths | ({stdin} if stdin is not None else set())
+        write_paths = output_paths | ({p for p in (stdout, stderr) if p is not None})
+        if read_paths & write_paths:
             raise ValueError("Duplicate file declaration: input/output collision")
-        cache_paths = []
+        caches = []
         seen_caches = set()
         for value in getattr(spec, "cache_files", ()):
             path = file_path(value, directory)
@@ -227,15 +230,17 @@ class FileManifest:
             if path in seen_caches:
                 raise ValueError(f"Duplicate file declaration: cache {path}")
             seen_caches.add(path)
-            if path in input_paths or path in output_paths or path in (stdout, stderr):
+            if path in read_paths or path in write_paths:
                 raise ValueError(f"Duplicate file declaration: cache collision {path}")
-            cache_paths.append(path)
+            caches.append(CacheEntry(FileEntry(
+                local_path=path, optional=getattr(value, "optional", False),
+            )))
         return cls(
             inputs=tuple(FileEntry(local_path=path, optional=not required)
                          for path, required in inputs),
             outputs=tuple(FileEntry(local_path=path, optional=not required)
                           for path, required in outputs),
-            caches=tuple(CacheEntry(FileEntry(local_path=x)) for x in cache_paths),
+            caches=tuple(caches),
             stdout=None if stdout is None else FileEntry(local_path=stdout),
             stderr=None if stderr is None else FileEntry(local_path=stderr),
         ).initialize_availability()
