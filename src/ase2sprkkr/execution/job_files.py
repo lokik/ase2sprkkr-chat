@@ -60,7 +60,27 @@ class JobFiles:
             if requested != current:
                 raise ValueError("Cannot replace a captured file manifest")
             return current
-        return requested
+        # A concurrently persisted file delivery must not be reset to
+        # pending by an older backend status assembled before that delivery.
+        previous = {
+            (entry.local_path, entry.remote_path): entry
+            for entry in current.files
+        }
+
+        def preserve(entry):
+            if entry is None or entry.availability_state != "pending":
+                return entry
+            prior = previous.get((entry.local_path, entry.remote_path))
+            if prior is None or prior.availability_state not in (
+                "available", "failed", "skipped",
+            ):
+                return entry
+            return replace(
+                entry, availability_state=prior.availability_state,
+                availability_message=prior.availability_message,
+            )
+
+        return requested._map_files(preserve)
 
     @staticmethod
     def merge_terminal_files(previous, received):
