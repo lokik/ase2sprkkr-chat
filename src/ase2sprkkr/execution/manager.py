@@ -17,7 +17,7 @@ from uuid import uuid4
 
 
 from ..common.file_locks import FileLock
-from ..common.file_versions import FileState, file_digest
+from ..common.file_versions import FileState
 from ._durability import durable_mkdir, durable_write_json, sync_file
 from .base import (
     Executor,
@@ -27,13 +27,13 @@ from .base import (
     SubmissionNotStarted,
 )
 from .job_files import JobFiles
-from .file_history import file_is_current, missing_result_files
+from .file_history import file_is_current
 from .endpoint import ExecutorEndpoint, endpoint_for_executor
 from .pool import Executors
 from .projects import _project_id
 from .postprocessing import CalculationRun
 from .run_model import (
-    FileAvailabilityState, Execution, WorkingDirectory, FileManifest,
+    Execution, WorkingDirectory, FileManifest,
 )
 from .transport import has_file_magic
 
