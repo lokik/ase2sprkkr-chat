@@ -448,10 +448,10 @@ class FileManifest:
         A stream that was not recorded remains absent.
         """
         changes = {}
-        for name, remote in (("stdout", stdout), ("stderr", stderr)):
-            current = getattr(self, name)
-            if remote and current is not None:
-                changes[name] = replace(current, remote_path=remote)
+        if stdout and self.stdout is not None and stdout != self.stdout.remote_path:
+            changes["stdout"] = replace(self.stdout, remote_path=stdout)
+        if stderr and self.stderr is not None and stderr != self.stderr.remote_path:
+            changes["stderr"] = replace(self.stderr, remote_path=stderr)
         return replace(self, **changes) if changes else self
 
     def initialize_availability(self):
@@ -462,12 +462,17 @@ class FileManifest:
         )
 
     def _map_files(self, transform):
+        """Apply a delivery-state transformation without replacing unchanged facts."""
+        stdout = None if self.stdout is None else transform(self.stdout)
+        stderr = None if self.stderr is None else transform(self.stderr)
+        outputs = tuple(transform(entry) for entry in self.outputs)
+        caches = tuple(transform(entry) for entry in self.caches)
+        if (stdout == self.stdout and stderr == self.stderr
+                and outputs == self.outputs and caches == self.caches):
+            return self
         return replace(
-            self,
-            stdout=None if self.stdout is None else transform(self.stdout),
-            stderr=None if self.stderr is None else transform(self.stderr),
-            outputs=tuple(transform(x) for x in self.outputs),
-            caches=tuple(transform(x) for x in self.caches),
+            self, stdout=stdout, stderr=stderr,
+            outputs=outputs, caches=caches,
         )
 
     def retry_failed_downloads(self):
@@ -482,15 +487,6 @@ class FileManifest:
             ) if item.availability_state == "failed" else item
         )
 
-    def with_file_availability(
-        self, local_path, state, message=None, *,
-        remote_path=None, kind=None,
-    ):
-        """Update an existing file only; never change manifest membership."""
-        return self._with_file_availability(
-            local_path, state, message, remote_path=remote_path, kind=kind,
-        )
-
     def with_added_file(self, entry: FileEntry, *, kind="output"):
         """Explicitly register a new output/cache file.
 
@@ -501,17 +497,17 @@ class FileManifest:
             raise TypeError("entry must be a FileEntry")
         if entry.local_path is None:
             raise ValueError("A registered file requires a local path")
-        return self._with_file_availability(
+        return self.with_file_availability(
             entry.local_path, entry.availability_state,
             entry.availability_message, remote_path=entry.remote_path,
-            kind=kind, source=entry.source, allow_new=True,
+            kind=kind, source=entry.source, _allow_new=True,
         )
 
-    def _with_file_availability(
+    def with_file_availability(
         self, local_path, state, message=None, *,
-        remote_path=None, kind=None, source=None, allow_new=False,
+        remote_path=None, kind=None, source=None, _allow_new=False,
     ):
-        """Update one file identity, not every role sharing its local path.
+        """Update one declared file identity; registration alone may add members.
 
         A shared stdout/stderr destination is one output identity when both
         entries name the same remote file. Ambiguous output/cache destinations
@@ -550,15 +546,19 @@ class FileManifest:
                     )
                 return entry
 
+            stdout = update(self.stdout, "output")
+            stderr = update(self.stderr, "output")
+            outputs = tuple(update(entry, "output") for entry in self.outputs)
+            caches = tuple(update(entry, "cache") for entry in self.caches)
+            if (stdout == self.stdout and stderr == self.stderr
+                    and outputs == self.outputs and caches == self.caches):
+                return self
             return replace(
-                self,
-                stdout=update(self.stdout, "output"),
-                stderr=update(self.stderr, "output"),
-                outputs=tuple(update(entry, "output") for entry in self.outputs),
-                caches=tuple(update(entry, "cache") for entry in self.caches),
+                self, stdout=stdout, stderr=stderr,
+                outputs=outputs, caches=caches,
             )
 
-        if not allow_new:
+        if not _allow_new:
             raise KeyError(f"File is not declared in manifest: {path}")
         file = FileEntry(
             local_path=path, remote_path=remote_path,

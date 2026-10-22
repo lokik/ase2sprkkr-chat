@@ -223,10 +223,13 @@ class JobFiles:
         state = FileAvailabilityState(state)
 
         def update(latest):
+            files = latest.files.with_file_availability(path, state.value, message)
+            if files is latest.files:
+                return latest
             return replace(
                 latest,
                 updated_at=datetime.now(timezone.utc).isoformat(),
-                files=latest.files.with_file_availability(path, state.value, message),
+                files=files,
             )
 
         return store.update(self.record, update)
