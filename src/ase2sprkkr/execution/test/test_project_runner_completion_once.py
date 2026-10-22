@@ -310,7 +310,6 @@ def test_persistent_reservation_rejects_duplicate_before_submitting(tmp_path):
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
     record = manager.store.save(manager.new_record(task="DOS", directory=tmp_path))
     persistence = RunPersistence(manager, _Executor(), record)
-    published = []
     runner = SimpleNamespace(job_files=JobFiles(record.files))
     persistence.before_submit(runner)
     assert persistence.record.state is RunState.SUBMITTING
