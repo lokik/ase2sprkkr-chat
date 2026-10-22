@@ -146,7 +146,7 @@ def test_captured_completion_respects_newer_failed_file_state(tmp_path, monkeypa
 
     version = FileVersion(path=path, fingerprint=None)
 
-    def capture(self, manifest=None):
+    def capture(manifest):
         return replace(
             manifest, captured_at="2026-10-22T00:00:00+00:00",
             input_versions=(version,), output_versions=(version,),
