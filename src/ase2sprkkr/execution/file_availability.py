@@ -32,11 +32,10 @@ def prepare_local_files(spec, *, output_file=None, error_file=None,
     ))
     declared = paths(spec.output_files)
     validate_output_collisions((*declared, *streams), protected=protected)
-    if preserve_open_streams:
-        # Unlinking streams already open would orphan the output descriptors.
-        clear_declared_outputs(declared, protected=(*protected, *streams))
-    else:
-        clear_declared_outputs((*declared, *streams), protected=protected)
+    # Never unlink streams already open: that would orphan their descriptors.
+    outputs = declared if preserve_open_streams else (*declared, *streams)
+    protected_paths = (*protected, *streams) if preserve_open_streams else protected
+    clear_declared_outputs(outputs, protected=protected_paths)
 
 
 
