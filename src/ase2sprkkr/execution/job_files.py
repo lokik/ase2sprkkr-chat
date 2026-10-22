@@ -285,6 +285,10 @@ class JobFiles:
                             record, (path,),
                             destinations={path: os.fspath(staged)},
                         )
+                        if staged.is_symlink():
+                            raise OSError(
+                                f"Historical restore supplied a symlink: {staged}"
+                            )
                         if not staged.is_file():
                             raise FileNotFoundError(
                                 f"Historical file was not retrieved: {path}"
