@@ -87,12 +87,16 @@ def test_callback_failure_does_not_change_local_execution_state(tmp_path):
 
 
 class _UnknownRunner:
+    callback = None
     result = object()
     backend_id = None
     state = RunState.NEW
     exception = None
     failure_phase = None
     failure_message = None
+
+    def prepare_submission(self):
+        return None
 
     def submit(self):
         self.state = RunState.UNKNOWN
@@ -123,12 +127,16 @@ def test_unknown_raw_state_is_preserved_and_not_postprocessed():
 
 
 class _NotStartedRunner:
+    callback = None
     backend_id = None
     result = None
     state = RunState.NEW
     exception = None
     failure_phase = None
     failure_message = None
+
+    def prepare_submission(self):
+        return None
 
     def submit(self):
         raise SubmissionNotStarted("input staging failed")
