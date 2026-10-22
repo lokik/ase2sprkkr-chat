@@ -1,44 +1,143 @@
-"""Containers for configuration parameters of SPR-KKR task.
-
-These configuration parameters are supplied to SPR-KKR executables as input files.
-The containers are also the objects, that take care about executing the SPR-KKR
-executables.
-"""
+"""Containers for configuration parameters of SPR-KKR tasks."""
 
 from __future__ import annotations
 
-import os
 import io
-import pkgutil
-import importlib
-from ..outputs.task_result import KkrOutputReader
-from . import definitions
-from ..sprkkr.configuration import ConfigurationFile, ConfigurationSection
+from collections.abc import Mapping
+from . import definitions, tasks
+from .task_definition import InputParametersRegistry, TaskRegistry
+from ..sprkkr.configuration import (
+    ConfigurationFile,
+    ConfigurationSection,
+    ConfigurationValue,
+)
+from ..common.configuration_containers import BaseConfigurationContainer
+from ..common.repeated_configuration_containers import RepeatedConfigurationContainer
 from ..common.decorators import cached_class_property
-from typing import Union
-from ..configuration import config, mpi_runner
 from ..potentials.potentials import Potential
-from ..common.doc import process_input_parameters_definition
-import warnings
+
+class _LazyInputParametersDefinitions(Mapping):
+    """Read-only compatibility mapping that materializes only requested schemas.
+
+    User-installed definitions can be malformed or require optional packages.
+    Merely requesting a different definition must not import those modules.
+    """
+
+    def __init__(self, registry):
+        self._registry = registry
+
+    def __getitem__(self, name):
+        return self._registry[name]
+
+    def __iter__(self):
+        return iter(self._registry.names())
+
+    def __len__(self):
+        return len(self._registry.names())
+
+    def __contains__(self, name):
+        return name in self._registry
 
 
 class InputSection(ConfigurationSection):
-    """Input parameters sections has nothing special, yet."""
+    """Input parameters sections have nothing special yet."""
+
+
+class InputValue(ConfigurationValue):
+    """Input-file option supporting a default specific to one parameter instance."""
+
+    @property
+    def default_value(self):
+        """Return an instance-specific override of the definition default."""
+        if hasattr(self, "_default_override"):
+            return self._default_override
+        return super().default_value
+
+    def set_default(self, value):
+        """Override this instance's definition default without setting a value."""
+        if self._definition.is_generated:
+            raise TypeError("Generated options cannot have instance defaults")
+        if self._definition.default_value is None:
+            raise ValueError(
+                "An instance default can only override an existing definition default"
+            )
+        self._default_override = None if value is None else self._pack_value(value)
+
+    def clear_default(self):
+        """Restore the default supplied by the input-parameter definition."""
+        self.__dict__.pop("_default_override", None)
 
 
 class InputParameters(ConfigurationFile):
-    """It holds the configuration values for a SPR-KKR task and run the task
+    """Concrete values of an SPR-KKR input file."""
 
-    This class is a ConfigurationContainer, thus, it holds the configuration values
-    for the task. Moreover, according to its definition, it can run the task -
-    execute the executable with proper parameters - and instantiate the result class,
-    which then parse the output of the task.
-    """
+    input_parameters_registry = InputParametersRegistry(definitions)
+    task_registry = TaskRegistry(input_parameters_registry, tasks)
+
+    def __init__(
+        self,
+        definition,
+        inputfile=None,
+        outputfile=False,
+        *,
+        requested_task_name=None,
+    ):
+        super().__init__(definition)
+        self._requested_task_name = (
+            None
+            if requested_task_name is None
+            else str(requested_task_name).upper()
+        )
+        self._inputfile = inputfile
+        self._outputfile = inputfile if outputfile is False else outputfile
+
+    @property
+    def task_name(self):
+        """Return the ASE2SPRKKR task represented by the current values."""
+        name = self._definition.task_definition_name(self)
+        if name is None:
+            return None
+        return str(name).strip().upper()
+
+    @property
+    def task_definition(self):
+        """Return the task represented by the current values, if any."""
+        name = self.task_name
+        return None if name is None else self.task_registry[name]
+
+    def task_definition_required(self):
+        """Return the task represented by the current values, failing if detached."""
+        task = self.task_definition
+        if task is None:
+            raise RuntimeError(
+                "These input parameters are not associated with an SPR-KKR task definition"
+            )
+        expected = self.input_parameters_registry.definition_for_task(task)
+        if expected is not self._definition:
+            raise RuntimeError(
+                f"Task {task.name} uses a different input schema; "
+                "use change_task() to switch schemas explicitly."
+            )
+        return task
+
+    @property
+    def requested_task_name(self):
+        """Task requested when these parameters were created or last retargeted.
+
+        Shared input schemas may use this only as context for callable defaults.
+        Concrete parameter values remain authoritative for :attr:`task_name`.
+        """
+        return self._requested_task_name
+
+    @property
+    def definition_name(self):
+        """Return the normalized registered input-parameter schema name."""
+        return self.input_parameters_registry.normalize_name(self._definition.name)
 
     @property
     def potential(self):
         pot = getattr(self, "_potential", None)
-        potfil = self.CONTROL.POTFIL.result()
+        potfil = self.CONTROL.POTFIL.result
         if pot:
             if potfil == pot[0]:
                 return pot[1]
@@ -46,293 +145,153 @@ class InputParameters(ConfigurationFile):
         self._potential = potfil, out
         return out
 
-    def resolve_executable_suffix(self, suffix: Union[str, bool]):
-        """ " Return the suffix, that is appended after the name of SPR-KKR executable.
-
-        Parameters
-        ----------
-        suffix
-          - If str is given, it is left as is.
-          - If True, return the default value:
-                      config.executable.suffix
-                     (content of SPRKKR_EXECUTABLE_SUFFIX env variable
-                      or a user_defined_value)
-          - If False, return ''
-        """
-        if suffix is False:
-            return ""
-        if suffix is True:
-            return config.executables.suffix()
-        return suffix
-
-    def __init__(self, definition, inputfile=None, outputfile=False):
-        super().__init__(definition)
-        self._inputfile = inputfile
-        self._outputfile = inputfile if outputfile is False else outputfile
-
-    @property
-    def task_name(self):
-        """Return the task name, as defined in the definition of the parameters
-        (see InputParametersDefinition class)"""
-        return self._definition.name
-
-    def is_mpi(self, mpi=True):
-        """Will be this task (the task described by this input parameters)
-        runned using mpi?
-
-        Parameters
-        ----------
-        mpi: list or str or bool
-          Optional parameter. If False is given, return False regardless the type of the
-          task, otherwise it is ignored. See InputParameters.mpi_runner for the explanation of the
-          parameter.
-
-        Return
-        ------
-        is_mpi: bool
-          Will be this task runned using mpi?
-        """
-        return mpi and self._definition.mpi
-
-    def run_process(
-        self,
-        calculator,
-        input_file,
-        output_file,
-        directory=".",
-        print_output=None,
-        read_callback=None,
-        run_async=False,
-        executable_suffix=None,
-        executable_dir=None,
-        mpi=None,
-        callback=None,
-        gdb=False,
-    ):
-        """
-        Run the process that calculate the task specified by this input paameters
-
-        calculator: ase2sprkkr.sprkkr.calculator.SPRKKR
-          Calculator, used for running the task. Various configurations are readed from them.
-
-        directory: str
-          Where to run the calculation
-
-        input_file: file
-          File, where the input parameters for the task are stored.
-
-        output_file: file
-          File, where the output will be writed. It should be opened for writing (in binary mode)
-
-        print_output: bool or str
-          Print the output to the stdout, too? String value 'info' prints only selected infromations
-          (depending on the task runned)
-
-        read_callback: callable
-          The function will be called for each line
-
-        run_async: bool
-          Whether directly execute the process, or return the coroutine to run it
-
-        executable_suffix: str or None
-          Postfix, appended to the name of the called executable (sometimes, SPRKKR executables are
-          compiled so that the resulting executables has postfixies)
-
-        callback: Optional[callable]
-          A function, that will be called with the result object, when the calculation is finished.
-
-        mpi: list or str or bool
-          Run the task using mpi? See :func:`ase2sprkkr.config.mpi_runner` for the possible values.
-
-        Return
-        ------
-        out: mixed
-          The result of ase2sprkkr.common.process_output_reader.ProcessOutputParser.run() method: the
-          parsed output of the runned task.
-
-        """
-        print_output = calculator.value_or_default("print_output", print_output)
-        executable_suffix = self.resolve_executable_suffix(executable_suffix)
-        executable_suffix = calculator.value_or_default("executable_suffix", executable_suffix)
-        mpi = calculator.value_or_default("mpi", mpi)
-
-        d = self._definition
-        executable = d.executable
-        executable += executable_suffix
-        if executable_dir is not False:
-            if executable_dir is None:
-                executable_dir = config.executables.dir()
-            if executable_dir:
-                executable = os.path.join(executable_dir, executable)
-
-        runner = self.process_runner(calculator, print_output, read_callback, directory)
-
-        try:
-
-            def cleanup(out):
-                input_file.close()
-                if callback:
-                    callback(out)
-
-            mpi = mpi_runner(mpi) if self._definition.mpi else None
-            if mpi:
-                fname = input_file.name
-                # max length of the argument in SPRKKR
-                if len(fname) > 80:
-                    fname = os.path.relpath(fname, directory)
-                executable = mpi + [executable + "MPI", fname]
-                stdin = None
-            else:
-                executable = [executable]
-                stdin = input_file
-            if gdb:
-                stdin = None
-                if mpi:
-                    print(f"run {input_file.name}")
-                    executable = executable[:-1]
-                else:
-                    print(f"run <{input_file.name}")
-                executable = ["gdb"] + executable
-            out = runner.create_process(
-                executable, output_file, stdin=stdin, input_file=input_file.name, callback=cleanup
+    @staticmethod
+    def _has_instance_defaults(source):
+        if isinstance(source, InputValue):
+            return hasattr(source, "_default_override")
+        if isinstance(source, RepeatedConfigurationContainer):
+            return any(
+                InputParameters._has_instance_defaults(member)
+                for member in source._raw_values()
             )
-            if not run_async:
-                out = out.run()
-            return out
-        except FileNotFoundError as e:
-            add = (
-                "Cannot find SPRKKR executable. Maybe, ase2sprkkr.config.executable.suffix "
-                "variable should be set (or the SPRKKR_EXECUTABLE_SUFFIX environment variable)?\n"
+        if isinstance(source, BaseConfigurationContainer):
+            return any(
+                InputParameters._has_instance_defaults(member)
+                for member in source._members.values()
             )
-            if mpi:
-                add += (
-                    "Also, pleas check that the MPI is functional on your machine, or explicitly disable "
-                    "MPI with mpi=False argument of calculate method (or set ase2sprkkr.config.running.mpi = False)\n\n"
+        return False
+
+    @staticmethod
+    def _copy_instance_defaults(source, target, copy_values):
+        if isinstance(source, RepeatedConfigurationContainer):
+            for key, source_member in source._raw_items():
+                try:
+                    target_member = target[key]
+                except (IndexError, KeyError, TypeError):
+                    if not InputParameters._has_instance_defaults(source_member):
+                        continue
+                    if isinstance(target._values, list):
+                        while len(target._values) <= key:
+                            target._add()
+                    else:
+                        target._add(key)
+                    target_member = target[key]
+                InputParameters._copy_instance_defaults(
+                    source_member, target_member, copy_values
                 )
-            e.strerror = add + "SPRKKR cannot be run due to the following error: \n" + e.strerror
-            raise
+            return
 
-    def process_runner(self, calculator=None, print_output=False, read_callback=None, directory=None):
-        """Return the result readed: the class that parse the output
-        of the runned task
+        if isinstance(source, BaseConfigurationContainer):
+            for name, source_member in source._members.items():
+                target_member = target._members.get(name)
+                if target_member is None:
+                    continue
+                InputParameters._copy_instance_defaults(
+                    source_member, target_member, copy_values
+                )
+            return
 
-        Parameters
-        ----------
+        if not isinstance(source, InputValue):
+            return
+        if not hasattr(source, "_default_override"):
+            return
+        value = source._default_override
+        if copy_values and value is not None:
+            value = source._definition.copy_value(value, all_values=True)
+        target._default_override = value
 
-        calculator:
-          Calculator, which will be attached to the resulting class
-          for ruther processing the results.
+    def copy(self, copy_values: bool = False):
+        """Copy parameters, including instance-specific defaults."""
+        values = self.as_dict(copy=copy_values, only_changed="explicit")
+        out = self.__class__(
+            definition=self._definition,
+            requested_task_name=self.requested_task_name,
+        )
+        out.set(values, unknown="add", retain_invalid="all", report_invalid="ignore")
+        self._copy_instance_defaults(self, out, copy_values)
+        return out
 
-        print_output: bool or str
-          Whether to print output to the stdout.
-          'info' means only print a short summary
-        """
-        cls = self._definition.result_reader
+    def uses_separate_single_site_contour(self):
+        switches = (
+            ("ENERGY", "SPLITSS"),
+            ("CONTROL", "SPLITSS"),
+            ("CONTROL", "FSOHFF"),
+        )
+        for section, name in switches:
+            try:
+                if self[section][name]():
+                    return True
+            except (KeyError, AttributeError):
+                pass
+        task = self.task_definition
+        return task is not None and task.name == "COMPTON"
 
-        if not directory and calculator and calculator.directory:
-            directory = calculator.directory
+    def _task_files(self, directory, kind):
+        task = self.task_definition_required()
+        return self.input_parameters_registry.files_for_task(
+            task, self, directory, kind
+        )
 
-        if cls is None:
-            task = self.TASK.TASK().lower()
-            cls = KkrOutputReader.class_for_task(task)
-        return cls(self, calculator, directory, print_output, read_callback)
+    def input_files(self, directory):
+        return self._task_files(directory, "input")
+
+    def output_files(self, directory):
+        return self._task_files(directory, "output")
+
+    def cache_files(self, directory):
+        return self._task_files(directory, "cache")
+
+    def output_reader(self, calculator=None, print_output=False, directory=None):
+        """Create the reader for the effective task represented by these values."""
+        return self.task_definition_required().output_reader(
+            input_parameters=self,
+            calculator=calculator,
+            print_output=print_output,
+            directory=directory,
+        )
 
     def read_output_from_file(self, filename, directory=None):
-        """Read output of a previously runned task from a file and parse it in a same
-        way, as the process would be runned again.
-
-        filename
-          Filename, from which the result will be read
-
-        directory
-          A directory, to which are related the paths in the output
-          Default None means the directory, where the file is
-        """
-        directory = directory or os.path.dirname(filename)
-        return self.process_runner(directory=directory).read_from_file(filename)
-
-    def executable_params(self, directory=None):
-        """
-        Return
-        ------
-        ([executable], stdin, stdout) params for process.Popen
-        """
+        """Read a completed output through the effective task's registered reader."""
+        return self.task_definition_required().read_output_from_file(
+            filename,
+            input_parameters=self,
+            directory=directory,
+        )
 
     def __str__(self):
         return f"<Configuration container {self._get_path()}>"
 
     def set_option(self, name, value):
-        for i in self._members:
-            if name in i:
-                self._members[i][name] = value
-        else:
-            raise KeyError("No option with name {} in any of the members".format(name))
-
-    @cached_class_property
-    def definition_modules():
-        names = (i for i in pkgutil.iter_modules(definitions.__path__))
-        im = importlib.import_module
-        modules = (im(".definitions." + i.name, __package__) for i in names)
-        return {m.__name__.rsplit(".", 1)[-1].upper(): m for m in modules if hasattr(m, "input_parameters")}
-
-    _definitions = {}
+        try:
+            option = self.get_member(name, is_option=True)
+        except KeyError:
+            raise KeyError(f"No option with name {name} in any of the members") from None
+        option.set(value)
 
     @classmethod
     def definition(cls, name):
-        name = name.upper()
-        if name not in cls._definitions:
-            module = cls.definition_modules[name]
-            ip = module.input_parameters
-            if isinstance(ip, ipdefs.InputParametersDefinition):
-                warnings.warn(
-                    f"In the module '{module.__name__}' in file '{module.__file__}' "
-                    "is an InputParametersDefinition object directly defined. "
-                    "Consider to enclose its definition in a lambda function to "
-                    "speed up ase2sprkkr loading."
-                )
-            else:
-                try:
-                    ip = ip()
-                except Exception as e:
-                    raise RuntimeError(
-                        f"Can not load file {module.__name__} in {module.__file__} due to the following error:\n {e}"
-                    ) from e
-            cls._definitions[name] = ip
-            process_input_parameters_definition(module, ip)
-        return cls._definitions[name]
+        normalized = cls.input_parameters_registry.normalize_name(name)
+        if normalized in cls.input_parameters_registry:
+            return cls.input_parameters_registry[normalized]
+        task = cls.task_registry[normalized]
+        return cls.input_parameters_registry.definition_for_task(task)
 
     @cached_class_property
-    def definitions():
-        # user = os.path.join(platformdirs.user_config_dir('ase2sprkkr', 'ase2sprkkr'), 'input_parameters')
-        ip = InputParameters
-        return {n: ip.definition(n) for n in ip.definition_modules}
+    def definitions(cls):
+        return _LazyInputParametersDefinitions(cls.input_parameters_registry)
 
     @classmethod
-    def is_it_an_input_parameters_name(cls, name):
-        name = name.upper()
-        return name if name in cls.definition_modules else False
+    def is_task_name(cls, name):
+        """Return the normalized task name when *name* identifies a task."""
+        name = cls.task_registry.normalize_name(name)
+        return name if name in cls.task_registry else False
 
     @classmethod
     def create_input_parameters(cls, arg):
-        """
-        Create input_parameters object
-
-        Parameters
-        ----------
-        arg: str or InputParameters
-          If an InputParameters object is given, it is returned as is.
-          If a string is given, it is interpreted either as a filename
-          (from which the parameters are read) or the task name, for
-          which the default parameters are used
-
-        Return
-        ------
-        input_parameters: InputParameters
-        """
         if isinstance(arg, str):
-            name = cls.is_it_an_input_parameters_name(arg)
-            if name:
-                return cls.create(arg)
+            name = cls.is_task_name(arg)
+            if name or arg.upper() in cls.input_parameters_registry:
+                return cls.create(name or arg)
             return cls.from_file(arg)
         if isinstance(arg, io.IOBase):
             return cls.from_file(arg)
@@ -340,74 +299,62 @@ class InputParameters(ConfigurationFile):
 
     @classmethod
     def create(cls, name):
-        """Create input parameters for the given task name
-        Parameters
-        ----------
-        name: str
-          Name of the task (e.g. 'SCF', 'PHAGEN')
-
-        Return
-        ------
-        input_parameters: InputParameters
-          Input parameters with the default values for the given task.
-        """
-        return InputParameters(cls.definition(name))
+        """Create parameters for a registered task, not for a bare shared schema."""
+        name = cls.task_registry.normalize_name(name)
+        return cls.input_parameters_registry.create_for_task(cls.task_registry[name])
 
     @classmethod
     def default_parameters(cls):
-        """Create default input parameters"""
         return cls.create("SCF")
 
     @classmethod
     def from_file(cls, filename, allow_dangerous: bool = False):
-        """Read an input file and create a new InputParameters object from the readed stuff
+        """Read with the IPD class-level selector autodetection."""
+        from .input_parameters_definitions import InputParametersDefinition
 
-        Parameters
-        ----------
-        filename: str or file
-          Input file (either its filename, or an open file)
-
-        allow_dangerous
-          Allow to read dangerous values of options: i.e. the values that do not fullfil the
-          required type of the given option or its other requirements.
-        """
-        definitions = cls.definitions
-        for d in definitions.values():
-            try:
-                out = d.read_from_file(filename, allow_dangerous=allow_dangerous)
-                return out
-            except Exception as e:
-                last = e
-        raise last
-
-    def calculate(self, *args, **kwargs):
-        """Create a calculator and run the input_parameters. See SPRKKR.calculate for the arguments"""
-        calc = calculator.SPRKKR()
-        calc.calculate(input_parameters=self, *args, **kwargs)
+        return InputParametersDefinition.from_file(
+            filename, allow_dangerous=allow_dangerous
+        )
 
     def __repr__(self):
-        d = self._definition
-        out = d.configuration_type_name
-        out = out + " for task " + d.name.upper()
-        return out
+        task = self.task_definition
+        if task is None:
+            return self._definition.configuration_type_name + " (detached schema)"
+        return self._definition.configuration_type_name + " for task " + task.name
 
     def change_task(self, task, retain_values=False):
-        """Change the task to the given task. Retain the value of the options,
-        that are present in the new task.
-        """
         if retain_values:
-            vals = self.to_dict(only_changed=True)
-        self._definition = self.definition(task)
+            vals = self.to_dict(only_changed="explicit")
+
+        requested = self.task_registry.normalize_name(task)
+        task_definition = self.task_registry[requested]
+        self._definition = self.input_parameters_registry.definition_for_task(
+            task_definition
+        )
+        self._requested_task_name = requested
         self._init_members_from_the_definition()
+
         if retain_values:
-            self.set(vals, unknown="ignore", error="ignore")
+            self.set(
+                vals,
+                unknown="ignore",
+                retain_invalid="none",
+                report_invalid="ignore",
+            )
 
-    def save_to_file(self, file, atoms=None, *, validate="save"):
-        if self._definition.save_hook:
-            self._definition.save_hook(getattr(file, "name", None), atoms)
-        super().save_to_file(file, atoms, validate=validate)
-
-
-# at least, to avoid a circular import
-from ..sprkkr import calculator  # NOQA: E402
-from . import input_parameters_definitions as ipdefs  # NOQA: E402
+            # Explicit TASK.TASK may select a different canonical schema.
+            # Preserve requested provenance while keeping the effective task
+            # and its input definition consistent.
+            effective = self.task_definition
+            if effective is not None:
+                canonical = self.input_parameters_registry.definition_for_task(effective)
+                if canonical is not self._definition:
+                    values = self.to_dict(only_changed="explicit")
+                    self._definition = canonical
+                    self._init_members_from_the_definition()
+                    self.set(
+                        values,
+                        unknown="ignore",
+                        retain_invalid="none",
+                        report_invalid="ignore",
+                    )
