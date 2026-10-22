@@ -70,7 +70,7 @@ def test_manager_reconstructs_local_executor_after_restart(tmp_path):
     store.save(record)
 
     restarted = ExecutionManager(store, executors=Executors())
-    executor = restarted.executor_for(store.get(record.id))
+    executor = restarted.executors.for_record(store.get(record.id))
 
     assert isinstance(executor, LocalExecutor)
 
