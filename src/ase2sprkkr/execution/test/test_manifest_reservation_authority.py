@@ -110,9 +110,16 @@ def test_reserved_tilde_root_is_used_by_staging(tmp_path, monkeypatch):
     assert prepared.inputs[0].remote_path == manifest.inputs[0].remote_path
 
 
-def test_staging_uses_reserved_manifest_not_spec_declarations(tmp_path):
-    """Stage reserved paths; changed spec declarations cannot expand the transfer."""
+def test_staging_uses_reserved_manifest_and_ignores_unreserved_handles(tmp_path):
+    """Changed spec declarations and handles cannot expand reserved staging."""
     from dataclasses import replace
+
+    class UnexpectedSource:
+        def __init__(self, name):
+            self.name = name
+
+        def flush(self):
+            raise AssertionError("Unreserved source must not be accessed")
 
     executor = RemoteEndpointExecutor(LocalTransport())
     source = tmp_path / "work"
@@ -130,8 +137,13 @@ def test_staging_uses_reserved_manifest_not_spec_declarations(tmp_path):
         spec, FileManifest.from_spec(spec),
     )
     changed = replace(
-        spec, input_files=("extra.in",),
-        output_files=("extra.out",), cache_files=("extra.cache",),
+        spec,
+        input_file="extra.in",
+        input_files=(UnexpectedSource(str(source / "extra.in")),),
+        output_file="changed.out",
+        error_file="changed.err",
+        output_files=("extra.out",),
+        cache_files=("extra.cache",),
     )
     prepared = asyncio.run(executor.file_handler.prepare(
         reserved.mapping, changed, reserved,

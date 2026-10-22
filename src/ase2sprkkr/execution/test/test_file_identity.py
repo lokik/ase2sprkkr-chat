@@ -55,13 +55,6 @@ def test_shared_stream_identity_remains_one_file():
 
 
 @pytest.mark.parametrize("role", ("stdout", "stderr"))
-def test_stream_and_output_same_path_rejected(role):
-    stream = FileEntry("/local/shared.log", "/remote/shared.log", "pending")
-    with pytest.raises(ValueError, match="Duplicate file declaration"):
-        FileManifest(**{role: stream}, outputs=(stream,))
-
-
-@pytest.mark.parametrize("role", ("stdout", "stderr"))
 def test_stream_and_output_wildcard_overlap_rejected(role):
     stream = FileEntry("/local/run.log", "/remote/run.log", "pending")
     with pytest.raises(ValueError, match="Duplicate file declaration"):

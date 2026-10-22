@@ -1,7 +1,6 @@
 """Remote preparation is driven only by the frozen file manifest."""
 
 import asyncio
-from dataclasses import replace
 
 import pytest
 
@@ -9,39 +8,6 @@ from ase2sprkkr.execution import (
     ExecutionSpec, FileManifest, FileMapping, LaunchSpec, LocalTransport,
     RemoteEndpointExecutor,
 )
-
-
-def test_staging_does_not_flush_new_unreserved_source_handle(tmp_path):
-    local, remote = tmp_path / "local", tmp_path / "remote"
-    local.mkdir()
-    original = local / "original.in"
-    original.write_text("original")
-    extra = local / "extra.in"
-    extra.write_text("extra")
-
-    class UnexpectedSource:
-        name = str(extra)
-
-        def flush(self):
-            raise AssertionError("Unreserved source must not be accessed")
-
-    spec = ExecutionSpec(
-        argv=("true",), directory=str(local),
-        input_file=str(original), output_file=None,
-        launch=LaunchSpec(local_root=local, remote_root=remote),
-    )
-    mapping = FileMapping(str(local), str(remote))
-    reserved = FileManifest.from_spec(spec).with_mapping(mapping)
-    changed = replace(
-        spec, input_file=str(extra), input_files=(UnexpectedSource(),),
-    )
-    executor = RemoteEndpointExecutor(LocalTransport())
-    prepared = asyncio.run(
-        executor.file_handler.prepare(mapping, changed, reserved),
-    )
-    assert prepared.inputs == reserved.inputs
-    assert (remote / "original.in").read_text() == "original"
-    assert not (remote / "extra.in").exists()
 
 
 def test_prepared_caches_keep_declaration_order_and_wildcard_baselines(tmp_path):

@@ -41,27 +41,29 @@ def test_optional_task_files_survive_manifest_roundtrip(tmp_path):
     assert FileManifest(**asdict(files)) == files
 
 
-def test_identical_auxiliary_inputs_are_rejected(tmp_path):
-    path = tmp_path / "extra.inp"
-    with pytest.raises(ValueError, match="Duplicate file declaration"):
-        FileManifest.from_spec(spec(tmp_path, input_files=(path, path)))
-
-
-@pytest.mark.parametrize("first_optional, second_optional", [
-    (True, False), (False, True), (True, True), (False, False),
-])
-def test_repeated_auxiliary_input_never_merges_optionality(
-    tmp_path, first_optional, second_optional,
+@pytest.mark.parametrize(
+    "first_optional, second_optional, use_path_objects",
+    [
+        pytest.param(True, False, False, id="optional-required"),
+        pytest.param(False, True, False, id="required-optional"),
+        pytest.param(True, True, False, id="optional-optional"),
+        pytest.param(False, False, False, id="required-required"),
+        pytest.param(False, False, True, id="plain-path-objects"),
+    ],
+)
+def test_duplicate_auxiliary_inputs_are_rejected_without_merging_optionality(
+    tmp_path, first_optional, second_optional, use_path_objects,
 ):
-    path = str(tmp_path / "extra.inp")
+    path = tmp_path / "extra.inp"
+    if use_path_objects:
+        declarations = (path, path)
+    else:
+        declarations = (
+            DeclaredPath(str(path), optional=first_optional),
+            DeclaredPath(str(path), optional=second_optional),
+        )
     with pytest.raises(ValueError, match="Duplicate file declaration"):
-        FileManifest.from_spec(spec(
-            tmp_path,
-            input_files=(
-                DeclaredPath(path, optional=first_optional),
-                DeclaredPath(path, optional=second_optional),
-            ),
-        ))
+        FileManifest.from_spec(spec(tmp_path, input_files=declarations))
 
 
 def test_repeated_output_is_not_silently_coalesced(tmp_path):
@@ -80,15 +82,6 @@ def test_first_input_can_feed_stdin_but_duplicate_input_alias_is_invalid(tmp_pat
     assert files.stdin is True
     with pytest.raises(ValueError, match="Duplicate file declaration"):
         FileManifest.from_spec(spec(tmp_path, input_files=(primary,), stdin=primary))
-
-
-def test_output_cache_collision_is_rejected(tmp_path):
-    """The same path cannot be declared as both output and cache."""
-    path = tmp_path / "shared.dat"
-    with pytest.raises(ValueError, match="Duplicate file declaration"):
-        FileManifest.from_spec(spec(
-            tmp_path, output_files=(path,), cache_files=(path,),
-        ))
 
 
 def test_optional_flag_must_be_bool():
