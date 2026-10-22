@@ -1,5 +1,5 @@
 import io
-from threading import Event
+from threading import Event, Thread
 from types import SimpleNamespace
 
 import pytest
