@@ -99,8 +99,8 @@ def _text_run(
         output_file=output_file,
         directory=str(workdir),
         stdin=input_file,
-        input_files=(input_file, *declared_input_files),
-        output_files=(output_file, *declared_output_files),
+        input_files=declared_input_files,
+        output_files=declared_output_files,
         cache_files=declared_cache_files,
         launch=_launch(
             local_root,
