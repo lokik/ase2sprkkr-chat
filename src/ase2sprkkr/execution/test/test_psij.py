@@ -62,6 +62,7 @@ class _Status:
     def __init__(self, name="NEW", exit_code=None):
         self.state = SimpleNamespace(name=name)
         self.exit_code = exit_code
+        self.message = None
 
 
 class _JobSpec:
@@ -392,9 +393,9 @@ def test_psij_project_manifest_marks_concrete_and_wildcard_files(monkeypatch, tm
     runner.set_manifest(files)
     runner.submit()
     runner.wait()
-    assert runner.files.stdout.availability_state == "available"
-    assert runner.files.outputs[0].availability_state == "available"
-    matches = [entry for entry in runner.files.outputs if entry.source is not None]
+    assert runner.file_snapshot().stdout.availability_state == "available"
+    assert runner.file_snapshot().outputs[0].availability_state == "available"
+    matches = [entry for entry in runner.file_snapshot().outputs if entry.source is not None]
     assert len(matches) == 1
     assert matches[0].availability_state == "available"
 
@@ -411,7 +412,7 @@ def test_psij_missing_optional_output_is_skipped(monkeypatch, tmp_path):
     runner.set_manifest(files)
     runner.submit()
     runner.wait()
-    assert runner.files.outputs[0].availability_state == "skipped"
+    assert runner.file_snapshot().outputs[0].availability_state == "skipped"
 
 
 def test_psij_mpi_process_count_becomes_resource_spec(monkeypatch, tmp_path):
@@ -714,7 +715,7 @@ def test_psij_attach_without_recorded_streams(monkeypatch, tmp_path):
     attached = executor.attach(run, start=False)
     assert attached.spec.output_file is None
     assert attached.spec.error_file is None
-    assert attached.files == run.files
+    assert attached.file_snapshot() == run.files
 
 
 def test_psij_recovers_live_slurm_submission_by_run_id(monkeypatch, tmp_path):
