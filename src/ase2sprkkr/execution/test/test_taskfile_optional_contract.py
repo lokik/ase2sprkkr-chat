@@ -89,10 +89,9 @@ def test_optional_missing_input_does_not_block_stage(tmp_path):
 
     source = tmp_path / "absent.inp"
     mapping = FileMapping(str(tmp_path), str(tmp_path / "remote"))
-    spec_obj = spec(tmp_path)
     handler = RemoteFileHandler(LocalTransport())
     staged = asyncio.run(handler._stage_file(
-        mapping, spec_obj, source, {}, required=False,
+        mapping, str(source), {}, required=False,
     ))
     assert staged == mapping.map_path(source)
 
