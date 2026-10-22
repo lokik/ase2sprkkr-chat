@@ -44,14 +44,21 @@ def test_shared_stream_identity_remains_one_file():
     assert FileManifest(**asdict(updated)) == updated
 
 
-def test_output_alias_of_merged_stream_is_rejected():
+def test_output_alias_of_merged_stream_is_one_file_identity():
     path = "/local/shared.log"
-    with pytest.raises(ValueError, match="Duplicate file declaration"):
-        FileManifest(
-            stdout=FileEntry(path, "/remote/shared"),
-            stderr=FileEntry(path, "/remote/shared"),
-            outputs=(FileEntry(path, "/remote/shared"),),
-        )
+    files = FileManifest(
+        stdout=FileEntry(path, "/remote/shared", "pending"),
+        stderr=FileEntry(path, "/remote/shared", "pending"),
+        outputs=(FileEntry(path, "/remote/shared", "pending"),),
+    )
+
+    assert len(files.files) == 1
+    updated = files.with_file_availability(path, "available")
+    assert updated.stdout.availability_state == "available"
+    assert updated.stderr.availability_state == "available"
+    assert updated.outputs[0].availability_state == "available"
+    assert len(updated.files) == 1
+    assert FileManifest(**asdict(updated)) == updated
 
 
 def test_cache_only_path_updates_without_explicit_kind():
