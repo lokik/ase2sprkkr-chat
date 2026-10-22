@@ -107,7 +107,7 @@ def test_psij_monitor_forwards_follow_bytes(monkeypatch):
         lambda text, kind: received.append((text, kind))
     )
     runner.result = SimpleNamespace(return_code=None)
-    runner._job_files = JobFiles(FileManifest())
+    runner.job_files = JobFiles(FileManifest())
     runner._observed_state = None
     from threading import Event, Lock
     runner._observation_stopped = Event()
@@ -154,7 +154,7 @@ def test_local_project_follow_delivers_bytes_through_shared_decoder():
     runner = object.__new__(LocalProjectRunner)
     runner.executor = SimpleNamespace(connection=Connection())
     runner._backend_id = "opaque-backend"
-    runner._job_files = JobFiles(frozen_files)
+    runner.job_files = JobFiles(frozen_files)
     runner._output_observers = OutputObservers(
         lambda text, kind: received.append((text, kind))
     )
