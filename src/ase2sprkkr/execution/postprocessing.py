@@ -304,7 +304,8 @@ class CalculationRun:
         self._backend_submit_attempted = False
         try:
             if self.persistence is not None:
-                self.persistence.before_submit(self)
+                reserved_files = self.persistence.before_submit(self)
+                self.job_files.replace(reserved_files)
 
             try:
                 self._runner.prepare_submission()

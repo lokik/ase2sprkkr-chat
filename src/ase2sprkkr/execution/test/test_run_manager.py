@@ -344,6 +344,60 @@ def test_project_manager_returns_one_public_calculation_runner(tmp_path):
     assert run.backend_id == "native-1"
 
 
+def test_before_submit_returns_reserved_files_without_mutating_runner(tmp_path, monkeypatch):
+    """Persistence reserves a snapshot; only CalculationRun installs it."""
+    from dataclasses import replace
+    from ase2sprkkr.execution.run_model import FileMapping
+
+    manager = _manager(tmp_path)
+    executor = _Executor()
+    run = manager.create_run(
+        _spec(tmp_path), endpoint=manager.executors.register(executor),
+        process_result=lambda outcome: outcome, task="DOS",
+    )
+    original = run.job_files.manifest
+    reserved = replace(original, mapping=FileMapping(str(tmp_path), "/remote/dos"))
+    monkeypatch.setattr(
+        executor, "reservation_context",
+        lambda spec, files: (reserved, "/remote/dos"),
+    )
+
+    assert run.persistence.before_submit(run) is reserved
+    assert run.job_files.manifest is original
+    assert run.record.files is reserved
+    assert run.record.state == RunState.SUBMITTING
+    assert manager.store.get(run.id).files == reserved
+
+
+def test_calculation_run_installs_reserved_files_before_staging(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from ase2sprkkr.execution.run_model import FileMapping
+
+    manager = _manager(tmp_path)
+    executor = _Executor()
+    run = manager.create_run(
+        _spec(tmp_path), endpoint=manager.executors.register(executor),
+        process_result=lambda outcome: outcome, task="DOS",
+    )
+    original = run.job_files.manifest
+    reserved = replace(original, mapping=FileMapping(str(tmp_path), "/remote/dos"))
+    monkeypatch.setattr(
+        executor, "reservation_context",
+        lambda spec, files: (reserved, "/remote/dos"),
+    )
+    raw = executor.runners[0]
+    staged = []
+    monkeypatch.setattr(raw, "prepare_submission", lambda: staged.append(raw.job_files.manifest))
+
+    run.submit()
+
+    assert staged == [reserved]
+    assert staged[0] is reserved
+    assert run.job_files is raw.job_files
+    assert run.job_files.manifest is reserved
+    assert run.record.files == reserved
+
+
 def test_calculation_run_job_files_is_read_only_runner_view(tmp_path):
     manager = _manager(tmp_path)
     executor = _Executor()

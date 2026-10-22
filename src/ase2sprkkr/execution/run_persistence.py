@@ -5,6 +5,7 @@ from __future__ import annotations
 from threading import Lock
 
 from .base import RunState
+from .run_model import FileManifest
 from .postprocessing import CalculationRun
 
 
@@ -44,16 +45,16 @@ class RunPersistence:
             return None
         return record.execution.submitted(run.backend_id)
 
-    def before_submit(self, run: CalculationRun):
-        """Reserve atomically before any backend file staging."""
+    def before_submit(self, run: CalculationRun) -> FileManifest:
+        """Reserve atomically and return the committed layout for runner staging."""
         with self._record_lock:
             if self._record.state != RunState.NEW:
                 raise RuntimeError(f"Run is already {self._record.state.value}")
             self._record = self.manager.reserve(
                 self._record, spec=self._spec, executor=self.executor,
             )
-            run.job_files.replace(self._record.files)
             self._observation_base_version = self._record.updated_at
+            return self._record.files
 
     def prepared(self, run: CalculationRun):
         """Commit the staged layout before the backend can launch."""

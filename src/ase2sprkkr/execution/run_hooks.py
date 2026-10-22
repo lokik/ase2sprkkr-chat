@@ -10,6 +10,7 @@ from typing import Protocol, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .postprocessing import CalculationRun
+    from .run_model import FileManifest
 
 
 class PersistenceError(RuntimeError):
@@ -19,7 +20,7 @@ class PersistenceError(RuntimeError):
 class RunPersistenceHooks(Protocol):
     """Durable transaction boundary for a persistent calculation."""
 
-    def before_submit(self, run: "CalculationRun") -> None: ...
+    def before_submit(self, run: "CalculationRun") -> "FileManifest": ...
     def prepared(self, run: "CalculationRun") -> None: ...
     def submitted(self, run: "CalculationRun") -> None: ...
     def submission_failed(
