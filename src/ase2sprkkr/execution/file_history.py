@@ -11,7 +11,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 
 from ..common.file_fingerprints import file_fingerprint
-from ..common.file_versions import FileState, FileVersion
+from ..common.file_versions import FileState, FileVersion, FileVersionCaptureError
 from ._durability import sync_file
 from .transport import expand_local_candidates, has_file_magic
 from .file_availability import discover_local_files
@@ -90,18 +90,47 @@ def missing_result_files(result_files):
 def capture_result_files(result_files):
     if result_files is None or result_files.captured_at is not None:
         return result_files
+    # Remote deliveries are historical only after verified collection.
+    # Existing local files skipped by MISSING are not outcomes of this run.
+    remote_entries = (
+        (result_files.stdout, result_files.stderr, *result_files.outputs)
+        if result_files.mapping is not None else ()
+    )
+    selected = set(result_files.output_files)
+    original_versions = {}
+    for entry in remote_entries:
+        if entry is None or entry.local_path is None or entry.remote_path is None:
+            continue
+        path = os.path.abspath(entry.local_path)
+        if entry.availability_state != "available":
+            selected.discard(path)
+        else:
+            if not entry.verified_delivery_is_current():
+                raise FileVersionCaptureError(
+                    f"Remote result is unverified or changed: {path}"
+                )
+            original_versions[path] = entry.verified_local_version
+
     verified_versions = (
         entry.verified_local_version for entry in result_files.files
         if entry.availability_state == "available"
         and entry.verified_local_version is not None
     )
+    outputs = snapshot_result_files(
+        (p for p in result_files.output_files if p in selected),
+        sync=True, verified_versions=verified_versions,
+    )
+    captured_versions = {os.path.abspath(os.fspath(v.path)): v for v in outputs}
+    for path, previous in original_versions.items():
+        # Do not silently bless changed or missing bytes as a new version.
+        if captured_versions.get(path) != previous:
+            raise FileVersionCaptureError(
+                f"Remote result changed during final capture: {path}"
+            )
     captured = replace(
         result_files,
         input_versions=snapshot_result_files(result_files.input_files),
-        output_versions=snapshot_result_files(
-            result_files.output_files, sync=True,
-            verified_versions=verified_versions,
-        ),
+        output_versions=outputs,
         captured_at=datetime.now(timezone.utc).isoformat(),
     )
     return discover_local_files(captured)

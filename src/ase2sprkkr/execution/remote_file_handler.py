@@ -221,10 +221,19 @@ class RemoteFileHandler:
         remote, local = entry.remote_path, entry.local_path
         local_exists = os.path.isfile(local)
 
-        # MISSING never replaces an existing local copy. Caches still need
-        # their terminal signature checked against the pre-run baseline.
+        # MISSING preserves a conflicting local copy without claiming delivery.
         if not is_cache and policy == FileSyncPolicy.MISSING and local_exists:
-            return "available"
+            remote_digest = await self.transport.file_digest(remote)
+            if remote_digest is None:
+                if required:
+                    raise FileNotFoundError(f"Declared remote output was not created: {remote}")
+                return "skipped"
+            local_digest = await asyncio.to_thread(file_digest, local, missing_ok=True)
+            if local_digest == remote_digest:
+                return "available"
+            if local_digest is not None:
+                return "skipped"
+            # The local copy vanished during hashing: download normally.
 
         if is_cache:
             after = await self.transport.file_signature(remote)
@@ -278,7 +287,9 @@ class RemoteFileHandler:
             for entry in entries:
                 if entry.local_path is None or entry.remote_path is None:
                     continue
-                if entry.availability_state == "skipped":
+                if (entry.availability_state == "skipped"
+                        and not (mapping.output_sync == FileSyncPolicy.MISSING
+                                 and not os.path.isfile(entry.local_path))):
                     continue
                 if (entry.availability_state == "available"
                         and entry.verified_local_version is not None
