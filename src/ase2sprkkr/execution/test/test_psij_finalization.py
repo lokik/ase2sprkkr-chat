@@ -75,7 +75,7 @@ def test_psij_terminal_callback_wakes_file_follower(monkeypatch, tmp_path):
     async def check():
         runner = object.__new__(PsijRunner)
         runner._job = SimpleNamespace(
-            status=SimpleNamespace(state=SimpleNamespace(name="ACTIVE"))
+            status=SimpleNamespace(state=SimpleNamespace(name="ACTIVE"), exit_code=None, message=None)
         )
         runner._stdout_path = str(tmp_path / "silent.out")
         runner._stderr_path = None
