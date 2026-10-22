@@ -34,6 +34,25 @@ class _Manager:
         }
         return SimpleNamespace(**{**vars(record), **changes})
 
+    def record_observation(self, record, *, state, **kwargs):
+        if state is RunState.UNKNOWN:
+            if record.state is RunState.UNKNOWN:
+                return record
+            return self.transition(record, state=state, message=kwargs["message"])
+        if not state.is_terminal:
+            return None
+        return self.complete(record, state=state)
+
+    @staticmethod
+    def acknowledge_terminal(executor, record):
+        if not record.state.is_terminal or record.execution.backend_id is None:
+            return False
+        try:
+            executor.acknowledge(record)
+        except (OSError, RuntimeError):
+            return False
+        return True
+
 
 class _Runner:
     state = RunState.RUNNING
