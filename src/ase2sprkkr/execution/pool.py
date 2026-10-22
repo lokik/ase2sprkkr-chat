@@ -35,9 +35,7 @@ class _ExecutorPool:
         with self._lock:
             executor = self._executors.pop(key, None)
         if executor is not None:
-            close = getattr(executor, "close", None)
-            if close is not None:
-                close()
+            _close_distinct((executor,))
         return executor
 
     def close(self):
