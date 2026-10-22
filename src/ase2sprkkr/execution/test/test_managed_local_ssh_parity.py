@@ -215,4 +215,4 @@ def test_detach_follow_then_reattach_running_job(mode, tmp_path):
     attached = executor.attach(record, start=True)
     assert attached.wait().return_code == 0
     assert attached.state == RunState.FINISHED
-    assert (directory / "run.out").read_text() == "ready\\nfinished\\n"
+    assert (directory / "run.out").read_text().splitlines() == ["ready", "finished"]

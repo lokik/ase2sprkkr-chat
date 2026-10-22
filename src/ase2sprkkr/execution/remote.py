@@ -58,7 +58,7 @@ class RemoteRunner(ManagedRunner):
         # Once monitoring has started, only the client monitor may advance from
         # backend execution into DOWNLOADING. A direct backend query must never
         # expose FINISHED before files are locally available.
-        if self._thread is not None:
+        if self._thread is not None or self._state == RunState.DETACHED:
             return self._state
         if (self._backend_id is None or self._state in (RunState.NEW, RunState.DOWNLOADING)
                 or self._state.is_terminal):
