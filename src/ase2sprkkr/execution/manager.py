@@ -487,12 +487,6 @@ class ExecutionManager:
             return latest.state
         return requested
 
-    @staticmethod
-    def _merged_result_files(latest, requested):
-        if requested is _UNCHANGED or requested is None:
-            return latest.files
-        return JobFiles.merge_snapshot(latest.files, requested)
-
     def transition(
         self,
         record,
@@ -528,9 +522,10 @@ class ExecutionManager:
             if not latest.state.is_terminal and merged_state.is_terminal:
                 changes["finished_at"] = now
             if not final_locked:
-                merged_result_files = self._merged_result_files(latest, files)
-                if merged_result_files is not latest.files:
-                    changes["files"] = merged_result_files
+                if files is not _UNCHANGED and files is not None:
+                    merged_files = JobFiles.merge_snapshot(latest.files, files)
+                    if merged_files is not latest.files:
+                        changes["files"] = merged_files
             if execution is not _UNCHANGED and execution is not None:
                 if execution.endpoint != latest.execution.endpoint:
                     raise ValueError("Execution endpoint cannot change")
