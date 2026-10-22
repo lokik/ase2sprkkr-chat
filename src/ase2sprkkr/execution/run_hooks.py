@@ -16,8 +16,8 @@ class PersistenceError(RuntimeError):
     """Durable persistence failed; the calculation result is unaffected."""
 
 
-class CalculationRunHooks(Protocol):
-    """Transaction boundaries invoked by CalculationRun for a single run."""
+class RunPersistenceHooks(Protocol):
+    """Durable transaction boundary for a persistent calculation."""
 
     def before_submit(self, run: "CalculationRun") -> None: ...
     def prepared(self, run: "CalculationRun") -> None: ...
