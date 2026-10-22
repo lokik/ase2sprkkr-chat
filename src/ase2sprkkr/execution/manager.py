@@ -27,7 +27,7 @@ from .base import (
     SubmissionNotStarted,
 )
 from .job_files import JobFiles
-from .file_history import missing_result_files
+from .file_history import file_is_current, missing_result_files
 from .endpoint import ExecutorEndpoint, endpoint_for_executor
 from .pool import Executors
 from .projects import _project_id
