@@ -128,7 +128,7 @@ def test_local_same_path_is_shared_even_without_inode_info(tmp_path, monkeypatch
     ))
     monkeypatch.setattr(runner, "_stream_inode", lambda value: None)
     try:
-        runner._open_streams()
+        runner._open_streams(stdin=None)
         assert runner._stream_handles["out"] is runner._stream_handles["err"]
         assert len(runner._owned_streams) == 1
         runner._forward_output(b"stdout\\n", "out")
@@ -240,7 +240,7 @@ def test_local_stream_paths_share_inode_alias(tmp_path, alias_kind):
         input_file=None, output_file=out_path, error_file=err_path,
     ))
     try:
-        runner._open_streams()
+        runner._open_streams(stdin=None)
         assert runner._stream_handles["out"] is runner._stream_handles["err"]
         assert len(runner._owned_streams) == 1
         runner._forward_output(b"first\n", "out")
@@ -292,7 +292,7 @@ def test_local_named_stream_reuses_existing_file_handle(tmp_path, preopened_kind
             output_file=stream if preopened_kind == "out" else path,
             error_file=stream if preopened_kind == "err" else path,
         ))
-        runner._open_streams()
+        runner._open_streams(stdin=None)
         assert runner._stream_handles["out"] is stream
         assert runner._stream_handles["err"] is stream
         assert not runner._owned_streams

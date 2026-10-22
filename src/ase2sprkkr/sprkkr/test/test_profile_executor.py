@@ -205,7 +205,7 @@ def test_profile_executor_is_selected_before_mpi_resolution(monkeypatch, tmp_pat
     try:
         assert result.result is None  # Postprocessing starts only after submit
         assert calls[0] == ("factory", "ssh")
-        assert calls[1] == ("resolve_spec", LaunchSpec().mpi)
+        assert calls[1] == ("resolve_spec", LaunchSpec.from_mpi(8).mpi)
         assert calls[2][0] == "create_run"
     finally:
         result.close()

@@ -517,7 +517,8 @@ def test_ssh_psij_cleanup_removes_declared_outputs_before_submit(tmp_path, monke
     class Backend:
         backend = "slurm"
         url = None
-        def create_project_run(self, spec, *, run_id):
+        def create_project_run(self, spec, *, run_id, cleanup_side):
+            assert cleanup_side == "local"
             return Runner(spec)
     monkeypatch.setattr(remote_service, "_psij_executor", lambda options: Backend())
     request = {
@@ -554,7 +555,7 @@ def test_scheduler_request_protects_remote_cache_wildcards(tmp_path):
         },
     }
     spec = remote_service._request_spec(request)
-    assert spec.input_files == ("case.inp",)
+    assert spec.input_files == ()
     assert spec.output_files == ("*.pot", "case.out")
     assert spec.cache_files == (
         "known-restart.pot", "restart-*.pot", "external-cache.pot",

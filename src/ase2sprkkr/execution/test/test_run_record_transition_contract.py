@@ -38,9 +38,12 @@ def test_run_record_transition_guards_stale_observations(tmp_path):
     )
     assert stale is running
     processing = running.with_transition(state=RunState.POSTPROCESSING)
-    assert processing.with_transition(
+    unconfirmed = processing.with_transition(
         state=RunState.UNKNOWN, message="stale observation",
-    ) is processing
+    )
+    assert unconfirmed.state == RunState.POSTPROCESSING
+    assert unconfirmed.confirmed is False
+    assert unconfirmed.error == "stale observation"
 
 
 def test_run_record_transition_uses_latest_file_failure_on_completion(tmp_path):

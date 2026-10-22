@@ -173,8 +173,7 @@ def test_remote_input_file_and_stdin_staged_only_once(tmp_path):
         assert [entry["remote_path"] for entry in request["files"]["inputs"]] == [
             str(target),
         ]
-        assert request["files"]["primary_input"]["remote_path"] == str(target)
-        assert request["files"]["stdin"]["remote_path"] == str(target)
+        assert request["files"]["stdin"] is True
         assert [destination for _, destination in transport.put_files] == [target]
     finally:
         spec.input_file.close()
