@@ -70,7 +70,7 @@ class RunPersistence:
                 )
             self._record = replace(self._record, files=files, execution=execution)
         self._record = self.manager.reserve(self._record)
-        run.replace_file_manifest(self._record.files)
+        run.job_files.replace(self._record.files)
         self._monitor_record_version = self._record.updated_at
 
     def prepared(self, run: CalculationRun):
@@ -78,7 +78,7 @@ class RunPersistence:
         self._record = self.manager.transition(
             self._record,
             execution=self._execution_for(run, self._record),
-            files=run.file_snapshot(),
+            files=run.job_files.manifest,
         )
         self._monitor_record_version = self._record.updated_at
 
@@ -98,7 +98,7 @@ class RunPersistence:
                     execution=self._execution_for(run, self._record),
                     failure_phase=(None if observed == RunState.SUBMITTING
                                    else _failure_phase(run.failure_phase)),
-                    files=run.file_snapshot(),
+                    files=run.job_files.manifest,
                 )
                 self._monitor_record_version = self._record.updated_at
         self.manager._acknowledge_submission(self.executor, self._record)
@@ -198,7 +198,7 @@ class RunPersistence:
                 message=message,
                 failure_phase=phase,
                 files_available=files_available,
-                files=run.file_snapshot(),
+                files=run.job_files.manifest,
             )
             # ACK follows the crash-durable transition. A new RunPersistence
             # retries a lost ACK, without repeating terminal persistence.
