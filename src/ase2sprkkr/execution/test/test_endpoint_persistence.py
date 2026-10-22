@@ -89,6 +89,9 @@ def test_attach_reconstructs_persisted_endpoint_without_task_reader(tmp_path):
             self.failure_message = None
             self._done = Event()
 
+        def file_snapshot(self):
+            return self.files
+
         def start(self):
             pass
 
