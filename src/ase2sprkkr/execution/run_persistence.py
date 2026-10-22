@@ -121,9 +121,13 @@ class RunPersistence:
             self._observation_base_version = self._record.updated_at
 
     def can_cancel(self, run: CalculationRun):
-        """A locally confirmed terminal run cannot be cancelled."""
-        with self._record_lock:
-            return not self._record.state.is_terminal
+        """A confirmed terminal run cannot be cancelled; never wait for I/O.
+
+        Each RunRecord is immutable. Reading its published reference is safe
+        while reservation or staging holds the persistence transaction lock.
+        Cancellation is latched by CalculationRun and reconciled after submit.
+        """
+        return not self._record.state.is_terminal
 
     def _acknowledge_terminal(self, record):
         # A separate lock avoids blocking record reads or refresh on remote I/O,

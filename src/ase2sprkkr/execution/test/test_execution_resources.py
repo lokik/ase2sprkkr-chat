@@ -504,6 +504,14 @@ def test_manifest_persistence_failure_does_not_submit_backend():
             completed.append(kwargs)
             return SimpleNamespace(state=kwargs["state"], id="reserved")
 
+        def record_submission_failure(self, record, *, error, uncertain, **kwargs):
+            assert not uncertain
+            return self.complete(
+                record, state=RunState.FAILED, failure_phase=kwargs["failure_phase"],
+            )
+
+
+
     processed = CalculationRun(
         PreparedBackend(), lambda outcome: outcome, resources=resources,
     )
@@ -594,6 +602,13 @@ def test_project_cancel_during_manifest_staging_never_submits_backend():
         def complete(self, record, **changes):
             completions.append(changes)
             return SimpleNamespace(state=changes["state"], id="run")
+
+        def record_submission_failure(self, record, *, error, uncertain, **kwargs):
+            assert not uncertain
+            assert isinstance(error, asyncio.CancelledError)
+            return self.complete(record, state=RunState.CANCELLED)
+
+
 
     processed = CalculationRun(Backend(), lambda outcome: outcome, resources=resources)
     project = _tracked(Store(), None, processed, SimpleNamespace(

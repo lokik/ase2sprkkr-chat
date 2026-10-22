@@ -37,7 +37,7 @@ def _record(runner):
         runner.backend_id,
     )
     return RunRecord(
-        id=runner.backend_id, task="SCF", state=RunState.RUNNING,
+        id="remote-attach", task="SCF", state=RunState.RUNNING,
         created_at="2026-10-13T08:00:00+00:00",
         updated_at="2026-10-13T08:00:00+00:00",
         execution=execution,
@@ -118,6 +118,7 @@ def test_remote_executor_attach_reconnects_running_run_and_restores_stage_out(tm
 
     run = _record(original)
     assert run.execution.backend_id is not None
+    assert run.id != run.execution.backend_id
 
     # A fresh endpoint object reconstructs per-run staging policy solely from
     # persisted run manifest; no task reader or live runner state is used.
@@ -170,6 +171,7 @@ def test_remote_executor_attach_replays_finished_run(tmp_path):
     assert original.run().return_code == 0
     run = _record(original)
     assert run.execution.backend_id is not None
+    assert run.id != run.execution.backend_id
 
     attached = _processed(_executor().attach(run, start=False))
     result = attached.wait()

@@ -205,6 +205,20 @@ def test_project_cancel_returns_while_backend_submission_is_blocked():
         def register_executor(self, executor, endpoint):
             pass
 
+        def record_submitted(self, record, *, backend_id, state, **kwargs):
+            return self.transition(
+                record, state=state,
+                execution=record.execution.submitted(backend_id),
+            )
+
+        def record_observation(self, record, *, state, **kwargs):
+            return self.complete(record, state=state)
+
+        @staticmethod
+        def acknowledge_terminal(executor, record):
+            executor.acknowledge(record)
+            return True
+
         def _acknowledge_submission(self, executor, record):
             pass
 
@@ -293,6 +307,13 @@ def test_project_cancellation_during_prelaunch_is_durable_and_nonblocking(phase)
         def complete(self, record, **changes):
             self.completions.append(changes)
             return self.changed(record, **changes)
+
+        def record_submission_failure(self, record, *, error, uncertain, **kwargs):
+            assert not uncertain
+            assert isinstance(error, asyncio.CancelledError)
+            return self.complete(record, state=RunState.CANCELLED)
+
+
 
     backend = Backend()
     resource = _Resource()
