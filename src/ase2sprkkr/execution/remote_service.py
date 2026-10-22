@@ -131,7 +131,10 @@ def _request_spec(request):
     manifest = None if supplied is None else FileManifest(**supplied)
     input_files = (
         tuple(request.get("input_files", ())) if manifest is None else
-        tuple(entry.remote_path for entry in manifest.inputs if entry.remote_path)
+        tuple(entry.remote_path for entry in manifest.inputs
+              if entry.remote_path and (
+                  manifest.primary_input is None
+                  or entry.remote_path != manifest.primary_input.remote_path))
     )
     output_files = (
         tuple(request.get("output_files", ())) if manifest is None else
