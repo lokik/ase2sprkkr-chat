@@ -107,6 +107,8 @@ class LocalProjectRunner(ManagedRunner):
             self.start()
 
     def _refresh(self):
+        if self.detached:
+            return self._detached_state
         # A terminal result is immutable. After acknowledgment the receipt
         # may disappear while the supervisor process is still shutting down.
         if (self._backend_id is None or self._state.is_terminal
