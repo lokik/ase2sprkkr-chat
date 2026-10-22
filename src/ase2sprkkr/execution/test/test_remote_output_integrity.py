@@ -54,3 +54,39 @@ def test_successful_integrity_check_preserves_timestamps(tmp_path):
     asyncio.run(handler.verify_streams(manifest, spec))
     assert local_out.stat().st_mtime_ns == remote_out.stat().st_mtime_ns
     assert local_err.stat().st_mtime_ns == remote_err.stat().st_mtime_ns
+
+def test_remote_stream_modified_during_integrity_check_is_rejected(tmp_path, monkeypatch):
+    """Matching bytes are not enough if the authoritative file changes mid-check."""
+    handler, manifest, spec, _, _, remote_out, _ = _case(tmp_path)
+    from dataclasses import replace
+
+    manifest = replace(manifest, stderr=None)
+    original_signature = handler.transport.file_signature
+    calls = 0
+
+    async def changing_signature(path):
+        nonlocal calls
+        signature = await original_signature(path)
+        if path == str(remote_out):
+            calls += 1
+            if calls == 2:
+                return signature[0], signature[1] + 1
+        return signature
+
+    monkeypatch.setattr(handler.transport, "file_signature", changing_signature)
+    with pytest.raises(RuntimeError, match="changed during verification"):
+        asyncio.run(handler.verify_streams(manifest, spec))
+    assert calls == 2
+
+
+def test_stream_availability_preserves_successful_peer_after_corruption(tmp_path):
+    """A damaged stdout must not conceal an independently valid stderr."""
+    handler, manifest, spec, _, _, _, _ = _case(tmp_path, stdout=b"bad!")
+    checked, error = asyncio.run(handler.verify_stream_availability(manifest, spec))
+
+    assert isinstance(error, RuntimeError)
+    assert "stdout contents differ" in str(error)
+    assert checked.stdout.availability_state == "failed"
+    assert "stdout contents differ" in checked.stdout.availability_message
+    assert checked.stderr.availability_state == "available"
+    assert checked.stderr.availability_message is None
