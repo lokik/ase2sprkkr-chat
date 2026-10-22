@@ -48,7 +48,7 @@ class CalculationRun:
 
         # The existing backend monitor owns observation and invokes this
         # callback only after file delivery and stream finalization.
-        if getattr(runner, "callback", None) is not None:
+        if runner.callback is not None:
             raise ValueError("Raw runner already has a completion callback")
         runner.callback = self._backend_completed
 
@@ -90,11 +90,11 @@ class CalculationRun:
 
     @property
     def execution(self):
-        return getattr(self._runner, 'execution', None)
+        return self._runner.execution
 
     @property
     def files(self):
-        return getattr(self._runner, 'files', None)
+        return self._runner.files
 
     @property
     def exception(self):
@@ -121,7 +121,7 @@ class CalculationRun:
             return self._state
         # Reattached persistent runs may already be terminal, even if their
         # backend is gone. Do not query a stale or released backend.
-        record = getattr(self.hooks, "record", None)
+        record = self.hooks.record if self.hooks is not None else None
         if record is not None and record.state.is_terminal:
             return record.state
         if self._processing:
@@ -167,17 +167,13 @@ class CalculationRun:
                         self._runner.failure_phase
                         or FailurePhase.EXECUTION
                     )
-                    self._failure_message = getattr(
-                        self._runner, "failure_message", None
-                    )
+                    self._failure_message = self._runner.failure_message
                     self._exception = self._runner.exception
                 elif raw_state == RunState.UNKNOWN:
                     # An observation ended, not the job. Project persistence
                     # must not create a terminal timestamp or acknowledge it.
                     self._state = RunState.UNKNOWN
-                    self._failure_message = getattr(
-                        self._runner, "failure_message", None
-                    )
+                    self._failure_message = self._runner.failure_message
                 elif raw_state == RunState.FINISHED:
                     self._processing = True
                     try:
