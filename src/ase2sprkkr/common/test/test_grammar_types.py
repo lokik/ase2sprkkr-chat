@@ -526,6 +526,16 @@ def test_bracketed_string_sets_in_input_mixed():
             assert not (isinstance(parsed, np.ndarray) and len(parsed) == 0)
 
 
+def test_generated_variant_classes_have_unique_pickle_identity():
+    import pickle
+
+    assert gt.PotMixed is not gt.Variant
+    assert gt.PotMixed.__name__ == "PotMixed"
+    assert gt.Variant.__name__ == "Variant"
+    assert pickle.loads(pickle.dumps(gt.Variant())).__class__ is gt.Variant
+    assert pickle.loads(pickle.dumps(gt.pot_mixed)).__class__ is gt.PotMixed
+
+
 def test_mixed_string_sets_can_be_assigned_and_pickled():
     import pickle
 

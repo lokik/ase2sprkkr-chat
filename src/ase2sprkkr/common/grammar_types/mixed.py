@@ -118,7 +118,7 @@ PotMixed = VariantGenerator(
     LineString.I,
     doc=""" A variant value to be used in potential files (in unknown - custom - options) """,
 )
-Variant = VariantGenerator("PotMixed", Boolean.I, QString.I, doc=""" Variant type for configuration """)
+Variant = VariantGenerator("Variant", Boolean.I, QString.I, doc=""" Variant type for configuration """)
 
 
 class CustomMixed(BaseMixed):
