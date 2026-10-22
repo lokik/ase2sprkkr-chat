@@ -67,6 +67,12 @@ def publish_outcome(receipt_id, state, return_code, failure_phase=None, *,
     if return_code is not None and (isinstance(return_code, bool)
                                     or not isinstance(return_code, int)):
         raise TypeError("Terminal receipt return_code must be an integer or None")
+    if files is not None and not isinstance(files, dict):
+        raise TypeError("Terminal receipt files must be a mapping or None")
+    for field, value in (("error", error),
+                         ("materialization_error", materialization_error)):
+        if value is not None and not isinstance(value, str):
+            raise TypeError(f"Terminal receipt {field} must be a string or None")
     path = _path(receipt_id)
     durable_mkdir(path.parent, parents=True, exist_ok=True, mode=0o700)
     temporary = path.parent / ("." + receipt_id + "." + uuid4().hex + ".prepared")

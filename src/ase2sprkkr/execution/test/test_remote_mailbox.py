@@ -159,6 +159,21 @@ def test_outcome_publisher_rejects_noninteger_return_codes(return_code):
     assert remote_mailbox.read_outcome(key) is None
 
 
+@pytest.mark.parametrize(("field", "value"), [
+    ("files", []),
+    ("files", "not a manifest"),
+    ("error", {"message": "failed"}),
+    ("materialization_error", 4),
+])
+def test_outcome_publisher_rejects_unreadable_receipt_fields(field, value):
+    key = uuid4().hex
+    with pytest.raises(TypeError, match=field):
+        remote_mailbox.publish_outcome(
+            key, RunState.FINISHED, 0, **{field: value},
+        )
+    assert remote_mailbox.read_outcome(key) is None
+
+
 def test_rejects_non_object_terminal_receipt():
     key = uuid4().hex
     assert remote_mailbox.publish_outcome(key, RunState.FINISHED, 0)
