@@ -12,7 +12,7 @@ from dataclasses import replace
 from ..common.file_versions import file_digest
 from .base import file_path
 from .run_model import FileEntry, FileManifest, FileSyncPolicy
-from .transport import expand_local_files, has_file_magic
+from .transport import FILE_DELIVERY_ERRORS, expand_local_files, has_file_magic
 
 
 
@@ -313,7 +313,7 @@ class RemoteFileHandler:
                         mapping, entry, is_cache=is_cache, before=before,
                         required=mandatory,
                     )
-                except Exception as exc:
+                except FILE_DELIVERY_ERRORS as exc:
                     manifest = manifest.with_file_availability(
                         entry.local_path, "failed", str(exc),
                         kind=kind, remote_path=entry.remote_path,
@@ -348,7 +348,7 @@ class RemoteFileHandler:
             checked.add(identity)
             try:
                 await self._verify_stream(entry, kind, spec)
-            except Exception as exc:
+            except FILE_DELIVERY_ERRORS as exc:
                 manifest = manifest.with_file_availability(
                     entry.local_path, "failed", str(exc),
                     remote_path=entry.remote_path,

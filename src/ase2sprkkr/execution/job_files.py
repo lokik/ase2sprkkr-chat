@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 from ..common.file_locks import FileLock
 from .run_model import FileAvailabilityState, FileManifest
-from .transport import has_file_magic
+from .transport import FILE_DELIVERY_ERRORS, has_file_magic
 from .historical_restore import (
     preflight_historical_destination, restore_historical_file,
 )
@@ -194,7 +194,7 @@ class JobFiles:
             manifest, transfer_error = await handler.collect(
                 manifest.mapping, manifest, outcome, required=required,
             )
-        except Exception as exc:
+        except FILE_DELIVERY_ERRORS as exc:
             # A preflight failure precedes any transfer; still verify FOLLOW
             # streams on successful jobs without changing output membership.
             transfer_error = exc
@@ -204,7 +204,7 @@ class JobFiles:
                 manifest, stream_error = await handler.verify_stream_availability(
                     manifest, spec,
                 )
-            except Exception as exc:
+            except FILE_DELIVERY_ERRORS as exc:
                 # Preserve all independently delivered output/cache files.
                 stream_error = exc
             if transfer_error is None:

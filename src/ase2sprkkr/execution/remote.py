@@ -10,7 +10,9 @@ from dataclasses import asdict
 from .base import FailurePhase, RunState, SubmissionNotStarted, file_path, start_monitor
 from ..common.async_utils import run_coro_sync as _run_sync
 from .remote_file_handler import FileSyncPolicy
+from .transport import FILE_DELIVERY_ERRORS
 from .job_files import JobFiles
+from .run_model import FileManifest
 from .managed_runner import ManagedRunner
 from .supervisor_monitor import backend_status_from_facts, monitor_supervisor
 
@@ -147,7 +149,6 @@ class RemoteRunner(ManagedRunner):
 
         self._state = RunState.DOWNLOADING
         try:
-            from .run_model import FileManifest
             frozen = (
                 FileManifest(**status["files"])
                 if status.get("files") is not None else self.job_files.manifest
@@ -160,7 +161,7 @@ class RemoteRunner(ManagedRunner):
             self.job_files.merge(observed)
             if transfer_error is not None:
                 raise transfer_error
-        except Exception as exc:
+        except FILE_DELIVERY_ERRORS as exc:
             if backend_state == RunState.FINISHED:
                 self._state = RunState.FAILED
                 self._failure_phase = FailurePhase.DOWNLOAD
@@ -241,7 +242,6 @@ class RemoteRunner(ManagedRunner):
         if not remote_id:
             raise RuntimeError("Remote submit returned no remote_id")
         if status.get("files") is not None:
-            from .run_model import FileManifest
             manifest = FileManifest(**status["files"])
         return remote_id, manifest, status, request
 

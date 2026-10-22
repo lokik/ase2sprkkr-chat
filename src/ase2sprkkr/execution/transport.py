@@ -19,6 +19,13 @@ from typing import Optional, Protocol
 from uuid import uuid4
 
 
+# A file delivery error may be recorded per file and retried. Programming
+# failures (e.g. TypeError) must not be misclassified as download failures.
+FILE_DELIVERY_ERRORS = (
+    OSError, RuntimeError, ValueError, subprocess.CalledProcessError,
+)
+
+
 class RunningCommand(Protocol):
     """A running command with independently readable output streams."""
 
