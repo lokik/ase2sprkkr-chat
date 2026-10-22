@@ -346,3 +346,68 @@ def test_uncaptured_missing_output_after_fetch_raises_and_marks_failed(tmp_path)
     assert saved.state is RunState.FINISHED
     assert saved.files.outputs[0].availability_state == "failed"
     assert executor.fetch_calls == [(record.id, (str(output),))]
+
+
+def test_uncaptured_restore_interruption_never_publishes_partial_output(tmp_path):
+    from ase2sprkkr.execution.run_model import FileEntry
+
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    executor = _HistoryExecutor()
+    endpoint = endpoint_for_executor(executor)
+    manager.executors.register(executor, endpoint)
+    output = tmp_path / "missing.out"
+    record = manager.new_record(
+        task="DOS", directory=tmp_path, endpoint=endpoint,
+        files=FileManifest(outputs=(
+            FileEntry(local_path=str(output), availability_state="pending"),
+        )),
+    )
+    record = manager.transition(
+        record, state=RunState.FINISHED,
+        execution=record.execution.submitted("job-1"),
+    )
+
+    def interrupted_fetch(reference, files, *, destinations=None):
+        from pathlib import Path
+        assert destinations is not None
+        Path(destinations[str(output)]).write_bytes(b"incomplete data")
+        raise OSError("connection interrupted")
+
+    executor.fetch_result_files = interrupted_fetch
+    with pytest.raises(OSError, match="connection interrupted"):
+        manager.retrieve_result_files(record.id)
+    assert not output.exists()
+    assert list(tmp_path.glob(".missing.out.*.tmp")) == []
+    assert manager.store.get(record.id).files.outputs[0].availability_state == "failed"
+    assert manager.store.get(record.id).state is RunState.FINISHED
+
+
+def test_uncaptured_restore_publishes_complete_file_atomically(tmp_path):
+    from pathlib import Path
+    from ase2sprkkr.execution.run_model import FileEntry
+
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    executor = _HistoryExecutor()
+    endpoint = endpoint_for_executor(executor)
+    manager.executors.register(executor, endpoint)
+    output = tmp_path / "missing.out"
+    record = manager.new_record(
+        task="DOS", directory=tmp_path, endpoint=endpoint,
+        files=FileManifest(outputs=(FileEntry(
+            local_path=str(output), availability_state="pending",
+        ),)),
+    )
+    record = manager.transition(
+        record, state=RunState.FINISHED,
+        execution=record.execution.submitted("job-1"),
+    )
+
+    def fetch(reference, files, *, destinations=None):
+        assert destinations is not None
+        Path(destinations[str(output)]).write_bytes(b"complete data")
+
+    executor.fetch_result_files = fetch
+    retrieved = manager.retrieve_result_files(record.id)
+    assert output.read_bytes() == b"complete data"
+    assert retrieved.files.outputs[0].availability_state == "available"
+    assert list(tmp_path.glob(".missing.out.*.tmp")) == []
