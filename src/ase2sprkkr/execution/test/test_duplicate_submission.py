@@ -73,7 +73,7 @@ class _Executor(Executor):
     def __init__(self):
         self.runners = []
 
-    def create_run(self, spec, callback=None):
+    def create_project_run(self, spec, *, run_id, callback=None):
         runner = _Runner(callback)
         self.runners.append(runner)
         return runner
