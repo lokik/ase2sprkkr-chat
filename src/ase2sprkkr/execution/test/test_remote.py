@@ -155,8 +155,8 @@ def test_remote_executor_local_transport_streams_output(tmp_path):
     assert result.error == b""
     assert seen == [("HELLO\n", "out")]
     assert runner.backend_id is not None
-    assert runner.execution.endpoint is not None
-    assert Path(runner.execution.directory.remote) == remote_root
+    assert runner.executor is executor
+    assert Path(runner._runner._remote_directory) == remote_root
 
 
 def test_remote_input_file_and_stdin_staged_only_once(tmp_path):
