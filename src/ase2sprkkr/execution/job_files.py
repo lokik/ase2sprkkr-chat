@@ -7,6 +7,10 @@ from pathlib import Path
 from dataclasses import replace
 from datetime import datetime, timezone
 from threading import RLock
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .manager import RunRecord
 
 from ..common.file_locks import FileLock
 from .run_model import FileAvailabilityState, FileManifest
@@ -79,13 +83,13 @@ class JobFiles:
         return missing_result_files(manifest)
 
     @staticmethod
-    def input_file_is_current(record):
+    def input_file_is_current(record: RunRecord):
         """Check the input file against the immutable historical snapshot."""
         files = record.files
         return file_is_current(files, files.input_file, files.input_versions)
 
     @staticmethod
-    def output_file_is_current(record):
+    def output_file_is_current(record: RunRecord):
         """Check the primary output against the immutable historical snapshot."""
         files = record.files
         return file_is_current(files, files.output_file, files.output_versions)
@@ -219,7 +223,7 @@ class JobFiles:
         return manifest, error if error is not None else stream_error
 
     @staticmethod
-    def update_availability(record, store, path, state, message=None):
+    def update_availability(record: RunRecord, store, path, state, message=None):
         """Update one file's availability using the latest durable record."""
         state = FileAvailabilityState(state)
 
@@ -236,7 +240,7 @@ class JobFiles:
         return store.update(record, update)
 
     @classmethod
-    def retrieve(cls, record, store, executor=None):
+    def retrieve(cls, record: RunRecord, store, executor=None):
         """Restore missing history and reconcile already-published failed files.
 
         A captured file may be present and hash-correct after a failed
