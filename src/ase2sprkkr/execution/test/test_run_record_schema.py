@@ -101,3 +101,72 @@ def test_run_store_rejects_reused_id_with_different_creation_time(tmp_path):
 def test_run_store_lookup_preserves_missing_directory_error(tmp_path):
     with pytest.raises(FileNotFoundError, match="missing-run"):
         RunStore(tmp_path / "absent").get("missing-run")
+
+
+@pytest.mark.parametrize("run_id", [
+    "", ".", "..", "../escape", "nested/run", r"nested\\run",
+    "/tmp/escape", "a/../../escape", ".hidden", "run.json", "a:b",
+    "has space", "has\\nnewline", "naïve", "a" * 129, 17,
+])
+def test_run_id_rejects_unsafe_path_components(tmp_path, run_id):
+    from ase2sprkkr.execution.manager import ExecutionManager
+
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    with pytest.raises(ValueError, match="Invalid run ID"):
+        manager.new_record(task="DOS", directory=tmp_path, run_id=run_id)
+    assert not store.directory.exists()
+
+
+@pytest.mark.parametrize("run_id", [
+    "run_123", "my-run-42", "a", "A" * 128,
+])
+def test_run_id_accepts_portable_path_components(tmp_path, run_id):
+    from ase2sprkkr.execution.manager import ExecutionManager
+
+    store = RunStore(tmp_path / "runs")
+    record = ExecutionManager(store).new_record(
+        task="DOS", directory=tmp_path, run_id=run_id,
+    )
+    store.save(record)
+    assert store.get(run_id) == record
+
+
+@pytest.mark.parametrize("run_id", ["../escape", None, 17])
+def test_run_record_rejects_unsafe_id_even_without_manager(tmp_path, run_id):
+    from ase2sprkkr.execution.manager import ExecutionManager
+
+    record = ExecutionManager().new_record(task="DOS", directory=tmp_path)
+    with pytest.raises(ValueError, match="Invalid run ID"):
+        replace(record, id=run_id)
+
+
+@pytest.mark.parametrize("run_id", ["../escape", "/tmp/escape", "nested/run", "", None])
+def test_run_store_rejects_unsafe_lookup_before_touching_disk(tmp_path, run_id):
+    store = RunStore(tmp_path / "absent")
+    with pytest.raises(ValueError, match="Invalid run ID"):
+        store.get(run_id)
+    assert not store.directory.exists()
+
+
+def test_run_store_rejects_corrupt_persisted_id(tmp_path):
+    from ase2sprkkr.execution.manager import ExecutionManager
+
+    store = RunStore(tmp_path / "runs")
+    record = ExecutionManager(store).new_record(
+        task="DOS", directory=tmp_path, run_id="safe-run",
+    )
+    store.save(record)
+    path = store._path(record)
+    serialized = json.loads(path.read_text())
+    serialized["id"] = "../escape"
+    path.write_text(json.dumps(serialized))
+    with pytest.raises(CorruptRunRecord, match="Invalid run ID"):
+        store.get("safe-run")
+
+
+def test_omitted_run_id_generates_valid_id(tmp_path):
+    from ase2sprkkr.execution.manager import ExecutionManager
+
+    record = ExecutionManager().new_record(task="DOS", directory=tmp_path)
+    assert len(record.id) == 32

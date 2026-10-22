@@ -17,7 +17,7 @@ from .base import RunState
 from .file_reservations import reservation_conflict
 from .file_history import sync_result_files
 from .projects import _project_id
-from .run_record import RunRecord, _RUN_RECORD_SCHEMA_VERSION, _now
+from .run_record import RunRecord, _RUN_RECORD_SCHEMA_VERSION, _now, _validate_run_id
 
 
 class CorruptRunRecord(RuntimeError):
@@ -70,7 +70,7 @@ class RunStore:
         return self.directory / f".{record.id}.lock"
 
     def _path_for_id(self, run_id):
-        filename = f"{run_id}.json"
+        filename = f"{_validate_run_id(run_id)}.json"
         found = None
         for day in self._day_directories(newest=True):
             path = day / filename
