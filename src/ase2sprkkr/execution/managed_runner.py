@@ -122,6 +122,12 @@ class ManagedRunner:
                     self._monitor_failure(exc)
             finish_monitor(self)
 
+    def prepare_submission(self):
+        """Backends without separate staging use their submit operation."""
+
+    def stop_observation(self):
+        raise NotImplementedError("This execution backend cannot detach observation")
+
     def start(self):
         if self.backend_id is None:
             return self.submit()
