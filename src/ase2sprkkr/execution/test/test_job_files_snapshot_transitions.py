@@ -194,7 +194,7 @@ def test_independent_availability_update_does_not_change_terminal_outcome(tmp_pa
     ))
     finished = manager.complete(record, state=RunState.FINISHED, return_code=0)
     changed = JobFiles(record.files).update_availability(
-        record,        manager.store, output, "failed", "historical fetch error",
+        record, manager.store, output, "failed", "historical fetch error",
     )
     assert changed.state == RunState.FINISHED
     assert changed.finished_at == finished.finished_at
@@ -215,7 +215,7 @@ def test_stale_job_files_updater_preserves_other_file_status(tmp_path):
     ))
     first_update = JobFiles(record.files).update_availability(record, manager.store, first, "available")
     second_update = JobFiles(record.files).update_availability(
-        record,        manager.store, second, "failed", "missing",
+        record, manager.store, second, "failed", "missing",
     )
     assert first_update.files.outputs[0].availability_state == "available"
     assert second_update.files.outputs[0].availability_state == "available"
@@ -247,7 +247,7 @@ def test_parallel_run_stores_merge_independent_file_updates(tmp_path):
         client_store = RunStore(directory)
         barrier.wait(timeout=10)
         return JobFiles(record.files).update_availability(
-        record,            client_store, path, state, message,
+        record, client_store, path, state, message,
         )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
