@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from types import SimpleNamespace
 
@@ -602,3 +603,85 @@ def test_refresh_ignores_stale_scheduler_observation(tmp_path):
     assert refreshed.state is RunState.RUNNING
     assert refreshed.message == "fresh"
     assert manager.store.get(record.id) == refreshed
+
+@pytest.mark.parametrize("terminal", [RunState.FINISHED, RunState.FAILED])
+def test_attach_does_not_commit_terminal_before_processing(tmp_path, terminal):
+    from ase2sprkkr.execution.run_persistence import RunPersistence
+
+    manager = _manager(tmp_path)
+    executor = _Executor()
+    record = manager.new_record(task="DOS", directory=tmp_path)
+    queued = manager.transition(
+        record, state=RunState.QUEUED,
+        execution=record.execution.submitted("native-1"),
+    )
+    persistence = RunPersistence(manager, executor, queued)
+    observed = SimpleNamespace(
+        state=terminal, backend_id="native-1",
+        failure_phase=FailurePhase.EXECUTION if terminal == RunState.FAILED else None,
+    )
+
+    persistence.attached(observed)
+
+    assert persistence.record == queued
+    assert manager.store.get(queued.id) == queued
+    assert queued.finished_at is None
+
+
+def test_refresh_cannot_promote_stale_monitor_unknown(tmp_path):
+    manager = _manager(tmp_path)
+    executor = _Executor()
+    run = manager.create_run(
+        _spec(tmp_path), endpoint=manager.executors.register(executor),
+        process_result=lambda outcome: outcome, task="DOS",
+    )
+    run.submit()
+    refreshed = run.refresh()
+    assert refreshed.state == RunState.RUNNING
+
+    stale_monitor = SimpleNamespace(
+        state=RunState.UNKNOWN, backend_id=run.backend_id,
+        return_code=None, failure_phase=None,
+        failure_message="stale monitor disconnected", exception=None,
+        job_files=run.job_files,
+    )
+    result = run.persistence.completed(stale_monitor)
+
+    assert result == RunState.RUNNING
+    assert run.record == refreshed
+    assert manager.store.get(run.id) == refreshed
+
+
+def test_slow_terminal_ack_does_not_block_refresh_or_ack_twice(tmp_path, monkeypatch):
+    manager = _manager(tmp_path)
+    executor = _Executor()
+    run = manager.create_run(
+        _spec(tmp_path), endpoint=manager.executors.register(executor),
+        process_result=lambda outcome: outcome, task="DOS",
+    )
+    run.submit()
+    ack_entered = Event()
+    ack_release = Event()
+    acknowledged = []
+
+    def slow_ack(record):
+        acknowledged.append(record.id)
+        ack_entered.set()
+        assert ack_release.wait(timeout=5)
+
+    monkeypatch.setattr(executor, "acknowledge", slow_ack)
+    with ThreadPoolExecutor(max_workers=3) as workers:
+        finish = workers.submit(executor.runners[0].finish)
+        try:
+            assert ack_entered.wait(timeout=3)
+            # refresh must not acquire the lock currently held by remote ACK.
+            refreshed = workers.submit(run.refresh)
+            assert refreshed.result(timeout=2).state == RunState.FINISHED
+            duplicate = workers.submit(run.persistence.completed, run)
+        finally:
+            ack_release.set()
+        finish.result(timeout=3)
+        assert duplicate.result(timeout=3) == RunState.FINISHED
+
+    assert acknowledged == [run.id]
+    assert manager.store.get(run.id).state == RunState.FINISHED
