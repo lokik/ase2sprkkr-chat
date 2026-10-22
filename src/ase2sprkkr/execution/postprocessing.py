@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 from dataclasses import replace
 from datetime import datetime, timezone
 from threading import Event, Lock
@@ -302,46 +303,50 @@ class CalculationRun:
         # reserves the run before staging and persists the staged manifest
         # before any backend can start.
         self._backend_submit_attempted = False
-        try:
-            if self.persistence is not None:
-                reserved_files = self.persistence.before_submit(self)
-                self.job_files.replace(reserved_files)
-
+        owner = self.persistence.submission_owner() if self.persistence is not None else nullcontext()
+        with owner:
             try:
-                self._runner.prepare_submission()
-            except Exception as exc:
-                if isinstance(exc, SubmissionNotStarted):
-                    raise
-                raise SubmissionNotStarted(str(exc)) from exc
+                if self.persistence is not None:
+                    reserved_files = self.persistence.before_submit(self)
+                    self.job_files.replace(reserved_files)
 
-            if self.persistence is not None:
-                self.persistence.prepared(self)
-            if self.cancellation_requested:
-                raise asyncio.CancelledError(
-                    "Run was cancelled before backend submission"
-                )
-
-            self._backend_submit_attempted = True
-            self._runner.submit()
-            if self.persistence is not None:
-                self.persistence.submitted(self)
-        except BaseException as exc:
-            if self.persistence is not None:
                 try:
-                    self.persistence.submission_failed(
-                        self, exc, uncertain=(
-                            self._backend_submit_attempted
-                            and not isinstance(exc, SubmissionNotStarted)
-                        ),
+                    self._runner.prepare_submission()
+                except Exception as exc:
+                    if isinstance(exc, SubmissionNotStarted):
+                        raise
+                    raise SubmissionNotStarted(str(exc)) from exc
+
+                if self.persistence is not None:
+                    self.persistence.prepared(self)
+                if self.cancellation_requested:
+                    raise asyncio.CancelledError(
+                        "Run was cancelled before backend submission"
                     )
-                except BaseException as hook_exc:
-                    # Do not hide the original submission failure, especially
-                    # when the backend may already have accepted the job.
-                    if hasattr(exc, "add_note"):
-                        exc.add_note(
-                            f"Submission persistence also failed: {hook_exc!r}"
+
+                if self.persistence is not None:
+                    self.persistence.dispatching()
+                self._backend_submit_attempted = True
+                self._runner.submit()
+                if self.persistence is not None:
+                    self.persistence.submitted(self)
+            except BaseException as exc:
+                if self.persistence is not None:
+                    try:
+                        self.persistence.submission_failed(
+                            self, exc, uncertain=(
+                                self._backend_submit_attempted
+                                and not isinstance(exc, SubmissionNotStarted)
+                            ),
                         )
-            raise
+                    except BaseException as hook_exc:
+                        # Do not hide the original submission failure, especially
+                        # when the backend may already have accepted the job.
+                        if hasattr(exc, "add_note"):
+                            exc.add_note(
+                                f"Submission persistence also failed: {hook_exc!r}"
+                            )
+                raise
 
     def _start_submission(self, *, attached=False):
         with self._lock:

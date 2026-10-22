@@ -62,6 +62,19 @@ class Backend:
         pass
 
 
+
+class _NoopSubmissionOwner:
+    """Test persistence hooks honor the real submission lifecycle contract."""
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def submission_owner(self):
+        yield
+
+    def dispatching(self):
+        pass
+
 def test_one_monitor_runs_parser_and_persistence_before_waking_waiters():
     backend = Backend()
     entered, proceed = Event(), Event()
@@ -183,7 +196,7 @@ def test_persistence_failure_is_distinct_from_calculation_and_can_be_retried():
     backend = Backend()
     attempts, observed, processed = [], [], []
 
-    class Hooks:
+    class Hooks(_NoopSubmissionOwner):
         def before_submit(self, run):
             return run.job_files.manifest
 
@@ -239,7 +252,7 @@ def test_persistent_hook_transaction_order_and_completion():
         original_submit()
     backend.submit = submit
 
-    class Hooks:
+    class Hooks(_NoopSubmissionOwner):
         def before_submit(self, run):
             stages.append("reserved")
             return run.job_files.manifest
@@ -273,7 +286,7 @@ def test_persistent_pre_submit_hook_failure_does_not_launch_or_allow_retry():
     backend = Backend()
     phases = []
 
-    class Hooks:
+    class Hooks(_NoopSubmissionOwner):
         def before_submit(self, run):
             phases.append("reservation")
             raise OSError("reservation failed")
@@ -300,7 +313,7 @@ def test_persistent_cancel_after_preflight_does_not_launch():
     backend = Backend()
     phases = []
 
-    class Hooks:
+    class Hooks(_NoopSubmissionOwner):
         def before_submit(self, run):
             phases.append("reserved")
             return run.job_files.manifest
@@ -328,7 +341,7 @@ def test_persistent_prepared_hook_runs_without_backend_preflight():
     backend = Backend()
     events = []
 
-    class Hooks:
+    class Hooks(_NoopSubmissionOwner):
         def before_submit(self, run):
             events.append("reserved")
             return run.job_files.manifest
@@ -381,7 +394,7 @@ def test_synchronous_completion_waits_for_durable_backend_identity():
 
     order = []
 
-    class Hooks:
+    class Hooks(_NoopSubmissionOwner):
         def before_submit(self, run):
             order.append("reserve")
             return run.job_files.manifest
@@ -439,7 +452,7 @@ def test_fast_completion_does_not_publish_if_identity_persistence_fails():
 
     events = []
 
-    class Hooks:
+    class Hooks(_NoopSubmissionOwner):
         def before_submit(self, run):
             return run.job_files.manifest
 

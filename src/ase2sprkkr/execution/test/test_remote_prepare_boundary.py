@@ -62,6 +62,8 @@ def test_prepared_manifest_is_durable_before_remote_backend_submit(tmp_path, mon
     assert len(submitted) == 1
     snapshot = submitted[0]
     assert snapshot.state == RunState.SUBMITTING
+    from ase2sprkkr.execution.run_record import SubmissionPhase
+    assert snapshot.submission_phase == SubmissionPhase.DISPATCHING
     assert snapshot.execution.backend_id is None
     assert snapshot.execution.directory.remote == remote_directory
     assert snapshot.files == expected

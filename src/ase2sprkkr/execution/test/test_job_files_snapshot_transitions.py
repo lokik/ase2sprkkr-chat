@@ -7,6 +7,7 @@ import pytest
 from ase2sprkkr.execution.manager import ExecutionManager
 from ase2sprkkr.execution.run_store import RunStore
 from ase2sprkkr.execution.job_files import JobFiles
+from ase2sprkkr.execution.manifest_merge import merge_snapshot, merge_terminal_files
 from ase2sprkkr.execution.run_model import FileManifest
 
 
@@ -46,7 +47,7 @@ def test_stale_pending_observation_preserves_concurrent_file_availability(tmp_pa
     path = str(tmp_path / "result.out")
     pending = FileManifest(outputs=(FileEntry(path, availability_state="pending"),))
     recorded = pending.with_file_availability(path, "failed", "download error")
-    merged = JobFiles.merge_snapshot(recorded, pending)
+    merged = merge_snapshot(recorded, pending)
     assert merged.outputs[0].availability_state == "failed"
     assert merged.outputs[0].availability_message == "download error"
 
@@ -58,7 +59,7 @@ def test_explicit_file_status_update_is_not_discarded(tmp_path):
     path = str(tmp_path / "result.out")
     pending = FileManifest(outputs=(FileEntry(path, availability_state="pending"),))
     failed = pending.with_file_availability(path, "failed", "download error")
-    merged = JobFiles.merge_snapshot(pending, failed)
+    merged = merge_snapshot(pending, failed)
     assert merged.outputs[0].availability_state == "failed"
 
 
@@ -177,7 +178,7 @@ def test_snapshot_discard_preserves_failed_transfer_for_retry(tmp_path):
         outputs=(FileEntry(path, availability_state="available"),),
         captured_at="2026-10-22T00:00:00+00:00",
     )
-    merged = JobFiles.merge_snapshot(current, snapshot)
+    merged = merge_snapshot(current, snapshot)
     assert merged.failed_files
     assert merged.outputs[0].availability_message == "transfer failed"
     discarded = replace(merged, captured_at=None)

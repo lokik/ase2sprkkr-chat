@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from threading import Lock
+from contextlib import contextmanager
 
 from .base import RunState
 from .run_model import FileManifest
@@ -44,6 +45,18 @@ class RunPersistence:
         if run.backend_id is None:
             return None
         return record.execution.submitted(run.backend_id)
+
+    @contextmanager
+    def submission_owner(self):
+        with self.manager.store.submission_owner(self._record) as acquired:
+            if not acquired:
+                raise RuntimeError(f"Submission {self._record.id} already has an owner")
+            yield
+
+    def dispatching(self):
+        with self._record_lock:
+            self._record = self.manager.store.begin_dispatch(self._record)
+            self._observation_base_version = self._record.updated_at
 
     def before_submit(self, run: CalculationRun) -> FileManifest:
         """Reserve atomically and return the committed layout for runner staging."""
