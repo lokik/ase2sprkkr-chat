@@ -11,18 +11,10 @@ from dataclasses import replace
 
 from ..common.file_versions import file_digest
 from .base import file_path
-from .run_model import FileEntry, FileManifest, FileMapping, FileSyncPolicy
+from .run_model import FileEntry, FileManifest, FileSyncPolicy
 from .transport import expand_local_files, has_file_magic
 
 
-
-def _local_path(spec, value):
-    if value is None:
-        return None
-    try:
-        return file_path(value, spec.directory, flush=True, required=True)
-    except ValueError as exc:
-        raise ValueError("Remote execution requires named files") from exc
 
 
 class RemoteFileHandler:
@@ -98,60 +90,51 @@ class RemoteFileHandler:
             )
         return matches
 
-    async def _prepare_cache_files(self, mapping, used, cache_entries):
-        """Stage the manifest's cache declarations and capture target baselines."""
-        targets, baselines = {}, {}
-        root = mapping.remote_root
-        # FileManifest already normalizes and validates declarations.
+    async def _prepare_caches(self, mapping, used, cache_entries):
+        """Stage cache inputs and retain pre-run signatures for exact and glob caches."""
+        declared, expanded = [], []
+        policy = FileSyncPolicy(mapping.output_sync)
         for entry in cache_entries:
             local = entry.local_path
             if local is None:
+                declared.append(entry)
                 continue
             if has_file_magic(local):
                 remote_pattern = mapping.map_path(local)
                 await self._stage_input_pattern(
                     mapping, local, used, required=False,
                 )
-                if FileSyncPolicy(mapping.output_sync) != FileSyncPolicy.NEVER:
-                    for remote in await self.transport.expand_files(remote_pattern, root):
-                        baselines[remote] = await self.transport.file_signature(remote)
-                continue
-            remote = await self._stage_file(
-                mapping, local, used, required=False,
-            )
-            before = (None if FileSyncPolicy(mapping.output_sync) == FileSyncPolicy.NEVER
-                      else await self.transport.file_signature(remote))
-            targets[local] = before
-        return targets, baselines
+                declared.append(entry)
+                if policy != FileSyncPolicy.NEVER:
+                    for remote in await self.transport.expand_files(
+                        remote_pattern, mapping.remote_root,
+                    ):
+                        expanded.append(FileEntry(
+                            remote_path=remote,
+                            pre_run_signature=await self.transport.file_signature(remote),
+                        ))
+            else:
+                remote = await self._stage_file(
+                    mapping, local, used, required=False,
+                )
+                before = (None if policy == FileSyncPolicy.NEVER
+                          else await self.transport.file_signature(remote))
+                declared.append(replace(entry, pre_run_signature=before))
+        # Keep frozen declarations first; discovered wildcard members follow.
+        return tuple((*declared, *expanded))
 
-    async def prepare(self, mapping, spec, manifest=None):
-        """Stage the authoritative manifest; never re-declare files from spec."""
-        manifest = FileManifest.from_spec(spec) if manifest is None else manifest
-        # Validate every reserved target before touching a remote file.
-        manifest = manifest.with_mapping(mapping)
-
-        # Named source handles may hold buffered input; flush without
-        # rebuilding the authoritative file declarations from the spec.
-        for value in (
-            spec.input_file, spec.stdin, *spec.input_files, *spec.cache_files,
-        ):
-            _local_path(spec, value)
-
-        used = {}
-        # Track optionality of materialized wildcard members as well as
-        # exact declarations. Required aliases always take precedence.
-        input_optional = {
-            entry.local_path: entry.optional for entry in manifest.inputs
-            if entry.local_path is not None
+    async def _prepare_inputs(self, mapping, manifest, used):
+        """Materialize reserved inputs once; return only concrete input members."""
+        optional = {
+            entry.local_path: entry.optional
+            for entry in manifest.inputs if entry.local_path is not None
         }
         primary = (None if manifest.primary_input is None
                    else manifest.primary_input.local_path)
-        # Primary input and stdin are mandatory references. Stage them first,
-        # so an optional auxiliary alias cannot weaken their requirements.
-        if primary is not None:
-            await self._stage_file(mapping, primary, used)
-        if manifest.stdin is not None and manifest.stdin.local_path is not None:
-            await self._stage_file(mapping, manifest.stdin.local_path, used)
+        # Stage mandatory references first, before optional overlapping globs.
+        for reference in (manifest.primary_input, manifest.stdin):
+            if reference is not None and reference.local_path is not None:
+                await self._stage_file(mapping, reference.local_path, used)
         for entry in manifest.inputs:
             source = entry.local_path
             if source is None or source == primary:
@@ -161,37 +144,18 @@ class RemoteFileHandler:
                     mapping, source, used, required=not entry.optional,
                 )
                 for match in matches:
-                    input_optional[match] = (
-                        input_optional.get(match, True) and entry.optional
-                    )
+                    optional[match] = optional.get(match, True) and entry.optional
             else:
                 await self._stage_file(
                     mapping, source, used, required=not entry.optional,
                 )
-
-        # Primary input and stdin are mandatory even when matched by an
-        # optional wildcard declaration.
         for reference in (manifest.primary_input, manifest.stdin):
             if reference is not None and reference.local_path is not None:
-                input_optional[reference.local_path] = False
+                optional[reference.local_path] = False
 
-        # Cache staging shares the collision map, not input file identity.
-        input_sources = tuple(dict.fromkeys(used.values()))
-        cache_targets, cache_before = await self._prepare_cache_files(
-            mapping, used, manifest.caches,
-        )
-
-        caches = [
-            replace(entry, pre_run_signature=cache_targets.get(entry.local_path))
-            for entry in manifest.caches
-        ]
-        for remote, before in cache_before.items():
-            caches.append(FileEntry(remote_path=remote, pre_run_signature=before))
-
-        # Wildcard inputs are concretized during staging, not at completion.
-        inputs = []
         declared = {entry.local_path: entry for entry in manifest.inputs}
-        for local in dict.fromkeys((*declared, *input_sources)):
+        inputs = []
+        for local in dict.fromkeys((*declared, *used.values())):
             if local is None or has_file_magic(local):
                 continue
             if (manifest.stdin is not None and local == manifest.stdin.local_path
@@ -199,14 +163,40 @@ class RemoteFileHandler:
                 continue
             inputs.append(FileEntry(
                 local_path=local, remote_path=mapping.map_path(local),
-                optional=input_optional.get(local, False),
+                optional=optional.get(local, False),
             ))
+        return tuple(inputs)
 
-        return replace(
-            manifest,
-            inputs=tuple(inputs),
-            caches=tuple(caches),
-        )
+    async def prepare(self, mapping, spec, manifest=None):
+        """Stage frozen declarations and record concrete input/cache membership."""
+        manifest = FileManifest.from_spec(spec) if manifest is None else manifest
+        # Validate every reserved path, including outputs, before first upload.
+        manifest = manifest.with_mapping(mapping)
+
+        # Source handles may hold buffered bytes. Flush only handles whose
+        # names are members of the frozen manifest, never new spec declarations.
+        declared = {
+            entry.local_path for entry in (
+                *manifest.inputs, *manifest.caches,
+                manifest.primary_input, manifest.stdin,
+            )
+            if entry is not None and entry.local_path is not None
+        }
+        for value in (spec.input_file, spec.stdin, *spec.input_files, *spec.cache_files):
+            if value is None:
+                continue
+            try:
+                path = file_path(value, spec.directory, required=True)
+            except ValueError as exc:
+                raise ValueError("Remote execution requires named files") from exc
+            if path in declared and hasattr(value, "flush"):
+                value.flush()
+
+        used = {}
+        inputs = await self._prepare_inputs(mapping, manifest, used)
+        caches = await self._prepare_caches(mapping, used, manifest.caches)
+        return replace(manifest, inputs=inputs, caches=caches)
+
 
     async def _sync_file(self, mapping, entry, *, is_cache, before=None, required=False):
         """One transfer mechanism; cache and output policies differ only in decision."""
