@@ -10,9 +10,11 @@ from ase2sprkkr.execution.job_files import JobFiles
 from ase2sprkkr.execution.base import ExecutionResources, RunState
 from ase2sprkkr.execution.postprocessing import CalculationRun
 from ase2sprkkr.execution.run_persistence import RunPersistence
+from .submission_store_double import SubmissionStoreDouble
 
 
 def _tracked(manager, executor, processed, record):
+    manager.store = SubmissionStoreDouble()
     processed.persistence = RunPersistence(manager, executor, record)
     return processed
 
