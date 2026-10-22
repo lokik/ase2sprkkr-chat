@@ -104,8 +104,8 @@ def test_attach_restores_typed_manifest_without_sync_dictionary(tmp_path, monkey
     monkeypatch.setattr(endpoint.connection, "status", status)
     runner = asyncio.run(endpoint._attach(run, start=False))
     try:
-        assert runner.file_snapshot() is run.files
-        assert runner.file_snapshot().caches[0].pre_run_signature == (2, 3)
+        assert runner.job_files.manifest is run.files
+        assert runner.job_files.manifest.caches[0].pre_run_signature == (2, 3)
     finally:
         runner.spec.output_file.close()
 
