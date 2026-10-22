@@ -910,13 +910,11 @@ class ExecutionManager:
         """Discard the temporary backend PID only after RunStore is durable."""
         if record.execution.backend_id is None:
             return
-        acknowledge = getattr(executor, "acknowledge_submission", None)
-        if acknowledge is not None:
-            try:
-                acknowledge(record)
-            except (OSError, RuntimeError):
-                # The receipt remains recoverable until a subsequent refresh.
-                pass
+        try:
+            executor.acknowledge_submission(record)
+        except (OSError, RuntimeError):
+            # The receipt remains recoverable until a subsequent refresh.
+            pass
 
     def create_run(
         self,
@@ -1160,13 +1158,11 @@ class PersistentRun:
                 or (self._record.execution.backend_id is None
                     and run.backend_id is None)):
             return
-        acknowledge = getattr(self.executor, "acknowledge", None)
-        if acknowledge is not None:
-            try:
-                acknowledge(self._record)
-            except (OSError, RuntimeError):
-                # Backend receipts remain safely repeatable after this failure.
-                return
+        try:
+            self.executor.acknowledge(self._record)
+        except (OSError, RuntimeError):
+            # Backend receipts remain safely repeatable after this failure.
+            return
         self._terminal_acknowledged = True
 
     def completed(self, run: CalculationRun):
