@@ -308,3 +308,26 @@ def test_capture_failure_does_not_change_individual_file_availability(monkeypatc
     assert result["state"] == RunState.FAILED
     assert result["failure_phase"] == FailurePhase.FILES
     assert result["files"].outputs[0].availability_state == "pending"
+
+
+def test_stream_verification_exception_preserves_partial_download(tmp_path):
+    import asyncio
+    from types import SimpleNamespace
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+
+    path = str(tmp_path / "output.dat")
+    initial = FileManifest(outputs=(FileEntry(path, "/remote/output", "pending"),))
+
+    class Handler:
+        async def collect(self, mapping, manifest, outcome, *, required):
+            return manifest.with_file_availability(path, "available"), None
+
+        async def verify_stream_availability(self, manifest, spec):
+            raise OSError("stream verification unavailable")
+
+    saved, error = asyncio.run(JobFiles.collect_remote(
+        initial, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
+    ))
+    assert isinstance(error, OSError)
+    assert str(error) == "stream verification unavailable"
+    assert saved.outputs[0].availability_state == "available"
