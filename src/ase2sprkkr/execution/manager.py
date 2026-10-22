@@ -16,7 +16,6 @@ from uuid import uuid4
 
 
 from ..common.file_locks import FileLock
-from ..common.file_versions import FileState
 from ._durability import durable_mkdir, durable_write_json, sync_file
 from .base import (
     Executor,
@@ -26,7 +25,6 @@ from .base import (
     SubmissionNotStarted,
 )
 from .job_files import JobFiles, HistoricalFileMismatchError
-from .file_history import file_is_current
 from .endpoint import ExecutorEndpoint, endpoint_for_executor
 from .pool import Executors
 from .projects import _project_id
