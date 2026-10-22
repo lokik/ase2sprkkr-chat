@@ -217,8 +217,8 @@ def test_file_availability_failure_does_not_change_finished_state(tmp_path):
     record = manager.store.save(record)
     record = manager.transition(record, state=RunState.FINISHED)
 
-    record = manager.update_file_availability(
-        record, str(tmp_path / "out"), FileAvailabilityState.FAILED, "ssh disconnected"
+    record = record.job_files.update_availability(
+        manager.store, str(tmp_path / "out"), FileAvailabilityState.FAILED, "ssh disconnected"
     )
 
     assert record.state == RunState.FINISHED
