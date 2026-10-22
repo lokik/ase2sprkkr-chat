@@ -19,7 +19,7 @@ from .remote import FileSyncPolicy, RemoteRunner, _run_sync
 from .remote_file_handler import RemoteFileHandler
 from .target_connection import SSHConnection
 from .supervisor_monitor import backend_status_from_facts
-from .run_model import FileMapping, WorkingDirectory
+from .run_model import FileManifest, FileMapping, WorkingDirectory
 from .endpoint import endpoint_for_executor
 
 
@@ -114,9 +114,11 @@ class RemoteEndpointExecutor(Executor):
             result = []
             for run in runs:
                 execution = run.execution
-                state = await self.connection.status(execution.backend_id, run.files)
+                facts = await self.connection.status(execution.backend_id, run.files)
+                frozen = facts.get("files")
+                files = None if frozen is None else FileManifest(**frozen)
                 result.append(backend_status_from_facts(
-                    state, execution.backend_id, needs_delivery=True,
+                    facts, execution.backend_id, needs_delivery=True, files=files,
                 ))
             return tuple(result)
 
