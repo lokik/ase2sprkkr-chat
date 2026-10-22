@@ -359,3 +359,23 @@ def test_parallel_registration_of_same_executor_is_idempotent():
         ))
     assert all(value == endpoint for value in registered)
     assert executors.for_endpoint(endpoint) is executor
+
+
+def test_refresh_groups_by_endpoint_not_executor_hash(tmp_path):
+    from ase2sprkkr.execution import ExecutorEndpoint
+
+    class UnhashableExecutor:
+        __hash__ = None
+
+        def status(self, *records):
+            return tuple(RunStatus(state=RunState.RUNNING) for _ in records)
+
+    manager = _manager(tmp_path)
+    endpoint = ExecutorEndpoint(executor="custom:unhashable")
+    manager.executors.register(UnhashableExecutor(), endpoint)
+    record = manager.new_record(task="DOS", directory=tmp_path, endpoint=endpoint)
+    record = manager.transition(
+        record, state=RunState.QUEUED,
+        execution=record.execution.submitted("native-1"),
+    )
+    assert manager.refresh((record,))[0].state is RunState.RUNNING

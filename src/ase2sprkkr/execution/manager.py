@@ -778,11 +778,10 @@ class ExecutionManager:
         for record in records:
             if record.execution.backend_id is None:
                 continue
-            executor = self.executors.for_endpoint(record.execution.endpoint)
-            groups.setdefault(executor, []).append(record)
+            groups.setdefault(record.execution.endpoint, []).append(record)
 
-        for executor, group in groups.items():
-            statuses = executor.status(*group)
+        for endpoint, group in groups.items():
+            statuses = self.executors.for_endpoint(endpoint).status(*group)
             if len(statuses) != len(group):
                 raise RuntimeError("Executor returned wrong number of run statuses")
             for record, status in zip(group, statuses):
