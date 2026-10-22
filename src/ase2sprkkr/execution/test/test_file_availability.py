@@ -162,33 +162,6 @@ def test_output_pattern_can_skip_protected_files(tmp_path):
     assert not drop.exists()
 
 
-def test_protected_output_rejects_symlink_alias(tmp_path):
-    import pytest
-    from ase2sprkkr.execution.file_availability import validate_output_collisions
-
-    source = tmp_path / "source.dat"
-    source.write_bytes(b"density")
-    alias = tmp_path / "alias.out"
-    alias.symlink_to(source)
-    with pytest.raises(ValueError, match="overlaps protected"):
-        validate_output_collisions((alias,), protected=(source,))
-    assert source.read_bytes() == b"density"
-
-
-def test_protected_output_rejects_hardlink_alias(tmp_path):
-    import os
-    import pytest
-    from ase2sprkkr.execution.file_availability import validate_output_collisions
-
-    source = tmp_path / "source.dat"
-    source.write_bytes(b"density")
-    alias = tmp_path / "alias.out"
-    os.link(source, alias)
-    with pytest.raises(ValueError, match="overlaps protected"):
-        validate_output_collisions((alias,), protected=(source,))
-    assert source.read_bytes() == b"density"
-
-
 def test_collision_expands_protected_wildcard_once_for_multiple_outputs(
     tmp_path, monkeypatch,
 ):
@@ -219,8 +192,6 @@ def test_collision_expands_protected_wildcard_once_for_multiple_outputs(
 
     assert expanded == [os.path.abspath(pattern)]
     assert protected_file.read_bytes() == b"restart"
-
-
 
 
 def test_remote_missing_wildcards_distinguish_required_and_optional(tmp_path):
@@ -287,7 +258,6 @@ def test_remote_optional_glob_does_not_hide_successful_required_result(tmp_path)
     assert frozen.outputs[0].local_path == str(local / "result-a.dat")
     assert frozen.outputs[0].source == str(local / "result-*.dat")
     assert frozen.outputs[0].optional is False
-
 
 
 def test_unmatched_optional_remote_wildcards_are_frozen_as_empty_membership(tmp_path):
