@@ -345,6 +345,12 @@ class RemoteRunner:
         # remote files during client-side staging.
         self._output_targets = targets
         self._output_patterns = tuple(patterns)
+        self._optional_output_patterns = {
+            await self.executor.map_path(self._local_path(value))
+            for value in self.spec.output_files
+            if getattr(value, "optional", False)
+            and has_file_magic(self._local_path(value))
+        }
 
     async def _sync_output_entry(self, local, remote, required, *, source_pattern=None):
         """Synchronize one concrete output and record its availability."""
@@ -424,13 +430,14 @@ class RemoteRunner:
                 path for path in (self.result.output_file, self.result.error_file)
                 if path is not None
             }
-            await self._sync_patterns(
-                self._output_patterns,
-                kind="output",
-                required=required,
-                excluded_remote=self._output_targets.values(),
-                excluded_local=primary,
-            )
+            for pattern in self._output_patterns:
+                await self._sync_patterns(
+                    (pattern,),
+                    kind="output",
+                    required=required and pattern not in self._optional_output_patterns,
+                    excluded_remote=self._output_targets.values(),
+                    excluded_local=primary,
+                )
 
     async def _sync_one_output(self, local, remote, required):
         policy = self.executor.output_files

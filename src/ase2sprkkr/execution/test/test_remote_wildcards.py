@@ -286,3 +286,18 @@ def test_overlapping_exact_and_wildcard_caches_are_transferred_once(tmp_path):
     assert entries[str(exact)].availability_state == "available"
     assert entries[str(pattern)].availability_state == "available"
     assert exact.read_text() == "new"
+
+
+def test_missing_optional_scf_startup_pattern_is_not_fatal(tmp_path):
+    """Successful remote SCF need not emit the optional startup DOS."""
+    from ase2sprkkr.input_parameters.task_definition import TaskFile
+
+    workdir = tmp_path / "local" / "calculation"
+    executor, spec, _, _ = _text_run(
+        tmp_path,
+        declared_output_files=(TaskFile(workdir / "*_SCFSTART.dos", optional=True),),
+        code="print('done')",
+    )
+    runner = _processed_run(executor, spec)
+    result = runner.run()
+    assert result.return_code == 0

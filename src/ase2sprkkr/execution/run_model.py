@@ -81,6 +81,7 @@ class FileEntry:
     availability_state: Optional[str] = None
     availability_message: Optional[str] = None
     source_pattern: Optional[str] = None
+    optional: bool = False
 
     def __post_init__(self):
         import os
@@ -91,6 +92,8 @@ class FileEntry:
             value = getattr(self, name)
             if value is not None:
                 object.__setattr__(self, name, os.fspath(value))
+        if type(self.optional) is not bool:
+            raise TypeError("FileEntry.optional must be a bool")
         if self.local_path is None and self.remote_path is None:
             raise ValueError("A file entry must have at least one location")
         if self.availability_state is not None:
@@ -186,7 +189,7 @@ class FileManifest:
         """Build the local file manifest for an execution specification."""
         import os
 
-        from .base import file_path
+        from .base import declared_file_paths, file_path
 
         directory = os.path.abspath(os.fspath(spec.directory))
 
@@ -196,17 +199,31 @@ class FileManifest:
                 if (path := file_path(value, directory)) is not None
             ))
 
-        inputs = paths(getattr(spec, "input_file", None), *getattr(spec, "input_files", ()))
+        inputs = declared_file_paths(
+            (getattr(spec, "input_file", None), *getattr(spec, "input_files", ())),
+            directory,
+        )
         stdout = file_path(getattr(spec, "output_file", None), directory)
         stderr = file_path(getattr(spec, "error_file", None), directory)
-        streams = {stdout, stderr}
-        outputs = (
-            path for path in paths(*getattr(spec, "output_files", ())) if path not in streams
-        )
+        # Output duplicates are ambiguous: the later execution manifest
+        # rejects them instead of silently weakening file ownership.
+        output_values = getattr(spec, "output_files", ())
+        outputs = []
+        output_paths = set()
+        for value in output_values:
+            path = file_path(value, directory)
+            if path is None or path in {stdout, stderr}:
+                continue
+            if path in output_paths:
+                raise ValueError(f"Duplicate file declaration: output {path}")
+            output_paths.add(path)
+            outputs.append((path, not getattr(value, "optional", False)))
         caches = paths(*getattr(spec, "cache_files", ()))
         return cls(
-            inputs=tuple(FileEntry(local_path=x) for x in inputs),
-            outputs=tuple(FileEntry(local_path=x) for x in outputs),
+            inputs=tuple(FileEntry(local_path=path, optional=not required)
+                         for path, required in inputs),
+            outputs=tuple(FileEntry(local_path=path, optional=not required)
+                          for path, required in outputs),
             caches=tuple(CacheEntry(FileEntry(local_path=x)) for x in caches),
             stdout=None if stdout is None else FileEntry(local_path=stdout),
             stderr=None if stderr is None else FileEntry(local_path=stderr),
