@@ -279,7 +279,8 @@ class RemoteFileHandler:
                 if entry.availability_state == "skipped":
                     continue
                 if (entry.availability_state == "available"
-                        and os.path.isfile(entry.local_path)):
+                        and entry.verified_local_version is not None
+                        and entry.verified_local_version.is_current()):
                     continue
 
                 identity = (kind, entry.remote_path, entry.local_path)

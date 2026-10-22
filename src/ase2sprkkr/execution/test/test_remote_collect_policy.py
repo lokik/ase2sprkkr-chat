@@ -117,3 +117,63 @@ def test_successful_remote_download_stores_revalidatable_sha256(tmp_path):
 
     local.write_bytes(b"changed local copy")
     assert not version.is_current()
+
+
+@pytest.mark.parametrize("initial_state", ("verified", "unverified"))
+def test_collect_rechecks_available_output_when_local_identity_is_not_verified(
+    tmp_path, initial_state,
+):
+    """Only a current SHA-256 receipt can skip another collection attempt."""
+    from ase2sprkkr.common.file_versions import FileVersion
+
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    source = remote / "result.dat"
+    source.write_bytes(b"authoritative output")
+    local = tmp_path / "result.dat"
+    local.write_bytes(b"old local contents")
+    receipt = FileVersion.capture(local, require_digest=True)
+    if initial_state == "verified":
+        # A delivery was verified before the local copy was tampered with.
+        local.write_bytes(b"tampered after delivery")
+    else:
+        # Imported legacy availability has no trustworthy receipt.
+        receipt = None
+
+    original = FileManifest(outputs=(
+        FileEntry(
+            str(local), str(source), availability_state="available",
+            verified_local_version=receipt,
+        ),
+    ))
+    observed, error = asyncio.run(RemoteFileHandler(LocalTransport()).collect(
+        FileMapping(str(tmp_path), str(remote), output_sync="changed"),
+        original, ExecutionOutcome(), required=True,
+    ))
+
+    assert error is None
+    assert local.read_bytes() == source.read_bytes()
+    assert observed.outputs[0].verified_local_version is not None
+    assert observed.outputs[0].verified_local_version.is_current()
+    assert original.outputs[0].verified_local_version == receipt
+
+
+def test_collect_current_verified_output_skips_remote_even_if_missing(tmp_path):
+    """An intact receipt survives reattachment without contacting the server."""
+    from ase2sprkkr.common.file_versions import FileVersion
+
+    path = tmp_path / "verified.dat"
+    path.write_bytes(b"already downloaded")
+    receipt = FileVersion.capture(path, require_digest=True)
+    files = FileManifest(outputs=(
+        FileEntry(
+            str(path), str(tmp_path / "deleted-remote.dat"),
+            availability_state="available", verified_local_version=receipt,
+        ),
+    ))
+    observed, error = asyncio.run(RemoteFileHandler(NoRemoteAccess()).collect(
+        FileMapping(str(tmp_path), str(tmp_path), output_sync="changed"),
+        files, ExecutionOutcome(), required=True,
+    ))
+    assert error is None
+    assert observed == files
