@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 
 from .transport import expand_local_candidates, expand_local_files, has_file_magic
+from .file_identity import same_local_file
 
 
 def prepare_local_files(spec, *, output_file=None, error_file=None,
@@ -171,26 +172,15 @@ def validate_output_collisions(streams, *, protected=()):
     Broad output patterns retain their existing behavior: matching protected
     files are skipped by clear_declared_outputs rather than removed.
     """
-    protected_paths = tuple(
-        (declaration, candidate, os.path.realpath(candidate))
-        for declaration, candidate in _expanded_protected_paths(protected)
-    )
+    protected_paths = tuple(_expanded_protected_paths(protected))
     for stream in streams:
         if stream is None:
             continue
         target = os.path.abspath(os.fspath(stream))
         if has_file_magic(target):
             continue
-        resolved_target = os.path.realpath(target)
-        for declaration, candidate, resolved_candidate in protected_paths:
-            collision = resolved_target == resolved_candidate
-            if not collision:
-                # Existing distinct hardlinks may refer to the same inode.
-                try:
-                    collision = os.path.samefile(target, candidate)
-                except (FileNotFoundError, NotADirectoryError):
-                    pass
-            if collision:
+        for declaration, candidate in protected_paths:
+            if same_local_file(target, candidate):
                 raise ValueError(
                     f"Output {target} overlaps protected input/cache {declaration}"
                 )

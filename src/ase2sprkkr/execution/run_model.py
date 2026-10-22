@@ -13,6 +13,7 @@ from typing import Optional
 from ..common.file_versions import FileState, FileVersion
 
 from .endpoint import ExecutorEndpoint
+from .file_identity import same_local_file
 
 
 @dataclass(frozen=True)
@@ -195,18 +196,6 @@ class FileMapping:
         return local
 
 
-def _same_local_file(first, second):
-    """Treat lexical aliases, symlinks and existing hardlinks as one file."""
-    import os
-
-    if first is None or second is None:
-        return False
-    a, b = os.fspath(first), os.fspath(second)
-    if os.path.realpath(a) == os.path.realpath(b):
-        return True
-    return os.path.exists(a) and os.path.exists(b) and os.path.samefile(a, b)
-
-
 def _validate_file_declarations(entries, *, primary_input=None):
     """Reject duplicate file identities, except intentionally merged streams.
 
@@ -224,7 +213,7 @@ def _validate_file_declarations(entries, *, primary_input=None):
         if role == "cache" and entry.local_path is None:
             continue
         for previous_role, previous in declared:
-            same_local = _same_local_file(entry.local_path, previous.local_path)
+            same_local = same_local_file(entry.local_path, previous.local_path)
             same_remote = (
                 entry.remote_path is not None and previous.remote_path is not None
                 and posixpath.normpath(entry.remote_path)
@@ -244,8 +233,8 @@ def _validate_file_declarations(entries, *, primary_input=None):
                 continue
             if (roles == {"input", "stdin"} and primary_input is not None
                     and same_local
-                    and _same_local_file(entry.local_path, primary_input.local_path)
-                    and _same_local_file(previous.local_path, primary_input.local_path)):
+                    and same_local_file(entry.local_path, primary_input.local_path)
+                    and same_local_file(previous.local_path, primary_input.local_path)):
                 continue
             # An expanded wildcard may repeat an exact output/cache member,
             # but the same local destination must not have different sources.
@@ -311,17 +300,17 @@ class FileManifest:
         primary = file_path(spec.input_file, directory)
         inputs = []
         for entry in entries(spec.input_file, *spec.input_files):
-            if primary is not None and _same_local_file(entry.local_path, primary):
+            if primary is not None and same_local_file(entry.local_path, primary):
                 entry = replace(entry, optional=False)
             for index, prior in enumerate(inputs):
-                if _same_local_file(entry.local_path, prior.local_path):
+                if same_local_file(entry.local_path, prior.local_path):
                     inputs[index] = replace(prior, optional=prior.optional and entry.optional)
                     break
             else:
                 inputs.append(entry)
         stdin = file_path(spec.stdin, directory)
         if stdin is not None and any(
-            _same_local_file(stdin, file_path(value, directory))
+            same_local_file(stdin, file_path(value, directory))
             for value in spec.input_files
         ):
             raise ValueError("Duplicate file declaration: input and stdin refer to the same file")

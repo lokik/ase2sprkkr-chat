@@ -11,6 +11,7 @@ import fnmatch
 import os
 
 from .transport import has_file_magic
+from .file_identity import same_local_file
 
 
 def _accesses(record):
@@ -51,12 +52,8 @@ def _paths_overlap(first, second, *, check_hardlinks=False):
                 return True
             a_magic, b_magic = has_file_magic(a), has_file_magic(b)
             if not a_magic and not b_magic:
-                if check_hardlinks:
-                    try:
-                        if os.path.samefile(a, b):
-                            return True
-                    except (FileNotFoundError, NotADirectoryError):
-                        pass
+                if check_hardlinks and same_local_file(a, b):
+                    return True
             elif not a_magic:
                 if fnmatch.fnmatchcase(a, b):
                     return True
