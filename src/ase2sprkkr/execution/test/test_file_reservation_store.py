@@ -1,12 +1,23 @@
 """Atomic file namespace reservation for persistent execution."""
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
-from ase2sprkkr.execution.base import RunState
-from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.base import RunState, RunStatus, SubmissionRecovery
+from ase2sprkkr.execution.manager import DuplicateSubmissionError, ExecutionManager
 from ase2sprkkr.execution.run_store import RunStore
+from ase2sprkkr.execution.run_record import SubmissionPhase
+
+
+def _dispatch(manager, record):
+    """Commit the uncertain launch boundary after a file reservation."""
+    prepared = manager.reserve(record)
+    assert prepared.submission_phase == SubmissionPhase.PREPARING
+    dispatched = manager.store.begin_dispatch(prepared)
+    assert dispatched.submission_phase == SubmissionPhase.DISPATCHING
+    return dispatched
 
 
 def test_conflict_does_not_write_unclaimed_record(tmp_path):
@@ -44,17 +55,20 @@ def test_reservation_rejects_stale_new_record(tmp_path):
     assert latest.state == RunState.NEW
 
 
-def test_recovery_does_not_fail_concurrently_refreshed_submission(tmp_path, monkeypatch):
-    from types import SimpleNamespace
 
+def test_recovery_does_not_fail_concurrently_refreshed_submission(tmp_path, monkeypatch):
     store = RunStore(tmp_path / "runs")
     manager = ExecutionManager(store, submitting_grace=0)
-    record = manager.new_record(task="DOS", directory=tmp_path)
-    submitted = manager.reserve(record)
+    submitted = _dispatch(manager, manager.new_record(task="DOS", directory=tmp_path))
 
-    def recover(*args, **kwargs):
-        manager.transition(submitted, state=RunState.SUBMITTING)
-        return None
+    def recover(run_id, record, *, submitted_at):
+        assert (run_id, record, submitted_at) == (
+            submitted.id, submitted, submitted.updated_at,
+        )
+        manager.transition(
+            submitted, state=RunState.SUBMITTING, message="newer submission evidence",
+        )
+        return SubmissionRecovery.ABSENT
 
     monkeypatch.setattr(
         manager.executors, "for_endpoint",
@@ -62,7 +76,9 @@ def test_recovery_does_not_fail_concurrently_refreshed_submission(tmp_path, monk
     )
     result = manager.recover_submitting(submitted)
     assert result.state == RunState.SUBMITTING
-    assert store.get(submitted.id).state == RunState.SUBMITTING
+    assert result.submission_phase == SubmissionPhase.DISPATCHING
+    assert result.message == "newer submission evidence"
+    assert store.get(submitted.id) == result
 
 
 def test_unsubmitted_record_does_not_reserve_files(tmp_path):
@@ -119,19 +135,23 @@ def test_reservations_are_atomic_across_store_instances(tmp_path):
     assert len(first.store.runs(active=True)) == 1
 
 
+
 def test_recovered_status_does_not_overwrite_newer_backend_observation(
     tmp_path, monkeypatch,
 ):
-    from types import SimpleNamespace
-    from ase2sprkkr.execution.base import RunStatus
-
     store = RunStore(tmp_path / "runs")
     manager = ExecutionManager(store, submitting_grace=0)
-    submitted = manager.reserve(manager.new_record(task="DOS", directory=tmp_path))
+    submitted = _dispatch(manager, manager.new_record(task="DOS", directory=tmp_path))
 
     def recover(*args, **kwargs):
-        manager.transition(submitted, state=RunState.RUNNING)
-        return RunStatus(state=RunState.FAILED, message="stale recovery")
+        manager.transition(
+            submitted, state=RunState.RUNNING,
+            execution=submitted.execution.submitted("current-backend"),
+        )
+        return RunStatus(
+            state=RunState.FAILED, backend_id="stale-backend",
+            message="stale recovery",
+        )
 
     monkeypatch.setattr(
         manager.executors, "for_endpoint",
@@ -141,7 +161,9 @@ def test_recovered_status_does_not_overwrite_newer_backend_observation(
     )
     result = manager.recover_submitting(submitted)
     assert result.state == RunState.RUNNING
-    assert store.get(submitted.id).state == RunState.RUNNING
+    assert result.execution.backend_id == "current-backend"
+    assert result.message is None
+    assert store.get(submitted.id) == result
 
 
 def test_corrupt_run_blocks_reservation_but_history_remains_readable(tmp_path):
@@ -162,56 +184,62 @@ def test_corrupt_run_blocks_reservation_but_history_remains_readable(tmp_path):
     assert path.read_text() == "{broken json"
 
 
-def test_stale_missing_submission_releases_reservation(tmp_path, monkeypatch):
-    from types import SimpleNamespace
 
+def test_stale_missing_submission_releases_reservation(tmp_path, monkeypatch):
     manager = ExecutionManager(RunStore(tmp_path / "runs"), submitting_grace=0)
-    first = manager.reserve(manager.new_record(task="SCF", directory=tmp_path))
+    first = _dispatch(manager, manager.new_record(task="SCF", directory=tmp_path))
+    second = manager.new_record(task="SCF", directory=tmp_path)
+    calls = []
+
+    def recover(run_id, record, *, submitted_at):
+        calls.append((run_id, record, submitted_at))
+        return SubmissionRecovery.ABSENT
+
+    monkeypatch.setattr(
+        manager.executors, "for_endpoint",
+        lambda endpoint: SimpleNamespace(recover_submission=recover),
+    )
+    reserved = manager.reserve(second)
+    assert reserved.state == RunState.SUBMITTING
+    assert reserved.submission_phase == SubmissionPhase.PREPARING
+    abandoned = manager.store.get(first.id)
+    assert abandoned.state == RunState.FAILED
+    assert abandoned.submission_phase is None
+    assert calls == [(first.id, first, first.updated_at)]
+
+
+
+def test_recovered_active_backend_still_blocks_reservation(tmp_path, monkeypatch):
+    manager = ExecutionManager(RunStore(tmp_path / "runs"), submitting_grace=0)
+    first = _dispatch(manager, manager.new_record(task="SCF", directory=tmp_path))
     second = manager.new_record(task="SCF", directory=tmp_path)
     calls = []
 
     def recover(run_id, record, *, submitted_at):
         calls.append((run_id, submitted_at))
-        return None
+        return RunStatus(state=RunState.RUNNING, backend_id="still-running")
 
-    monkeypatch.setattr(manager.executors, "for_endpoint",
-                        lambda endpoint: SimpleNamespace(recover_submission=recover))
-    reserved = manager.reserve(second)
-    assert reserved.state == RunState.SUBMITTING
-    assert manager.store.get(first.id).state == RunState.FAILED
+    monkeypatch.setattr(
+        manager.executors, "for_endpoint",
+        lambda endpoint: SimpleNamespace(
+            recover_submission=recover,
+            acknowledge_submission=lambda record: None,
+        ),
+    )
+    with pytest.raises(DuplicateSubmissionError):
+        manager.reserve(second)
+    recovered = manager.store.get(first.id)
+    assert recovered.state == RunState.RUNNING
+    assert recovered.execution.backend_id == "still-running"
+    assert recovered.submission_phase is None
+    assert second.state == RunState.NEW
     assert calls == [(first.id, first.updated_at)]
 
 
-def test_recovered_active_backend_still_blocks_reservation(tmp_path, monkeypatch):
-    from types import SimpleNamespace
-    from ase2sprkkr.execution.base import RunStatus
-    from ase2sprkkr.execution.manager import DuplicateSubmissionError
-
-    manager = ExecutionManager(RunStore(tmp_path / "runs"), submitting_grace=0)
-    first = manager.reserve(manager.new_record(task="SCF", directory=tmp_path))
-    second = manager.new_record(task="SCF", directory=tmp_path)
-    calls = []
-
-    def recover(*args, **kwargs):
-        calls.append(1)
-        return RunStatus(state=RunState.RUNNING, backend_id="still-running")
-
-    monkeypatch.setattr(manager.executors, "for_endpoint",
-                        lambda endpoint: SimpleNamespace(
-                            recover_submission=recover,
-                            acknowledge_submission=lambda record: None))
-    with pytest.raises(DuplicateSubmissionError):
-        manager.reserve(second)
-    assert manager.store.get(first.id).state == RunState.RUNNING
-    assert calls == [1]
-
 
 def test_unsupported_recovery_preserves_reservation(tmp_path, monkeypatch):
-    from types import SimpleNamespace
-    from ase2sprkkr.execution.manager import DuplicateSubmissionError
-
     manager = ExecutionManager(RunStore(tmp_path / "runs"), submitting_grace=0)
-    first = manager.reserve(manager.new_record(task="SCF", directory=tmp_path))
+    first = _dispatch(manager, manager.new_record(task="SCF", directory=tmp_path))
     second = manager.new_record(task="SCF", directory=tmp_path)
     calls = []
 
@@ -219,27 +247,27 @@ def test_unsupported_recovery_preserves_reservation(tmp_path, monkeypatch):
         calls.append(1)
         raise NotImplementedError
 
-    monkeypatch.setattr(manager.executors, "for_endpoint",
-                        lambda endpoint: SimpleNamespace(recover_submission=unsupported))
+    monkeypatch.setattr(
+        manager.executors, "for_endpoint",
+        lambda endpoint: SimpleNamespace(recover_submission=unsupported),
+    )
     with pytest.raises(DuplicateSubmissionError):
         manager.reserve(second)
-    assert manager.store.get(first.id).state == RunState.SUBMITTING
+    persisted = manager.store.get(first.id)
+    assert persisted.state == RunState.SUBMITTING
+    assert persisted.submission_phase == SubmissionPhase.DISPATCHING
     assert second.state == RunState.NEW
     assert calls == [1]
 
 
-def test_fresh_submission_is_not_recovered(tmp_path, monkeypatch):
-    from types import SimpleNamespace
-    from ase2sprkkr.execution.manager import DuplicateSubmissionError
 
-    manager = ExecutionManager(
-        RunStore(tmp_path / "runs"), submitting_grace=3600,
-    )
-    first = manager.reserve(manager.new_record(task="SCF", directory=tmp_path))
+def test_fresh_submission_is_not_recovered(tmp_path, monkeypatch):
+    manager = ExecutionManager(RunStore(tmp_path / "runs"), submitting_grace=3600)
+    first = _dispatch(manager, manager.new_record(task="SCF", directory=tmp_path))
     second = manager.new_record(task="SCF", directory=tmp_path)
 
     def unexpected_recovery(*args, **kwargs):
-        raise AssertionError("Fresh submission must not be recovered")
+        raise AssertionError("Fresh dispatch must not be recovered")
 
     monkeypatch.setattr(
         manager.executors, "for_endpoint",
@@ -247,7 +275,88 @@ def test_fresh_submission_is_not_recovered(tmp_path, monkeypatch):
     )
     with pytest.raises(DuplicateSubmissionError):
         manager.reserve(second)
-    assert manager.store.get(first.id).state == RunState.SUBMITTING
+    persisted = manager.store.get(first.id)
+    assert persisted.state == RunState.SUBMITTING
+    assert persisted.submission_phase == SubmissionPhase.DISPATCHING
+
+
+
+@pytest.mark.parametrize("safe", (False, True))
+def test_abandoned_preparing_requires_executor_safety(tmp_path, monkeypatch, safe):
+    manager = ExecutionManager(RunStore(tmp_path / "runs"), submitting_grace=3600)
+    first = manager.reserve(manager.new_record(task="SCF", directory=tmp_path))
+    second = manager.new_record(task="SCF", directory=tmp_path)
+    assert first.submission_phase == SubmissionPhase.PREPARING
+    calls = []
+
+    def preparation_is_safe():
+        calls.append("preparing")
+        return safe
+
+    def unexpected_recovery(*args, **kwargs):
+        raise AssertionError("PREPARING must not query submission receipts")
+
+    monkeypatch.setattr(
+        manager.executors, "for_endpoint",
+        lambda endpoint: SimpleNamespace(
+            abandoned_preparation_is_safe=preparation_is_safe,
+            recover_submission=unexpected_recovery,
+        ),
+    )
+    if safe:
+        assert manager.reserve(second).submission_phase == SubmissionPhase.PREPARING
+        assert manager.store.get(first.id).state == RunState.FAILED
+    else:
+        with pytest.raises(DuplicateSubmissionError):
+            manager.reserve(second)
+        assert manager.store.get(first.id) == first
+        assert second.state == RunState.NEW
+    assert calls == ["preparing"]
+
+
+@pytest.mark.parametrize("phase", (SubmissionPhase.PREPARING, SubmissionPhase.DISPATCHING))
+def test_submission_owner_lock_prevents_recovery(tmp_path, monkeypatch, phase):
+    manager = ExecutionManager(RunStore(tmp_path / "runs"), submitting_grace=0)
+    first = manager.reserve(manager.new_record(task="SCF", directory=tmp_path))
+    if phase == SubmissionPhase.DISPATCHING:
+        first = manager.store.begin_dispatch(first)
+    second = manager.new_record(task="SCF", directory=tmp_path)
+    assert first.submission_phase == phase
+
+    def unexpected_recovery(*args, **kwargs):
+        raise AssertionError("A live submission owner must not be recovered")
+
+    monkeypatch.setattr(
+        manager.executors, "for_endpoint",
+        lambda endpoint: SimpleNamespace(
+            abandoned_preparation_is_safe=unexpected_recovery,
+            recover_submission=unexpected_recovery,
+        ),
+    )
+    with manager.store.submission_owner(first) as acquired:
+        assert acquired
+        assert manager.recover_submitting(first) == first
+        with pytest.raises(DuplicateSubmissionError):
+            manager.reserve(second)
+        assert manager.store.get(first.id) == first
+    with manager.store.submission_owner(first) as acquired:
+        assert acquired  # Ownership is released when its holder exits.
+    assert second.state == RunState.NEW
+
+
+def test_inconclusive_dispatch_recovery_keeps_reservation(tmp_path, monkeypatch):
+    manager = ExecutionManager(RunStore(tmp_path / "runs"), submitting_grace=0)
+    first = _dispatch(manager, manager.new_record(task="SCF", directory=tmp_path))
+    second = manager.new_record(task="SCF", directory=tmp_path)
+
+    monkeypatch.setattr(
+        manager.executors, "for_endpoint",
+        lambda endpoint: SimpleNamespace(recover_submission=lambda *a, **kw: None),
+    )
+    with pytest.raises(DuplicateSubmissionError):
+        manager.reserve(second)
+    assert manager.store.get(first.id) == first
+    assert second.state == RunState.NEW
 
 
 @pytest.mark.parametrize("payload", ("null", "[]", '"text"', "7"))
