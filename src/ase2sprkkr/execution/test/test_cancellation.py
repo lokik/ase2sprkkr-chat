@@ -6,7 +6,7 @@ from threading import Event, Thread
 import pytest
 
 from ase2sprkkr.execution import FileManifest
-from ase2sprkkr.execution.job_files import JobFilesOwner
+from ase2sprkkr.execution.job_files import JobFiles
 from ase2sprkkr.execution.base import ExecutionResources, RunState
 from ase2sprkkr.execution.postprocessing import CalculationRun
 from ase2sprkkr.execution.run_persistence import RunPersistence
@@ -25,7 +25,7 @@ class _Resource:
         self.closed = True
 
 
-class _BackendRunner(JobFilesOwner):
+class _BackendRunner:
     """Backend double intentionally lacking pre-submit cancellation support."""
 
     def __init__(self):
@@ -34,7 +34,7 @@ class _BackendRunner(JobFilesOwner):
         self.backend_id = None
         self.failure_phase = None
         self.failure_message = None
-        self._initialize_job_files(FileManifest())
+        self.job_files = JobFiles(FileManifest())
         self.exception = None
         self.result = object()
         self.submitted = 0
