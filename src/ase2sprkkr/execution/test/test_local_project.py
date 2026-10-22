@@ -435,3 +435,34 @@ def test_local_project_rejects_output_cache_collision_before_submission(tmp_path
     assert existing.read_text() == "restart cache"
     assert extra.read_text() == "old output"
     assert read_submission(RUN_ID) is None
+
+
+def test_attach_local_preserves_durable_file_delivery(tmp_path, monkeypatch):
+    from ..local_project import attach_local
+    from ..base import RunStatus
+    from ..run_model import FileEntry
+    from .. import local_project
+
+    file = str(tmp_path / "result.dat")
+    previous = FileManifest(outputs=(
+        FileEntry(local_path=file, availability_state="failed",
+                  availability_message="transfer interrupted"),
+    ))
+    stale = previous.with_file_availability(file, "pending")
+    record = _record(tmp_path, "opaque-id")
+    record = replace(record, files=previous)
+    monkeypatch.setattr(
+        local_project, "_decode_handle", lambda _: {"kind": "process"},
+    )
+    monkeypatch.setattr(
+        local_project, "local_status",
+        lambda *args: RunStatus(RunState.RUNNING, files=stale),
+    )
+    attached = attach_local(LocalExecutor(), record, start=False)
+    assert attached.file_snapshot().outputs[0].availability_state == "failed"
+    assert attached.file_snapshot().outputs[0].availability_message == "transfer interrupted"
+
+    captured = replace(previous, captured_at="2026-10-13T08:00:01+00:00")
+    completed = replace(record, files=captured, state=RunState.FINISHED)
+    attached = attach_local(LocalExecutor(), completed, start=False)
+    assert attached.file_snapshot() is captured

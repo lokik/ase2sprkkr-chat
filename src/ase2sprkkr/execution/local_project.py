@@ -13,6 +13,7 @@ from .base import (
     ExecutionSpec, FailurePhase, RunState, RunStatus, start_monitor, file_path,
 )
 from .run_model import FileManifest
+from .job_files import JobFiles
 from .managed_runner import ManagedRunner
 from .supervisor_monitor import backend_status_from_facts, monitor_supervisor
 from .remote_service import _decode_handle
@@ -216,7 +217,11 @@ def attach_local(executor, run, *, callback=None, output_listener=None, start=Tr
         state=status.state, failure_phase=status.failure_phase,
         failure_message=status.message,
     )
-    runner.replace_file_manifest(status.files or files)
+    observed = status.files
+    runner.replace_file_manifest(
+        files if observed is None or files.captured_at is not None
+        else JobFiles.merge_snapshot(files, observed)
+    )
     runner._return_code = status.return_code
     runner.result.return_code = status.return_code
     if start:

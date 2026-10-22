@@ -17,6 +17,7 @@ from .base import (
 )
 from .remote import FileSyncPolicy, RemoteRunner, _run_sync
 from .remote_file_handler import RemoteFileHandler
+from .job_files import JobFiles
 from .target_connection import SSHConnection
 from .supervisor_monitor import backend_status_from_facts
 from .run_model import FileManifest, FileMapping, WorkingDirectory
@@ -208,7 +209,13 @@ class RemoteEndpointExecutor(Executor):
                 ),
             )
             frozen = status.get("files")
-            files = run.files if frozen is None else FileManifest(**frozen)
+            # Persistence is authoritative for previously delivered files.
+            # A captured historical snapshot is immutable after completion.
+            files = (
+                run.files
+                if frozen is None or run.files.captured_at is not None
+                else JobFiles.merge_snapshot(run.files, FileManifest(**frozen))
+            )
             runner = RemoteRunner(
                 self, spec, callback=callback, output_listener=output_listener,
                 backend_id=execution.backend_id,

@@ -259,3 +259,53 @@ def test_remote_status_preserves_frozen_file_manifest():
     assert status.files.outputs == files.outputs
     assert status.state is RunState.DOWNLOADING
     assert status.return_code == 0
+
+
+def test_remote_attach_preserves_durable_transfer_failure(tmp_path, monkeypatch):
+    import asyncio
+    from dataclasses import asdict, replace
+    from ..run_model import FileEntry, FileMapping
+
+    local, remote = tmp_path / "local", tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    endpoint = _executor()
+    mapping = FileMapping(str(local), str(remote))
+    output = str(local / "download.dat")
+    recorded = FileManifest(
+        outputs=(FileEntry(
+            output, str(remote / "download.dat"), availability_state="failed",
+            availability_message="download interrupted",
+        ),),
+        mapping=mapping,
+    )
+    run = RunRecord(
+        id="attach-files", task="DOS", state=RunState.RUNNING,
+        created_at="2026-10-13T08:00:00+00:00",
+        updated_at="2026-10-13T08:00:00+00:00",
+        execution=Execution(
+            endpoint_for_executor(endpoint),
+            WorkingDirectory(str(local), str(remote)), "opaque-handle",
+        ),
+        files=recorded,
+    )
+    stale = replace(recorded, outputs=(
+        replace(recorded.outputs[0], availability_state="pending",
+                availability_message=None),
+    ))
+
+    async def status(*args, **kwargs):
+        return {"state": "running", "files": asdict(stale)}
+
+    monkeypatch.setattr(endpoint.connection, "status", status)
+    attached = endpoint.attach(run, start=False)
+    assert attached.file_snapshot().outputs[0].availability_state == "failed"
+    assert attached.file_snapshot().outputs[0].availability_message == "download interrupted"
+    assert run.files is recorded
+
+    # Even an apparently successful stale backend snapshot may not replace
+    # captured historical file membership.
+    captured = replace(recorded, captured_at="2026-10-13T08:00:01+00:00")
+    completed = replace(run, state=RunState.FINISHED, files=captured)
+    attached = endpoint.attach(completed, start=False)
+    assert attached.file_snapshot() is captured
