@@ -17,7 +17,9 @@ from ase2sprkkr.execution.manager import ExecutionManager
 
 
 class _Runner:
-    def __init__(self, callback=None):
+    def __init__(self, spec, executor, callback=None):
+        self.spec = spec
+        self.executor = executor
         self.callback = callback
         self.state = RunState.NEW
         self.backend_id = None
@@ -30,6 +32,10 @@ class _Runner:
 
     def set_manifest(self, manifest):
         self.files = manifest
+
+    @property
+    def return_code(self):
+        return self.result.return_code
 
     def file_snapshot(self):
         return self.files
@@ -74,7 +80,7 @@ class _Executor(Executor):
         self.runners = []
 
     def create_project_run(self, spec, *, run_id, callback=None):
-        runner = _Runner(callback)
+        runner = _Runner(spec, self, callback)
         self.runners.append(runner)
         return runner
 
