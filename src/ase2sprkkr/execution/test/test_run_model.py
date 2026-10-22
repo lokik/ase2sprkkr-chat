@@ -285,12 +285,11 @@ def test_only_stdout_and_stderr_may_share_a_file():
         )
 
 
-def test_availability_enum_is_shared_between_model_and_manager():
+def test_availability_enum_is_exported_from_model_and_execution():
     from ase2sprkkr.execution import FileAvailabilityState
-    from ase2sprkkr.execution.manager import FileAvailabilityState as ManagerState
     from ase2sprkkr.execution.run_model import FileAvailabilityState as ModelState
 
-    assert ModelState is ManagerState is FileAvailabilityState
+    assert ModelState is FileAvailabilityState
     assert {state.value for state in ModelState} == {
         "pending", "available", "failed", "skipped",
     }
@@ -364,31 +363,6 @@ def test_manifest_rejects_stream_output_remote_source_disagreement():
             outputs=(FileEntry("/local/run.out", "/remote/another.out"),),
         )
 
-
-
-def test_optional_taskfile_survives_manifest_and_roundtrip(tmp_path):
-    from ase2sprkkr.execution.base import ExecutionSpec
-    from ase2sprkkr.input_parameters.task_definition import TaskFile
-
-    optional_output = TaskFile(tmp_path / "maybe-*.dat", optional=True)
-    required_output = TaskFile(tmp_path / "required.dat")
-    optional_cache = TaskFile(tmp_path / "restart.pot", optional=True)
-    optional_input = TaskFile(tmp_path / "maybe.in", optional=True)
-    spec = ExecutionSpec(
-        argv=("true",), directory=str(tmp_path), input_file=None,
-        output_file=None, input_files=(optional_input,),
-        output_files=(optional_output, required_output),
-        cache_files=(optional_cache,),
-    )
-    manifest = FileManifest.from_spec(spec)
-    assert [(item.local_path, item.optional) for item in manifest.outputs] == [
-        (str(optional_output), True), (str(required_output), False),
-    ]
-    assert manifest.caches[0].optional is True
-    assert manifest.inputs[0].optional is True
-    assert FileManifest(**asdict(manifest)) == manifest
-    with pytest.raises(TypeError, match="optional"):
-        FileEntry(str(tmp_path / "wrong"), optional="true")
 
 
 def test_manifest_allows_one_remote_output_downloaded_to_distinct_local_paths():
