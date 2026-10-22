@@ -616,7 +616,7 @@ def test_remote_cleanup_checks_collisions_before_deleting_any_output(tmp_path):
         output_files=("old.dat", "restart.dat"),
         cache_files=("restart.dat",),
     )
-    with pytest.raises(ValueError, match="overlaps protected"):
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
         prepare_local_files(spec)
 
     assert stale.read_text() == "old"
