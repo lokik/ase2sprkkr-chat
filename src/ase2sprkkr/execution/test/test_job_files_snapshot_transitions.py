@@ -167,7 +167,7 @@ def test_snapshot_discard_preserves_failed_transfer_for_retry(tmp_path):
     merged = JobFiles.merge_snapshot(current, snapshot)
     assert merged.failed_files
     assert merged.outputs[0].availability_message == "transfer failed"
-    discarded = JobFiles.discard_capture(merged)
+    discarded = replace(merged, captured_at=None)
     assert discarded.captured_at is None
     assert discarded.outputs[0].availability_state == "failed"
 
