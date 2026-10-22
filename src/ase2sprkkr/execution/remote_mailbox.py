@@ -64,6 +64,9 @@ def publish_outcome(receipt_id, state, return_code, failure_phase=None, *,
     state = RunState(state)
     if not state.is_terminal:
         raise ValueError("Backend receipt requires a terminal state")
+    if return_code is not None and (isinstance(return_code, bool)
+                                    or not isinstance(return_code, int)):
+        raise TypeError("Terminal receipt return_code must be an integer or None")
     path = _path(receipt_id)
     durable_mkdir(path.parent, parents=True, exist_ok=True, mode=0o700)
     temporary = path.parent / ("." + receipt_id + "." + uuid4().hex + ".prepared")
@@ -72,7 +75,7 @@ def publish_outcome(receipt_id, state, return_code, failure_phase=None, *,
             temporary,
             {
                 "state": state.value,
-                "return_code": None if return_code is None else int(return_code),
+                "return_code": return_code,
                 "failure_phase": None if failure_phase is None else FailurePhase(failure_phase).value,
                 "error": error,
                 "files": files,

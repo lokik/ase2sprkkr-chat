@@ -151,6 +151,14 @@ def test_rejects_malformed_terminal_receipt_fields(tmp_path, field, value):
         remote_mailbox.read_outcome(key)
 
 
+@pytest.mark.parametrize("return_code", (True, False, "0", 1.5))
+def test_outcome_publisher_rejects_noninteger_return_codes(return_code):
+    key = uuid4().hex
+    with pytest.raises(TypeError, match="return_code must be an integer"):
+        remote_mailbox.publish_outcome(key, RunState.FINISHED, return_code)
+    assert remote_mailbox.read_outcome(key) is None
+
+
 def test_rejects_non_object_terminal_receipt():
     key = uuid4().hex
     assert remote_mailbox.publish_outcome(key, RunState.FINISHED, 0)
