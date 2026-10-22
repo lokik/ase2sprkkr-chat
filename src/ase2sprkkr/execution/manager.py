@@ -1062,9 +1062,6 @@ class PersistentRun:
             backend_id = run.backend_id
             if backend_id is None:
                 raise RuntimeError("Executor submit returned without a backend ID")
-            self.manager.executors.register(
-                self.executor, self._record.execution.endpoint,
-            )
             with self._completion_lock:
                 if not self._record.state.is_terminal:
                     observed = run.state
