@@ -55,6 +55,7 @@ def test_finished_execution_passes_unknown_return_code_to_reader(tmp_path):
         def __init__(self, spec):
             self.spec = spec
             self.state = RunState.NEW
+            self.callback = None
             self.exception = None
             self.result = ExecutionOutcome(
                 input_file=input_path, output_file=output_path, return_code=None,
