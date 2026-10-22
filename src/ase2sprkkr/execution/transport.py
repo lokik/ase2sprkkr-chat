@@ -9,6 +9,7 @@ import os
 import posixpath
 import shlex
 import shutil
+import stat as stat_module
 import subprocess
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
@@ -218,6 +219,8 @@ def local_file_signature(path):
     try:
         stat = os.stat(path)
     except FileNotFoundError:
+        return None
+    if not stat_module.S_ISREG(stat.st_mode):
         return None
     return stat.st_size, stat.st_mtime_ns
 
