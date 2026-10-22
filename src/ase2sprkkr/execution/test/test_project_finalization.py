@@ -850,7 +850,9 @@ def test_unknown_observation_closes_owned_streams_but_attach_can_recover(tmp_pat
             return runner
 
         def attach(self, record, *, output_listener=None, start=False):
-            assert record.state == RunState.UNKNOWN
+            assert record.state == RunState.SUBMITTING
+            assert record.confirmed is False
+            assert record.execution.backend_id == "existing-job"
             assert original.closed
             self.attached_runner = ObservedRunner(recovered=True)
             return self.attached_runner
@@ -864,8 +866,13 @@ def test_unknown_observation_closes_owned_streams_but_attach_can_recover(tmp_pat
     first.submit()
     assert first.wait().return_code is None
     assert original.closed
-    assert store.get(first.id).state == RunState.UNKNOWN
-    assert store.get(first.id).finished_at is None
+    observed = store.get(first.id)
+    # UNKNOWN is an inconclusive observation: the last known lifecycle
+    # state remains durable, with confirmed=False and no terminal timestamp.
+    assert observed.state == RunState.SUBMITTING
+    assert observed.confirmed is False
+    assert observed.execution.backend_id == "existing-job"
+    assert observed.finished_at is None
     assert callbacks == ["unknown"]
 
     recovered = manager.attach(
