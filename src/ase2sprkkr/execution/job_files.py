@@ -318,6 +318,10 @@ class JobFiles:
                     else FileAvailabilityState.AVAILABLE,
                     "Historical file is still missing" if still_missing else None,
                 )
+                if still_missing:
+                    raise FileNotFoundError(
+                        f"Historical file is still missing after retrieval: {path}"
+                    )
         return record
 
 
