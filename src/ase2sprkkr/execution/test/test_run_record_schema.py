@@ -101,3 +101,72 @@ def test_run_store_rejects_reused_id_with_different_creation_time(tmp_path):
 def test_run_store_lookup_preserves_missing_directory_error(tmp_path):
     with pytest.raises(FileNotFoundError, match="missing-run"):
         RunStore(tmp_path / "absent").get("missing-run")
+
+
+@pytest.mark.parametrize("run_id", (
+    "", ".", "..", "../outside", "../../outside", "/tmp/outside",
+    "nested/child", r"..\\outside", r"C:\\outside", "run.json",
+    "run with spaces", "český", "x" * 129, 123, 0,
+))
+def test_run_id_rejected_before_path_operations(tmp_path, run_id):
+    from ase2sprkkr.execution.manager import ExecutionManager
+
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    valid = manager.new_record(
+        task="DOS", directory=tmp_path, run_id="run-1_test",
+    )
+    with pytest.raises(ValueError, match="Invalid run ID"):
+        replace(valid, id=run_id)
+    with pytest.raises(ValueError, match="Invalid run ID"):
+        manager.new_record(task="DOS", directory=tmp_path, run_id=run_id)
+    with pytest.raises(ValueError, match="Invalid run ID"):
+        store.get(run_id)
+    assert not store.directory.exists()
+
+
+def test_none_run_id_generates_identity_but_empty_string_is_invalid(tmp_path):
+    from ase2sprkkr.execution.manager import ExecutionManager
+
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    generated = manager.new_record(task="DOS", directory=tmp_path, run_id=None)
+    assert len(generated.id) == 32
+    assert all(char in "0123456789abcdef" for char in generated.id)
+    with pytest.raises(ValueError, match="Invalid run ID"):
+        manager.new_record(task="DOS", directory=tmp_path, run_id="")
+
+
+@pytest.mark.parametrize("persisted_id", ("another-run", "../../outside"))
+def test_run_store_rejects_json_id_inconsistent_with_filename(tmp_path, persisted_id):
+    from ase2sprkkr.execution.manager import ExecutionManager
+
+    store = RunStore(tmp_path / "runs")
+    record = ExecutionManager(store).new_record(
+        task="DOS", directory=tmp_path, run_id="trusted-run",
+    )
+    store.save(record)
+    path = store._path(record)
+    payload = json.loads(path.read_text())
+    payload["id"] = persisted_id
+    path.write_text(json.dumps(payload))
+    with pytest.raises(CorruptRunRecord, match="ID"):
+        store.get(record.id)
+    with pytest.raises(CorruptRunRecord, match="ID"):
+        store.runs(strict=True)
+    with pytest.warns(RuntimeWarning, match="Corrupt run record"):
+        assert store.runs() == ()
+
+
+def test_run_store_rejects_renamed_record_file(tmp_path):
+    from ase2sprkkr.execution.manager import ExecutionManager
+
+    store = RunStore(tmp_path / "runs")
+    record = ExecutionManager(store).new_record(
+        task="DOS", directory=tmp_path, run_id="trusted-run",
+    )
+    store.save(record)
+    store._path(record).rename(store._path(record).with_name("other-run.json"))
+    with pytest.raises(CorruptRunRecord, match="does not match filename"):
+        store.get("other-run")
+    with pytest.raises(CorruptRunRecord, match="does not match filename"):
+        store.runs(strict=True)

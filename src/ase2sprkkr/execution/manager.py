@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import warnings
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
@@ -36,6 +37,18 @@ from .run_model import (
 
 
 _RUN_RECORD_SCHEMA_VERSION = 3
+_RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+
+
+def _validate_run_id(run_id):
+    """Preserve a single safe, portable filename component as the run identity."""
+    if not isinstance(run_id, str) or _RUN_ID_PATTERN.fullmatch(run_id) is None:
+        raise ValueError(
+            f"Invalid run ID {run_id!r}: expected 1-128 ASCII letters, digits, "
+            "underscores or hyphens, starting with a letter or digit"
+        )
+    return run_id
+
 _STATE_RANK = {
     RunState.NEW: 0,
     RunState.SUBMITTING: 1,
@@ -115,6 +128,7 @@ class RunRecord:
     project_id: Optional[str] = None
 
     def __post_init__(self):
+        _validate_run_id(self.id)
         object.__setattr__(self, "task", str(self.task).upper())
         if self.dataset is not None:
             object.__setattr__(self, "dataset", str(self.dataset))
@@ -277,7 +291,7 @@ class RunStore:
         return self.directory / f".{record.id}.lock"
 
     def _path_for_id(self, run_id):
-        filename = f"{run_id}.json"
+        filename = f"{_validate_run_id(run_id)}.json"
         found = None
         for day in self._day_directories(newest=True):
             path = day / filename
@@ -303,7 +317,12 @@ class RunStore:
                     f"unsupported schema version {version!r}; "
                     f"expected {_RUN_RECORD_SCHEMA_VERSION}"
                 )
-            return RunRecord(**data)
+            record = RunRecord(**data)
+            if path.name != f"{record.id}.json":
+                raise ValueError(
+                    f"Run ID {record.id!r} does not match filename {path.name!r}"
+                )
+            return record
         except CorruptRunRecord:
             raise
         except (json.JSONDecodeError, TypeError, ValueError, KeyError) as exc:
@@ -496,7 +515,8 @@ class ExecutionManager:
         now = _now()
         local = os.path.abspath(os.fspath(directory))
         return RunRecord(
-            id=run_id or uuid4().hex, state=RunState.NEW, created_at=now,
+            id=uuid4().hex if run_id is None else run_id,
+            state=RunState.NEW, created_at=now,
             updated_at=now, task=str(task).upper(), dataset=dataset,
             execution=Execution(endpoint or ExecutorEndpoint(), WorkingDirectory(local, remote_directory)),
             files=files if files is not None else FileManifest(),
