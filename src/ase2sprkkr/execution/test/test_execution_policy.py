@@ -125,7 +125,7 @@ def test_unknown_raw_state_is_preserved_and_not_postprocessed():
     assert runner.failure_phase is None
 
 
-class _NotStartedRunner(JobFilesOwner):
+class _NotStartedRunner:
     callback = None
     def __init__(self):
         self._job_files = JobFiles(FileManifest())
