@@ -9,14 +9,14 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from .base import FailurePhase, RunState, RunStatus
+from .base import FailurePhase, RunState, RunStatus, SubmissionRecovery
 from .endpoint import ExecutorEndpoint
 from .file_history import capture_result_files, missing_result_files
 from .job_files import JobFiles
 from .pool import Executors
 from .postprocessing import CalculationRun
 from .run_model import Execution, WorkingDirectory, FileManifest
-from .run_record import RunRecord, _UNCHANGED, _failure_phase, _now
+from .run_record import RunRecord, SubmissionPhase, _UNCHANGED, _failure_phase, _now
 from .run_persistence import RunPersistence
 
 
@@ -79,7 +79,7 @@ class ExecutionManager:
         now = _now()
         local = os.path.abspath(os.fspath(directory))
         return RunRecord(
-            id=run_id or uuid4().hex, state=RunState.NEW, created_at=now,
+            id=uuid4().hex if run_id is None else run_id, state=RunState.NEW, created_at=now,
             updated_at=now, task=str(task).upper(), dataset=dataset,
             execution=Execution(endpoint or ExecutorEndpoint(), WorkingDirectory(local, remote_directory)),
             files=files if files is not None else FileManifest(),
@@ -118,45 +118,52 @@ class ExecutionManager:
     def _is_stale_submitting(self, record, *, now=None):
         if record.state != RunState.SUBMITTING or record.execution.backend_id is not None:
             return False
+        if record.submission_phase == SubmissionPhase.PREPARING:
+            return True  # Owner lock, not age, determines whether it is abandoned.
+        if record.submission_phase != SubmissionPhase.DISPATCHING:
+            return False
         now = now or datetime.now(timezone.utc)
-        return (
-            now - _timestamp(record.updated_at)
-        ).total_seconds() >= self.submitting_grace
+        return (now - _timestamp(record.updated_at)).total_seconds() >= self.submitting_grace
 
     def recover_submitting(self, record):
-        record = self.store.get(record.id)
-        if not self._is_stale_submitting(record):
-            return record
-        executor = self.executors.for_endpoint(record.execution.endpoint)
-        try:
-            status = executor.recover_submission(
-                record.id,
-                record,
-                submitted_at=record.updated_at,
+        with self.store.submission_owner(record) as acquired:
+            record = self.store.get(record.id)
+            if not acquired or not self._is_stale_submitting(record):
+                return record
+
+            def mark_absent(latest):
+                if (latest != record or latest.state != RunState.SUBMITTING
+                        or latest.execution.backend_id is not None):
+                    return latest
+                now = _now()
+                return replace(latest, state=RunState.FAILED,
+                               submission_phase=None, updated_at=now, finished_at=now,
+                               message="Abandoned submission proven not to have launched",
+                               failure_phase=FailurePhase.SUBMISSION)
+
+            executor = self.executors.for_endpoint(record.execution.endpoint)
+            if record.submission_phase == SubmissionPhase.PREPARING:
+                if not executor.abandoned_preparation_is_safe():
+                    return record
+                return self.store.update(record, mark_absent)
+            try:
+                status = executor.recover_submission(
+                    record.id, record, submitted_at=record.updated_at,
+                )
+            except (NotImplementedError, OSError, subprocess.CalledProcessError):
+                return record
+            if status is SubmissionRecovery.ABSENT:
+                return self.store.update(record, mark_absent)
+            if status is None:
+                return record
+            if not isinstance(status, RunStatus):
+                raise TypeError("Invalid backend submission recovery result")
+            backend_id = status.backend_id or (
+                None if status.execution is None else status.execution.backend_id
             )
-        except NotImplementedError:
-            return record
-        if status is not None:
+            if backend_id is None:
+                raise ValueError("Recovered submission lacks backend identity")
             return self.update(record, status, expected_updated_at=record.updated_at)
-
-        def mark_absent(latest):
-            # Do not invalidate a newer submission observation while backend
-            # recovery was in progress.
-            if (latest.updated_at != record.updated_at
-                    or latest.state != RunState.SUBMITTING
-                    or latest.execution.backend_id is not None):
-                return latest
-            now = _now()
-            return replace(
-                latest,
-                state=RunState.FAILED,
-                updated_at=now,
-                finished_at=now,
-                message="Stale submission was not found by its execution backend",
-                failure_phase=FailurePhase.SUBMISSION,
-            )
-
-        return self.store.update(record, mark_absent)
 
     def reserve(self, record, *, spec=None, executor=None):
         """Resolve placement, reserve files and recover stale submissions."""
@@ -468,7 +475,11 @@ class ExecutionManager:
         current = {record.id: record for record in records}
         groups = {}
         for record in records:
-            if record.state.is_terminal or record.execution.backend_id is None:
+            if record.state.is_terminal:
+                continue
+            if record.execution.backend_id is None:
+                if record.state == RunState.SUBMITTING:
+                    current[record.id] = self.recover_submitting(record)
                 continue
             groups.setdefault(record.execution.endpoint, []).append(record)
 
@@ -491,8 +502,6 @@ class ExecutionManager:
         output_listener=None,
     ):
         """Attach raw execution, then resume client-side postprocessing."""
-        # An attached RunRecord may be stale. The store is authoritative for
-        # backend identity, state, and recovered file membership.
         record = self.store.get(run if isinstance(run, str) else run.id)
         if record.execution.backend_id is None:
             raise RuntimeError(f"Run {record.id} has no backend reference")
