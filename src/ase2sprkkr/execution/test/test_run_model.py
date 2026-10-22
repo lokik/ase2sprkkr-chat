@@ -90,20 +90,29 @@ def test_each_file_tracks_its_own_transfer_outcome():
     assert FileManifest(**asdict(manifest)) == manifest
 
 
-def test_individual_wildcard_matches_are_recorded_separately():
+def test_wildcard_members_require_explicit_registration():
     manifest = FileManifest(
         outputs=(FileEntry("/local/*.dat", "/remote/*.dat", "pending"),)
     )
+    with pytest.raises(KeyError, match="not declared"):
+        manifest.with_file_availability(
+            "/local/one.dat", "available", remote_path="/remote/one.dat",
+        )
+    for name in ("one", "two"):
+        manifest = manifest.with_added_file(
+            FileEntry(f"/local/{name}.dat", f"/remote/{name}.dat", "pending",
+                      source="/local/*.dat"),
+        )
+    manifest = manifest.with_file_availability("/local/one.dat", "available")
     manifest = manifest.with_file_availability(
-        "/local/one.dat", "available", remote_path="/remote/one.dat",
-    )
-    manifest = manifest.with_file_availability(
-        "/local/two.dat", "failed", "I/O error", remote_path="/remote/two.dat",
+        "/local/two.dat", "failed", "I/O error",
     )
     assert len(manifest.outputs) == 3
     assert manifest.outputs[1].availability_state == "available"
     assert manifest.outputs[2].availability_state == "failed"
+    assert manifest.outputs[1].source == "/local/*.dat"
     assert FileManifest(**asdict(manifest)) == manifest
+
 
 def test_merged_stdout_stderr_has_only_one_file_status():
     manifest = FileManifest(
@@ -178,7 +187,6 @@ def test_recovered_stream_paths_do_not_create_unrecorded_stream():
     assert updated.stderr is None
 
 
-@pytest.mark.parametrize("existing", [False, True])
 @pytest.mark.parametrize(
     "state, message, error",
     [
@@ -186,12 +194,17 @@ def test_recovered_stream_paths_do_not_create_unrecorded_stream():
         ("available", "unexpected error", "availability error"),
     ],
 )
-def test_manifest_availability_validation_is_shared_with_file_entry(existing, state, message, error):
-    manifest = FileManifest(
-        outputs=(FileEntry("/local/result"),) if existing else (),
-    )
+def test_manifest_availability_validation_is_shared_with_file_entry(state, message, error):
+    manifest = FileManifest(outputs=(FileEntry("/local/result"),))
+    with pytest.raises(ValueError, match=error):
+        FileEntry("/local/result", availability_state=state, availability_message=message)
     with pytest.raises(ValueError, match=error):
         manifest.with_file_availability("/local/result", state, message)
+
+
+def test_availability_cannot_implicitly_register_undeclared_output():
+    with pytest.raises(KeyError, match="not declared"):
+        FileManifest().with_file_availability("/local/result", "available")
 
 
 def test_submitted_uses_execution_backend_id_validation():
