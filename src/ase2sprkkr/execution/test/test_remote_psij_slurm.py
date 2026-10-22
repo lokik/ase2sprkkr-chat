@@ -247,9 +247,11 @@ def test_remote_executor_runs_psij_slurm_over_ssh(docker_execution_image):
             except subprocess.CalledProcessError as exc:
                 _remote_error(exc)
             assert runner.backend_id is not None
-            assert runner.execution.endpoint.psij_backend == "slurm"
-            assert runner.execution.endpoint.host == "tester@127.0.0.1"
-            assert runner.execution.directory.remote == "/home/tester/ase2sprkkr-runs/calculation"
+            assert runner.executor.backend_options["backend"] == "slurm"
+            assert runner.executor.transport.host == "tester@127.0.0.1"
+            assert runner.files.mapping.map_path(str(workdir)) == (
+                "/home/tester/ase2sprkkr-runs/calculation"
+            )
 
             try:
                 result = runner.wait()
