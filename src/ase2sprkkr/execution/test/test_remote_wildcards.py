@@ -339,3 +339,21 @@ def test_overlapping_optional_and_required_wildcards_sync_each_file_once(
     entries = {item.local_path: item for item in runner.files.outputs}
     assert entries[str(optional)].availability_state == "available"
     assert entries[str(required)].availability_state == "available"
+
+
+def test_missing_optional_exact_remote_output_is_not_fatal(tmp_path):
+    """Manifest optionality applies equally to explicit filenames and globs."""
+    from ase2sprkkr.input_parameters.task_definition import TaskFile
+
+    workdir = tmp_path / "local" / "calculation"
+    optional_file = workdir / "optional-result.dat"
+    executor, spec, _, _ = _text_run(
+        tmp_path,
+        declared_output_files=(TaskFile(optional_file, optional=True),),
+        code="print('done')",
+    )
+    runner = _processed_run(executor, spec)
+    result = runner.run()
+    assert result.return_code == 0
+    entries = {entry.local_path: entry for entry in runner.files.outputs}
+    assert entries[str(optional_file)].availability_state == "skipped"
