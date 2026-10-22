@@ -30,12 +30,19 @@ class _BackendRunner:
         self.callback = None
         self.state = RunState.NEW
         self.backend_id = None
+        self.failure_phase = None
+        self.failure_message = None
+        self.files = None
+        self.exception = None
         self.result = object()
         self.submitted = 0
         self.cancelled = 0
         self.submit_entered = Event()
         self.release_submit = Event()
         self.completed = Event()
+
+    def set_manifest(self, files):
+        self.files = files
 
     def prepare_submission(self):
         return None
