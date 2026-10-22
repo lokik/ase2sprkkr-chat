@@ -603,3 +603,30 @@ def test_historical_restore_retries_failed_transfer_without_resubmission(tmp_pat
     assert recovered.files.availability_state == FileAvailabilityState.AVAILABLE
     assert recovered.return_code == 0
     assert list(tmp_path.glob(".run.out.*.tmp")) == []
+
+
+def test_history_reconciles_durable_file_after_failed_directory_fsync(tmp_path, monkeypatch):
+    import ase2sprkkr.execution._durability as durability
+
+    manager, executor, record = _terminal_run(tmp_path)
+    output = tmp_path / "run.out"
+    output.unlink()
+    original = durability.fsync_directory
+
+    def fail_publish(directory):
+        if output.exists():
+            raise OSError("publication fsync interrupted")
+        return original(directory)
+
+    monkeypatch.setattr(durability, "fsync_directory", fail_publish)
+    with pytest.raises(OSError, match="publication fsync interrupted"):
+        manager.retrieve_result_files(record.id)
+
+    assert output.read_text() == "original output"
+    assert manager.store.get(record.id).files.availability_state == "failed"
+    monkeypatch.setattr(durability, "fsync_directory", original)
+
+    restored = manager.retrieve_result_files(record.id)
+    assert restored.files.availability_state == "available"
+    assert executor.fetch_calls == [(record.id, (str(output),))]
+    assert restored.state is RunState.FINISHED
