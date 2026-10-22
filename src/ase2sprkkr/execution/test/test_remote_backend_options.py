@@ -138,3 +138,33 @@ def test_remote_manifest_is_sole_authority_for_input_declarations(tmp_path):
     assert _request_spec(request).input_files == ()
     assert _request_spec(request).input_file == manifest.primary_input.remote_path
     assert manifest.input_files == (str(inp),)
+
+
+def test_remote_spec_ignores_remote_only_cache_baselines(tmp_path):
+    """Cache signatures describe staging history, not another input file."""
+    from dataclasses import asdict
+    from ase2sprkkr.execution import FileEntry, FileManifest
+    from ase2sprkkr.execution.remote_service import _request_spec
+
+    directory = tmp_path / "remote" / "calculation"
+    directory.mkdir(parents=True)
+    exact = directory / "restart-a.dat"
+    pattern = directory / "restart-*.dat"
+    exact.write_text("initial")
+    manifest = FileManifest(caches=(
+        FileEntry(local_path=str(exact), remote_path=str(exact)),
+        FileEntry(local_path=str(pattern), remote_path=str(pattern)),
+        FileEntry(remote_path=str(exact), pre_run_signature=(7, 42)),
+    ))
+    assert len(manifest.caches) == 3
+    spec = _request_spec({
+        "directory": str(directory), "argv": ("program",),
+        "files": asdict(manifest),
+    })
+    assert spec.cache_files == (str(exact), str(pattern))
+    # The original frozen manifest still carries the remote baseline.
+    assert manifest.caches[2].pre_run_signature == (7, 42)
+    assert FileManifest.from_spec(spec).caches == (
+        FileEntry(local_path=str(exact), availability_state="pending"),
+        FileEntry(local_path=str(pattern), availability_state="pending"),
+    )
