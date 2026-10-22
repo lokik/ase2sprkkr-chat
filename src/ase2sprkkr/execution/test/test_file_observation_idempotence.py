@@ -1,8 +1,9 @@
 """No-op file observations must not invalidate durable run versions."""
 
 from ase2sprkkr.execution import (
-    ExecutionManager, FileEntry, FileManifest, RunStore, JobFiles,
+    ExecutionManager, FileEntry, FileManifest, RunStore,
 )
+from ase2sprkkr.execution.historical_restore import update_historical_availability
 
 
 def test_availability_transformations_reuse_unchanged_manifest(tmp_path):
@@ -35,13 +36,13 @@ def test_unchanged_file_status_does_not_bump_run_record_version(tmp_path):
     record = manager.store.save(
         manager.new_record(task="DOS", directory=tmp_path, files=files),
     )
-    updated = JobFiles(record.files).update_availability(record, manager.store, path, "available")
-    repeated = JobFiles(record.files).update_availability(record, manager.store, path, "available")
+    updated = update_historical_availability(record, manager.store, path, "available")
+    repeated = update_historical_availability(record, manager.store, path, "available")
     assert repeated == updated
     assert repeated.updated_at == updated.updated_at
     assert manager.store.get(record.id) == updated
 
-    failed = JobFiles(record.files).update_availability(
+    failed = update_historical_availability(
         record,        manager.store, path, "failed", "transfer failed",
     )
     assert failed.updated_at != updated.updated_at
