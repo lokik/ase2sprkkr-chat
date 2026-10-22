@@ -275,3 +275,16 @@ def test_executor_registries_have_independent_lifetimes():
     assert second.for_endpoint(local) is other
     second.close()
     assert other.closed == 1
+
+
+def test_register_executor_rejects_conflicting_instance():
+    from ase2sprkkr.execution import ExecutorEndpoint
+
+    executors = Executors()
+    endpoint = ExecutorEndpoint()
+    original, conflicting = _Executor(), _Executor()
+    assert executors.register(original, endpoint) == endpoint
+    assert executors.register(original, endpoint) == endpoint
+    with pytest.raises(ValueError, match="already registered"):
+        executors.register(conflicting, endpoint)
+    assert executors.for_endpoint(endpoint) is original
