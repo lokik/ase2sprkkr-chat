@@ -104,9 +104,12 @@ class JobFiles:
 
         FileManifest already rejects output/cache identity collisions.
         """
+        # Remote-only cache baselines are absent from the availability summary.
         recorded = {
             (entry.local_path, entry.remote_path): entry
-            for entry in previous.files
+            for entry in (previous.stdout, previous.stderr,
+                          *previous.outputs, *previous.caches)
+            if entry is not None
         }
 
         def merged(entry):
