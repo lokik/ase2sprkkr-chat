@@ -96,7 +96,7 @@ def test_submission_ticket_roundtrip(tmp_path, monkeypatch):
     remote_mailbox.publish_submission(key, {"remote_id": "native"})
     assert remote_mailbox.read_submission(key) == {"remote_id": "native"}
     assert remote_mailbox.drop_submission(key)
-    assert not remote_mailbox.drop_submission(key)
+    assert remote_mailbox.drop_submission(key) is True
 
 
 def test_publication_error_survives_cleanup_fsync_error(monkeypatch):

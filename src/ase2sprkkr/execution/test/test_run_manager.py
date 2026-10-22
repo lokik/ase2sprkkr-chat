@@ -211,10 +211,11 @@ def test_terminal_ack_failure_preserves_completion_and_retries(
     assert manager.store.get(run.id).state == RunState.FINISHED
     assert observed_states == [RunState.FINISHED]
 
-    monkeypatch.setattr(
-        executor, "acknowledge",
-        lambda record: observed_states.append(manager.store.get(record.id).state),
-    )
+    def successful_ack(record):
+        observed_states.append(manager.store.get(record.id).state)
+        return True
+
+    monkeypatch.setattr(executor, "acknowledge", successful_ack)
     assert run.persistence.completed(run) == RunState.FINISHED
     assert run.persistence.completed(run) == RunState.FINISHED
     assert observed_states == [RunState.FINISHED, RunState.FINISHED]
@@ -725,6 +726,7 @@ def test_slow_terminal_ack_does_not_block_refresh_or_ack_twice(tmp_path, monkeyp
         acknowledged.append(record.id)
         ack_entered.set()
         assert ack_release.wait(timeout=5)
+        return True
 
     monkeypatch.setattr(executor, "acknowledge", slow_ack)
     with ThreadPoolExecutor(max_workers=3) as workers:

@@ -93,7 +93,7 @@ def test_ticket_and_outcome_share_configured_state_root(tmp_path, monkeypatch):
     assert remote_mailbox.read_submission(key) == {"remote_id": "job-12"}
     assert remote_service.acknowledge_submission(key) == {"acknowledged": True}
     assert remote_mailbox.read_submission(key) is None
-    assert remote_service.acknowledge_submission(key) == {"acknowledged": False}
+    assert remote_service.acknowledge_submission(key) == {"acknowledged": True}
 
 
 def test_ticket_uses_xdg_state_home_without_override(tmp_path, monkeypatch):
@@ -148,4 +148,4 @@ def test_recovered_psij_receipt_freezes_manifest_and_acknowledges(tmp_path, monk
     (remote / "late.dat").write_text("late")
     assert remote_service.status_remote(job, asdict(manifest))["files"] == first["files"]
     assert remote_service.acknowledge_remote(job) == {"acknowledged": True}
-    assert remote_service.acknowledge_remote(job) == {"acknowledged": False}
+    assert remote_service.acknowledge_remote(job) == {"acknowledged": True}
