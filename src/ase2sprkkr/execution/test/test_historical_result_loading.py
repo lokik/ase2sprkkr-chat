@@ -417,19 +417,19 @@ def test_uncaptured_restore_publishes_complete_file_atomically(tmp_path):
 def test_external_writer_cannot_be_overwritten_during_historical_restore(
     tmp_path, monkeypatch, matching,
 ):
-    import ase2sprkkr.execution.job_files as job_files
+    import ase2sprkkr.execution.historical_restore as historical_restore
 
     manager, executor, record = _terminal_run(tmp_path)
     target = tmp_path / "run.out"
     target.unlink()
-    publish = job_files.durable_publish_new
+    publish = historical_restore.durable_publish_new
 
     def competing_publish(staged, destination):
         # Simulate a writer not participating in the restoration file lock.
         target.write_text("original output" if matching else "different contents")
         return publish(staged, destination)
 
-    monkeypatch.setattr(job_files, "durable_publish_new", competing_publish)
+    monkeypatch.setattr(historical_restore, "durable_publish_new", competing_publish)
     if matching:
         restored = manager.retrieve_result_files(record.id)
         assert restored.files.availability_state == FileAvailabilityState.AVAILABLE
@@ -442,7 +442,7 @@ def test_external_writer_cannot_be_overwritten_during_historical_restore(
 
 
 def test_uncaptured_external_file_is_never_overwritten(tmp_path, monkeypatch):
-    import ase2sprkkr.execution.job_files as job_files
+    import ase2sprkkr.execution.historical_restore as historical_restore
     from ase2sprkkr.execution.run_model import FileEntry
 
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
@@ -465,13 +465,13 @@ def test_uncaptured_external_file_is_never_overwritten(tmp_path, monkeypatch):
         from pathlib import Path
         Path(destinations[str(target)]).write_text("downloaded")
     executor.fetch_result_files = fetch
-    publish = job_files.durable_publish_new
+    publish = historical_restore.durable_publish_new
 
     def competing_publish(staged, destination):
         target.write_text("external")
         return publish(staged, destination)
 
-    monkeypatch.setattr(job_files, "durable_publish_new", competing_publish)
+    monkeypatch.setattr(historical_restore, "durable_publish_new", competing_publish)
     with pytest.raises(HistoricalFileMismatchError, match="appeared during retrieval"):
         manager.retrieve_result_files(record.id)
     assert target.read_text() == "external"
@@ -554,18 +554,18 @@ def test_restore_detects_content_changed_immediately_after_publication(
     tmp_path, monkeypatch,
 ):
     """An external writer cannot make corrupted history appear available."""
-    import ase2sprkkr.execution.job_files as job_files
+    import ase2sprkkr.execution.historical_restore as historical_restore
 
     manager, executor, record = _terminal_run(tmp_path)
     output = tmp_path / "run.out"
     output.unlink()
-    publish = job_files.durable_publish_new
+    publish = historical_restore.durable_publish_new
 
     def overwrite_after_publish(staged, destination):
         publish(staged, destination)
         output.write_text("different contents")
 
-    monkeypatch.setattr(job_files, "durable_publish_new", overwrite_after_publish)
+    monkeypatch.setattr(historical_restore, "durable_publish_new", overwrite_after_publish)
     with pytest.raises(HistoricalFileMismatchError, match="changed during retrieval"):
         manager.retrieve_result_files(record.id)
 
@@ -573,3 +573,33 @@ def test_restore_detects_content_changed_immediately_after_publication(
     assert saved.state is RunState.FINISHED
     assert saved.files.outputs[0].availability_state == "failed"
     assert output.read_text() == "different contents"
+
+
+def test_historical_restore_retries_failed_transfer_without_resubmission(tmp_path):
+    manager, executor, record = _terminal_run(tmp_path)
+    output = tmp_path / "run.out"
+    output.unlink()
+    original_fetch = executor.fetch_result_files
+    attempts = []
+
+    def flaky_fetch(run, files, *, destinations=None):
+        attempts.append(tuple(files))
+        if len(attempts) == 1:
+            raise OSError("transient transfer failure")
+        return original_fetch(run, files, destinations=destinations)
+
+    executor.fetch_result_files = flaky_fetch
+    with pytest.raises(OSError, match="transient transfer failure"):
+        manager.retrieve_result_files(record.id)
+    failed = manager.store.get(record.id)
+    assert failed.state is RunState.FINISHED
+    assert failed.files.availability_state == FileAvailabilityState.FAILED
+    assert not output.exists()
+
+    recovered = manager.retrieve_result_files(record.id)
+    assert len(attempts) == 2
+    assert output.read_text() == "original output"
+    assert recovered.state is RunState.FINISHED
+    assert recovered.files.availability_state == FileAvailabilityState.AVAILABLE
+    assert recovered.return_code == 0
+    assert list(tmp_path.glob(".run.out.*.tmp")) == []

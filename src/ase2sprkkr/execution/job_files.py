@@ -5,23 +5,19 @@ from __future__ import annotations
 import os
 import fnmatch
 from pathlib import Path
-from uuid import uuid4
 from dataclasses import replace
 from datetime import datetime, timezone
 
 from ..common.file_locks import FileLock
-from ._durability import durable_publish_new, sync_file
-from ..common.file_versions import file_digest
 from .run_model import FileAvailabilityState
+from .historical_restore import (
+    HistoricalFileMismatchError, restore_historical_file,
+)
 from .transport import has_file_magic
 
 from .file_history import (
     capture_result_files, file_is_current, missing_result_files, sync_result_files,
 )
-
-
-class HistoricalFileMismatchError(OSError):
-    """Restored file contents differ from the captured digest."""
 
 
 class JobFiles:
@@ -248,28 +244,15 @@ class JobFiles:
         if not record.state.is_terminal:
             raise RuntimeError(f"Run {record.id} is not finished")
         missing = self.missing_files()
+        if not missing or record.execution.backend_id is None:
+            return record
+        if executor is None or not executor.supports_result_file_retrieval:
+            return record
+
         versions = {
             os.path.abspath(os.fspath(version.path)): version
             for version in record.files.all_versions
         }
-        # A previous attempt may have published a correct historical file
-        # before its directory fsync failed. In that case the bytes are
-        # present but the persisted availability still says FAILED. Verify
-        # and sync such files again instead of downloading them a second time.
-        recoverable = tuple(
-            os.path.abspath(os.fspath(entry.local_path))
-            for entry in record.files.failed_files
-            if entry.local_path is not None
-            and (version := versions.get(os.path.abspath(entry.local_path))) is not None
-            and version.is_current()
-        )
-        can_fetch = (
-            record.execution.backend_id is not None
-            and executor is not None
-            and executor.supports_result_file_retrieval
-        )
-        if not recoverable and (not missing or not can_fetch):
-            return record
         # Captured input versions are recoverable too, but inputs have no
         # availability field: only output/cache entries may be updated through
         # FileManifest.with_file_availability().
@@ -277,7 +260,7 @@ class JobFiles:
             os.path.abspath(os.fspath(item.local_path))
             for item in record.files.files if item.local_path is not None
         }
-        for path in dict.fromkeys((*missing, *recoverable)):
+        for path in missing:
             path = os.path.abspath(os.fspath(path))
             # A historical restore must have a concrete, frozen file identity.
             # Expanding a wildcard now would invent members absent at capture.
@@ -289,87 +272,18 @@ class JobFiles:
             # a RunStore lock during network transfer.
             lock_path = Path(path).with_name(f".{Path(path).name}.restore.lock")
             with FileLock(lock_path):
-                version = versions.get(path)
-                staged = Path(path).with_name(
-                    f".{Path(path).name}.{uuid4().hex}.tmp"
-                )
                 try:
-                    # A previous restorer might already have completed while
-                    # this caller was waiting for the filesystem lock.
-                    if version is not None and version.is_current():
-                        if path in recoverable:
-                            sync_file(path)
-                    elif version is None and os.path.isfile(path):
-                        pass
-                    elif not can_fetch:
-                        continue
-                    elif version is not None and os.path.lexists(path):
-                        raise HistoricalFileMismatchError(
-                            f"Historical result file was modified: {path}"
-                        )
-                    else:
-                        executor.fetch_result_files(
-                            record, (path,),
-                            destinations={path: os.fspath(staged)},
-                        )
-                        if staged.is_symlink():
-                            raise OSError(
-                                f"Historical restore supplied a symlink: {staged}"
-                            )
-                        if not staged.is_file():
-                            raise FileNotFoundError(
-                                f"Historical file was not retrieved: {path}"
-                            )
-                        if (version is not None and version.digest is not None
-                                and file_digest(staged) != version.digest):
-                            raise HistoricalFileMismatchError(
-                                f"Historical result files have been overwritten: {path}"
-                            )
-                        # Do not publish partial files or record availability
-                        # before both file contents and its directory entry
-                        # have crossed the durability barrier.
-                        sync_file(staged)
-                        try:
-                            durable_publish_new(staged, path)
-                        except FileExistsError:
-                            # An unrelated writer published the path without
-                            # participating in our advisory restore lock.
-                            # Never overwrite it even when its bytes match.
-                            if version is None or not version.is_current():
-                                raise HistoricalFileMismatchError(
-                                    f"Historical destination appeared during retrieval: {path}"
-                                )
+                    restore_historical_file(record, path, versions.get(path), executor)
                 except OSError as exc:
                     if path in tracked:
-                        JobFiles(store.get(record.id)).update_availability(
+                        record = self.update_availability(
                             store, path, FileAvailabilityState.FAILED, str(exc),
                         )
                     raise
-                finally:
-                    staged.unlink(missing_ok=True)
-
-                # The captured version is immutable. Checking only this
-                # path avoids re-reading the run and scanning all versions for
-                # every downloaded file. RunStore.update reads the latest
-                # record atomically when changing availability.
-                error = None
-                if not os.path.isfile(path):
-                    error = FileNotFoundError(
-                        f"Historical file is still missing after retrieval: {path}"
-                    )
-                elif version is not None and not version.is_current():
-                    error = HistoricalFileMismatchError(
-                        f"Historical file changed during retrieval: {path}"
-                    )
                 if path in tracked:
                     record = self.update_availability(
-                        store, path,
-                        FileAvailabilityState.FAILED if error
-                        else FileAvailabilityState.AVAILABLE,
-                        str(error) if error else None,
+                        store, path, FileAvailabilityState.AVAILABLE,
                     )
-                if error is not None:
-                    raise error
         # Inputs have no availability field; only their frozen versions are
         # checked. Return the latest run without a redundant per-input read.
         return store.get(record.id)
