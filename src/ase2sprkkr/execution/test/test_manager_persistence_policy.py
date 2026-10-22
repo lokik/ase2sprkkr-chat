@@ -60,6 +60,46 @@ def test_unknown_observation_cannot_overwrite_newer_status(manager, tmp_path):
     assert manager.store.get(record.id).message is None
 
 
+@pytest.mark.parametrize(
+    "reply, expected",
+    [
+        (True, True),
+        (False, False),
+        (None, False),
+        ({}, False),
+        ({"acknowledged": True}, False),
+    ],
+    ids=("confirmed", "rejected", "no-reply", "empty-payload", "wire-payload"),
+)
+def test_submission_ack_reports_strict_bool_without_changing_record(
+    manager, tmp_path, reply, expected,
+):
+    original = manager.new_record(task="DOS", directory=tmp_path)
+    submitted = manager.transition(
+        original, state=RunState.QUEUED,
+        execution=original.execution.submitted("backend-1"),
+    )
+
+    class Backend:
+        def acknowledge_submission(self, record):
+            assert record == submitted
+            assert manager.store.get(record.id) == submitted
+            return reply
+
+    assert manager._acknowledge_submission(Backend(), submitted) is expected
+    assert manager.store.get(submitted.id) == submitted
+
+
+def test_submission_ack_without_backend_id_does_not_contact_backend(manager, tmp_path):
+    record = manager.new_record(task="DOS", directory=tmp_path)
+
+    class Backend:
+        def acknowledge_submission(self, record):
+            pytest.fail("ACK of an unsubmitted run")
+
+    assert manager._acknowledge_submission(Backend(), record) is False
+
+
 def test_terminal_ack_retries_transport_error_without_overwriting_record(manager, tmp_path):
     created = manager.new_record(task="DOS", directory=tmp_path)
     running = manager.transition(

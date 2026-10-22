@@ -435,14 +435,14 @@ class ExecutionManager:
 
     @staticmethod
     def _acknowledge_submission(executor, record):
-        """Discard the temporary backend PID only after RunStore is durable."""
+        """Best-effort cleanup after the backend identity is durable."""
         if record.execution.backend_id is None:
-            return
+            return False
         try:
-            executor.acknowledge_submission(record)
+            return executor.acknowledge_submission(record) is True
         except (OSError, RuntimeError, subprocess.CalledProcessError):
-            # The receipt remains recoverable until a subsequent refresh.
-            pass
+            # Preserve the durable submission; the ticket can be ACKed later.
+            return False
 
     def create_run(
         self,

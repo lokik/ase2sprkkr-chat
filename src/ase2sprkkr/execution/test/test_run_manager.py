@@ -173,6 +173,40 @@ def test_submission_ack_failure_does_not_undo_durable_submit(
     assert manager.store.get(run.id).execution.backend_id == "native-1"
 
 
+def test_negative_submission_ack_does_not_undo_submit_and_retries_on_refresh(
+    tmp_path, monkeypatch,
+):
+    manager = _manager(tmp_path)
+    executor = _Executor()
+    observed = []
+
+    def acknowledge(record):
+        stored = manager.store.get(record.id)
+        observed.append((stored.state, stored.execution.backend_id))
+        return len(observed) > 1
+
+    monkeypatch.setattr(executor, "acknowledge_submission", acknowledge)
+    run = manager.create_run(
+        _spec(tmp_path), endpoint=manager.executors.register(executor),
+        process_result=lambda outcome: outcome, task="DOS",
+    )
+    run.submit()
+
+    submitted = manager.store.get(run.id)
+    assert submitted.state == RunState.QUEUED
+    assert submitted.execution.backend_id == "native-1"
+    assert observed == [(RunState.QUEUED, "native-1")]
+
+    refreshed = manager.refresh((submitted,))[0]
+    assert refreshed.state == RunState.RUNNING
+    assert refreshed.execution.backend_id == "native-1"
+    assert manager.store.get(run.id) == refreshed
+    assert observed == [
+        (RunState.QUEUED, "native-1"),
+        (RunState.RUNNING, "native-1"),
+    ]
+
+
 @pytest.mark.parametrize(
     "ack_error",
     [
