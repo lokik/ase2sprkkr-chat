@@ -57,14 +57,14 @@ def test_repeated_output_is_not_silently_coalesced(tmp_path):
         ))
 
 
-def test_primary_and_stdin_are_references(tmp_path):
+def test_primary_input_can_feed_stdin_but_auxiliary_alias_is_invalid(tmp_path):
     primary = tmp_path / "input.inp"
-    files = FileManifest.from_spec(spec(
-        tmp_path, input_files=(primary,), stdin=primary,
-    ))
+    files = FileManifest.from_spec(spec(tmp_path, stdin=primary))
     assert len(files.inputs) == 1
     assert files.primary_input.local_path == str(primary)
     assert files.stdin.local_path == str(primary)
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest.from_spec(spec(tmp_path, input_files=(primary,), stdin=primary))
 
 
 def test_output_cache_collision_is_rejected(tmp_path):
@@ -143,6 +143,9 @@ def test_optional_alias_cannot_weaken_mandatory_stdin(tmp_path):
         tmp_path, stdin=missing,
         input_files=(DeclaredPath(str(missing), optional=True),),
     )
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest.from_spec(spec_obj)
+    spec_obj = spec(tmp_path, stdin=missing)
     mapping = FileMapping(str(tmp_path), str(remote))
     handler = RemoteFileHandler(LocalTransport())
     with pytest.raises(FileNotFoundError, match="neither locally nor remotely"):
