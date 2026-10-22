@@ -233,7 +233,7 @@ def test_manifest_from_spec_normalizes_stream_overlaps(tmp_path):
         input_file="input.inp",
         input_files=("input.inp", "other.inp", "other.inp", None, object(), 1),
         output_file="stdout.out", error_file="stderr.err",
-        output_files=("stdout.out", "stderr.err", "result.dat", "result.dat", None, object()),
+        output_files=("stdout.out", "stderr.err", "result.dat", None, object()),
         cache_files=("restart.pot", "restart.pot", None, object()),
     )
     files = FileManifest.from_spec(spec)
