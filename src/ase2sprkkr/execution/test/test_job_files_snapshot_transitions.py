@@ -121,7 +121,7 @@ def test_concurrent_delivery_does_not_force_failed_completion(tmp_path):
     record = manager.store.save(manager.new_record(
         task="DOS", directory=tmp_path, files=manifest,
     ))
-    current = JobFiles.update_availability(record,record, manager.store, path, "available")
+    current = JobFiles.update_availability(record, manager.store, path, "available")
     completed = manager.complete(
         record, state=RunState.FINISHED, files_available=False, return_code=0,
     )
@@ -140,7 +140,7 @@ def test_captured_completion_respects_newer_failed_file_state(tmp_path, monkeypa
     record = manager.store.save(manager.new_record(
         task="DOS", directory=tmp_path, files=manifest,
     ))
-    JobFiles(record.files).update_availability(record, manager.store, path, "failed", "download failed")
+    JobFiles.update_availability(record, manager.store, path, "failed", "download failed")
 
     from ase2sprkkr.common.file_versions import FileVersion
 
@@ -193,7 +193,7 @@ def test_independent_availability_update_does_not_change_terminal_outcome(tmp_pa
         files=FileManifest(outputs=(FileEntry(output, availability_state="pending"),)),
     ))
     finished = manager.complete(record, state=RunState.FINISHED, return_code=0)
-    changed = JobFiles(record.files).update_availability(
+    changed = JobFiles.update_availability(
         record, manager.store, output, "failed", "historical fetch error",
     )
     assert changed.state == RunState.FINISHED
@@ -214,7 +214,7 @@ def test_stale_job_files_updater_preserves_other_file_status(tmp_path):
         )),
     ))
     first_update = JobFiles.update_availability(record, manager.store, first, "available")
-    second_update = JobFiles(record.files).update_availability(
+    second_update = JobFiles.update_availability(
         record, manager.store, second, "failed", "missing",
     )
     assert first_update.files.outputs[0].availability_state == "available"
