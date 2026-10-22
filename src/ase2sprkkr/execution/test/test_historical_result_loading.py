@@ -12,7 +12,8 @@ from ase2sprkkr.execution import (
     RunStore,
 )
 from ase2sprkkr.execution.endpoint import endpoint_for_executor
-from ase2sprkkr.execution.manager import ExecutionManager, HistoricalFileMismatchError
+from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.historical_restore import HistoricalFileMismatchError
 from ase2sprkkr.outputs import project_results
 from ase2sprkkr.outputs.project_results import (
     ProjectResultUnavailableError,
