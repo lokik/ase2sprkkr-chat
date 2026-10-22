@@ -21,7 +21,7 @@ def test_noncurrent_run_record_schema_is_rejected(tmp_path):
                 "updated_at": created_at,
                 "task": "DOS",
                 "directory": str(tmp_path),
-                "schema_version": 4,  # Current format is 3; no legacy compatibility matrix.
+                "schema_version": 3,  # Previous schema intentionally rejected.
             }
         )
     )
@@ -50,7 +50,7 @@ def test_current_schema_round_trips_with_one_execution_identity(tmp_path, backen
     loaded = store.get(record.id)
 
     assert loaded == record
-    assert loaded.schema_version == 3
+    assert loaded.schema_version == 4
     assert loaded.execution.backend_id == backend_id
     for obsolete in (
         "backend_state", "requested_task", "reference", "submission",
