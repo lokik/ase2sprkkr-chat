@@ -141,6 +141,44 @@ def test_found_dispatch_restores_identity(tmp_path):
     assert recovered.submission_phase is None
 
 
+
+@pytest.mark.parametrize(
+    "result,exception,pattern",
+    [
+        (object(), TypeError, "Invalid backend submission recovery result"),
+        (RunStatus(state=RunState.RUNNING), ValueError, "lacks backend identity"),
+    ],
+)
+def test_invalid_recovery_result_preserves_dispatch_reservation(
+    tmp_path, monkeypatch, result, exception, pattern,
+):
+    """Malformed recovery cannot release the claim or invent backend identity."""
+    manager = ExecutionManager(
+        RunStore(tmp_path / "runs"), executors=Executors(), submitting_grace=0,
+    )
+    executor = _Executor()
+    endpoint = manager.executors.register(executor)
+    first = manager.reserve(
+        manager.new_record(task="SCF", directory=tmp_path, endpoint=endpoint),
+    )
+    dispatched = manager.store.begin_dispatch(first)
+    monkeypatch.setattr(
+        executor, "recover_submission", lambda *args, **kwargs: result,
+    )
+    with pytest.raises(exception, match=pattern):
+        manager.recover_submitting(dispatched)
+    assert manager.store.get(dispatched.id) == dispatched
+
+    # Neither malformed observation may authorize a conflicting second run.
+    another = manager.new_record(
+        task="SCF", directory=tmp_path, endpoint=endpoint,
+    )
+    with pytest.raises(exception, match=pattern):
+        manager.reserve(another)
+    assert another.state == RunState.NEW
+    assert manager.store.get(dispatched.id) == dispatched
+
+
 def test_cannot_dispatch_after_reservation_was_reclaimed(tmp_path):
     manager = _manager(tmp_path)
     reserved = manager.reserve(manager.new_record(task="SCF", directory=tmp_path))
