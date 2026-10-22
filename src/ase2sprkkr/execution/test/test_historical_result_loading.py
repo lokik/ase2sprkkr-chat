@@ -509,3 +509,49 @@ def test_uncaptured_wildcard_restore_never_creates_literal_pattern_directory(tmp
     assert actual.read_text() == "restored"
     assert not (tmp_path / "results-*").exists()
     assert restored.files.outputs[0].availability_state == "available"
+
+
+def test_restore_directory_sync_failure_does_not_erase_published_file(
+    tmp_path, monkeypatch,
+):
+    import ase2sprkkr.execution._durability as durability
+    from pathlib import Path
+
+    manager, executor, record = _terminal_run(tmp_path)
+    output = tmp_path / "run.out"
+    output.unlink()
+    real_sync_directory = durability.fsync_directory
+
+    def fail_after_publish(directory):
+        if Path(directory) == tmp_path:
+            raise OSError("directory fsync failed")
+        return real_sync_directory(directory)
+
+    monkeypatch.setattr(durability, "fsync_directory", fail_after_publish)
+    with pytest.raises(OSError, match="directory fsync failed"):
+        manager.retrieve_result_files(record.id)
+
+    # Publication may have occurred before the durability barrier raised:
+    # the content remains correct, and temporary staging is still cleaned up.
+    assert output.read_text() == "original output"
+    assert list(tmp_path.glob(".run.out.*.tmp")) == []
+    assert manager.store.get(record.id).state is RunState.FINISHED
+
+
+def test_restore_rejects_symlink_supplied_as_staged_file(tmp_path):
+    manager, executor, record = _terminal_run(tmp_path)
+    output = tmp_path / "run.out"
+    output.unlink()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("original output")
+
+    def fetch(reference, files, *, destinations=None):
+        from pathlib import Path
+        Path(destinations[str(output)]).symlink_to(outside)
+
+    executor.fetch_result_files = fetch
+    with pytest.raises(OSError):
+        manager.retrieve_result_files(record.id)
+    assert not output.exists()
+    assert outside.read_text() == "original output"
+    assert list(tmp_path.glob(".run.out.*.tmp")) == []
