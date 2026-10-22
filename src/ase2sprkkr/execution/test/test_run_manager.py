@@ -391,3 +391,29 @@ def test_refresh_groups_by_endpoint_not_executor_hash(tmp_path):
         execution=record.execution.submitted("native-1"),
     )
     assert manager.refresh((record,))[0].state is RunState.RUNNING
+
+
+def test_refresh_does_not_query_terminal_runs(tmp_path):
+    from ase2sprkkr.execution import ExecutorEndpoint
+
+    class RecordingExecutor:
+        def __init__(self):
+            self.polled = []
+
+        def status(self, *records):
+            self.polled.extend(record.id for record in records)
+            return tuple(RunStatus(state=RunState.RUNNING) for _ in records)
+
+    manager = _manager(tmp_path)
+    endpoint = ExecutorEndpoint(executor="custom:recording")
+    executor = RecordingExecutor()
+    manager.executors.register(executor, endpoint)
+    active = manager.new_record(task="DOS", directory=tmp_path, endpoint=endpoint)
+    active = manager.transition(active, state=RunState.QUEUED,
+                                execution=active.execution.submitted("job-active"))
+    finished = manager.new_record(task="DOS", directory=tmp_path, endpoint=endpoint)
+    finished = manager.transition(finished, state=RunState.FINISHED,
+                                  execution=finished.execution.submitted("job-finished"))
+    result = manager.refresh((finished, active))
+    assert [item.state for item in result] == [RunState.FINISHED, RunState.RUNNING]
+    assert executor.polled == [active.id]

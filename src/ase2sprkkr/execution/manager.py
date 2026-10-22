@@ -776,7 +776,7 @@ class ExecutionManager:
         current = {record.id: record for record in records}
         groups = {}
         for record in records:
-            if record.execution.backend_id is None:
+            if record.state.is_terminal or record.execution.backend_id is None:
                 continue
             groups.setdefault(record.execution.endpoint, []).append(record)
 
