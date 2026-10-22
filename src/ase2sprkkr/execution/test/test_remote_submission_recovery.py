@@ -135,7 +135,7 @@ def test_recovered_psij_receipt_freezes_manifest_and_acknowledges(tmp_path, monk
             },
         },
     )())
-    monkeypatch.setattr(psij, "_slurm_status_native", lambda _: RunStatus(
+    monkeypatch.setattr(psij, "_slurm_status_native", lambda _, **_options: RunStatus(
         RunState.FINISHED, backend_id="42", return_code=0,
     ))
     recovered = remote_service.recover_remote("project-run", {

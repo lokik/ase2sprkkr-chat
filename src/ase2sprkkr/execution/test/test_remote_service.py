@@ -71,7 +71,7 @@ def test_remote_status_wire_reply_is_shared_between_process_and_psij(
     )
     monkeypatch.setattr(
         psij, "_slurm_status_native",
-        lambda native_id: RunStatus(
+        lambda native_id, **_options: RunStatus(
             state, backend_id=native_id, return_code=return_code,
             failure_phase=phase, message=error,
         ),
@@ -147,6 +147,25 @@ def test_status_distinguishes_launch_and_execution_failure(tmp_path, monkeypatch
     assert execution["state"] == RunState.FAILED.value
     assert execution["return_code"] == 3
     assert execution["failure_phase"] == FailurePhase.EXECUTION.value
+
+
+def test_status_forwards_slurm_timestamp_metadata(tmp_path, monkeypatch):
+    _, encoded = _psij_handle(tmp_path)
+    handle = remote_service._decode_handle(encoded)
+    handle.update(submitted_at="2026-10-22T12:00:00+00:00",
+                  output_file="/scratch/job.out",
+                  error_file="/scratch/job.err")
+    calls = []
+
+    def native(native_id, *, submitted_at=None, output_paths=()):
+        calls.append((native_id, submitted_at, output_paths))
+        return RunStatus(RunState.UNKNOWN, backend_id=native_id)
+
+    monkeypatch.setattr(psij, "_slurm_status_native", native)
+    status = remote_service.status_remote(remote_service._encode_handle(handle))
+    assert status["state"] == RunState.UNKNOWN.value
+    assert calls == [("42", "2026-10-22T12:00:00+00:00",
+                      ("/scratch/job.out", "/scratch/job.err"))]
 
 
 def test_slurm_status_is_native_and_does_not_use_psij_job_cache(tmp_path, monkeypatch):
@@ -772,7 +791,7 @@ def test_psij_terminal_receives_and_freezes_client_manifest(tmp_path, monkeypatc
                            availability_state="pending"),),
         mapping=FileMapping(str(local), str(target)),
     )
-    monkeypatch.setattr(psij, "_slurm_status_native", lambda _id: RunStatus(
+    monkeypatch.setattr(psij, "_slurm_status_native", lambda _id, **_options: RunStatus(
         RunState.FINISHED, backend_id="42", return_code=0,
     ))
     receipt = uuid4().hex
@@ -1358,7 +1377,7 @@ def test_psij_callback_follow_preserves_manifest_receipt_boundary(tmp_path, monk
     remote_id = remote_service._encode_handle(handle)
     observed = []
     _stub_terminal_psij_job(monkeypatch, "COMPLETED", 0, observed)
-    monkeypatch.setattr(psij, "_slurm_status_native", lambda native_id: RunStatus(
+    monkeypatch.setattr(psij, "_slurm_status_native", lambda native_id, **_options: RunStatus(
         RunState.FINISHED, backend_id=native_id, return_code=0,
     ))
 
