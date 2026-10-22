@@ -729,7 +729,18 @@ def test_concurrent_wait_and_completion_callback_persist_only_once(
         process_result=lambda outcome: outcome,
         task="DOS", callback=callback, resources=resources,
     )
-    run.submit()
+    submission_errors = []
+
+    def submit():
+        try:
+            run.submit()
+        except BaseException as exc:
+            submission_errors.append(exc)
+
+    # The fake backend invokes its completion callback synchronously from
+    # submit(). Keep submission on a thread while persistence is gated.
+    submitting = Thread(target=submit)
+    submitting.start()
     waiting = None
 
     def wait():
@@ -748,9 +759,12 @@ def test_concurrent_wait_and_completion_callback_persist_only_once(
         # the assertions below verify single durable completion and cleanup.
     finally:
         release.set()
+        submitting.join(5)
         if waiting is not None:
             waiting.join(5)
 
+    assert not submitting.is_alive()
+    assert submission_errors == []
     assert waiting is not None and not waiting.is_alive()
     assert completions == [RunState.FINISHED]
     assert callbacks == [(RunState.FINISHED, False)]
