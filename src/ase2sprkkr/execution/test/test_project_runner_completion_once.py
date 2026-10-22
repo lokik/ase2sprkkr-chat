@@ -44,6 +44,10 @@ class _Runner:
     files = None
     execution = None
 
+    def file_snapshot(self):
+        from ..run_model import FileManifest
+        return FileManifest()
+
     def wait(self):
         self.state = RunState.FINISHED
         return self.result
