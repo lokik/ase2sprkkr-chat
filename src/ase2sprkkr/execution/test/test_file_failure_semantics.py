@@ -1,11 +1,10 @@
-from ase2sprkkr.execution import JobFiles
 """Execution outcome and file availability are independent persisted facts."""
 
 import pytest
 
 from ase2sprkkr.execution import (
     FileAvailabilityState, FailurePhase, FileEntry,
-    FileManifest, RunState, RunStore,
+    FileManifest, RunState, RunStore, JobFiles,
 )
 
 from ase2sprkkr.execution.manager import ExecutionManager
