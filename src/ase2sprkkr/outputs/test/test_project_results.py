@@ -60,7 +60,6 @@ def _record(
     files = FileManifest() if input_file is None else capture_result_files(
         FileManifest(
             inputs=(FileEntry(local_path=str(input_file)),),
-            primary_input=FileEntry(local_path=str(input_file)),
         )
     )
     return RunRecord(
