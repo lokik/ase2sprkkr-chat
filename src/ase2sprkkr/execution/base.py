@@ -268,17 +268,16 @@ class ExecutionOutcome:
         The outcome holds their normalized paths for readers and persistence,
         not another mutable copy of the original stream objects.
         """
-        def normalized(name):
-            value = getattr(spec, name)
+        def normalized(value):
             return file_path(
                 value, spec.directory, flush=flush,
                 required=strict_paths and value is not None,
             )
 
         return cls(
-            output_file=normalized("output_file"),
-            input_file=normalized("input_file"),
-            error_file=normalized("error_file"),
+            output_file=normalized(spec.output_file),
+            input_file=normalized(spec.input_file),
+            error_file=normalized(spec.error_file),
         )
 
 
@@ -419,13 +418,16 @@ class LaunchSpec:
         elif not isinstance(mpi, MpiSpec):
             raise TypeError("LaunchSpec.mpi must be an MpiSpec")
         object.__setattr__(self, "mpi", mpi)
-        for name in ("local_root", "remote_root"):
-            value = getattr(self, name)
-            if value is not None:
-                object.__setattr__(self, name, os.fspath(value))
-        for name in ("input_sync", "output_sync"):
+        if self.local_root is not None:
+            object.__setattr__(self, "local_root", os.fspath(self.local_root))
+        if self.remote_root is not None:
+            object.__setattr__(self, "remote_root", os.fspath(self.remote_root))
+        for name, value in (
+            ("input_sync", self.input_sync),
+            ("output_sync", self.output_sync),
+        ):
             try:
-                value = FileSyncPolicy(getattr(self, name))
+                value = FileSyncPolicy(value)
             except ValueError as exc:
                 raise ValueError(f"Invalid {name} file synchronization policy") from exc
             object.__setattr__(self, name, value.value)
