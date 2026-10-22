@@ -174,3 +174,35 @@ def test_remote_spec_ignores_remote_only_cache_baselines(tmp_path):
         FileEntry(local_path=str(exact), availability_state="pending"),
         FileEntry(local_path=str(pattern), availability_state="pending"),
     )
+
+
+
+def test_ssh_status_serializes_captured_file_version_paths(tmp_path):
+    """A frozen historical manifest can contain Path-backed FileVersion values."""
+    import json
+    from ase2sprkkr.common.file_versions import FileVersion
+    from ase2sprkkr.execution import FileEntry, FileManifest
+    from ase2sprkkr.execution.target_connection import SSHConnection
+
+    output = tmp_path / "result.dat"
+    output.write_text("result")
+    version = FileVersion.capture(output)
+    manifest = FileManifest(outputs=(
+        FileEntry(
+            local_path=str(output),
+            remote_path="/remote/result.dat",
+            availability_state="available",
+            verified_local_version=version,
+        ),
+    ))
+
+    class Transport:
+        async def run(self, command, *, input=None):
+            assert command[-2:] == ("status", "backend-1")
+            request = json.loads(input)
+            assert request["files"]["outputs"][0]["verified_local_version"]["path"] == str(output)
+            return type("Reply", (), {"stdout": b'{"state":"finished"}'})()
+
+    connection = SSHConnection(Transport(), command=("ase2sprkkr", "remote"),
+                               backend="local", backend_options={})
+    assert asyncio.run(connection.status("backend-1", manifest))["state"] == "finished"
