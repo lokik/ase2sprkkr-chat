@@ -245,6 +245,7 @@ class RunStore:
             conflicts = tuple(
                 active for active in self.runs(active=True)
                 if active.id != record.id
+                and active.state != RunState.NEW
                 and record.job_files.conflicts_with(active.job_files)
             )
             if conflicts:
@@ -258,7 +259,6 @@ class RunStore:
                     raise RuntimeError("Run changed during file reservation")
                 return replace(
                     latest, state=RunState.SUBMITTING,
-                    files=record.files, execution=record.execution,
                     updated_at=_now(),
                 )
             return self.update(record, claim), ()
