@@ -89,10 +89,6 @@ class CalculationRun:
         return self._runner.backend_id
 
     @property
-    def execution(self):
-        return self._runner.execution
-
-    @property
     def files(self):
         return self._runner.files
 
