@@ -82,8 +82,9 @@ def materialize_manifest(manifest, *, remote=False, include_streams=True):
     """Resolve local filesystem declarations and return (manifest, first_error).
 
     This is the only wildcard evaluator for job outputs. Missing mandatory
-    remote output patterns are failures; optional output/cache patterns are
-    skipped. Exceptional errors preserve successful matches of other patterns.
+    remote output patterns are failures; unmatched optional output/cache
+    patterns resolve to empty membership (no phantom FileEntry).
+    Exceptional errors preserve successful matches of other patterns.
     The caller owns lifecycle and persistence.
     """
     from dataclasses import replace
@@ -132,7 +133,10 @@ def materialize_manifest(manifest, *, remote=False, include_streams=True):
             return (entry,)
         if remote and not matches:
             if not mandatory:
-                return (replace(entry, availability_state="skipped"),)
+                # Terminal membership is frozen even when empty. Do not
+                # retain a wildcard placeholder: that could be re-expanded
+                # or incorrectly retried by the client later.
+                return ()
             exc = FileNotFoundError(
                 f"Declared remote output pattern matched no files: {pattern}"
             )

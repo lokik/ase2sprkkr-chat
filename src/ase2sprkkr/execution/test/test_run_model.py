@@ -428,3 +428,32 @@ def test_stdin_boolean_requires_nonempty_inputs_and_literal_first_entry():
     files = FileManifest(inputs=(FileEntry("/does/not/exist.inp"),), stdin=True)
     assert files.stdin is True
     assert FileManifest(**asdict(files)) == files
+
+
+
+def test_availability_summary_distinguishes_empty_partial_and_skipped():
+    assert FileManifest().availability_state == "available"
+
+    available = FileEntry("/local/one", "/remote/one", "available")
+    skipped = FileEntry("/local/two", "/remote/two", "skipped")
+    pending = FileEntry("/local/three", "/remote/three", "pending")
+    assert FileManifest(outputs=(available, skipped)).availability_state == "partial"
+    assert FileManifest(outputs=(skipped,)).availability_state == "skipped"
+    assert FileManifest(outputs=(available, pending)).availability_state == "pending"
+    assert FileManifest(outputs=(available,)).availability_state == "available"
+
+
+def test_download_files_only_include_concrete_remote_entries():
+    manifest = FileManifest(
+        outputs=(
+            FileEntry("/local/data.dat", "/remote/data.dat", "skipped"),
+            FileEntry("/local/other-*.dat", "/remote/other-*.dat", "pending"),
+            FileEntry("/local/local-only.dat", availability_state="available"),
+        ),
+        caches=(FileEntry("/local/cache.pot", "/remote/cache.pot", "available"),),
+    )
+    assert [(item.remote_path, item.availability_state)
+            for item in manifest.download_files] == [
+        ("/remote/data.dat", "skipped"),
+        ("/remote/cache.pot", "available"),
+    ]

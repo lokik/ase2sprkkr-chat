@@ -285,7 +285,7 @@ def test_overlapping_exact_and_wildcard_caches_are_transferred_once(tmp_path):
     assert exact.read_text() == "new"
 
 
-def test_remote_completed_run_keeps_missing_optional_wildcard_skipped(tmp_path):
+def test_remote_completed_run_freezes_missing_optional_wildcard_as_empty(tmp_path):
     from .test_taskfile_optional_contract import DeclaredPath
 
     workdir = tmp_path / "local" / "calculation"
@@ -294,17 +294,18 @@ def test_remote_completed_run_keeps_missing_optional_wildcard_skipped(tmp_path):
         declared_output_files=(
             DeclaredPath(str(workdir / "optional-*.dat"), optional=True),
         ),
+        output_files=FileSyncPolicy.MISSING,
         code="print('done')",
     )
     runner = _processed_run(executor, spec)
     result = runner.run()
     assert result.return_code == 0
-    missing = [
-        e for e in runner.job_files.manifest.outputs
-        if e.local_path == str(workdir / "optional-*.dat")
-    ]
-    assert len(missing) == 1
-    assert missing[0].availability_state == "skipped"
+    frozen = runner.job_files.manifest
+    assert frozen.outputs == ()
+    assert frozen.availability_state == "available"
+    assert not frozen.has_wildcards()
+    assert all("optional-*.dat" not in str(entry.local_path)
+               for entry in frozen.download_files)
 
 
 def test_remote_completed_run_fails_on_missing_mandatory_wildcard(tmp_path):
