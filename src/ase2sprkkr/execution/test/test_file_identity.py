@@ -177,11 +177,11 @@ def test_manifest_rejects_remote_path_outside_shared_mapping():
     from ase2sprkkr.execution.run_model import FileMapping
 
     mapping = FileMapping("/local/project", "/remote/project")
-    with pytest.raises(ValueError, match="does not match the file mapping"):
-        FileManifest(
-            mapping=mapping,
-            stdout=FileEntry("/local/project/stdout.log", "/remote/elsewhere/stdout.log"),
-        )
+    files = FileManifest(
+        stdout=FileEntry("/local/project/stdout.log", "/remote/elsewhere/stdout.log"),
+    )
+    with pytest.raises(ValueError, match="Submission path differs from reserved path"):
+        files.with_mapping(mapping)
 
 
 def test_manifest_accepts_remote_path_derived_from_shared_mapping():
@@ -189,9 +189,8 @@ def test_manifest_accepts_remote_path_derived_from_shared_mapping():
 
     mapping = FileMapping("/local/project", "/remote/project")
     files = FileManifest(
-        mapping=mapping,
-        outputs=(FileEntry("/local/project/out.dat", "/remote/project/out.dat"),),
-    )
+        outputs=(FileEntry("/local/project/out.dat"),),
+    ).with_mapping(mapping)
     assert files.outputs[0].remote_path == mapping.map_path(files.outputs[0].local_path)
 
 
