@@ -61,10 +61,12 @@ def test_unknown_observation_cannot_overwrite_newer_status(manager, tmp_path):
 
 
 def test_terminal_ack_retries_transport_error_without_overwriting_record(manager, tmp_path):
-    record = manager.complete(
-        manager.new_record(task="DOS", directory=tmp_path),
-        state=RunState.FINISHED,
+    created = manager.new_record(task="DOS", directory=tmp_path)
+    running = manager.transition(
+        created, state=RunState.RUNNING,
+        execution=created.execution.submitted("backend-1"),
     )
+    record = manager.complete(running, state=RunState.FINISHED)
     class Backend:
         calls = 0
         def acknowledge(self, current):
@@ -73,8 +75,8 @@ def test_terminal_ack_retries_transport_error_without_overwriting_record(manager
             if self.calls == 1:
                 raise OSError("disconnected")
     backend = Backend()
-    assert manager.acknowledge_terminal(backend, record, backend_id="backend-1") is False
-    assert manager.acknowledge_terminal(backend, record, backend_id="backend-1") is True
+    assert manager.acknowledge_terminal(backend, record) is False
+    assert manager.acknowledge_terminal(backend, record) is True
     assert backend.calls == 2
     assert manager.store.get(record.id) == record
 
@@ -114,3 +116,26 @@ def test_failed_backend_observation_uses_execution_failure_phase(manager, tmp_pa
     assert updated.state == RunState.FAILED
     assert updated.failure_phase == FailurePhase.EXECUTION
     assert manager.store.get(record.id) == updated
+
+def test_uncertain_synchronous_completion_does_not_publish_terminal_state(manager, tmp_path):
+    record = manager.reserve(manager.new_record(task="DOS", directory=tmp_path))
+    updated = manager.record_submission_failure(
+        record, error=OSError("ACK lost"), uncertain=True,
+        state=RunState.FINISHED, backend_id="backend-1",
+    )
+    assert updated.state == RunState.SUBMITTING
+    assert updated.finished_at is None
+    assert manager.store.get(record.id).execution.backend_id == "backend-1"
+
+
+def test_terminal_ack_needs_durable_backend_identity(manager, tmp_path):
+    record = manager.complete(
+        manager.new_record(task="DOS", directory=tmp_path),
+        state=RunState.FINISHED,
+    )
+
+    class Backend:
+        def acknowledge(self, _record):
+            pytest.fail("Undurable backend receipt was acknowledged")
+
+    assert not manager.acknowledge_terminal(Backend(), record)

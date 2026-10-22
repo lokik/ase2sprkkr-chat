@@ -254,10 +254,16 @@ class ExecutionManager:
             )
         if backend_id is None or record.state.is_terminal:
             return record
+        # The backend may have completed synchronously while persisting its
+        # identity failed. Finalization still belongs to the completion hook.
+        observed = RunState(state)
+        if observed.is_terminal:
+            observed = RunState.SUBMITTING
         return self.transition(
-            record, state=state,
+            record, state=observed,
             execution=record.execution.submitted(backend_id),
-            failure_phase=_failure_phase(failure_phase),
+            failure_phase=(None if observed == RunState.SUBMITTING
+                           else _failure_phase(failure_phase)),
         )
 
     def record_observation(
@@ -287,10 +293,9 @@ class ExecutionManager:
         )
 
     @staticmethod
-    def acknowledge_terminal(executor, record, *, backend_id=None):
-        """Return success only after ACK of a durable terminal record."""
-        if (not record.state.is_terminal
-                or (record.execution.backend_id is None and backend_id is None)):
+    def acknowledge_terminal(executor, record):
+        """ACK only after terminal state and backend identity are durable."""
+        if not record.state.is_terminal or record.execution.backend_id is None:
             return False
         try:
             executor.acknowledge(record)

@@ -113,7 +113,7 @@ class RunPersistence:
     def _acknowledge_terminal(self, run):
         if not self._terminal_acknowledged:
             self._terminal_acknowledged = self.manager.acknowledge_terminal(
-                self.executor, self._record, backend_id=run.backend_id,
+                self.executor, self._record,
             )
 
     def completed(self, run: CalculationRun):
