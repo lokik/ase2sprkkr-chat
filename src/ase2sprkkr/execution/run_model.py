@@ -371,21 +371,6 @@ class FileManifest:
             *(("cache", entry) for entry in self.caches),
         ), primary_input=self.primary_input)
 
-        if self.mapping is not None:
-            import posixpath
-
-            for entry in (
-                *self.inputs, self.primary_input, self.stdin, self.stdout,
-                self.stderr, *self.outputs, *self.caches,
-            ):
-                if entry is None or entry.local_path is None or entry.remote_path is None:
-                    continue
-                expected = self.mapping.map_path(entry.local_path)
-                if posixpath.normpath(entry.remote_path) != posixpath.normpath(expected):
-                    raise ValueError(
-                        f"Remote path {entry.remote_path} does not match "
-                        f"the file mapping for {entry.local_path}: {expected}"
-                    )
     @property
     def files(self):
         """Distinct downloadable file states; shared streams count only once.
@@ -465,10 +450,18 @@ class FileManifest:
         A stream that was not recorded remains absent.
         """
         changes = {}
-        if stdout and self.stdout is not None and stdout != self.stdout.remote_path:
-            changes["stdout"] = replace(self.stdout, remote_path=stdout)
-        if stderr and self.stderr is not None and stderr != self.stderr.remote_path:
-            changes["stderr"] = replace(self.stderr, remote_path=stderr)
+        for name, path in (("stdout", stdout), ("stderr", stderr)):
+            entry = getattr(self, name)
+            if not path or entry is None or path == entry.remote_path:
+                continue
+            if self.mapping is not None and entry.local_path is not None:
+                expected = self.mapping.map_path(entry.local_path)
+                if path != expected:
+                    raise ValueError(
+                        f"Recovered {name} path {path} does not match "
+                        f"the file mapping: {expected}"
+                    )
+            changes[name] = replace(entry, remote_path=path)
         return replace(self, **changes) if changes else self
 
     def initialize_availability(self):
