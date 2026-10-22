@@ -263,7 +263,10 @@ def test_historical_missing_input_restores_without_output_availability_update(tm
 
     def fetch(reference, files, *, destinations=None):
         if str(input_path) in files:
-            input_path.write_text("input")
+            target = (str(input_path) if destinations is None
+                      else destinations[str(input_path)])
+            from pathlib import Path
+            Path(target).write_text("input")
         else:
             original_fetch(reference, files, destinations=destinations)
 
@@ -280,6 +283,6 @@ def test_historical_missing_input_reports_unrestored_file(tmp_path):
     input_path.unlink()
     executor.fetch_result_files = lambda reference, files, *, destinations=None: None
 
-    with pytest.raises(FileNotFoundError, match="Historical input file is still missing"):
+    with pytest.raises(FileNotFoundError, match="Historical file was not retrieved"):
         manager.retrieve_result_files(record.id)
     assert manager.store.get(record.id).state == record.state
