@@ -1,3 +1,4 @@
+import io
 from threading import Event
 from types import SimpleNamespace
 
