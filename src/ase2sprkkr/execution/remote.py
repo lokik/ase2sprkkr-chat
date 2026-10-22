@@ -59,7 +59,7 @@ class RemoteRunner(ManagedRunner):
         # Once monitoring has started, only the client monitor may advance from
         # backend execution into DOWNLOADING. A direct backend query must never
         # expose FINISHED before files are locally available.
-        if self._thread is not None:
+        if self._thread is not None or self.detached:
             return self._state
         if (self._backend_id is None or self._state in (RunState.NEW, RunState.DOWNLOADING)
                 or self._state.is_terminal):
@@ -273,6 +273,11 @@ class RemoteRunner(ManagedRunner):
             self._remote_directory = request["directory"]
             self.job_files.merge(manifest)
         start_monitor(self, missing_backend="Run has no backend reference")
+
+    def stop_observation(self):
+        if self._run_id is None:
+            raise NotImplementedError('Nonpersistent remote runners cannot detach')
+        return super().stop_observation()
 
     def _cancel_backend(self):
         return _run_sync(
