@@ -255,6 +255,13 @@ class JobFiles:
             os.path.abspath(os.fspath(version.path)): version
             for version in record.files.all_versions
         }
+        # Captured input versions are recoverable too, but inputs have no
+        # availability field: only output/cache entries may be updated through
+        # FileManifest.with_file_availability().
+        tracked = {
+            os.path.abspath(os.fspath(item.local_path))
+            for item in record.files.files if item.local_path is not None
+        }
         for path in missing:
             path = os.path.abspath(os.fspath(path))
             version = versions.get(path)
@@ -279,23 +286,31 @@ class JobFiles:
                         )
                     os.replace(staged, path)
             except OSError as exc:
-                self.update_availability(
-                    store, path, FileAvailabilityState.FAILED, str(exc),
-                )
+                if path in tracked:
+                    self.update_availability(
+                        store, path, FileAvailabilityState.FAILED, str(exc),
+                    )
                 raise
             finally:
                 if staged is not None:
                     staged.unlink(missing_ok=True)
             refreshed = store.get(record.id)
-            availability = (
-                FileAvailabilityState.FAILED
-                if path in missing_result_files(refreshed.files)
-                else FileAvailabilityState.AVAILABLE
-            )
+            still_missing = path in missing_result_files(refreshed.files)
+            if path not in tracked:
+                # There is no per-input availability record to update. A
+                # failed restore must be reported, not turned into a KeyError
+                # from the output/cache availability API.
+                if still_missing:
+                    raise FileNotFoundError(
+                        f"Historical input file is still missing: {path}"
+                    )
+                record = refreshed
+                continue
             record = JobFiles(refreshed).update_availability(
-                store, path, availability,
-                "Historical file is still missing"
-                if availability == FileAvailabilityState.FAILED else None,
+                store, path,
+                FileAvailabilityState.FAILED if still_missing
+                else FileAvailabilityState.AVAILABLE,
+                "Historical file is still missing" if still_missing else None,
             )
         return record
 
