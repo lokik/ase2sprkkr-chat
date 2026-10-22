@@ -72,7 +72,7 @@ def _psij_state(status, *, attached=False, return_code=None):
     scheduler status. That is UNKNOWN, not evidence of a new submission.
     A completed job with a nonzero exit code is an execution failure.
     """
-    name = None if status is None else status.state.name
+    name = None if status is None or status.state is None else status.state.name
     if attached and name == "NEW":
         return RunState.UNKNOWN
     state = _STATE_MAP.get(name, RunState.UNKNOWN)
@@ -477,7 +477,7 @@ class PsijRunner(ManagedRunner):
         self._observed_state = observed_state
         if observed_state == RunState.FAILED:
             self._failure_phase = FailurePhase.EXECUTION
-            self._failure_message = getattr(status, "message", None) or (
+            self._failure_message = (None if status is None else status.message) or (
                 f"PSI/J job failed with exit code {self._return_code}"
                 if self._return_code is not None else "PSI/J job failed"
             )
