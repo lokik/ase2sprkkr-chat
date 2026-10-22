@@ -57,6 +57,8 @@ class JobFiles:
         if current is None:
             return requested
         if current.captured_at is not None:
+            if requested != current:
+                raise ValueError("Cannot replace a captured file manifest")
             return current
         return requested
 
