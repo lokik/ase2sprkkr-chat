@@ -5,6 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 import ase2sprkkr.outputs.project_results as project_output
+from ase2sprkkr.execution.job_files import JobFilesOwner
+
 from ase2sprkkr.execution import (
     ExecutionOutcome,
     ExecutionSpec,
@@ -22,7 +24,7 @@ from ase2sprkkr.outputs.project_results import (
 )
 
 
-class _RawRunner:
+class _RawRunner(JobFilesOwner):
     def __init__(self):
         self.callback = None
         self.state = RunState.NEW
@@ -31,7 +33,7 @@ class _RawRunner:
         self.exception = None
         self.failure_phase = None
         self.failure_message = None
-        self.job_files = JobFiles(FileManifest())
+        self._initialize_job_files(FileManifest())
 
     def prepare_submission(self):
         return None
