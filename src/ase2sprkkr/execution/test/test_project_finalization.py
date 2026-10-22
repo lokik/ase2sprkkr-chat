@@ -66,6 +66,7 @@ class _Executor(Executor):
 
     def create_project_run(self, spec, *, run_id, callback=None):
         self.runner = _RawRunner()
+        self.runner.spec = spec  # The factory exposes the concrete execution spec.
         return self.runner
 
 
