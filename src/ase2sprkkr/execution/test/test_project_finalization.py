@@ -841,7 +841,9 @@ def test_unknown_observation_closes_owned_streams_but_attach_can_recover(tmp_pat
 
     class ExecutorWithAttach(_Executor):
         def create_project_run(self, spec, *, run_id, callback=None):
-            return ObservedRunner()
+            runner = ObservedRunner()
+            runner.spec = spec
+            return runner
 
         def attach(self, record, *, output_listener=None, start=False):
             assert record.state == RunState.UNKNOWN

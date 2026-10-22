@@ -1387,6 +1387,10 @@ def test_project_observer_detaches_without_stopping_other_attached_client(
         assert first.stop_observation()
         with pytest.raises(ObservationDetached):
             first.wait()
+        # Detaching requests asynchronous cancellation of the monitor. Wait
+        # for that monitor's finally block to unregister its PSI/J listener.
+        first._runner._thread.join(timeout=3)
+        assert not first._runner._thread.is_alive()
         assert first.detached
         assert first._runner.state is RunState.RUNNING
         assert job.status.state.name == "ACTIVE"
