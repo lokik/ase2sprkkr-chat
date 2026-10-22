@@ -321,3 +321,41 @@ def test_parallel_endpoint_lookup_constructs_one_executor(monkeypatch):
         results = list(workers.map(lookup, range(8)))
     assert len(instances) == 1
     assert all(instance is instances[0] for instance in results)
+
+
+def test_executor_factory_failure_is_not_cached(monkeypatch):
+    from ase2sprkkr.execution import ExecutorEndpoint
+    from ase2sprkkr.execution import endpoint as endpoint_module
+
+    executors = Executors()
+    endpoint = ExecutorEndpoint()
+    attempts = []
+
+    def factory(value):
+        assert value == endpoint
+        attempts.append(_Executor())
+        if len(attempts) == 1:
+            raise RuntimeError("temporary backend failure")
+        return attempts[-1]
+
+    monkeypatch.setattr(endpoint_module, "create_executor_from_endpoint", factory)
+    with pytest.raises(RuntimeError, match="temporary backend failure"):
+        executors.for_endpoint(endpoint)
+    assert executors.for_endpoint(endpoint) is attempts[1]
+    assert executors.for_endpoint(endpoint) is attempts[1]
+    assert len(attempts) == 2
+
+
+def test_parallel_registration_of_same_executor_is_idempotent():
+    from concurrent.futures import ThreadPoolExecutor
+    from ase2sprkkr.execution import ExecutorEndpoint
+
+    executors = Executors()
+    endpoint = ExecutorEndpoint()
+    executor = _Executor()
+    with ThreadPoolExecutor(max_workers=8) as workers:
+        registered = tuple(workers.map(
+            lambda _: executors.register(executor, endpoint), range(32)
+        ))
+    assert all(value == endpoint for value in registered)
+    assert executors.for_endpoint(endpoint) is executor
