@@ -25,8 +25,6 @@ from .managed_runner import ManagedRunner
 
 _log = logging.getLogger(__name__)
 
-_OBSERVATION_STOPPED = object()
-
 
 def _ignore_job_status(job, status):
     """PSI/J 0.9.11 wraps None as a broken callable on unsubscribe."""
@@ -278,9 +276,6 @@ class PsijRunner(ManagedRunner):
         self._attached = attached
         self._submit_lock = Lock()
         self._observed_state = None
-        self._observation_stopped = Event()
-        self._observation_signal_lock = Lock()
-        self._observation_wakeup = None
 
         self._psij = executor._psij
         self._job = job or self._create_job()
@@ -340,6 +335,8 @@ class PsijRunner(ManagedRunner):
 
     @property
     def state(self):
+        if self._state == RunState.DETACHED:
+            return RunState.DETACHED
         if self._exception is not None:
             return RunState.FAILED
         if self._observed_state is not None:
@@ -416,11 +413,6 @@ class PsijRunner(ManagedRunner):
             completed.append(status)
             schedule(status)
 
-        with self._observation_signal_lock:
-            self._observation_wakeup = lambda: schedule(_OBSERVATION_STOPPED)
-            if self._observation_stopped.is_set():
-                self._observation_wakeup()
-
         detach = None
         read_error = None
         try:
@@ -445,11 +437,6 @@ class PsijRunner(ManagedRunner):
         finally:
             if detach is not None:
                 detach()
-            with self._observation_signal_lock:
-                self._observation_wakeup = None
-
-        if status is _OBSERVATION_STOPPED:
-            status = None
 
         observed_state = _psij_state(status) if status is not None else RunState.UNKNOWN
         if observed_state not in (
@@ -513,14 +500,6 @@ class PsijRunner(ManagedRunner):
             self.executor._job_executor.submit(self._job)
             self.executor._cache_submitted_job(self._job)
             start_monitor(self)
-
-    def stop_observation(self):
-        """Stop monitoring without cancelling the scheduler calculation."""
-        self._observation_stopped.set()
-        with self._observation_signal_lock:
-            wakeup = self._observation_wakeup
-        if wakeup is not None:
-            wakeup()
 
     def _can_cancel(self):
         # PSI/J may accept the job before its native ID is observable.
