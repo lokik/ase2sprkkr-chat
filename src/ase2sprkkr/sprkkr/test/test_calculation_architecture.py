@@ -27,6 +27,7 @@ class _UnstartedRunner:
         self.result = None
         self.reference = None
         self.exception = None
+        self.callback = None
 
     def add_output_listener(self, callback):
         pass
