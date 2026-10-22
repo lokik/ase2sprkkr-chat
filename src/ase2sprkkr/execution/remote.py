@@ -63,7 +63,7 @@ class RemoteRunner(ManagedRunner):
                 or self._state.is_terminal):
             return self._state
         status = _run_sync(
-            self.executor.connection.status(self._backend_id, self._files)
+            self.executor.connection.status(self._backend_id, self.job_files.manifest)
         )
         return self._apply_status(
             backend_status_from_facts(
@@ -129,13 +129,13 @@ class RemoteRunner(ManagedRunner):
                 offsets[kind] = os.path.getsize(self._local_path(target))
         self._stream_positions = dict(offsets)
         return await self.executor.connection.follow(
-            self._backend_id, self._files, offsets=offsets,
+            self._backend_id, self.job_files.manifest, offsets=offsets,
             on_chunk=self._on_follow_chunk,
         )
 
     async def _backend_status(self):
         return await self.executor.connection.status(
-            self._backend_id, self._files,
+            self._backend_id, self.job_files.manifest,
         )
 
     async def _complete_terminal(self, status, backend_state):
@@ -150,13 +150,14 @@ class RemoteRunner(ManagedRunner):
             from .run_model import FileManifest
             frozen = (
                 FileManifest(**status["files"])
-                if status.get("files") is not None else self._files
+                if status.get("files") is not None else self.job_files.manifest
             )
-            self._files, transfer_error = await JobFiles.collect_terminal_remote(
-                self._files, frozen, self.file_handler, self.result, self.spec,
+            observed, transfer_error = await JobFiles.collect_terminal_remote(
+                self.job_files.manifest, frozen, self.file_handler, self.result, self.spec,
                 required=backend_state == RunState.FINISHED,
                 materialization_error=status.get("materialization_error"),
             )
+            self.job_files.merge(observed)
             if transfer_error is not None:
                 raise transfer_error
         except Exception as exc:
@@ -174,20 +175,14 @@ class RemoteRunner(ManagedRunner):
         if self._state == RunState.FAILED and self._failure_phase is None:
             self._failure_phase = FailurePhase.EXECUTION
 
-    def set_manifest(self, files):
-        """Use the exact manifest already reserved by the project layer."""
-        if self._state != RunState.NEW or self._prepared is not None:
-            raise RuntimeError("Cannot replace prepared submission manifest")
-        self._files = files
-
     async def _prepare_async(self):
         try:
-            mapping = self._files.mapping if self._files is not None else None
+            mapping = self.job_files.manifest.mapping if self.job_files.manifest is not None else None
             if mapping is None:
                 mapping = await self.executor.resolve_mapping(self.spec.launch)
             remote_directory = mapping.map_path(self.spec.directory)
             await self.executor.transport.run(("mkdir", "-p", "--", remote_directory))
-            manifest = await self.file_handler.prepare(mapping, self.spec, self._files)
+            manifest = await self.file_handler.prepare(mapping, self.spec, self.job_files.manifest)
             # The runner owns backend identity, command construction and the
             # submission protocol. FileHandler knows only file locations.
             mapped = {entry.local_path: entry.remote_path
@@ -231,7 +226,7 @@ class RemoteRunner(ManagedRunner):
             request, manifest = _run_sync(self._prepare_async())
             self._prepared = (request, manifest)
             self._remote_directory = request["directory"]
-            self._files = manifest
+            self.job_files.merge(manifest)
 
     async def _submit_async(self):
         if self._prepared is None:
@@ -262,7 +257,7 @@ class RemoteRunner(ManagedRunner):
             self._failure_message = status.get("error")
             self._backend_id = str(remote_id)
             self._remote_directory = request["directory"]
-            self._files = manifest
+            self.job_files.merge(manifest)
         start_monitor(self, missing_backend="Run has no backend reference")
 
     def _cancel_backend(self):

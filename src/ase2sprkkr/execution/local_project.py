@@ -98,7 +98,6 @@ class LocalProjectRunner(ManagedRunner):
         )
         # Direct runners construct a manifest once; project persistence
         # replaces it with the authoritative reserved manifest.
-        self._files = FileManifest.from_spec(spec)
         self._run_id = run_id
         self._prepared_request = None
         self._failure_phase = failure_phase
@@ -106,16 +105,13 @@ class LocalProjectRunner(ManagedRunner):
         if start:
             self.start()
 
-    def set_manifest(self, files):
-        self._files = files
-
     def _refresh(self):
         # A terminal result is immutable. After acknowledgment the receipt
         # may disappear while the supervisor process is still shutting down.
         if (self._backend_id is None or self._state.is_terminal
                 or self._thread is not None):
             return self._state
-        status = local_status(self._backend_id, self._files)
+        status = local_status(self._backend_id, self.job_files.manifest)
         return self._apply_status(status)
 
     @property
@@ -130,15 +126,15 @@ class LocalProjectRunner(ManagedRunner):
 
     async def _follow_once(self):
         return await self.executor.connection.follow(
-            self._backend_id, self._files,
+            self._backend_id, self.job_files.manifest,
             on_chunk=lambda kind, data: self._output_observers.emit_bytes(data, kind),
         )
 
     async def _backend_status(self):
-        return await self.executor.connection.status(self._backend_id, self._files)
+        return await self.executor.connection.status(self._backend_id, self.job_files.manifest)
 
     async def _complete_terminal(self, facts, state):
-        status = _local_status_from_facts(self._backend_id, facts, self._files)
+        status = _local_status_from_facts(self._backend_id, facts, self.job_files.manifest)
         self._apply_status(status)
 
     def _request(self):
@@ -154,13 +150,13 @@ class LocalProjectRunner(ManagedRunner):
             "detached": True,
             "directory": os.fspath(self.spec.directory),
             **self.spec.command_request(),
-            "input_file": self._files.input_file,
-            "stdin": (None if self._files.stdin is None
-                      else self._files.stdin.local_path),
-            "output_file": self._files.output_file,
-            "error_file": (None if self._files.stderr is None
-                           else self._files.stderr.local_path),
-            "files": asdict(self._files),
+            "input_file": self.job_files.manifest.input_file,
+            "stdin": (None if self.job_files.manifest.stdin is None
+                      else self.job_files.manifest.stdin.local_path),
+            "output_file": self.job_files.manifest.output_file,
+            "error_file": (None if self.job_files.manifest.stderr is None
+                           else self.job_files.manifest.stderr.local_path),
+            "files": asdict(self.job_files.manifest),
         }
 
     def prepare_submission(self):
@@ -191,7 +187,7 @@ class LocalProjectRunner(ManagedRunner):
             raise
         self._backend_id = reply["remote_id"]
         if reply.get("files") is not None:
-            self._files = FileManifest(**reply["files"])
+            self.job_files.merge(FileManifest(**reply["files"]))
         self._state = RunState(reply["state"])
         start_monitor(self, missing_backend="Local run has no backend identity")
 
@@ -219,7 +215,7 @@ def attach_local(executor, run, *, callback=None, output_listener=None, start=Tr
         state=status.state, failure_phase=status.failure_phase,
         failure_message=status.message,
     )
-    runner.set_manifest(status.files or files)
+    runner.job_files.replace(status.files or files)
     runner._return_code = status.return_code
     runner.result.return_code = status.return_code
     if start:

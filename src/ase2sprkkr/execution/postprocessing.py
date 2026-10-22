@@ -23,11 +23,11 @@ class CalculationRun:
     """
 
     def __init__(self, runner, process_result, callback=None, *, resources=None,
-                 hooks=None):
+                 persistence=None):
         self._runner = runner
         self._process_result = process_result
         self.callback = callback
-        self.hooks = hooks
+        self.persistence = persistence
         self.persistence_error = None
         self.result = None
         self._resources = resources
@@ -58,20 +58,20 @@ class CalculationRun:
 
     @property
     def id(self):
-        if self.hooks is None:
+        if self.persistence is None:
             raise AttributeError("Untracked calculation has no persistent ID")
-        return self.hooks.id
+        return self.persistence.id
 
     @property
     def record(self):
-        if self.hooks is None:
+        if self.persistence is None:
             raise AttributeError("Untracked calculation has no RunRecord")
-        return self.hooks.record
+        return self.persistence.record
 
     def refresh(self):
-        if self.hooks is None:
+        if self.persistence is None:
             raise RuntimeError("Untracked calculation has no persistent record")
-        return self.hooks.refresh()
+        return self.persistence.refresh()
 
     @property
     def cancellation_requested(self):
@@ -92,9 +92,9 @@ class CalculationRun:
     def backend_id(self):
         return self._runner.backend_id
 
-    def file_snapshot(self):
-        """Read the backend file snapshot at a persistence boundary."""
-        return self._runner.file_snapshot()
+    @property
+    def job_files(self):
+        return self._runner.job_files
 
     @property
     def exception(self):
@@ -121,7 +121,7 @@ class CalculationRun:
             return self._state
         # Reattached persistent runs may already be terminal, even if their
         # backend is gone. Do not query a stale or released backend.
-        record = self.hooks.record if self.hooks is not None else None
+        record = self.persistence.record if self.persistence is not None else None
         if record is not None and record.state.is_terminal:
             return record.state
         if self._processing:
@@ -131,9 +131,6 @@ class CalculationRun:
             # Raw execution is complete, but the public lifecycle is not.
             return RunState.POSTPROCESSING
         return state
-
-    def set_manifest(self, manifest):
-        self._runner.set_manifest(manifest)
 
     def add_output_listener(self, callback):
         return self._runner.add_output_listener(callback)
@@ -215,7 +212,7 @@ class CalculationRun:
                 # before the completion hook can write a terminal record.
                 with self._lock:
                     if (self._submitting and self._backend_submit_attempted
-                            and self.hooks is not None):
+                            and self.persistence is not None):
                         self._completion_deferred = True
                         publish = False
                     else:
@@ -226,8 +223,8 @@ class CalculationRun:
     def _publish_completion(self):
         """Persistence must succeed before completion is published to observers."""
         try:
-            if self.hooks is not None:
-                persisted_state = self.hooks.completed(self)
+            if self.persistence is not None:
+                persisted_state = self.persistence.completed(self)
                 if persisted_state is not None:
                     self._state = RunState(persisted_state)
         except BaseException as exc:
@@ -253,10 +250,10 @@ class CalculationRun:
                 raise RuntimeError("Calculation has not completed")
             if self.persistence_error is None:
                 return
-            if self.hooks is None:
+            if self.persistence is None:
                 raise RuntimeError("No persistence hook is configured")
             try:
-                persisted_state = self.hooks.completed(self)
+                persisted_state = self.persistence.completed(self)
                 if persisted_state is not None:
                     self._state = RunState(persisted_state)
             except BaseException as exc:
@@ -297,8 +294,8 @@ class CalculationRun:
         # before any backend can start.
         self._backend_submit_attempted = False
         try:
-            if self.hooks is not None:
-                self.hooks.before_submit(self)
+            if self.persistence is not None:
+                self.persistence.before_submit(self)
 
             try:
                 self._runner.prepare_submission()
@@ -307,8 +304,8 @@ class CalculationRun:
                     raise
                 raise SubmissionNotStarted(str(exc)) from exc
 
-            if self.hooks is not None:
-                self.hooks.prepared(self)
+            if self.persistence is not None:
+                self.persistence.prepared(self)
             if self.cancellation_requested:
                 raise asyncio.CancelledError(
                     "Run was cancelled before backend submission"
@@ -316,12 +313,12 @@ class CalculationRun:
 
             self._backend_submit_attempted = True
             self._runner.submit()
-            if self.hooks is not None:
-                self.hooks.submitted(self)
+            if self.persistence is not None:
+                self.persistence.submitted(self)
         except BaseException as exc:
-            if self.hooks is not None:
+            if self.persistence is not None:
                 try:
-                    self.hooks.submission_failed(
+                    self.persistence.submission_failed(
                         self, exc, uncertain=(
                             self._backend_submit_attempted
                             and not isinstance(exc, SubmissionNotStarted)
@@ -438,8 +435,8 @@ class CalculationRun:
             if attached is None:
                 attached = self._runner.state != RunState.NEW
         result = self._start_submission(attached=attached)
-        if attached and self.hooks is not None:
-            self.hooks.attached(self)
+        if attached and self.persistence is not None:
+            self.persistence.attached(self)
         return result
 
     def _dispatch_cancel(self):
@@ -505,7 +502,7 @@ class CalculationRun:
         return self._runner.stop_observation()
 
     def cancel(self):
-        if self.hooks is not None and not self.hooks.can_cancel(self):
+        if self.persistence is not None and not self.persistence.can_cancel(self):
             return None
         self.request_cancel()
         with self._lock:

@@ -24,7 +24,7 @@ from .local import LocalExecutor, LocalRunner
 from .manager import (
     CorruptRunRecord,
     DuplicateSubmissionError,
-    PersistentRun,
+    RunPersistence,
     RunRecord,
     RunStore,
 )
@@ -77,7 +77,7 @@ __all__ = [
     "RunStore",
     "CorruptRunRecord",
     "ExecutionManager",
-    "PersistentRun",
+    "RunPersistence",
     "Project",
     "ProjectRepository",
     "ProjectRepositoryError",
