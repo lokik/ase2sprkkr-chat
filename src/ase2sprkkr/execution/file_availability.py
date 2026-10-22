@@ -204,13 +204,13 @@ def clear_declared_outputs(paths, *, protected=()):
     Called on the execution host before starting a new calculation, never on
     reattach. A wildcard removes only its concrete files.
     """
-    protected_paths = {candidate for _, candidate in _expanded_protected_paths(protected)}
-    protected_targets = {os.path.realpath(path) for path in protected_paths}
+    protected_targets = {
+        os.path.realpath(candidate)
+        for _, candidate in _expanded_protected_paths(protected)
+    }
     for declared in dict.fromkeys(os.fspath(p) for p in paths if p is not None):
         for candidate in expand_local_candidates(declared):
             path = os.path.abspath(candidate)
-            if (path in protected_paths
-                    or os.path.realpath(path) in protected_targets
-                    or not os.path.isfile(path)):
+            if os.path.realpath(path) in protected_targets or not os.path.isfile(path):
                 continue
             os.unlink(path)
