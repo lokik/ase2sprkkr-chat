@@ -115,6 +115,7 @@ class ExecutionManager:
                 validate_completed_files=validate_completed_files,
                 observed=observed,
             ),
+            optimistic=files is not _UNCHANGED and files is not None,
         )
 
     def _is_stale_submitting(self, record, *, now=None):

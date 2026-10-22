@@ -392,3 +392,73 @@ def test_non_project_store_rejects_duplicate_ids_across_day_shards(tmp_path):
     ):
         with pytest.raises(ValueError, match="Duplicate run ID"):
             operation()
+
+
+def test_file_revalidation_releases_store_lock_and_retries(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from ase2sprkkr.common.file_versions import FileVersion
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    record = _record(manager, tmp_path)
+    output = tmp_path / "out.dat"
+    output.write_bytes(b"good")
+    version = FileVersion.capture(output, require_digest=True)
+    current_files = FileManifest(outputs=(FileEntry(
+        str(output), "/remote/out.dat", availability_state="available",
+        verified_local_version=version,
+    ),))
+    running = manager.transition(record, state=RunState.RUNNING, files=current_files)
+    failed = current_files.with_file_availability(
+        str(output), "failed", "later failed transfer",
+    )
+    verifying = Event()
+    release = Event()
+    calls = []
+
+    def slow_validation(self):
+        calls.append(self)
+        verifying.set()
+        assert release.wait(timeout=10)
+        return True
+
+    monkeypatch.setattr(FileVersion, "is_current", slow_validation)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        slow = pool.submit(manager.transition, running, files=failed)
+        try:
+            assert verifying.wait(timeout=5)
+            # This transition must not wait for a SHA-256 operation in the
+            # other thread, even when updating the same persistent run.
+            fast = pool.submit(
+                manager.transition, running, state=RunState.RUNNING,
+                files=current_files,
+            )
+            fast_result = fast.result(timeout=5)
+        finally:
+            release.set()
+        slow_result = slow.result(timeout=10)
+
+    assert len(calls) >= 1
+    assert fast_result.state is RunState.RUNNING
+    assert slow_result.files.outputs[0].availability_state == "available"
+    assert manager.store.get(record.id).files.outputs[0].availability_state == "available"
+
+
+def test_optimistic_noop_does_not_rewrite_terminal_record(tmp_path, monkeypatch):
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    original = _record(manager, tmp_path)
+    completed = manager.transition(original, state=RunState.FINISHED)
+    writes = []
+
+    def forbidden(record):
+        writes.append(record)
+        raise AssertionError("An ignored terminal observation must not be rewritten")
+
+    monkeypatch.setattr(manager.store, "_write_unlocked", forbidden)
+    observed = manager.transition(
+        completed, state=RunState.RUNNING,
+        files=completed.files, observed=True,
+    )
+    assert observed == completed
+    assert not writes

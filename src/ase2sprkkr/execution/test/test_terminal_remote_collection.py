@@ -179,3 +179,59 @@ def test_frozen_failure_does_not_erase_verified_download(tmp_path):
     assert merge_terminal_files(available, failed).outputs[0].availability_state == "available"
     path.unlink()
     assert merge_terminal_files(available, failed).outputs[0].availability_state == "failed"
+
+
+def test_simultaneous_collections_keep_verified_success_after_late_failure(tmp_path):
+    """An in-flight failed collector must not undo another collector's success."""
+    from ase2sprkkr.common.file_versions import FileVersion
+
+    target = tmp_path / "same.out"
+    entry = FileEntry(str(target), "/remote/same.out", availability_state="pending")
+    frozen = FileManifest(outputs=(entry,))
+    owner = JobFiles(frozen)
+    began_failure = asyncio.Event()
+    release_failure = asyncio.Event()
+
+    class LateFailure:
+        async def collect(self, mapping, manifest, outcome, *, required):
+            began_failure.set()
+            await release_failure.wait()
+            return manifest.with_file_availability(
+                str(target), "failed", "connection lost",
+            ), OSError("connection lost")
+
+        async def verify_stream_availability(self, manifest, spec):
+            return manifest, None
+
+    class SuccessfulTransfer:
+        async def collect(self, mapping, manifest, outcome, *, required):
+            target.write_bytes(b"completed")
+            version = await asyncio.to_thread(
+                FileVersion.capture, target, require_digest=True,
+            )
+            return manifest.with_file_availability(
+                str(target), "available", verified_local_version=version,
+            ), None
+
+        async def verify_stream_availability(self, manifest, spec):
+            return manifest, None
+
+    async def scenario():
+        failed = asyncio.create_task(owner.collect_remote(
+            frozen, LateFailure(), SimpleNamespace(), SimpleNamespace(),
+            required=True,
+        ))
+        await asyncio.wait_for(began_failure.wait(), timeout=5)
+        succeeded_error = await asyncio.wait_for(owner.collect_remote(
+            frozen, SuccessfulTransfer(), SimpleNamespace(), SimpleNamespace(),
+            required=True,
+        ), timeout=5)
+        release_failure.set()
+        failed_error = await asyncio.wait_for(failed, timeout=5)
+        return succeeded_error, failed_error
+
+    succeeded_error, failed_error = asyncio.run(scenario())
+    assert succeeded_error is None
+    assert failed_error is None
+    assert owner.manifest.outputs[0].availability_state == "available"
+    assert owner.manifest.outputs[0].verified_local_version.is_current()

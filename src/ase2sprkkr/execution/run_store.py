@@ -217,22 +217,45 @@ class RunStore:
         with self._locked_run(record):
             return self._write_unlocked(record)
 
-    def update(self, record: RunRecord, updater):
+    def _commit_update_unlocked(self, path, latest, updated):
+        if (updated.id != latest.id or updated.created_at != latest.created_at
+                or updated.project_id != latest.project_id):
+            raise ValueError("Run update cannot change persistent identity")
+        if updated is latest:
+            # A previous atomic rename may have succeeded just before
+            # fsync failed. Reaffirm durability without rewriting the
+            # terminal record or changing its update timestamp.
+            if latest.state.is_terminal and path.is_file():
+                sync_file(path)
+            return latest
+        return self._write_unlocked(updated)
+
+    def update(self, record: RunRecord, updater, *, optimistic=False):
+        """Commit an update atomically.
+
+        Opt-in optimistic updates require a pure updater. Evaluate it without
+        holding the run/project locks, then verify the latest record again
+        under the locks before committing. Retry after a concurrent update.
+        """
+        if optimistic:
+            while True:
+                with self._locked_run(record):
+                    path = self._path(record)
+                    previous = self._decode(path) if path.is_file() else record
+                proposed = updater(previous)
+                with self._locked_run(record):
+                    current = self._decode(path) if path.is_file() else record
+                    if current != previous:
+                        continue
+                    # The second read produces an equal, but distinct object.
+                    # Keep no-op transitions as no-ops, not redundant writes.
+                    if proposed is previous:
+                        proposed = current
+                    return self._commit_update_unlocked(path, current, proposed)
         with self._locked_run(record):
             path = self._path(record)
             latest = self._decode(path) if path.is_file() else record
-            updated = updater(latest)
-            if (updated.id != latest.id or updated.created_at != latest.created_at
-                    or updated.project_id != latest.project_id):
-                raise ValueError("Run update cannot change persistent identity")
-            if updated is latest:
-                # A previous atomic rename may have succeeded just before
-                # fsync failed. Reaffirm durability without rewriting the
-                # terminal record or changing its update timestamp.
-                if latest.state.is_terminal and path.is_file():
-                    sync_file(path)
-                return latest
-            return self._write_unlocked(updated)
+            return self._commit_update_unlocked(path, latest, updater(latest))
 
     def terminal_record(self, record):
         """Return a crash-durable terminal record, if one already exists."""

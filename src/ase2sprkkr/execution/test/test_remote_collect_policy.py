@@ -177,3 +177,33 @@ def test_collect_current_verified_output_skips_remote_even_if_missing(tmp_path):
     ))
     assert error is None
     assert observed == files
+
+
+def test_download_sha256_capture_runs_off_event_loop(tmp_path, monkeypatch):
+    from threading import get_ident
+    from ase2sprkkr.common.file_versions import FileVersion
+
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    source = remote / "result.dat"
+    source.write_bytes(b"result")
+    destination = tmp_path / "result.dat"
+    observed_thread = []
+    loop_thread = get_ident()
+    capture = FileVersion.capture
+
+    def worker_capture(*args, **kwargs):
+        observed_thread.append(get_ident())
+        return capture(*args, **kwargs)
+
+    monkeypatch.setattr(FileVersion, "capture", worker_capture)
+    files = FileManifest(outputs=(
+        FileEntry(str(destination), str(source), availability_state="pending"),
+    ))
+    observed, error = asyncio.run(RemoteFileHandler(LocalTransport()).collect(
+        FileMapping(str(tmp_path), str(remote), output_sync="always"),
+        files, ExecutionOutcome(), required=True,
+    ))
+    assert error is None
+    assert observed.outputs[0].verified_local_version is not None
+    assert observed_thread and all(t != loop_thread for t in observed_thread)

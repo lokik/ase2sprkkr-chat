@@ -6,6 +6,7 @@ The low-level Transport owns physical filesystem operations.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 from dataclasses import replace
 
@@ -66,7 +67,8 @@ class RemoteFileHandler:
             should_upload = (
                 remote_digest is None or
                 policy.should_transfer(
-                    file_digest(source, missing_ok=True), remote_digest,
+                    await asyncio.to_thread(file_digest, source, missing_ok=True),
+                    remote_digest,
                 )
             )
         if should_upload:
@@ -238,7 +240,7 @@ class RemoteFileHandler:
                         f"Declared remote output was not created: {remote}"
                     )
                 return "skipped"
-            if remote_digest == file_digest(local, missing_ok=True):
+            if remote_digest == await asyncio.to_thread(file_digest, local, missing_ok=True):
                 return "available"
         elif await self.transport.file_signature(remote) is None:
             if required:
@@ -280,7 +282,7 @@ class RemoteFileHandler:
                     continue
                 if (entry.availability_state == "available"
                         and entry.verified_local_version is not None
-                        and entry.verified_local_version.is_current()):
+                        and await asyncio.to_thread(entry.verified_local_version.is_current)):
                     continue
 
                 identity = (kind, entry.remote_path, entry.local_path)
@@ -315,7 +317,10 @@ class RemoteFileHandler:
                 else:
                     try:
                         version = (
-                            FileVersion.capture(entry.local_path, require_digest=True)
+                            await asyncio.to_thread(
+                                FileVersion.capture, entry.local_path,
+                                require_digest=True,
+                            )
                             if state == "available" else None
                         )
                     except OSError as exc:
@@ -388,7 +393,9 @@ class RemoteFileHandler:
             )
         # One stable content capture both verifies the stream and supplies its
         # durable SHA-256 identity; do not read the entire file a second time.
-        version = FileVersion.capture(entry.local_path, require_digest=True)
+        version = await asyncio.to_thread(
+            FileVersion.capture, entry.local_path, require_digest=True,
+        )
         digest = await self.transport.file_digest(entry.remote_path)
         if digest is None or version.digest != digest:
             raise RuntimeError(
