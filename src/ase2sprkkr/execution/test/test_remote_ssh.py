@@ -184,11 +184,9 @@ def test_remote_executor_over_ssh(docker_execution_image):
                 _remote_error(exc)
 
             assert runner.backend_id is not None
-            assert runner.execution.endpoint.host == "tester@127.0.0.1"
-            assert (
-                runner.execution.directory.remote
-                == "/home/tester/ase2sprkkr-runs/calculation"
-            )
+            assert runner.executor.transport.host == "tester@127.0.0.1"
+            remote_directory = runner.files.mapping.map_path(str(workdir))
+            assert remote_directory == "/home/tester/ase2sprkkr-runs/calculation"
             _wait_for_live_output(runner, output_seen, output)
 
             result = runner.wait()
@@ -203,7 +201,7 @@ def test_remote_executor_over_ssh(docker_execution_image):
             remote_potential = (
                 potfil
                 if posixpath.isabs(potfil)
-                else posixpath.join(runner.execution.directory.remote, potfil)
+                else posixpath.join(remote_directory, potfil)
             )
             remote_pot_new = remote_potential + "_new"
             subprocess.run(ssh + ["test", "-s", remote_pot_new], check=True)
