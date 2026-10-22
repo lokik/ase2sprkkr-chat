@@ -14,10 +14,10 @@ from ase2sprkkr.execution import (
 )
 
 from ase2sprkkr.execution.manager import ExecutionManager
-from ase2sprkkr.execution.job_files import JobFiles, JobFilesOwner
+from ase2sprkkr.execution.job_files import JobFiles
 
 
-class _Runner(JobFilesOwner):
+class _Runner:
     def __init__(self, spec, executor, callback=None):
         self.spec = spec
         self.executor = executor
@@ -29,7 +29,7 @@ class _Runner(JobFilesOwner):
         self.exception = None
         self.failure_phase = None
         self.failure_message = None
-        self._job_files = JobFiles(FileManifest.from_spec(spec))
+        self.job_files = JobFiles(FileManifest.from_spec(spec))
 
     @property
     def return_code(self):
