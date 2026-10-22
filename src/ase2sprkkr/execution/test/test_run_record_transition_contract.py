@@ -83,6 +83,26 @@ def test_run_record_terminal_status_is_not_reversed_by_stale_result(tmp_path):
     assert stale.return_code == 0
 
 
+@pytest.mark.parametrize("observation", (
+    RunState.FINISHED, RunState.FAILED, RunState.CANCELLED,
+))
+def test_terminal_record_ignores_late_backend_observation(tmp_path, observation):
+    record = _record(tmp_path)
+    finished = record.with_transition(
+        state=RunState.FINISHED, return_code=0, message="complete",
+        observed=True,
+    )
+    stale = finished.with_transition(
+        state=observation, return_code=2, message="stale backend status",
+        failure_phase=FailurePhase.EXECUTION, observed=True,
+    )
+    assert stale is finished
+    assert stale.updated_at == finished.updated_at
+    assert stale.last_observed == finished.last_observed
+    assert stale.return_code == 0
+    assert stale.message == "complete"
+
+
 def test_manager_transition_commits_value_object_through_store(tmp_path):
     manager = ExecutionManager(RunStore(tmp_path / "record-store"))
     original = manager.store.save(manager.new_record(task="DOS", directory=tmp_path))

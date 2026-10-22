@@ -144,7 +144,11 @@ class RunRecord:
         """
         if expected_record is not None and self != expected_record:
             raise RuntimeError("Run changed during postprocessing retry")
-        if skip_if_terminal and self.state.is_terminal:
+        if self.state.is_terminal and (skip_if_terminal or observed):
+            # A durable terminal outcome is already authoritative. Later
+            # backend observations must not refresh its timestamps, status
+            # verification, or other completion metadata. Explicit file-status
+            # updates use the separate non-observation path.
             return self
         if (expected_updated_at is not _UNCHANGED
                 and self.updated_at != expected_updated_at):
