@@ -63,7 +63,7 @@ class RemoteRunner(ManagedRunner):
                 or self._state.is_terminal):
             return self._state
         status = _run_sync(
-            self.executor.connection.status(self._backend_id, self._job_files.manifest)
+            self.executor.connection.status(self._backend_id, self.job_files.manifest)
         )
         return self._apply_status(
             backend_status_from_facts(
@@ -129,13 +129,13 @@ class RemoteRunner(ManagedRunner):
                 offsets[kind] = os.path.getsize(self._local_path(target))
         self._stream_positions = dict(offsets)
         return await self.executor.connection.follow(
-            self._backend_id, self._job_files.manifest, offsets=offsets,
+            self._backend_id, self.job_files.manifest, offsets=offsets,
             on_chunk=self._on_follow_chunk,
         )
 
     async def _backend_status(self):
         return await self.executor.connection.status(
-            self._backend_id, self._job_files.manifest,
+            self._backend_id, self.job_files.manifest,
         )
 
     async def _complete_terminal(self, status, backend_state):
@@ -150,14 +150,14 @@ class RemoteRunner(ManagedRunner):
             from .run_model import FileManifest
             frozen = (
                 FileManifest(**status["files"])
-                if status.get("files") is not None else self._job_files.manifest
+                if status.get("files") is not None else self.job_files.manifest
             )
             observed, transfer_error = await JobFiles.collect_remote(
-                self._job_files.manifest, frozen, self.file_handler, self.result, self.spec,
+                self.job_files.manifest, frozen, self.file_handler, self.result, self.spec,
                 required=backend_state == RunState.FINISHED,
                 materialization_error=status.get("materialization_error"),
             )
-            self._job_files.merge(observed)
+            self.job_files.merge(observed)
             if transfer_error is not None:
                 raise transfer_error
         except Exception as exc:
@@ -177,7 +177,7 @@ class RemoteRunner(ManagedRunner):
 
     async def _prepare_async(self):
         try:
-            files = self._job_files.manifest
+            files = self.job_files.manifest
             mapping = files.mapping
             if mapping is None:
                 mapping = await self.executor.resolve_mapping(self.spec.launch)
@@ -227,7 +227,7 @@ class RemoteRunner(ManagedRunner):
             request, manifest = _run_sync(self._prepare_async())
             self._prepared = (request, manifest)
             self._remote_directory = request["directory"]
-            self._job_files.merge(manifest)
+            self.job_files.merge(manifest)
 
     async def _submit_async(self):
         if self._prepared is None:
@@ -258,7 +258,7 @@ class RemoteRunner(ManagedRunner):
             self._failure_message = status.get("error")
             self._backend_id = str(remote_id)
             self._remote_directory = request["directory"]
-            self._job_files.merge(manifest)
+            self.job_files.merge(manifest)
         start_monitor(self, missing_backend="Run has no backend reference")
 
     def _cancel_backend(self):
