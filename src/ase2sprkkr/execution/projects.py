@@ -338,10 +338,7 @@ class ProjectRepository:
             try:
                 self._json_path(canonical).unlink()
                 fsync_directory(self.directory)
-                for record in histories:
-                    record_path = run_store._path(record)
-                    record_path.unlink(missing_ok=True)
-                    fsync_directory(record_path.parent)
+                run_store.delete_records(histories)
             except OSError as exc:
                 raise ProjectRepositoryError(
                     f"Cannot delete project {canonical!r}: {exc}"

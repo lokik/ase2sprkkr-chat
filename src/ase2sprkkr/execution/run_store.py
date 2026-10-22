@@ -13,7 +13,7 @@ from pathlib import Path
 from threading import RLock
 
 from ..common.file_locks import FileLock
-from ._durability import durable_mkdir, durable_write_json, sync_file
+from ._durability import durable_mkdir, durable_write_json, fsync_directory, sync_file
 from .base import RunState
 from .file_reservations import reservation_conflict
 from .file_history import sync_result_files
@@ -240,6 +240,21 @@ class RunStore:
                 return None
             sync_file(path)
             return latest
+
+    def delete_records(self, records):
+        """Remove terminal snapshots under the caller's project-deletion locks.
+
+        The project repository must first exclude concurrent submissions and
+        writes. Validate the full batch before removing any history.
+        """
+        records = tuple(records)
+        if any(not record.state.is_terminal for record in records):
+            raise ValueError("Cannot delete nonterminal run history")
+        with self._lock:
+            for record in records:
+                path = self._path(record)
+                path.unlink(missing_ok=True)
+                fsync_directory(path.parent)
 
     def get(self, run_id):
         return self._decode(self._path_for_id(run_id))

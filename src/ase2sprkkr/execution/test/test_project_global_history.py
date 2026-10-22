@@ -366,3 +366,22 @@ def test_project_deletion_removes_distinct_runs_across_day_shards(tmp_path):
     for run_id in (first.id, second.id):
         with pytest.raises(FileNotFoundError):
             manager.store.get(run_id)
+
+
+def test_run_store_delete_records_validates_whole_batch(tmp_path):
+    """Invalid history must not leave a partially erased project."""
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store=store)
+    finished = replace(
+        manager.new_record(task="DOS", directory=tmp_path / "work"),
+        state=RunState.FINISHED,
+    )
+    active = manager.new_record(task="SCF", directory=tmp_path / "other")
+    store.save(finished)
+    store.save(active)
+
+    with pytest.raises(ValueError, match="nonterminal"):
+        store.delete_records((finished, active))
+
+    assert store.get(finished.id) == finished
+    assert store.get(active.id) == active
