@@ -84,6 +84,11 @@ def test_remote_submission_uses_reserved_primary_input_and_stdin(tmp_path):
         (remote / name).write_text(name)
     reserved = FileManifest.from_spec(spec).with_mapping(mapping)
     runner.job_files.replace(reserved)
+    # With NEVER sync the mandatory inputs must already exist remotely.
+    remote = tmp_path / "remote"
+    remote.mkdir(exist_ok=True)
+    for name in ("main.in", "stdin.in", "extra.in"):
+        (remote / name).write_text(name)
     # A stale or independently modified spec cannot change file membership.
     runner.spec = replace(spec, input_file="wrong.in", stdin="wrong.stdin",
                           input_files=("unreserved.in",))
