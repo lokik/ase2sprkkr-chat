@@ -15,6 +15,7 @@ def test_later_primary_output_is_not_mistaken_for_uncaptured_history(tmp_path):
     output_file = tmp_path / "run.out"
     input_file.write_text("input")
     spec = ExecutionSpec(
+        argv=(),
         directory=str(tmp_path),
         input_file=str(input_file),
         output_file=str(output_file),
