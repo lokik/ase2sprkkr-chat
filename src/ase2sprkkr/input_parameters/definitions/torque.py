@@ -1,7 +1,11 @@
-"""Torque task input parameters definition"""
+"""Torque input-parameter definition."""
 
+import numpy as np
+from ...common.grammar_types import Integer, SetOf
+from ...common.warnings import DataValidityError
 from .sections import TASK, CONTROL, TAU, ENERGY, SITES, STRCONST, MODE
-from ..input_parameters_definitions import InputParametersDefinition as InputParameters, InputValueDefinition as V
+from ..input_parameters_definitions import InputParametersDefinition, InputValueDefinition as V
+from ..task_definition import TaskDefinition
 
 
 def _torque_mode_warning_condition(value):
@@ -23,28 +27,47 @@ def _torque_nonmag_warning_condition(value):
     )
 
 
-def input_parameters():
-    """Torque -Torque task input parameters definition"""
+def _validate_torque(parameters, _values, why):
+    if why == "set":
+        return None
+    for name in ("THETAQ", "PHIQ"):
+        if not np.isfinite(parameters.TASK[name]()).all():
+            return DataValidityError("TORQUE axis angles must be finite.")
+    if parameters.ENERGY.SPLITSS() or len(parameters.ENERGY.GRID()) != 1 or len(parameters.ENERGY.NE()) != 1:
+        return DataValidityError("TORQUE uses only the first energy path; split contours are not supported.")
+    return None
+
+
+
+def input_parameters_definition():
     mmode = MODE["MODE"].copy(warning_condition=_torque_mode_warning_condition)
-    input_parameters = InputParameters(
+    energy = ENERGY(defaults={"ImE": 0.0, "GRID": 8, "NE": 36})
+    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+    schema = InputParametersDefinition(
         "torque",
         [
             CONTROL("TORQUE"),
             TAU,
-            MODE.copy(add = [ mmode ]),
+            MODE.copy(add=[mmode]),
             STRCONST,
-            ENERGY(defaults={"EMIN": -0.2, "ImE": 0.0, "GRID": 8, "NE": 36}),
+            energy,
             TASK("TORQUE").copy(
                 [
-                    V("THETAQ", [90.0], info="""the angles characterizing the orientation of the direction û"""),
-                    V("PHIQ", [90.0], info="""the angles characterizing the orientation of the direction û"""),
+                    V("THETAQ", SetOf(float, min_length=1), [90.0], info="Polar angles of the torque axis per site, in degrees."),
+                    V("PHIQ", SetOf(float, min_length=1), [90.0], info="Azimuthal angles of the torque axis per site, in degrees."),
                 ]
             ),
             SITES,
         ],
+        info="TORQUE",
+        validators=_validate_torque,
+        description="Requires a potential with rotated moments (KMROT=1 or 2), with torque axes perpendicular to them. Native repeats the final angle for remaining sites.",
+    )
+    schema["CONTROL"]["NONMAG"].warning_condition = _torque_nonmag_warning_condition
+    schema._task_definition = TaskDefinition(
+        "TORQUE",
+        name="TORQUE",
         executable="kkrgen",
         mpi=True,
-        info="TORQUE",
     )
-    input_parameters["CONTROL"]["NONMAG"].warning_condition=_torque_nonmag_warning_condition
-    return input_parameters
+    return schema
