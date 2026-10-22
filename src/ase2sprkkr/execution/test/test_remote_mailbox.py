@@ -106,12 +106,14 @@ def test_successful_receipt_survives_temporary_cleanup_failure(monkeypatch):
 def test_retry_after_first_publication_fsync_failure(monkeypatch):
     key = uuid4().hex
     original_fsync = remote_mailbox.fsync_directory
-    calls = 0
+    sync_calls = 0
+    interrupted = False
 
     def fail_link_directory_sync(directory):
-        nonlocal calls
-        calls += 1
-        if calls == 2:
+        nonlocal sync_calls, interrupted
+        sync_calls += 1
+        if not interrupted and remote_mailbox._path(key).exists():
+            interrupted = True
             raise OSError("receipt link was not confirmed durable")
         return original_fsync(directory)
 
@@ -123,7 +125,8 @@ def test_retry_after_first_publication_fsync_failure(monkeypatch):
     # that existing name before reporting first-writer-wins.
     assert remote_mailbox.read_outcome(key)["state"] == "finished"
     assert remote_mailbox.publish_outcome(key, RunState.CANCELLED, None) is False
-    assert calls >= 4
+    assert interrupted
+    assert sync_calls >= 2
     assert remote_mailbox.read_outcome(key)["state"] == "finished"
 
 
