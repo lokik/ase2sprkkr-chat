@@ -197,3 +197,33 @@ def test_capture_failure_does_not_falsely_mark_unprocessed_files_failed(monkeypa
     assert seen["state"] == RunState.FAILED
     assert seen["failure_phase"] == FailurePhase.FILES
     assert seen["files"].outputs[0].availability_state == "pending"
+
+
+def test_terminal_merge_does_not_restore_vanished_available_file(tmp_path):
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+
+    missing = str(tmp_path / "vanished.dat")
+    previous = FileManifest(outputs=(
+        FileEntry(missing, "/remote/vanished.dat", availability_state="available"),
+    ))
+    received = FileManifest(outputs=(
+        FileEntry(missing, "/remote/vanished.dat", availability_state="pending"),
+    ))
+    assert JobFiles.merge_terminal_files(previous, received) == received
+
+
+def test_snapshot_merge_preserves_failed_transfer_over_stale_captured_success(tmp_path):
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+
+    path = str(tmp_path / "result.dat")
+    current = FileManifest(outputs=(
+        FileEntry(path, "/remote/result.dat", availability_state="failed",
+                  availability_message="download failed"),
+    ))
+    stale = FileManifest(outputs=(
+        FileEntry(path, "/remote/result.dat", availability_state="available"),
+    ), captured_at="2026-10-22T00:00:00+00:00")
+    merged = JobFiles.merge_snapshot(current, stale)
+    assert merged.captured_at == stale.captured_at
+    assert merged.outputs[0].availability_state == "failed"
+    assert merged.outputs[0].availability_message == "download failed"
