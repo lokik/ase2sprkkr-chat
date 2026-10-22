@@ -419,6 +419,38 @@ def test_remote_output_policy_preserves_local_file_when_cleanup_is_remote_only(
     assert transport.get_files == []
 
 
+@pytest.mark.parametrize("generated,expected_downloads", (
+    ("same", 0), ("changed", 1),
+))
+def test_changed_sync_without_local_cleanup_compares_existing_output(
+    tmp_path, generated, expected_downloads,
+):
+    """CHANGED preserves identical output, but replaces genuinely new bytes."""
+    from dataclasses import replace
+
+    transport = _SpyTransport()
+    path = tmp_path / "local" / "calculation" / "file.dat"
+    path.parent.mkdir(parents=True)
+    path.write_text("same")
+
+    executor, spec, _, remote_root = _text_run(
+        tmp_path, transport,
+        declared_output_files=(path,),
+        output_files=FileSyncPolicy.CHANGED,
+        code=f"from pathlib import Path; Path('file.dat').write_text({generated!r})",
+    )
+    spec = replace(spec, launch=replace(spec.launch, cleanup_outputs="remote"))
+    result = _processed_run(executor, spec).run()
+
+    assert result.return_code == 0
+    assert path.read_text() == generated
+    remote_path = remote_root / "calculation" / "file.dat"
+    assert remote_path.read_text() == generated
+    assert transport.get_files == (
+        [(remote_path, path)] if expected_downloads else []
+    )
+
+
 def test_remote_executor_does_not_reuse_stale_output(tmp_path):
     transport = _SpyTransport()
     workdir = tmp_path / "local" / "calculation"
