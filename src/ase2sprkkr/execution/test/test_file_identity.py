@@ -152,3 +152,22 @@ def test_stream_and_output_cannot_share_either_local_or_remote_identity(
             **{role: FileEntry(stream_local, stream_remote)},
             outputs=(FileEntry(output_local, output_remote),),
         )
+
+
+@pytest.mark.parametrize("role", ("stdout", "stderr"))
+@pytest.mark.parametrize(
+    ("stream_remote", "output_remote"),
+    (
+        ("/remote/run.log", "/remote/*.log"),
+        ("/remote/*.log", "/remote/run.log"),
+        ("/remote/run.log", "/remote/run.*"),
+    ),
+)
+def test_stream_output_remote_wildcard_overlap_rejected(
+    role, stream_remote, output_remote,
+):
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest(
+            **{role: FileEntry("/local/stream", stream_remote)},
+            outputs=(FileEntry("/local/other", output_remote),),
+        )
