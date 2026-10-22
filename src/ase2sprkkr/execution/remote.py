@@ -242,13 +242,16 @@ class RemoteRunner:
 
         local_digest = file_digest(source, missing_ok=True)
         remote_digest = await self.executor.transport.file_digest(target)
-        if required and local_digest is None:
-            if policy == FileSyncPolicy.ALWAYS:
-                raise FileNotFoundError(f"Local input file does not exist: {source}")
-            if remote_digest is None:
-                raise FileNotFoundError(
-                    f"Input file exists neither locally nor remotely: {source}"
-                )
+        if local_digest is None:
+            if not required and remote_digest is None:
+                return None
+            if required:
+                if policy == FileSyncPolicy.ALWAYS:
+                    raise FileNotFoundError(f"Local input file does not exist: {source}")
+                if remote_digest is None:
+                    raise FileNotFoundError(
+                        f"Input file exists neither locally nor remotely: {source}"
+                    )
 
         if policy.should_transfer(local_digest, remote_digest):
             if uploads is None:
@@ -508,14 +511,22 @@ class RemoteRunner:
 
     async def _prepare_request(self, run_id, remote_directory):
         used = {}
-        for value in self.spec.input_files:
-            source = self._local_path(value)
-            if source is not None and has_file_magic(source):
-                await self._stage_input_pattern(value, used)
-            else:
-                await self._stage_file(value, used)
+        # The declared manifest merges aliases with required-wins semantics.
+        # Stage the primary input and stdin first: an optional auxiliary alias
+        # must never weaken a mandatory stream.
+        input_requirements = {
+            entry.local_path: not entry.optional
+            for entry in FileManifest.from_spec(self.spec).inputs
+        }
         input_target = await self._stage_file(self.spec.input_file, used)
         stdin_target = await self._stage_file(self.spec.stdin, used)
+        for value in self.spec.input_files:
+            source = self._local_path(value)
+            required = input_requirements.get(source, True)
+            if source is not None and has_file_magic(source):
+                await self._stage_input_pattern(value, used, required=required)
+            else:
+                await self._stage_file(value, used, required=required)
 
         await self._prepare_cache_files(used)
         staged = {source: target for target, source in used.items()}
