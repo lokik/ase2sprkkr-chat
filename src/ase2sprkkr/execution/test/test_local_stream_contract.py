@@ -253,12 +253,16 @@ def test_local_stream_paths_share_inode_alias(tmp_path, alias_kind):
     assert err_path.read_bytes() == b"first\nsecond\n"
 
 
-def test_local_aliased_stdout_stderr_end_to_end(tmp_path):
-    """A real subprocess must not overwrite one stream with the other."""
+@pytest.mark.parametrize("alias_kind", ("symlink", "hardlink"))
+def test_local_aliased_stdout_stderr_end_to_end(tmp_path, alias_kind):
+    """A real subprocess must not overwrite either of two inode aliases."""
     combined = tmp_path / "combined.dat"
     combined.write_bytes(b"stale output")
     stderr_alias = tmp_path / "stderr-link.dat"
-    stderr_alias.symlink_to(combined.name)
+    if alias_kind == "symlink":
+        stderr_alias.symlink_to(combined.name)
+    else:
+        os.link(combined, stderr_alias)
 
     stdout_data = b"from stdout\n"
     stderr_data = b"from stderr\n"

@@ -56,12 +56,38 @@ def prepare_local_files(spec, *, output_file=None, error_file=None,
     # the targets of symlinks or hardlinks.
     if preserve_open_streams:
         clear_declared_outputs(declared, protected=(*protected, *streams))
+        # Identify shared named streams before replacing their old inodes.
+        # Otherwise recreating stdout first makes a hardlinked stderr look
+        # independent; recreating a symlinked stderr can break its alias too.
+        groups = []
         for value, path in ((spec.output_file, output), (spec.error_file, error)):
-            if (path is not None and isinstance(value, (str, bytes, os.PathLike))
-                    and os.path.isfile(path)):
-                os.unlink(path)
-                with open(path, "xb"):
-                    pass
+            if (path is None or not isinstance(value, (str, bytes, os.PathLike))
+                    or not os.path.isfile(path)):
+                continue
+            for group in groups:
+                if same_local_file(path, group[0]):
+                    if path not in group:
+                        group.append(path)
+                    break
+            else:
+                groups.append([path])
+        for group in groups:
+            # Prefer a real path so an existing symlink stays an alias.
+            primary = next((p for p in group if not os.path.islink(p)), group[0])
+            os.unlink(primary)
+            with open(primary, "xb"):
+                pass
+            for alias in group:
+                if alias == primary or os.path.realpath(alias) == os.path.realpath(primary):
+                    continue
+                was_symlink = os.path.islink(alias)
+                os.unlink(alias)
+                if was_symlink:
+                    os.symlink(
+                        os.path.relpath(primary, os.path.dirname(alias)), alias,
+                    )
+                else:
+                    os.link(primary, alias)
     else:
         clear_declared_outputs((*declared, *streams), protected=protected)
 
