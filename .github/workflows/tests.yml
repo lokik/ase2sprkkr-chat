@@ -18,6 +18,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
+      # Collect failures on every supported Python version instead of hiding
+      # later matrix results after the first test failure.
+      fail-fast: false
       matrix:
         python-version: ['3.9', '3.10', '3.11', '3.12', '3.13', '3.14', '3.15']
     steps:
