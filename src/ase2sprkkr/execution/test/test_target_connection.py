@@ -17,19 +17,20 @@ def test_local_connection_uses_target_service(monkeypatch):
     )
     monkeypatch.setattr(
         remote_service, "status_remote",
-        lambda job: calls.append(("status", job)) or {"state": "running"},
+        lambda job, files=None: calls.append(("status", job, files)) or {"state": "running"},
     )
     monkeypatch.setattr(
         remote_service, "cancel_remote",
         lambda job: calls.append(("cancel", job)) or {"state": "cancelled"},
     )
     connection = LocalConnection()
+    files = FileManifest()
     assert asyncio.run(connection.submit({"executor": "local"}))["remote_id"] == "job"
-    assert asyncio.run(connection.status("job", FileManifest()))["state"] == "running"
+    assert asyncio.run(connection.status("job", files))["state"] == "running"
     assert asyncio.run(connection.cancel("job"))["state"] == "cancelled"
     assert calls == [
         ("submit", {"executor": "local"}),
-        ("status", "job"),
+        ("status", "job", files),
         ("cancel", "job"),
     ]
 
