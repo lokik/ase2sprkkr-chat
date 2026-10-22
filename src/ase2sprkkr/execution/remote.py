@@ -316,6 +316,8 @@ class RemoteRunner:
             # Cache inputs obey precisely the same staging policy as ordinary
             # inputs, except that a missing local cache is allowed.
             remote = await self._stage_file(local, used, required=False)
+            if remote is None:
+                continue
 
             before = None
             if output_policy != FileSyncPolicy.NEVER:
