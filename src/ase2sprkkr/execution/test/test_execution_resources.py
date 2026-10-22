@@ -98,6 +98,9 @@ class _Runner:
     def set_manifest(self, files):
         self.files = files
 
+    def file_snapshot(self):
+        return self.files
+
     def prepare_submission(self):
         return None
 
