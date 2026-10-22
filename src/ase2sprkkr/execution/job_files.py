@@ -100,24 +100,19 @@ class JobFiles:
 
     @staticmethod
     def _merge_availability(previous, received, preserve):
-        """Reconcile availability for matching file identities and roles once.
+        """Reconcile matching files without altering the received membership.
 
-        The prior manifest is evidence, never a source of new members. Output
-        and cache identities remain separate even when their paths coincide.
+        FileManifest already rejects output/cache identity collisions.
         """
         recorded = {
-            (role, entry.local_path, entry.remote_path): entry
-            for role, entries in (
-                ("output", (previous.stdout, previous.stderr, *previous.outputs)),
-                ("cache", previous.caches),
-            )
-            for entry in entries if entry is not None
+            (entry.local_path, entry.remote_path): entry
+            for entry in previous.files
         }
 
-        def merged(entry, role):
+        def merged(entry):
             if entry is None:
                 return None
-            prior = recorded.get((role, entry.local_path, entry.remote_path))
+            prior = recorded.get((entry.local_path, entry.remote_path))
             if prior is None or not preserve(prior, entry):
                 return entry
             return replace(
@@ -125,13 +120,7 @@ class JobFiles:
                 availability_message=prior.availability_message,
             )
 
-        return replace(
-            received,
-            stdout=merged(received.stdout, "output"),
-            stderr=merged(received.stderr, "output"),
-            outputs=tuple(merged(entry, "output") for entry in received.outputs),
-            caches=tuple(merged(entry, "cache") for entry in received.caches),
-        )
+        return received._map_files(merged)
 
     @staticmethod
     def merge_snapshot(current, requested):

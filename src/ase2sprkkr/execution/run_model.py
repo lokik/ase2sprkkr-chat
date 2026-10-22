@@ -371,26 +371,20 @@ class FileManifest:
         ))
     @property
     def files(self):
-        """Distinct file identities, preserving failures on shared paths.
+        """Distinct downloadable file states; shared streams count only once.
 
-        stdout/stderr aliases of one physical remote file count only once,
-        but an output and a cache at the same local path are different roles.
-        Two conflicting states must not hide one another during aggregation.
+        Output/cache destination collisions are rejected at declaration time.
+        Differing availability states must still remain separately visible.
         """
         unique = {}
-        groups = (
-            ("output", (self.stdout, self.stderr, *self.outputs)),
-            ("cache", self.caches),
-        )
-        for kind, entries in groups:
-            for entry in entries:
-                if entry is None or entry.local_path is None:
-                    continue
-                key = (
-                    kind, entry.local_path, entry.remote_path,
-                    entry.availability_state, entry.availability_message,
-                )
-                unique.setdefault(key, entry)
+        for entry in (self.stdout, self.stderr, *self.outputs, *self.caches):
+            if entry is None or entry.local_path is None:
+                continue
+            key = (
+                entry.local_path, entry.remote_path,
+                entry.availability_state, entry.availability_message,
+            )
+            unique.setdefault(key, entry)
         return tuple(unique.values())
 
     @property
