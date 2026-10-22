@@ -654,11 +654,11 @@ def test_failed_published_history_remains_failed_without_backend_if_missing(tmp_
 
     manager, _, record = _terminal_run(tmp_path)
     output = tmp_path / "run.out"
-    failed = JobFiles(record.files).update_availability(record,
+    failed = JobFiles.update_availability(record,
         manager.store, str(output), "failed", "download failed",
     )
     output.unlink()
-    unchanged = JobFiles(failed.files).retrieve(failed, manager.store, executor=None)
+    unchanged = JobFiles.retrieve(failed, manager.store, executor=None)
     assert unchanged.files.availability_state == FileAvailabilityState.FAILED
     assert not output.exists()
 
