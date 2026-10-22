@@ -753,8 +753,32 @@ class PsijExecutor(Executor):
             try:
                 details = _slurm_details(native_id)
             except (FileNotFoundError, subprocess.CalledProcessError):
-                # Do not throw away an ID obtained from squeue.
+                # Preserve identity from squeue, but attempt accounting for a
+                # terminal state if the job vanished from the controller.
                 details = {}
+                if submitted_at is not None:
+                    try:
+                        if _slurm_accounting_stores_comments():
+                            accounted = _slurm_accounting_matches(run_id, submitted_at)
+                            if len(accounted) > 1:
+                                raise RuntimeError(
+                                    f"Multiple accounting entries for ASE2SPRKKR run {run_id!r}"
+                                )
+                            if accounted:
+                                accounted_id, accounted_state, accounted_dir, out, err, code = accounted[0]
+                                if accounted_id != native_id:
+                                    raise RuntimeError("Slurm run identity changed during recovery")
+                                resolved = _slurm_state(accounted_state)
+                                if resolved == RunState.FINISHED and code not in (None, 0):
+                                    resolved = RunState.FAILED
+                                return {
+                                    "native_id": native_id, "state": resolved,
+                                    "directory": accounted_dir or workdir or directory,
+                                    "stdout": out, "stderr": err,
+                                    "return_code": code,
+                                }
+                    except (FileNotFoundError, subprocess.CalledProcessError):
+                        pass
             return {
                 "native_id": str(native_id), "state": _slurm_state(state),
                 "directory": details.get("WorkDir") or workdir or directory,
