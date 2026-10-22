@@ -128,7 +128,7 @@ def test_remote_manifest_is_sole_authority_for_input_declarations(tmp_path):
     executor = RemoteExecutor(LocalTransport())
     run = executor.create_run(ExecutionSpec(
         argv=("program",), directory=str(root),
-        input_file=str(inp), input_files=(str(inp),),
+        input_file=str(inp), input_files=(),
         output_file=None, launch=LaunchSpec(
             local_root=str(root), remote_root=str(tmp_path / "remote"),
         ),
