@@ -242,7 +242,7 @@ class RunStore:
         """Atomically check file conflicts and commit a new run's submission."""
         with self.submission_lock():
             conflicts = tuple(
-                active for active in self.runs(active=True)
+                active for active in self.runs(active=True, strict=True)
                 if active.id != record.id
                 and active.state != RunState.NEW
                 and record.job_files.conflicts_with(active.job_files)
@@ -329,16 +329,18 @@ class RunStore:
         days = [path for path in self.directory.iterdir() if path.is_dir()]
         return tuple(sorted(days, key=lambda path: path.name, reverse=newest))
 
-    def _records_in_directory(self, directory, *, newest):
+    def _records_in_directory(self, directory, *, newest, strict=False):
         records = []
         for path in directory.glob("*.json"):
             try:
                 records.append(self._decode(path))
             except CorruptRunRecord as exc:
+                if strict:
+                    raise
                 self._warn_corrupt(exc)
         return sorted(records, key=lambda record: record.created_at, reverse=newest)
 
-    def runs(self, *, active=None, limit=None, newest=False):
+    def runs(self, *, active=None, limit=None, newest=False, strict=False):
         if limit is not None and limit < 0:
             raise ValueError("limit must be non-negative")
         if limit == 0:
@@ -347,7 +349,7 @@ class RunStore:
         with self._lock:
             records = []
             for day in self._day_directories(newest=newest):
-                for record in self._records_in_directory(day, newest=newest):
+                for record in self._records_in_directory(day, newest=newest, strict=strict):
                     if active is True and record.state.is_terminal:
                         continue
                     if active is False and not record.state.is_terminal:
