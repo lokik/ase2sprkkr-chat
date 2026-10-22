@@ -199,7 +199,7 @@ def test_persistence_failure_is_distinct_from_calculation_and_can_be_retried():
 
     run = CalculationRun(
         backend, lambda result: processed.append(result) or result,
-        callback=lambda result: observed.append(result), hooks=Hooks(),
+        callback=lambda result: observed.append(result), persistence=Hooks(),
     )
     run.submit()
     backend.release.set()
@@ -253,7 +253,7 @@ def test_persistent_hook_transaction_order_and_completion():
 
     run = CalculationRun(
         backend, lambda result: stages.append("processed") or result,
-        hooks=Hooks(), callback=lambda result: stages.append("callback"),
+        persistence=Hooks(), callback=lambda result: stages.append("callback"),
     )
     run.submit()
     backend.release.set()
@@ -278,7 +278,7 @@ def test_persistent_pre_submit_hook_failure_does_not_launch_or_allow_retry():
             assert uncertain is False
             phases.append("failed")
 
-    run = CalculationRun(backend, lambda result: result, hooks=Hooks())
+    run = CalculationRun(backend, lambda result: result, persistence=Hooks())
     with pytest.raises(OSError, match="reservation failed"):
         run.submit()
     assert phases == ["reservation", "failed"]
@@ -309,7 +309,7 @@ def test_persistent_cancel_after_preflight_does_not_launch():
             phases.append("cancelled")
 
     backend.prepare_submission = lambda: None
-    run = CalculationRun(backend, lambda result: result, hooks=Hooks())
+    run = CalculationRun(backend, lambda result: result, persistence=Hooks())
     with pytest.raises(asyncio.CancelledError):
         run.submit()
     assert phases == ["reserved", "prepared", "cancelled"]
@@ -338,7 +338,7 @@ def test_persistent_prepared_hook_runs_without_backend_preflight():
         def completed(self, run):
             events.append("completed")
 
-    run = CalculationRun(backend, lambda outcome: outcome, hooks=Hooks())
+    run = CalculationRun(backend, lambda outcome: outcome, persistence=Hooks())
     run.submit()
     backend.release.set()
     run.wait()
@@ -393,7 +393,7 @@ def test_synchronous_completion_waits_for_durable_backend_identity():
 
     run = CalculationRun(
         ImmediateBackend(), lambda result: result,
-        hooks=Hooks(), callback=lambda result: order.append("callback"),
+        persistence=Hooks(), callback=lambda result: order.append("callback"),
     )
     run.submit()
     assert run.wait().return_code == 0
@@ -449,7 +449,7 @@ def test_fast_completion_does_not_publish_if_identity_persistence_fails():
 
     run = CalculationRun(
         ImmediateBackend(), lambda outcome: outcome,
-        hooks=Hooks(), callback=lambda outcome: events.append("callback"),
+        persistence=Hooks(), callback=lambda outcome: events.append("callback"),
     )
     with pytest.raises(OSError, match="store is unavailable"):
         run.submit()

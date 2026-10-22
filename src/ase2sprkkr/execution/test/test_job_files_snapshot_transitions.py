@@ -5,6 +5,7 @@ from dataclasses import replace
 import pytest
 
 from ase2sprkkr.execution.manager import ExecutionManager, RunStore
+from ase2sprkkr.execution.job_files import JobFiles
 from ase2sprkkr.execution.run_model import FileManifest
 
 
@@ -98,7 +99,7 @@ def test_concurrent_persisted_download_failure_overrides_stale_success(tmp_path)
     ))
     # Another client has already persisted a failed transfer, while the
     # completing client still holds the previous pending manifest.
-    current = record.job_files.update_availability(manager.store, path, "failed", "lost download")
+    current = JobFiles(record.files).update_availability(record, manager.store, path, "failed", "lost download")
     completed = manager.complete(
         record, state=RunState.FINISHED, files_available=False,
         return_code=0,
@@ -120,7 +121,7 @@ def test_concurrent_delivery_does_not_force_failed_completion(tmp_path):
     record = manager.store.save(manager.new_record(
         task="DOS", directory=tmp_path, files=manifest,
     ))
-    current = record.job_files.update_availability(manager.store, path, "available")
+    current = JobFiles(record.files).update_availability(record, manager.store, path, "available")
     completed = manager.complete(
         record, state=RunState.FINISHED, files_available=False, return_code=0,
     )
@@ -139,7 +140,7 @@ def test_captured_completion_respects_newer_failed_file_state(tmp_path, monkeypa
     record = manager.store.save(manager.new_record(
         task="DOS", directory=tmp_path, files=manifest,
     ))
-    record.job_files.update_availability(manager.store, path, "failed", "download failed")
+    JobFiles(record.files).update_availability(record, manager.store, path, "failed", "download failed")
 
     from ase2sprkkr.common.file_versions import FileVersion
 
@@ -192,8 +193,8 @@ def test_independent_availability_update_does_not_change_terminal_outcome(tmp_pa
         files=FileManifest(outputs=(FileEntry(output, availability_state="pending"),)),
     ))
     finished = manager.complete(record, state=RunState.FINISHED, return_code=0)
-    changed = record.job_files.update_availability(
-        manager.store, output, "failed", "historical fetch error",
+    changed = JobFiles(record.files).update_availability(
+        record, manager.store, output, "failed", "historical fetch error",
     )
     assert changed.state == RunState.FINISHED
     assert changed.finished_at == finished.finished_at
@@ -212,9 +213,9 @@ def test_stale_job_files_updater_preserves_other_file_status(tmp_path):
             FileEntry(second, availability_state="pending"),
         )),
     ))
-    first_update = record.job_files.update_availability(manager.store, first, "available")
-    second_update = record.job_files.update_availability(
-        manager.store, second, "failed", "missing",
+    first_update = JobFiles(record.files).update_availability(record, manager.store, first, "available")
+    second_update = JobFiles(record.files).update_availability(
+        record, manager.store, second, "failed", "missing",
     )
     assert first_update.files.outputs[0].availability_state == "available"
     assert second_update.files.outputs[0].availability_state == "available"
@@ -245,8 +246,8 @@ def test_parallel_run_stores_merge_independent_file_updates(tmp_path):
         # Independent stores model clients reopening the same persisted run.
         client_store = RunStore(directory)
         barrier.wait(timeout=10)
-        return record.job_files.update_availability(
-            client_store, path, state, message,
+        return JobFiles(record.files).update_availability(
+        record, client_store, path, state, message,
         )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
