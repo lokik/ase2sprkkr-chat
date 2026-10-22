@@ -20,6 +20,7 @@ class _AttachedRunner:
         self.job_files = JobFiles(run.files)
         self.backend_id = run.execution.backend_id
         self.result = SimpleNamespace(return_code=0)
+        self.return_code = 0
         self.state = RunState.RUNNING
         self.exception = None
         self.failure_phase = None
