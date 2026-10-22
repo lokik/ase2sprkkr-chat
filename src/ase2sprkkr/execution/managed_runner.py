@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from threading import Event, Lock
 
-from .job_files import JobFiles, JobFilesOwner
+from .job_files import JobFiles
 from .run_model import FileManifest
 from .base import (
     ExecutionOutcome, FailurePhase, OutputObservers, RunState,
@@ -18,7 +18,7 @@ from .base import (
 )
 
 
-class ManagedRunner(JobFilesOwner):
+class ManagedRunner:
     """Shared client-side runner; target-specific operations are hooks."""
 
     _missing_backend_message = "Run has no backend reference"
@@ -35,7 +35,7 @@ class ManagedRunner(JobFilesOwner):
         self._return_code = None
         self._failure_phase = None
         self._failure_message = None
-        self._job_files = JobFiles(files if files is not None else FileManifest.from_spec(spec))
+        self.job_files = JobFiles(files if files is not None else FileManifest.from_spec(spec))
         self._output_observers = OutputObservers(output_listener)
         self._lock = Lock()
         self._done = Event()
@@ -76,7 +76,7 @@ class ManagedRunner(JobFilesOwner):
             self._return_code = status.return_code
             self.result.return_code = status.return_code
         if status.files is not None:
-            self._job_files.merge(status.files)
+            self.job_files.merge(status.files)
         return self._state
 
     def add_output_listener(self, callback):
