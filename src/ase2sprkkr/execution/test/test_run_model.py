@@ -259,26 +259,39 @@ def test_duplicate_file_declarations_are_errors(tmp_path, role, overlap):
         FileManifest.from_spec(spec)
 
 
-@pytest.mark.parametrize("extras,stdin,expected", [
-    (("input.inp",), None, ("input.inp",)),
-    (("other.inp", "./other.inp"), None, ("input.inp", "other.inp")),
+@pytest.mark.parametrize("extras,stdin", [
+    (("input.inp",), None),
+    (("input.inp",), "input.inp"),
+    (("other.inp", "./other.inp"), None),
 ])
-def test_duplicate_input_roles_share_one_staged_file(tmp_path, extras, stdin, expected):
+def test_independent_duplicate_inputs_are_rejected(tmp_path, extras, stdin):
     from types import SimpleNamespace
     spec = SimpleNamespace(
         directory=str(tmp_path), input_file="input.inp", input_files=extras,
         stdin=stdin, output_file=None, error_file=None,
         output_files=(), cache_files=(),
     )
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest.from_spec(spec)
+
+
+def test_stdin_may_reference_primary_input_but_not_auxiliary_input(tmp_path):
+    from types import SimpleNamespace
+    spec = SimpleNamespace(
+        directory=str(tmp_path), input_file="input.inp", input_files=("other.inp",),
+        stdin="./input.inp", output_file=None, error_file=None,
+        output_files=(), cache_files=(),
+    )
     files = FileManifest.from_spec(spec)
-    assert tuple(x.local_path for x in files.inputs) == tuple(
-        str(tmp_path / name) for name in expected
+    assert files.primary_input == files.inputs[0]
+    assert files.stdin.local_path == str(tmp_path / "input.inp") or (
+        files.stdin.local_path == str(tmp_path / "./input.inp")
     )
-    assert files.primary_input.local_path == str(tmp_path / "input.inp")
-    assert (None if files.stdin is None else files.stdin.local_path) == (
-        None if stdin is None else str(tmp_path / stdin)
-    )
+    assert len(files.inputs) == 2
     assert FileManifest(**asdict(files)) == files
+    spec.stdin = "other.inp"
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest.from_spec(spec)
 
 
 def test_only_stdout_and_stderr_may_share_a_file():
