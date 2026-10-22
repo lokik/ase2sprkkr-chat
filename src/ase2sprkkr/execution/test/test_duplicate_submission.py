@@ -31,6 +31,9 @@ class _Runner:
         self.failure_message = None
         self.job_files = JobFiles(FileManifest.from_spec(spec))
 
+    def replace_file_manifest(self, manifest):
+        return self.job_files.replace(manifest)
+
     @property
     def return_code(self):
         return self.result.return_code
