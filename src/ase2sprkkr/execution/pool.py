@@ -30,14 +30,6 @@ class _ExecutorPool:
             endpoint = ExecutorEndpoint(**endpoint)
         return self.get(endpoint, lambda: create_executor_from_endpoint(endpoint))
 
-    def discard(self, key):
-        """Forget one pooled backend and close it when supported."""
-        with self._lock:
-            executor = self._executors.pop(key, None)
-        if executor is not None:
-            _close_distinct((executor,))
-        return executor
-
     def close(self):
         """Close every pooled executor, propagating the first close failure."""
         with self._lock:
@@ -72,9 +64,6 @@ class Executors:
 
     def for_profile(self, profile):
         return self.for_endpoint(profile.endpoint)
-
-    def discard(self, endpoint):
-        return self._pool.discard(endpoint)
 
     def close(self):
         self._pool.close()
