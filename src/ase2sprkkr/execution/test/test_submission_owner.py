@@ -15,7 +15,7 @@ from ase2sprkkr.execution.test.test_run_manager import _Executor, _manager
 
 def _run(manager, executor, directory):
     return manager.create_run(
-        ExecutionSpec(argv=(), directory=str(directory)),
+        ExecutionSpec(argv=(), input_file=None, output_file=None, directory=str(directory)),
         endpoint=manager.executors.register(executor),
         task="SCF", process_result=lambda outcome: outcome,
     )

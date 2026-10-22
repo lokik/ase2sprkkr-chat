@@ -1,3 +1,4 @@
+from dataclasses import replace
 import asyncio
 import os
 import sys
@@ -223,8 +224,15 @@ def test_file_availability_failure_does_not_change_finished_state(tmp_path):
     record = manager.store.save(record)
     record = manager.transition(record, state=RunState.FINISHED)
 
-    record = JobFiles(record.files).update_availability(
-        record, manager.store, str(tmp_path / "out"), FileAvailabilityState.FAILED, "ssh disconnected"
+    record = manager.store.update(
+        record,
+        lambda latest: replace(
+            latest,
+            files=latest.files.with_file_availability(
+                str(tmp_path / "out"), FileAvailabilityState.FAILED,
+                "ssh disconnected",
+            ),
+        ),
     )
 
     assert record.state == RunState.FINISHED

@@ -95,7 +95,7 @@ def _decode_handle(value):
 
 
 def _absolute(directory, value):
-    if value is None:
+    if value is None or value is False:
         return None
     path = Path(value)
     if not path.is_absolute():
@@ -151,7 +151,7 @@ def _request_spec(request):
         output_file=request.get("output_file"),
         error_file=request.get("error_file"),
         directory=os.fspath(request["directory"]),
-        stdin=request.get("stdin"),
+        stdin=(request["stdin"] if request.get("stdin") is not None else False),
         input_files=input_files,
         output_files=output_files,
         cache_files=cache_files,
@@ -161,16 +161,14 @@ def _request_spec(request):
 
 
 def _local_submit(request):
-    from .local import materialize_local_spec
-
+    # A remote submission carries the already-resolved command and stdin.
     # Everything here happens before launching a supervisor. A failed local
     # filesystem setup proves that submission never started, unlike a lost
     # reply after Popen.
     try:
         directory = Path(request["directory"]).expanduser().resolve()
         directory.mkdir(parents=True, exist_ok=True)
-        original_spec = _request_spec(dict(request, directory=os.fspath(directory)))
-        spec = materialize_local_spec(original_spec)
+        spec = _request_spec(dict(request, directory=os.fspath(directory)))
 
         output_path = _absolute(directory, spec.output_file)
         error_path = _absolute(directory, spec.error_file)
@@ -315,12 +313,13 @@ def _psij_receipt_id(run_id, backend, url, native_id, directory):
 def _psij_submit(request):
     executor = _psij_executor(request.get("executor_options"))
     spec = _request_spec(request)
-    runner = (
-        executor.create_project_run(
-            spec, run_id=request["id"], cleanup_side=request.get("cleanup_side", "local"))
-        if request.get("id")
-        else executor.create_run(
-            spec, cleanup_side=request.get("cleanup_side", "local"))
+    # This is the target end of an already-resolved remote request.
+    # Do not run the executor's public resolution factory again.
+    from .psij import PsijRunner
+    runner = PsijRunner(
+        executor, spec,
+        run_id=request.get("id"),
+        cleanup_side=request.get("cleanup_side", "local"),
     )
     # PSI/J's _prepare_io() owns cleanup of its complete declared manifest.
     # Running a second cleanup here would duplicate it and risk wildcard caches.

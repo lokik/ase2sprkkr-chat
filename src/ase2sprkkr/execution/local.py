@@ -40,6 +40,7 @@ class LocalRunner:
     """
 
     def __init__(self, spec: ExecutionSpec, callback=None):
+        # A runner receives the already-selected concrete launch variant.
         self.spec = spec
         self.job_files = JobFiles(FileManifest.from_spec(spec))
         self.callback = callback
@@ -197,12 +198,9 @@ class LocalRunner:
                 self._started.set()
                 return self.result
             try:
-                runtime_spec = materialize_local_spec(self.spec)
-                # MPI/command preparation may fail; leave old results alone
-                # until we have a launchable command.
                 prepare_local_files(self.spec, preserve_open_streams=True)
-                stdin = self._open_streams(stdin=runtime_spec.stdin)
-                self._process = await start_local_process(runtime_spec, stdin=stdin)
+                stdin = self._open_streams(stdin=self.spec.stdin)
+                self._process = await start_local_process(self.spec, stdin=stdin)
             except BaseException as exc:
                 self._failure_phase = FailurePhase.LAUNCH
                 self._failure_message = str(exc)

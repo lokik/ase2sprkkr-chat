@@ -517,7 +517,8 @@ def test_ssh_psij_cleanup_removes_declared_outputs_before_submit(tmp_path, monke
     class Backend:
         backend = "slurm"
         url = None
-        def create_project_run(self, spec, *, run_id):
+        def create_project_run(self, spec, *, run_id, cleanup_side):
+            assert cleanup_side == "local"
             return Runner(spec)
     monkeypatch.setattr(remote_service, "_psij_executor", lambda options: Backend())
     request = {
@@ -554,7 +555,7 @@ def test_scheduler_request_protects_remote_cache_wildcards(tmp_path):
         },
     }
     spec = remote_service._request_spec(request)
-    assert spec.input_files == ("case.inp",)
+    assert spec.input_files == ()
     assert spec.output_files == ("*.pot", "case.out")
     assert spec.cache_files == (
         "known-restart.pot", "restart-*.pot", "external-cache.pot",
@@ -1507,6 +1508,24 @@ def test_request_spec_does_not_duplicate_primary_input():
     assert FileManifest.from_spec(spec).input_files == (
         "/remote/main.in", "/remote/extra.in",
     )
+
+
+def test_disabled_stdin_is_not_materialized_as_filename(tmp_path):
+    from ase2sprkkr.execution import ExecutionSpec
+
+    assert remote_service._absolute(tmp_path, False) is None
+    spec = ExecutionSpec(
+        argv=("program",), directory=str(tmp_path),
+        input_file=None, output_file=None,
+    )
+    request = {
+        "directory": str(tmp_path),
+        "argv": list(spec.argv),
+        "stdin": None,
+    }
+    recovered = remote_service._request_spec(request)
+    assert recovered.stdin is False
+    assert remote_service._absolute(tmp_path, recovered.stdin) is None
 
 
 def test_target_ipc_failure_does_not_delete_declared_outputs(tmp_path, monkeypatch):

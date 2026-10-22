@@ -342,7 +342,7 @@ def test_local_project_request_uses_common_command_fields(tmp_path, monkeypatch)
     for key, value in runner.spec.command_request().items():
         assert request[key] == value
     reconstructed = _request_spec(request)
-    assert reconstructed.stdin is None
+    assert reconstructed.stdin is False
     assert reconstructed.mpi_argv is None
     assert reconstructed.argv[:3] == ("mpirun", "-np", "3")
 

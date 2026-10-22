@@ -30,8 +30,18 @@ def _path(receipt_id):
     return _validated_path(receipt_id, "remote-outcomes")
 
 
+def _validate_submission(reply):
+    """A corrupt submission ticket cannot prove that a backend is absent."""
+    if (not isinstance(reply, dict)
+            or not isinstance(reply.get("remote_id"), str)
+            or not reply["remote_id"]):
+        raise ValueError("Invalid remote submission receipt")
+    return reply
+
+
 def publish_submission(run_id, reply):
     """Persist short-lived backend identity until acknowledged."""
+    _validate_submission(reply)
     path = _validated_path(run_id, "remote-submissions")
     durable_mkdir(path.parent, parents=True, exist_ok=True, mode=0o700)
     durable_write_json(path, reply, mode=0o600)
@@ -39,9 +49,14 @@ def publish_submission(run_id, reply):
 
 def read_submission(run_id):
     try:
-        return json.loads(_validated_path(run_id, "remote-submissions").read_text())
+        reply = json.loads(
+            _validated_path(run_id, "remote-submissions").read_text(encoding="utf-8")
+        )
     except FileNotFoundError:
         return None
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ValueError("Invalid remote submission receipt") from exc
+    return _validate_submission(reply)
 
 
 def drop_submission(run_id):

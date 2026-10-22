@@ -58,6 +58,28 @@ def test_receipt_state_root_respects_override_and_xdg(tmp_path, monkeypatch, ove
     assert remote_mailbox._path(key) == root / "remote-outcomes" / f"{key}.json"
 
 
+@pytest.mark.parametrize("reply", (None, [], {}, {"remote_id": None},
+                                           {"remote_id": 12}, {"remote_id": ""}))
+def test_submission_rejects_missing_backend_identity_before_publication(tmp_path, reply):
+    key = uuid4().hex
+    with pytest.raises(ValueError, match="Invalid remote submission receipt"):
+        remote_mailbox.publish_submission(key, reply)
+    assert remote_mailbox.read_submission(key) is None
+    assert list(tmp_path.rglob("*.json")) == []
+
+
+@pytest.mark.parametrize("content", ("{", "[]", "null", "{}",
+                                     '{"remote_id": 42}', '{"remote_id": ""}'))
+def test_corrupt_submission_ticket_is_never_interpreted_as_absent(content):
+    key = uuid4().hex
+    path = remote_mailbox._validated_path(key, "remote-submissions")
+    path.parent.mkdir(parents=True)
+    path.write_text(content)
+    with pytest.raises(ValueError, match="Invalid remote submission receipt"):
+        remote_mailbox.read_submission(key)
+    assert path.read_text() == content
+
+
 def test_submission_ticket_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setenv("ASE2SPRKKR_REMOTE_STATE_DIR", str(tmp_path))
     key = uuid4().hex
