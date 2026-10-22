@@ -210,9 +210,9 @@ def test_project_cancel_returns_while_backend_submission_is_blocked():
     )
     store = Store()
     project = _tracked(
-        store, object(), processed,
+        store, SimpleNamespace(acknowledge=lambda record: None), processed,
         SimpleNamespace(state=RunState.NEW, id="test-run", updated_at="new",
-                        execution=Execution(), files=None),
+                        execution=Execution(), files=FileManifest()),
     )
     errors = []
 
@@ -299,7 +299,7 @@ def test_project_cancellation_during_prelaunch_is_durable_and_nonblocking(phase)
         manager, object(), processed,
         SimpleNamespace(
             state=RunState.NEW, id="run", updated_at="new",
-            execution=SimpleNamespace(), files=None,
+            execution=SimpleNamespace(), files=FileManifest(),
         ),
     )
     errors = []
