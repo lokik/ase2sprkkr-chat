@@ -375,3 +375,50 @@ def test_restore_existing_staging_file_is_rejected_before_any_download(tmp_path)
     assert not (local / ".first.stage").exists()
     assert second_stage.read_text() == "unrelated"
     assert not first.exists() and not second.exists()
+
+def test_job_files_preflights_all_remote_sources_before_first_download(tmp_path):
+    """The JobFiles path must preserve the handler's batch preflight contract."""
+    from ase2sprkkr.execution.job_files import JobFiles
+
+    local = tmp_path / "local"
+    remote = tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    first, second = local / "first.dat", local / "second.dat"
+    (remote / "first.dat").write_text("first")
+    (remote / "second.dat").write_text("second")
+
+    class TrackedTransport(LocalTransport):
+        def __init__(self):
+            self.downloads = []
+
+        async def get_file(self, source, destination):
+            self.downloads.append((source, destination))
+            return await super().get_file(source, destination)
+
+    transport = TrackedTransport()
+    executor = RemoteExecutor(transport)
+    record = RunRecord(
+        id="job-files-preflight", state=RunState.FINISHED,
+        created_at="2026-10-22T00:00:00+00:00",
+        updated_at="2026-10-22T00:00:00+00:00", task="DOS",
+        execution=Execution(
+            endpoint_for_executor(executor),
+            WorkingDirectory(str(local), str(remote)), "backend-id",
+        ),
+        files=FileManifest(
+            mapping=FileMapping(str(local), str(remote)),
+            outputs=(
+                FileEntry(str(first), str(remote / "first.dat")),
+                FileEntry(str(second), str(remote / "wrong.dat")),
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="differs from mapped path"):
+        JobFiles.retrieve(record, store=None, executor=executor)
+
+    assert transport.downloads == []
+    assert not first.exists()
+    assert not second.exists()
+    assert list(local.glob(".*.tmp")) == []
