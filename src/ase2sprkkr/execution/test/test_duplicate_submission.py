@@ -14,6 +14,7 @@ from ase2sprkkr.execution import (
 )
 
 from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.endpoint import endpoint_for_executor
 
 
 class _Runner:
@@ -24,6 +25,15 @@ class _Runner:
         self._done = Event()
         self.result = SimpleNamespace(return_code=None)
         self.exception = None
+        self.failure_phase = None
+        self.failure_message = None
+        self.files = None
+
+    def set_manifest(self, manifest):
+        self.files = manifest
+
+    def prepare_submission(self):
+        return None
 
     def submit(self):
         self.backend_id = "job"
@@ -42,6 +52,9 @@ class _Runner:
         self._done.set()
 
     def add_output_listener(self, callback):
+        pass
+
+    def add_output_error_listener(self, callback):
         pass
 
     def finish(self):
@@ -65,12 +78,13 @@ class _Executor(Executor):
 
 
 def _run(manager, executor, directory, *, task="DOS", dataset="case"):
+    endpoint = manager.executors.register(executor)
     return manager.create_run(
-        executor,
-        spec=ExecutionSpec(
+        ExecutionSpec(
             argv=(), input_file=None, output_file=None,
             directory=str(directory),
         ),
+        endpoint=endpoint,
         process_result=lambda outcome: outcome,
         task=task,
         dataset=dataset,
