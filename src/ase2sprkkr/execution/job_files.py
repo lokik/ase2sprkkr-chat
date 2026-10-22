@@ -48,6 +48,19 @@ class JobFiles:
         return missing_result_files(self.manifest)
 
     @staticmethod
+    def merge_snapshot(current, requested):
+        """Preserve captured historical file evidence on stale updates."""
+        from .run_model import FileManifest
+
+        if isinstance(requested, dict):
+            requested = FileManifest(**requested)
+        if current is None:
+            return requested
+        if current.captured_at is not None:
+            return current
+        return requested
+
+    @staticmethod
     def mark_pending_failed(manifest, message):
         return manifest._map_files(
             lambda item: replace(
