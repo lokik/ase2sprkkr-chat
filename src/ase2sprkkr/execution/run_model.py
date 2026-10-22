@@ -124,6 +124,19 @@ class FileEntry:
         ):
             raise ValueError("An availability error belongs to a failed file")
 
+    def verified_delivery_is_current(self):
+        """Whether a recorded successful delivery still has its original contents."""
+        version = self.verified_local_version
+        if (self.availability_state != FileAvailabilityState.AVAILABLE
+                or self.local_path is None or version is None
+                or not version.available):
+            return False
+        import os
+        return (
+            os.path.abspath(os.fspath(version.path)) == os.path.abspath(self.local_path)
+            and version.is_current()
+        )
+
 
 class FileSyncPolicy(str, Enum):
     """Policy controlling transfers between local and remote workspaces."""

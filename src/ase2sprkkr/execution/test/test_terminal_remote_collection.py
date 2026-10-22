@@ -9,8 +9,10 @@ from ase2sprkkr.execution import FileEntry, FileManifest, JobFiles
 def test_collection_preserves_a_previously_delivered_output(tmp_path):
     output = tmp_path / "downloaded.out"
     output.write_text("delivered")
+    from ase2sprkkr.common.file_versions import FileVersion
     previous = FileManifest(outputs=(
-        FileEntry(str(output), "/remote/output", availability_state="available"),
+        FileEntry(str(output), "/remote/output", availability_state="available",
+                  verified_local_version=FileVersion.capture(output, require_digest=True)),
     ))
     frozen = FileManifest(outputs=(
         FileEntry(str(output), "/remote/output", availability_state="pending"),

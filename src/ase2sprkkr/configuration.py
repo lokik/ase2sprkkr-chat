@@ -212,13 +212,18 @@ SYNC_POLICY = Keyword(
     },
     transform=None,
 )
-OUTPUT_CLEANUP = CustomMixed(
-    (Bool.I, Keyword({
+OUTPUT_CLEANUP_KEYWORDS = Keyword(
+    {
         "both": "Clear local and remote outputs.",
         "local": "Clear local outputs only.",
         "remote": "Clear remote outputs only.",
         "none": "Do not clear outputs.",
-    }, transform=None)),
+    },
+    transform=None,
+)
+OUTPUT_CLEANUP = CustomMixed(
+    (Bool.I, OUTPUT_CLEANUP_KEYWORDS),
+    string_type=OUTPUT_CLEANUP_KEYWORDS,
 )
 EXECUTOR = Keyword(
     {

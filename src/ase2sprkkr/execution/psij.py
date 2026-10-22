@@ -224,6 +224,17 @@ def _slurm_new_output_since(paths, submitted_at):
     return False
 
 
+def _slurm_absent_from_queue(native_id):
+    """Only a successful empty queue lookup permits output-based inference."""
+    try:
+        queued = _scheduler_output((
+            "squeue", "--noheader", "--jobs", str(native_id), "--format=%i",
+        ))
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return False
+    return not queued.strip()
+
+
 def _slurm_status_native(native_id, *, submitted_at=None, output_paths=()):
     """Read scheduler facts for a local Slurm job without initializing PSI/J."""
     native_id = str(native_id)
@@ -235,6 +246,7 @@ def _slurm_status_native(native_id, *, submitted_at=None, output_paths=()):
     except (FileNotFoundError, subprocess.CalledProcessError):
         details = {}
 
+    scheduler_record_found = bool(details)
     if details:
         state = _slurm_state(details.get("JobState"))
         return_code = _slurm_exit_code(details.get("ExitCode"))
@@ -251,16 +263,18 @@ def _slurm_status_native(native_id, *, submitted_at=None, output_paths=()):
         for line in output.splitlines():
             fields = line.rstrip("|").split("|")
             if len(fields) == 3 and fields[0].strip() == native_id:
+                scheduler_record_found = True
                 state = _slurm_state(fields[1])
                 return_code = _slurm_exit_code(fields[2].strip())
                 break
 
-    if state == RunState.UNKNOWN and submitted_at is not None:
-        # Scheduler accounting can expire before the job is inspected.
-        # File mtimes are only a best-effort hint: require a genuine known
-        # submission time and a non-empty newly written output, never a
-        # pre-existing file. An UNKNOWN scheduler state is otherwise retained.
-        if _slurm_new_output_since(output_paths, submitted_at):
+    if (state == RunState.UNKNOWN and not scheduler_record_found
+            and submitted_at is not None):
+        # A missing scheduler record and fresh output are merely hints.
+        # A job still visible in squeue (or an unavailable squeue) must
+        # not be terminalized just because it has started writing.
+        if (_slurm_new_output_since(output_paths, submitted_at)
+                and _slurm_absent_from_queue(native_id)):
             state = RunState.FINISHED
     if not state.is_terminal:
         return_code = None

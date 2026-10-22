@@ -6,14 +6,17 @@ from ase2sprkkr.execution.run_model import FileEntry, FileManifest
 
 
 def test_snapshot_merge_reuses_received_manifest_if_delivery_unchanged(tmp_path):
-    path = str(tmp_path / "output")
+    from ase2sprkkr.common.file_versions import FileVersion
+    path = tmp_path / "output"
+    path.write_bytes(b"valid")
     available = FileManifest(outputs=(
-        FileEntry(path, "/remote/output", availability_state="available"),
+        FileEntry(str(path), "/remote/output", availability_state="available",
+                  verified_local_version=FileVersion.capture(path, require_digest=True)),
     ))
     assert merge_snapshot(available, available) is available
 
     pending = FileManifest(outputs=(
-        FileEntry(path, "/remote/output", availability_state="pending"),
+        FileEntry(str(path), "/remote/output", availability_state="pending"),
     ))
     merged = merge_snapshot(available, pending)
     assert merged is not pending
