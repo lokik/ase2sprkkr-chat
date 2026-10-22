@@ -273,7 +273,10 @@ class KkrOutputReader:
         if self is None:
             self = cls(None, None, directory)
         result = self.create_result(output, input_file)
-        output_source = output if hasattr(output, "read") else result.path_to("output")
+        output_source = (
+            result.path_to("output")
+            if isinstance(output, (str, bytes, os.PathLike)) else output
+        )
 
         _parsed_output, parsed_error, parsed_return_code = self.parser.read_from_file(
             output_source, error, [result], return_code
