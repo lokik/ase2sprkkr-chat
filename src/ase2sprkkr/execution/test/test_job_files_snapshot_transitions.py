@@ -141,8 +141,15 @@ def test_captured_completion_respects_newer_failed_file_state(tmp_path, monkeypa
     ))
     record.job_files.update_availability(manager.store, path, "failed", "download failed")
 
+    from ase2sprkkr.common.file_versions import FileVersion
+
+    version = FileVersion(path=path, fingerprint=None)
+
     def capture(self, manifest=None):
-        return replace(manifest, captured_at="2026-10-22T00:00:00+00:00")
+        return replace(
+            manifest, captured_at="2026-10-22T00:00:00+00:00",
+            input_versions=(version,), output_versions=(version,),
+        )
 
     monkeypatch.setattr(JobFiles, "capture", capture)
     completed = manager.complete(
@@ -151,6 +158,8 @@ def test_captured_completion_respects_newer_failed_file_state(tmp_path, monkeypa
     assert completed.state == RunState.FAILED
     assert completed.failure_phase == FailurePhase.DOWNLOAD
     assert completed.files.captured_at is None
+    assert completed.files.input_versions == ()
+    assert completed.files.output_versions == ()
     assert completed.files.outputs[0].availability_state == "failed"
 
 
