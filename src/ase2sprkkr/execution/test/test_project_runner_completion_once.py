@@ -47,7 +47,7 @@ class _Runner:
     execution = None
 
     def __init__(self):
-        self._job_files = JobFiles(FileManifest())
+        self.job_files = JobFiles(FileManifest())
 
     def wait(self):
         self.state = RunState.FINISHED
@@ -305,7 +305,8 @@ def test_lost_ack_reply_after_receipt_deletion_is_safe_on_retry(tmp_path, monkey
 def test_persistent_reservation_rejects_duplicate_before_submitting(tmp_path):
     """The store claim, not another hook-local flag, prevents duplicates."""
     import pytest
-    from ..manager import ExecutionManager, RunStore
+    from ..manager import ExecutionManager
+    from ..run_store import RunStore
 
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
     record = manager.store.save(manager.new_record(task="DOS", directory=tmp_path))
