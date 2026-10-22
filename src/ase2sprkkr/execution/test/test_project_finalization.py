@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 import ase2sprkkr.outputs.project_results as project_output
-from ase2sprkkr.execution.job_files import JobFilesOwner
+from ase2sprkkr.execution.job_files import JobFiles
 
 from ase2sprkkr.execution import (
     ExecutionOutcome,
@@ -24,7 +24,7 @@ from ase2sprkkr.outputs.project_results import (
 )
 
 
-class _RawRunner(JobFilesOwner):
+class _RawRunner:
     def __init__(self):
         self.callback = None
         self.state = RunState.NEW
