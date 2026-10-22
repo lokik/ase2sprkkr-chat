@@ -212,7 +212,7 @@ def _local_submit(request):
             # supervisor is spawned. An IPC failure must keep older outputs.
             try:
                 prepare_local_files(
-                    original_spec, output_file=output_path, error_file=error_path,
+                    spec, output_file=output_path, error_file=error_path,
                     side=request.get("cleanup_side", "local"),
                 )
             except (OSError, ValueError) as exc:
