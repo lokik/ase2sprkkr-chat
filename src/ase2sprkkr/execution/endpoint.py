@@ -78,7 +78,7 @@ def endpoint_for_executor(executor) -> ExecutorEndpoint:
                         executor.name or "remote",
                     )
                 ),
-                host=getattr(transport, "host", None),
+                host=transport.host,
                 remote_command=executor.command,
                 psij_backend=psij_backend,
                 psij_url=psij_url,

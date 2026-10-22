@@ -174,6 +174,10 @@ class Transport:
     Wildcards are always expanded on the source side of the transfer.
     """
 
+    # A local target has no host name; remote transports expose a real host.
+    # Endpoint identity must not rely on optional dynamic attributes.
+    host: str | None = None
+
     async def run(self, argv, *, cwd=None, input=None, check=True):
         raise NotImplementedError
 
@@ -226,9 +230,6 @@ def _parse_remote_file_signature(raw):
         fraction = timestamp.split(".", 1)[1].split(None, 1)[0]
     nanoseconds = int((fraction + "000000000")[:9]) if fraction else 0
     return int(size), int(seconds) * 1_000_000_000 + nanoseconds
-
-
-# Kept temporarily for code using the helper inside the execution package.
 
 
 async def _completed_process(process, argv, input=None, check=True):

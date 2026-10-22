@@ -89,10 +89,10 @@ class FileEntry:
         if self.source is not None:
             object.__setattr__(self, "source", os.fspath(self.source))
 
-        for name in ("local_path", "remote_path"):
-            value = getattr(self, name)
-            if value is not None:
-                object.__setattr__(self, name, os.fspath(value))
+        if self.local_path is not None:
+            object.__setattr__(self, "local_path", os.fspath(self.local_path))
+        if self.remote_path is not None:
+            object.__setattr__(self, "remote_path", os.fspath(self.remote_path))
         if self.pre_run_signature is not None:
             object.__setattr__(self, "pre_run_signature", tuple(self.pre_run_signature))
         if type(self.optional) is not bool:

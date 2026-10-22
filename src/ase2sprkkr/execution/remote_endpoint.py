@@ -59,7 +59,7 @@ class RemoteEndpointExecutor(Executor):
         self.backend = backend
         self.backend_options = dict(backend_options or {})
         self.command = tuple(command)
-        self.computer = getattr(transport, "host", None)
+        self.computer = transport.host
         self.connection = SSHConnection(
             transport, command=self.command, backend=backend,
             backend_options=self.backend_options,
