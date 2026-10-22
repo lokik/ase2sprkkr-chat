@@ -125,8 +125,11 @@ def test_remote_file_preparation_rejects_duplicate_paths_before_mapping(tmp_path
 
 
 @pytest.mark.parametrize("method", ("submit", "start"))
-def test_postprocessing_rejected_submit_preserves_error_and_does_not_monitor(method):
-    from ase2sprkkr.execution.base import SubmissionNotStarted
+@pytest.mark.parametrize("rejection_phase", ("prepare", "submit"))
+def test_postprocessing_rejected_submit_preserves_error_and_does_not_monitor(
+    method, rejection_phase,
+):
+    from ase2sprkkr.execution.base import FailurePhase, SubmissionNotStarted
     from ase2sprkkr.execution.postprocessing import CalculationRun
 
     failure = SubmissionNotStarted("preflight refused")
@@ -136,14 +139,30 @@ def test_postprocessing_rejected_submit_preserves_error_and_does_not_monitor(met
         callback = None
 
         def prepare_submission(self):
-            pass
+            if rejection_phase == "prepare":
+                raise failure
 
         def submit(self):
-            raise failure
+            if rejection_phase == "submit":
+                raise failure
+            pytest.fail("Backend must not start after rejected preparation")
 
-    runner = CalculationRun(RejectedRunner(), lambda result: result)
+        def wait(self):
+            pytest.fail("Rejected submission must not call backend wait")
+
+    runner = CalculationRun(
+        RejectedRunner(),
+        lambda result: pytest.fail("Rejected submission must not be parsed"),
+        callback=lambda result: pytest.fail("Rejected submission has no completion callback"),
+    )
     with pytest.raises(SubmissionNotStarted, match="preflight refused") as caught:
         getattr(runner, method)()
     assert caught.value is failure
     assert runner._started is False
-    assert runner._done.is_set() is False
+    assert runner._settled is True
+    assert runner._done.is_set()
+    assert runner.state is RunState.FAILED
+    assert runner.failure_phase is FailurePhase.SUBMISSION
+    with pytest.raises(SubmissionNotStarted, match="preflight refused") as waited:
+        runner.wait()
+    assert waited.value is failure

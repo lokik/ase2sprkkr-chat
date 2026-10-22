@@ -378,7 +378,11 @@ class CalculationRun:
                 self._state = RunState.FAILED
                 self._settled = True
                 self._submitting = False
-            self._close_resources()
+            try:
+                self._close_resources()
+            finally:
+                # No backend exists to signal completion; wake all waiters.
+                self._done.set()
             raise
         except BaseException as exc:
             # Only backend I/O can make submission ambiguous. Reservation,
@@ -464,19 +468,23 @@ class CalculationRun:
     def wait(self):
         if not self._started and not self._settled:
             raise RuntimeError("Run has not been started")
-        # Production runners notify before raw.wait() returns. A lightweight
-        # external runner may only report its terminal state from wait().
-        # Preserve a callback's canonical completion if raw.wait() later fails.
-        try:
-            outcome = self._runner.wait()
-        except BaseException as exc:
-            if not self._done.is_set():
-                self._complete_observation(
-                    self._runner.result, error=exc,
-                )
-        else:
-            if not self._done.is_set():
-                self._complete_observation(outcome)
+        # A definitely rejected or closed run never started a backend; its
+        # terminal exception/state is already available locally. An uncertain
+        # submission, however, may still have a live backend to observe.
+        if self._started or self._submission_uncertain:
+            # Production runners notify before raw.wait() returns. A lightweight
+            # external runner may only report its terminal state from wait().
+            # Preserve a callback's canonical completion if raw.wait() fails.
+            try:
+                outcome = self._runner.wait()
+            except BaseException as exc:
+                if not self._done.is_set():
+                    self._complete_observation(
+                        self._runner.result, error=exc,
+                    )
+            else:
+                if not self._done.is_set():
+                    self._complete_observation(outcome)
         self._done.wait()
         if self.persistence_error is not None:
             raise self.persistence_error
