@@ -224,7 +224,7 @@ def test_duplicate_submission_is_blocked_by_persisted_namespace(tmp_path):
 
 
 def test_project_manager_returns_one_public_calculation_runner(tmp_path):
-    from ase2sprkkr.execution import CalculationRun, PersistentRun
+    from ase2sprkkr.execution import CalculationRun, RunPersistence
 
     manager = _manager(tmp_path)
     run = manager.create_run(
@@ -233,9 +233,9 @@ def test_project_manager_returns_one_public_calculation_runner(tmp_path):
     )
 
     assert type(run) is CalculationRun
-    assert isinstance(run.hooks, PersistentRun)
-    assert not hasattr(run.hooks, "_runner")
-    assert run.record is run.hooks.record
+    assert isinstance(run.persistence, RunPersistence)
+    assert not hasattr(run.persistence, "_runner")
+    assert run.record is run.persistence.record
     assert run.id == run.record.id
     assert run.record.state is RunState.NEW
     assert run.refresh().state is RunState.NEW
@@ -286,7 +286,7 @@ def test_explicit_executor_for_run_is_the_registered_instance(tmp_path):
     run = manager.create_run(
         _spec(tmp_path), endpoint=manager.executors.register(executor), process_result=lambda value: value, task="DOS",
     )
-    assert run.hooks.executor is manager.executors.for_endpoint(run.record.execution.endpoint)
+    assert run.persistence.executor is manager.executors.for_endpoint(run.record.execution.endpoint)
 
 
 def test_executor_registration_normalizes_serialized_endpoint():
