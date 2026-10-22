@@ -46,11 +46,6 @@ class ManagedRunner:
         )
 
     @property
-    def execution(self):
-        """Execution metadata is provided by backends that carry it."""
-        return None
-
-    @property
     def backend_id(self):
         return self._backend_id
 
