@@ -26,6 +26,9 @@ def restore_historical_file(record, path, version, executor):
     recorded digest matches; never replace any existing destination.
     """
     if version is not None and version.is_current():
+        # Reaffirm durability when a previous publish succeeded but its
+        # directory fsync (or the following RunStore update) failed.
+        sync_file(path)
         return
     if version is None and os.path.isfile(path):
         return
