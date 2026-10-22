@@ -449,7 +449,7 @@ def test_job_files_reconciles_stale_observation_with_working_changes(tmp_path):
     assert original.outputs[1].availability_state == "pending"
 
 
-def test_runner_exposes_file_operations_not_mutable_job_files(tmp_path):
+def test_runner_owns_job_files_and_preserves_immutable_snapshots(tmp_path):
     from ase2sprkkr.execution.base import ExecutionSpec
     from ase2sprkkr.execution.local import LocalRunner
     from ase2sprkkr.execution.run_model import FileEntry, FileManifest
@@ -459,13 +459,14 @@ def test_runner_exposes_file_operations_not_mutable_job_files(tmp_path):
         output_file=None, error_file=None, stdin=None, cache_files=(),
     )
     runner = LocalRunner(spec)
-    assert not hasattr(runner, "job_files")
+    assert isinstance(runner.job_files, JobFiles)
 
     path = str(tmp_path / "output.dat")
     manifest = FileManifest(outputs=(FileEntry(path, availability_state="pending"),))
-    assert runner.replace_file_manifest(manifest) is manifest
-    assert runner.file_snapshot() is manifest
+    assert runner.job_files.replace(manifest) is manifest
+    assert runner.job_files.manifest is manifest
 
     observed = manifest.with_file_availability(path, "available")
-    assert runner.merge_file_manifest(observed).outputs[0].availability_state == "available"
-    assert runner.file_snapshot().outputs[0].availability_state == "available"
+    assert runner.job_files.merge(observed).outputs[0].availability_state == "available"
+    assert runner.job_files.manifest.outputs[0].availability_state == "available"
+    assert manifest.outputs[0].availability_state == "pending"
