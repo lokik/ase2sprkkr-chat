@@ -82,11 +82,11 @@ def test_stale_claim_does_not_sync_files(tmp_path, monkeypatch):
     original = manager.new_record(task="DOS", directory=tmp_path)
     store.save(replace(original, dataset="newer"))
 
-    def unexpected_sync(self):
+    def unexpected_sync(manifests):
         raise AssertionError("Stale run must not sync inputs")
 
-    from ase2sprkkr.execution.job_files import JobFiles
-    monkeypatch.setattr(JobFiles, "sync_inputs", unexpected_sync)
+    import ase2sprkkr.execution.run_store as run_store_module
+    monkeypatch.setattr(run_store_module, "sync_result_files", unexpected_sync)
     with pytest.raises(RuntimeError, match="changed during file reservation"):
         store.reserve_files(original)
 
