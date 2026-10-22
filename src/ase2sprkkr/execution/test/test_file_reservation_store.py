@@ -161,3 +161,47 @@ def test_corrupt_run_blocks_reservation_but_history_remains_readable(tmp_path):
         manager.reserve(manager.new_record(task="SCF", directory=tmp_path))
 
     assert path.read_text() == "{broken json"
+
+
+def test_stale_missing_submission_releases_reservation(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    manager = ExecutionManager(RunStore(tmp_path / "runs"), submitting_grace=0)
+    first = manager.reserve(manager.new_record(task="SCF", directory=tmp_path))
+    second = manager.new_record(task="SCF", directory=tmp_path)
+    calls = []
+
+    def recover(run_id, record, *, submitted_at):
+        calls.append((run_id, submitted_at))
+        return None
+
+    monkeypatch.setattr(manager.executors, "for_endpoint",
+                        lambda endpoint: SimpleNamespace(recover_submission=recover))
+    reserved = manager.reserve(second)
+    assert reserved.state == RunState.SUBMITTING
+    assert manager.store.get(first.id).state == RunState.FAILED
+    assert calls == [(first.id, first.updated_at)]
+
+
+def test_recovered_active_backend_still_blocks_reservation(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from ase2sprkkr.execution.base import RunStatus
+    from ase2sprkkr.execution.manager import DuplicateSubmissionError
+
+    manager = ExecutionManager(RunStore(tmp_path / "runs"), submitting_grace=0)
+    first = manager.reserve(manager.new_record(task="SCF", directory=tmp_path))
+    second = manager.new_record(task="SCF", directory=tmp_path)
+    calls = []
+
+    def recover(*args, **kwargs):
+        calls.append(1)
+        return RunStatus(state=RunState.RUNNING, backend_id="still-running")
+
+    monkeypatch.setattr(manager.executors, "for_endpoint",
+                        lambda endpoint: SimpleNamespace(
+                            recover_submission=recover,
+                            acknowledge_submission=lambda record: None))
+    with pytest.raises(DuplicateSubmissionError):
+        manager.reserve(second)
+    assert manager.store.get(first.id).state == RunState.RUNNING
+    assert calls == [1]
