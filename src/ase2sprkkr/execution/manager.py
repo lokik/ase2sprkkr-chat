@@ -22,10 +22,9 @@ from .base import (
     FailurePhase,
     RunState,
     RunStatus,
-    SubmissionNotStarted,
 )
 from .job_files import JobFiles, HistoricalFileMismatchError
-from .endpoint import ExecutorEndpoint, endpoint_for_executor
+from .endpoint import ExecutorEndpoint
 from .pool import Executors
 from .projects import _project_id
 from .postprocessing import CalculationRun

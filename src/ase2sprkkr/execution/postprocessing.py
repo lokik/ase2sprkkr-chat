@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from threading import Event, Lock
 from dataclasses import replace
 from datetime import datetime, timezone
+from threading import Event, Lock
 
 from ..common.file_versions import FileState
+from .base import (ExecutionOutcome, FailurePhase, RunState,
+                   SubmissionNotStarted, finish_monitor)
 from .file_history import file_is_current
-from .base import ExecutionOutcome
-
-from .base import (FailurePhase, RunState, SubmissionNotStarted,
-                   finish_monitor)
 from .run_hooks import PersistenceError
 
 
