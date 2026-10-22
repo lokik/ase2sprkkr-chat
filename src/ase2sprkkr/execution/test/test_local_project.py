@@ -12,9 +12,10 @@ from ase2sprkkr.execution import (
 )
 from ase2sprkkr.execution.local_project import local_manifest
 from ase2sprkkr.execution.remote_service import (
-    _decode_handle, _encode_handle, _process_running, _recover_submission,
+    _decode_handle, _encode_handle, _process_running,
     acknowledge_submission, status_remote,
 )
+from ase2sprkkr.execution.remote_mailbox import read_submission
 from ase2sprkkr.execution.base import RunStatus, FailurePhase
 
 RUN_ID = "b" * 32
@@ -60,7 +61,7 @@ def test_project_launch_reconnect_and_shared_ticket(tmp_path):
     runner.submit()
     handle = runner.backend_id
     assert _decode_handle(handle)["kind"] == "process"
-    assert _recover_submission(RUN_ID) == {"remote_id": handle}
+    assert read_submission(RUN_ID) == {"remote_id": handle}
     assert runner.wait().return_code == 0
     assert runner.state == RunState.FINISHED
     assert not _process_running({**_decode_handle(handle), "start_time": "0"})
@@ -69,7 +70,7 @@ def test_project_launch_reconnect_and_shared_ticket(tmp_path):
     assert executor.recover_submission(RUN_ID, _record(tmp_path, None)).backend_id == handle
 
     executor.acknowledge_submission(_record(tmp_path, handle))
-    assert _recover_submission(RUN_ID) is None
+    assert read_submission(RUN_ID) is None
     assert executor.status(_record(tmp_path, handle))[0].state == RunState.FINISHED
 
     seen = []
@@ -142,11 +143,13 @@ def test_wildcards_track_concrete_file_availability(tmp_path):
         FileEntry(local_path=str(tmp_path / "*.dat"), availability_state="pending"),
     ))
     status = RunStatus(RunState.FINISHED, backend_id="test")
-    updated = local_manifest(files, status)
-    assert len(updated.outputs) == 2
+    from ase2sprkkr.execution.file_availability import materialize_manifest
+    frozen, error = materialize_manifest(files)
+    assert error is None
+    updated = local_manifest(frozen, status)
+    assert len(updated.outputs) == 1
+    assert updated.outputs[0].source == str(tmp_path / "*.dat")
     assert updated.outputs[0].availability_state == "available"
-    assert updated.outputs[1].source_pattern == str(tmp_path / "*.dat")
-    assert updated.outputs[1].availability_state == "available"
 
 
 def test_failed_launch_clears_stale_stdout(tmp_path):
@@ -205,7 +208,7 @@ def test_local_prelaunch_error_is_known_submission_failure(tmp_path, monkeypatch
     assert runner.backend_id is None
     assert runner.state == RunState.FAILED
     assert runner.failure_phase == FailurePhase.SUBMISSION
-    assert not _recover_submission(RUN_ID)
+    assert not read_submission(RUN_ID)
 
 
 def test_cancelled_run_preserves_partial_stream_availability(tmp_path):
@@ -214,7 +217,9 @@ def test_cancelled_run_preserves_partial_stream_availability(tmp_path):
     files = FileManifest(
         stdout=FileEntry(local_path=str(out), availability_state="pending"),
     )
-    manifest = local_manifest(files, RunStatus(RunState.CANCELLED))
+    from ase2sprkkr.execution.file_availability import materialize_manifest
+    frozen, _ = materialize_manifest(files)
+    manifest = local_manifest(frozen, RunStatus(RunState.CANCELLED))
     assert manifest.stdout.availability_state == "available"
     assert out.read_bytes() == b"partial output\n"
 
@@ -253,33 +258,65 @@ def test_project_request_flushes_each_declared_file_once(tmp_path):
     runner = LocalExecutor().create_project_run(spec, run_id=RUN_ID)
     request = runner._request()
 
-    assert request["output_files"] == [output.name, str(tmp_path / "a.dat")]
-    assert request["input_files"] == [inp.name, str(tmp_path / "b.inp")]
-    assert request["cache_files"] == [cache.name, str(tmp_path / "restart.pot")]
+    from ase2sprkkr.execution.run_model import FileManifest
+    declared = FileManifest(**request["files"])
+    assert [entry.local_path for entry in declared.outputs] == [output.name, str(tmp_path / "a.dat")]
+    assert [entry.local_path for entry in declared.inputs] == [inp.name, str(tmp_path / "b.inp")]
+    assert [entry.local_path for entry in declared.caches] == [cache.name, str(tmp_path / "restart.pot")]
+    assert "input_files" not in request
+    assert "output_files" not in request
+    assert "cache_files" not in request
     assert (output.flush_count, inp.flush_count, cache.flush_count) == (1, 1, 1)
 
 
-def test_submission_cleanup_uses_parsed_manifest_and_protects_caches(tmp_path):
-    from ase2sprkkr.execution.remote_service import (
-        _clean_request_outputs, _request_spec,
+def test_local_project_request_preserves_reserved_manifest(tmp_path):
+    """Changing spec declarations cannot replace the reserved file list."""
+    from dataclasses import asdict
+
+    spec = replace(_spec(tmp_path), output_files=("original.dat",))
+    runner = LocalExecutor().create_project_run(spec, run_id=RUN_ID)
+    reserved = FileManifest(
+        outputs=(FileEntry(local_path=str(tmp_path / "reserved.dat"),
+                           availability_state="pending"),),
+        stdout=FileEntry(local_path=str(tmp_path / "out.txt"),
+                         availability_state="pending"),
     )
+    runner.set_manifest(reserved)
+    runner.spec = replace(spec, output_files=("unreserved.dat",),
+                          cache_files=("unreserved.cache",))
+    assert runner._request()["files"] == asdict(reserved)
+    assert runner.files is reserved
+
+
+def test_submission_cleanup_uses_manifest_to_protect_caches(tmp_path):
+    from dataclasses import asdict
+
+    from ase2sprkkr.execution.file_availability import prepare_local_files
+    from ase2sprkkr.execution.remote_service import _request_spec
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
 
     for name in ("stale.dat", "input.dat", "stdin.dat", "cache.dat", "sync-cache.dat"):
         (tmp_path / name).write_text(name)
 
+    def located(name):
+        path = str(tmp_path / name)
+        return FileEntry(path, path)
+
+    manifest = FileManifest(
+        outputs=(located("*.dat"),),
+        caches=(
+            located("cache.dat"),
+            located("sync-cache.dat"),
+        ),
+    )
     request = {
         "directory": str(tmp_path),
         "argv": [sys.executable, "-c", "pass"],
         "input_file": "input.dat",
         "stdin": "stdin.dat",
-        "output_files": ["*.dat"],
-        "cache_files": ["cache.dat"],
-        "client_sync": {
-            "cache_files": [{"path": "sync-cache.dat", "before": None}],
-        },
+        "files": asdict(manifest),
     }
-    spec = _request_spec(request)
-    _clean_request_outputs(spec, tmp_path)
+    prepare_local_files(_request_spec(request))
 
     assert not (tmp_path / "stale.dat").exists()
     for name in ("input.dat", "stdin.dat", "cache.dat", "sync-cache.dat"):
@@ -318,6 +355,67 @@ def test_terminal_project_runner_does_not_query_backend(monkeypatch, tmp_path):
         lambda *args: pytest.fail("Terminal runner must not query backend"),
     )
     assert runner.state is RunState.FINISHED
+
+
+def test_local_project_freezes_wildcards_at_supervisor_termination(tmp_path):
+    result = tmp_path / "result-1.dat"
+    runner = LocalExecutor().create_project_run(
+        replace(_spec(tmp_path), output_files=(str(tmp_path / "result-*.dat"),),
+                argv=(sys.executable, "-c",
+                      "from pathlib import Path; Path('result-1.dat').write_text('one')")),
+        run_id=RUN_ID,
+    )
+    runner.submit()
+    assert runner.wait().return_code == 0
+    assert result.read_text() == "one"
+    assert len(runner.files.outputs) == 1
+    (tmp_path / "result-late.dat").write_text("late")
+    status = LocalExecutor().status(_record(tmp_path, runner.backend_id))[0]
+    assert status.files is not None
+    assert [entry.local_path for entry in status.files.outputs] == [str(result)]
+    assert [entry.local_path for entry in runner.files.outputs] == [str(result)]
+
+
+def test_local_prepare_publishes_manifest_before_submit(tmp_path, monkeypatch):
+    """Project persistence can read exactly the staged manifest before launch."""
+    from ase2sprkkr.execution import local_project
+    from ase2sprkkr.execution.run_model import FileManifest
+
+    outfile = tmp_path / "result.dat"
+    spec = replace(_spec(tmp_path), output_files=(str(outfile),))
+    runner = LocalExecutor().create_project_run(spec, run_id=RUN_ID)
+    assert runner.files is None
+
+    assert runner.prepare_submission() is True
+    manifest = runner.files
+    assert isinstance(manifest, FileManifest)
+    assert manifest.outputs[0].local_path == str(outfile)
+    request = runner._prepared_request
+    assert FileManifest(**request["files"]) == manifest
+
+    def lost_reply(_request):
+        assert _request is request
+        raise ConnectionError("lost submit response")
+
+    from ase2sprkkr.execution import remote_service
+    monkeypatch.setattr(remote_service, "submit_remote", lost_reply)
+    with pytest.raises(ConnectionError, match="lost submit response"):
+        runner.submit()
+    assert runner.files is manifest
+    assert runner._prepared_request is request
+    assert runner.backend_id is None
+
+
+def test_local_terminal_receipt_keeps_existing_stdout_available(tmp_path):
+    output = tmp_path / "out.txt"
+    output.write_text("complete")
+    files = FileManifest(
+        stdout=FileEntry(str(output), availability_state="pending"),
+    )
+    status = RunStatus(RunState.FINISHED, return_code=0)
+    updated = local_manifest(files, status)
+    assert updated.stdout.availability_state == "available"
+    assert updated.stdout.availability_message is None
 
 
 def test_local_project_invalid_output_is_known_non_submission(tmp_path):

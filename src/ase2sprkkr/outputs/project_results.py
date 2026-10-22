@@ -128,7 +128,7 @@ def attach_project_run(
                 state=RunState.FAILED,
                 message=str(exc),
                 failure_phase=FailurePhase.POSTPROCESSING,
-                artifacts_available=True,
+                files_available=True,
             )
         raise
 

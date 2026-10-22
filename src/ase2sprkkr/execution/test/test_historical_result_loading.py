@@ -3,10 +3,9 @@ from types import SimpleNamespace
 import pytest
 
 from ase2sprkkr.execution import (
-    ArtifactAvailabilityState,
+    FileAvailabilityState,
     ExecutionSpec,
     Executor,
-    ExecutorPool,
     FileState,
     FileManifest,
     RunState,
@@ -54,7 +53,7 @@ def _spec(tmp_path):
 
 
 def _manager(store):
-    return ExecutionManager(store, executor_pool=ExecutorPool())
+    return ExecutionManager(store)
 
 
 def _terminal_run(tmp_path, *, state=RunState.FINISHED, return_code=0, task="DOS"):
@@ -80,7 +79,7 @@ def _terminal_run(tmp_path, *, state=RunState.FINISHED, return_code=0, task="DOS
         state=state,
         execution=record.execution.submitted("job-1"),
         return_code=return_code,
-        artifacts_available=True,
+        files_available=True,
     )
     return manager, executor, record
 
@@ -107,7 +106,7 @@ def test_history_listing_is_lazy_but_loading_restores_missing_output(
     output_path = tmp_path / "run.out"
     output_path.unlink()
 
-    # Merely enumerating stored history must not retrieve artifacts.
+    # Merely enumerating stored history must not retrieve files.
     records = manager.store.runs()
     assert records[0].id == record.id
     assert executor.fetch_calls == []
@@ -128,7 +127,7 @@ def test_history_listing_is_lazy_but_loading_restores_missing_output(
     assert result.run_record.files.state == FileState.CURRENT
     assert (
         result.run_record.files.availability_state
-        == ArtifactAvailabilityState.AVAILABLE
+        == FileAvailabilityState.AVAILABLE
     )
 
 
@@ -170,12 +169,12 @@ def test_restored_changed_content_is_rejected_as_overwritten(
     assert not path.exists()
     assert not list(tmp_path.glob(".run.out.*.tmp"))
     if entrypoint == "load":
-        assert error.value.record.files.availability_state == ArtifactAvailabilityState.FAILED
+        assert error.value.record.files.availability_state == FileAvailabilityState.FAILED
         assert stored.files.state == FileState.MISSING
-        assert stored.files.availability_state == ArtifactAvailabilityState.FAILED
+        assert stored.files.availability_state == FileAvailabilityState.FAILED
 
 
-def test_retrieval_programming_error_is_not_persisted_as_artifact_failure(tmp_path):
+def test_retrieval_programming_error_is_not_persisted_as_file_failure(tmp_path):
     manager, executor, record = _terminal_run(tmp_path)
     (tmp_path / "run.out").unlink()
 
@@ -190,7 +189,7 @@ def test_retrieval_programming_error_is_not_persisted_as_artifact_failure(tmp_pa
     stored = manager.store.get(record.id)
     assert (
         stored.files.availability_state
-        == ArtifactAvailabilityState.AVAILABLE
+        == FileAvailabilityState.AVAILABLE
     )
 
 
@@ -208,7 +207,7 @@ def test_finished_history_without_available_output_is_not_synthesized(tmp_path):
         record,
         state=RunState.FINISHED,
         return_code=0,
-        artifacts_available=False,
+        files_available=False,
     )
 
     with pytest.raises(ProjectResultUnavailableError, match="unavailable"):

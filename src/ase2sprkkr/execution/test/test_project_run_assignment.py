@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from ase2sprkkr.execution import (
-    ExecutionManager, Executor, ProjectRepository, RunState,
+    ExecutionManager, ExecutionSpec, Executor, ProjectRepository, RunState,
 )
 
 
@@ -55,7 +55,7 @@ class _Executor(Executor):
 def _fixture(tmp_path):
     projects = ProjectRepository(tmp_path / "projects")
     project = projects.create("Project")
-    manager = ExecutionManager(project_repository=projects).for_project(project)
+    manager = ExecutionManager(project_repository=projects)
     return manager, projects, project
 
 
@@ -63,9 +63,9 @@ def test_run_is_durable_in_project_namespace_before_backend_submit(tmp_path):
     manager, projects, project = _fixture(tmp_path)
     executor = _Executor()
     run = manager.create_run(
-        executor, SimpleNamespace(directory=str(tmp_path)),
+        executor, ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
         process_result=lambda outcome: outcome, task="DOS",
-        input_definition="dos",
+        input_definition="dos", project_id=project.id,
     )
     observed = []
     executor.runner.on_submit = lambda: observed.append(
@@ -88,13 +88,13 @@ def test_project_must_exist_before_backend_is_created(tmp_path, explicit):
     projects = ProjectRepository(tmp_path / "projects")
     manager = ExecutionManager(project_repository=projects)
     executor = _Executor()
-    options = {"project": "missing"} if explicit else {}
+    options = {"project_id": "missing"} if explicit else {}
     errors = (KeyError, ValueError) if explicit else ValueError
-    message = None if explicit else "existing project"
+    message = None if explicit else "project_id"
 
     with pytest.raises(errors, match=message):
         manager.create_run(
-            executor, SimpleNamespace(directory=str(tmp_path)),
+            executor, ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
             process_result=lambda outcome: outcome, task="DOS",
             **options,
         )

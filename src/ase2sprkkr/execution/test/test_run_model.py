@@ -5,7 +5,7 @@ import pytest
 from ase2sprkkr.execution.base import LaunchSpec
 from ase2sprkkr.execution.endpoint import ExecutorEndpoint
 from ase2sprkkr.execution.run_model import (
-    ArtifactAvailabilityState, CacheEntry, Execution, FileEntry, FileManifest,
+    FileAvailabilityState, Execution, FileEntry, FileManifest,
     FileMapping, FileSyncPolicy, WorkingDirectory,
 )
 
@@ -30,13 +30,13 @@ def test_manifest_roundtrip_includes_streams_and_cache_baseline():
     original = FileManifest(
         inputs=(FileEntry("/local/input", "/remote/input"),),
         outputs=(FileEntry("/local/result", "/remote/result"),),
-        caches=(CacheEntry(FileEntry("/local/cache", "/remote/cache"), (100, 123)),),
+        caches=(FileEntry("/local/cache", "/remote/cache", pre_run_signature=(100, 123)),),
         stdout=FileEntry("/local/out", "/remote/out"),
         stderr=FileEntry("/local/err", "/remote/err"),
     )
     restored = FileManifest(**asdict(original))
     assert restored == original
-    assert restored.caches[0].before == (100, 123)
+    assert restored.caches[0].pre_run_signature == (100, 123)
 
 
 def test_empty_backend_identity_and_pathless_file_are_invalid():
@@ -49,6 +49,7 @@ def test_empty_backend_identity_and_pathless_file_are_invalid():
 def test_manifest_versions_and_availability_roundtrip():
     manifest = FileManifest(
         inputs=(FileEntry("/local/in", "/remote/in"),),
+        primary_input=FileEntry("/local/in", "/remote/in"),
         outputs=(FileEntry("/local/data", "/remote/data"),),
         stdout=FileEntry("/local/stdout", "/remote/stdout"),
         stderr=FileEntry("/local/stderr", "/remote/stderr"),
@@ -65,13 +66,13 @@ def test_manifest_versions_and_availability_roundtrip():
         FileEntry("/local/test", availability_state="inconsistent")
 
 
-def test_each_artifact_tracks_its_own_transfer_outcome():
+def test_each_file_tracks_its_own_transfer_outcome():
     manifest = FileManifest(
         outputs=(
             FileEntry("/local/one", "/remote/one", "pending"),
             FileEntry("/local/two", "/remote/two", "pending"),
         ),
-        caches=(CacheEntry(FileEntry("/local/cache", "/remote/cache", "pending")),),
+        caches=(FileEntry("/local/cache", "/remote/cache", "pending"),),
     )
     manifest = manifest.with_file_availability("/local/one", "available")
     manifest = manifest.with_file_availability(
@@ -79,10 +80,10 @@ def test_each_artifact_tracks_its_own_transfer_outcome():
     )
     assert manifest.outputs[0].availability_state == "available"
     assert manifest.outputs[1].availability_state == "failed"
-    assert manifest.failed_artifacts == (manifest.outputs[1],)
+    assert manifest.failed_files == (manifest.outputs[1],)
     assert manifest.availability_state == "failed"
     manifest = manifest.with_file_availability("/local/cache", "skipped", kind="cache")
-    assert [entry.availability_state for entry in manifest.artifacts] == [
+    assert [entry.availability_state for entry in manifest.files] == [
         "available", "failed", "skipped",
     ]
     assert manifest.availability_message == "connection lost"
@@ -110,58 +111,41 @@ def test_merged_stdout_stderr_has_only_one_file_status():
         stderr=FileEntry("/local/combined", "/remote/combined", "pending"),
     )
     manifest = manifest.with_file_availability("/local/combined", "available")
-    assert len(manifest.artifacts) == 1
+    assert len(manifest.files) == 1
     assert manifest.stdout.availability_state == "available"
     assert manifest.stderr.availability_state == "available"
     assert FileManifest(**asdict(manifest)) == manifest
 
 
-def test_wildcard_parent_remains_pending_until_completion():
-    manifest = FileManifest(
-        outputs=(FileEntry("/local/*.dat", "/remote/*.dat", "pending"),)
+def test_materialized_wildcard_members_have_independent_availability():
+    """Concrete results keep source provenance but no wildcard parent state."""
+    files = FileManifest(
+        outputs=(
+            FileEntry("/local/one.dat", "/remote/one.dat", "pending",
+                      source="/local/*.dat"),
+            FileEntry("/local/two.dat", "/remote/two.dat", "pending",
+                      source="/local/*.dat"),
+        ),
     )
-    manifest = manifest.with_file_availability(
-        "/local/one.dat", "pending", remote_path="/remote/one.dat",
-        source_pattern="/local/*.dat",
-    )
-    assert manifest.outputs[0].availability_state == "pending"
-    assert manifest.outputs[1].source_pattern == "/local/*.dat"
-    manifest = manifest.with_file_availability("/local/one.dat", "available")
-    assert manifest.outputs[0].availability_state == "pending"
-    manifest = manifest.with_file_availability(
+    files = files.with_file_availability("/local/one.dat", "available")
+    files = files.with_file_availability(
         "/local/two.dat", "failed", "transfer failed",
-        remote_path="/remote/two.dat", source_pattern="/local/*.dat",
     )
-    manifest = manifest.with_file_availability(
-        "/local/*.dat", "failed", "transfer failed",
-    )
-    assert [entry.availability_state for entry in manifest.outputs] == [
-        "failed", "available", "failed",
+    assert [entry.availability_state for entry in files.outputs] == [
+        "available", "failed",
     ]
-    assert FileManifest(**asdict(manifest)) == manifest
-
-
-def test_wildcard_parent_completed_after_all_files():
-    manifest = FileManifest(
-        outputs=(FileEntry("/local/*.dat", "/remote/*.dat", "pending"),)
-    )
-    for item in ("one", "two"):
-        manifest = manifest.with_file_availability(
-            f"/local/{item}.dat", "pending",
-            remote_path=f"/remote/{item}.dat", source_pattern="/local/*.dat",
-        )
-        manifest = manifest.with_file_availability(f"/local/{item}.dat", "available")
-        assert manifest.outputs[0].availability_state == "pending"
-    manifest = manifest.with_file_availability("/local/*.dat", "available")
-    assert manifest.availability_state == "available"
-    assert len(manifest.outputs) == 3
+    assert files.availability_state == "failed"
+    assert files.availability_message == "transfer failed"
+    assert all(entry.source == "/local/*.dat" for entry in files.outputs)
+    assert not files.has_wildcards()
+    assert FileManifest(**asdict(files)) == files
 
 
 def test_recovered_stream_paths_update_only_declared_stream_locations():
     manifest = FileManifest(
         inputs=(FileEntry("/local/input", "/remote/input"),),
-        outputs=(FileEntry("/local/artifact", "/remote/artifact"),),
-        caches=(CacheEntry(FileEntry("/local/cache", "/remote/cache"), (12, 34)),),
+        outputs=(FileEntry("/local/file", "/remote/file"),),
+        caches=(FileEntry("/local/cache", "/remote/cache", pre_run_signature=(12, 34)),),
         stdout=FileEntry(
             "/local/stdout", "/previous/stdout",
             availability_state="pending",
@@ -225,54 +209,96 @@ def test_submitted_uses_execution_backend_id_validation():
         bound.submitted("other")
 
 
-def test_manifest_from_spec_normalizes_stream_overlaps(tmp_path):
+def test_manifest_from_spec_preserves_distinct_roles(tmp_path):
     from types import SimpleNamespace
 
     spec = SimpleNamespace(
-        directory=str(tmp_path),
-        input_file="input.inp",
-        input_files=("input.inp", "other.inp", "other.inp", None, object(), 1),
-        output_file="stdout.out", error_file="stderr.err",
-        output_files=("stdout.out", "stderr.err", "result.dat", "result.dat", None, object()),
-        cache_files=("restart.pot", "restart.pot", None, object()),
+        directory=str(tmp_path), input_file="input.inp",
+        input_files=("other.inp",), output_file="stdout.out",
+        error_file="stderr.err", output_files=("result.dat",),
+        cache_files=("restart.pot",),
     )
     files = FileManifest.from_spec(spec)
-    assert files.input_files == (str(tmp_path / "input.inp"), str(tmp_path / "other.inp"))
-    assert files.stdout.local_path == str(tmp_path / "stdout.out")
-    assert files.stderr.local_path == str(tmp_path / "stderr.err")
-    assert tuple(x.local_path for x in files.outputs) == (str(tmp_path / "result.dat"),)
+    assert files.input_files == (
+        str(tmp_path / "input.inp"), str(tmp_path / "other.inp"),
+    )
     assert files.output_files == (
-        str(tmp_path / "stdout.out"),
-        str(tmp_path / "stderr.err"),
+        str(tmp_path / "stdout.out"), str(tmp_path / "stderr.err"),
         str(tmp_path / "result.dat"),
     )
-    assert len(files.caches) == 1
     assert FileManifest(**asdict(files)) == files
 
 
-def test_legacy_duplicate_stderr_declaration_is_updated_together():
-    path = "/local/stderr"
-    files = FileManifest(
-        stderr=FileEntry(path, availability_state="pending"),
-        outputs=(FileEntry(path, availability_state="pending"),),
+@pytest.mark.parametrize("role,overlap", [
+    ("output_files", ("stdout.out",)),
+    ("output_files", ("result.dat", "./result.dat")),
+    ("cache_files", ("cache.dat", "./cache.dat")),
+    ("cache_files", ("input.inp",)),
+    ("cache_files", ("result.dat",)),
+])
+def test_duplicate_file_declarations_are_errors(tmp_path, role, overlap):
+    from types import SimpleNamespace
+
+    spec = SimpleNamespace(
+        directory=str(tmp_path), input_file="input.inp",
+        input_files=("other.inp",), output_file="stdout.out",
+        error_file="stderr.err", output_files=("result.dat",),
+        cache_files=(),
     )
-    updated = files.with_file_availability(path, "available")
-    assert updated.stderr.availability_state == "available"
-    assert updated.outputs[0].availability_state == "available"
-    assert updated.output_files == (path,)
+    setattr(spec, role, overlap)
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest.from_spec(spec)
+
+
+@pytest.mark.parametrize("extras,stdin,expected", [
+    (("input.inp",), None, ("input.inp",)),
+    (("other.inp", "./other.inp"), None, ("input.inp", "other.inp")),
+    (("input.inp", "other.inp"), "input.inp", ("input.inp", "other.inp")),
+    (("other.inp",), "other.inp", ("input.inp", "other.inp")),
+])
+def test_duplicate_input_roles_share_one_staged_file(tmp_path, extras, stdin, expected):
+    from types import SimpleNamespace
+    spec = SimpleNamespace(
+        directory=str(tmp_path), input_file="input.inp", input_files=extras,
+        stdin=stdin, output_file=None, error_file=None,
+        output_files=(), cache_files=(),
+    )
+    files = FileManifest.from_spec(spec)
+    assert tuple(x.local_path for x in files.inputs) == tuple(
+        str(tmp_path / name) for name in expected
+    )
+    assert files.primary_input.local_path == str(tmp_path / "input.inp")
+    assert (None if files.stdin is None else files.stdin.local_path) == (
+        None if stdin is None else str(tmp_path / stdin)
+    )
+    assert FileManifest(**asdict(files)) == files
+
+
+def test_only_stdout_and_stderr_may_share_a_file():
+    files = FileManifest(
+        stdout=FileEntry("/local/shared", "/remote/shared"),
+        stderr=FileEntry("/local/shared", "/remote/shared"),
+    )
+    assert len(files.files) == 1
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest(
+            outputs=(FileEntry("/local/shared", "/remote/shared"),),
+            stdout=FileEntry("/local/shared", "/remote/shared"),
+        )
+
 
 def test_availability_enum_is_shared_between_model_and_manager():
-    from ase2sprkkr.execution import ArtifactAvailabilityState
-    from ase2sprkkr.execution.manager import ArtifactAvailabilityState as ManagerState
-    from ase2sprkkr.execution.run_model import ArtifactAvailabilityState as ModelState
+    from ase2sprkkr.execution import FileAvailabilityState
+    from ase2sprkkr.execution.manager import FileAvailabilityState as ManagerState
+    from ase2sprkkr.execution.run_model import FileAvailabilityState as ModelState
 
-    assert ModelState is ManagerState is ArtifactAvailabilityState
+    assert ModelState is ManagerState is FileAvailabilityState
     assert {state.value for state in ModelState} == {
         "pending", "available", "failed", "skipped",
     }
 
 
-@pytest.mark.parametrize("state", list(ArtifactAvailabilityState))
+@pytest.mark.parametrize("state", list(FileAvailabilityState))
 def test_file_entry_accepts_enum_but_serializes_status_as_string(state):
     entry = FileEntry("/local/file", availability_state=state)
     assert type(entry.availability_state) is str
@@ -281,13 +307,13 @@ def test_file_entry_accepts_enum_but_serializes_status_as_string(state):
     assert FileEntry(**asdict(entry)) == entry
 
 
-def test_invalid_artifact_availability_is_rejected():
+def test_invalid_file_availability_is_rejected():
     with pytest.raises(ValueError, match="availability"):
         FileEntry("/local/file", availability_state="new-state")
     with pytest.raises(ValueError, match="error belongs"):
         FileEntry(
             "/local/file",
-            availability_state=ArtifactAvailabilityState.PENDING,
+            availability_state=FileAvailabilityState.PENDING,
             availability_message="error",
         )
 
@@ -324,3 +350,79 @@ def test_launch_sync_policies_are_validated_and_serialized(name, policy):
 def test_launch_rejects_unknown_sync_policies(name):
     with pytest.raises(ValueError, match="synchronization policy"):
         LaunchSpec(**{name: "unsupported"})
+
+
+def test_manifest_accepts_output_that_is_also_stdout_or_stderr():
+    shared = FileEntry("/local/run.out", "/remote/run.out")
+    manifest = FileManifest(stdout=shared, outputs=(shared,))
+    assert manifest.stdout == manifest.outputs[0]
+    assert len(manifest.files) == 1
+
+    errors = FileEntry("/local/run.err", "/remote/run.err")
+    manifest = FileManifest(stderr=errors, outputs=(errors,))
+    assert manifest.stderr == manifest.outputs[0]
+
+
+def test_manifest_rejects_stream_output_remote_source_disagreement():
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest(
+            stdout=FileEntry("/local/run.out", "/remote/run.out"),
+            outputs=(FileEntry("/local/run.out", "/remote/another.out"),),
+        )
+
+
+
+def test_optional_taskfile_survives_manifest_and_roundtrip(tmp_path):
+    from ase2sprkkr.execution.base import ExecutionSpec
+    from ase2sprkkr.input_parameters.task_definition import TaskFile
+
+    optional_output = TaskFile(tmp_path / "maybe-*.dat", optional=True)
+    required_output = TaskFile(tmp_path / "required.dat")
+    optional_cache = TaskFile(tmp_path / "restart.pot", optional=True)
+    optional_input = TaskFile(tmp_path / "maybe.in", optional=True)
+    spec = ExecutionSpec(
+        argv=("true",), directory=str(tmp_path), input_file=None,
+        output_file=None, input_files=(optional_input,),
+        output_files=(optional_output, required_output),
+        cache_files=(optional_cache,),
+    )
+    manifest = FileManifest.from_spec(spec)
+    assert [(item.local_path, item.optional) for item in manifest.outputs] == [
+        (str(optional_output), True), (str(required_output), False),
+    ]
+    assert manifest.caches[0].optional is True
+    assert manifest.inputs[0].optional is True
+    assert FileManifest(**asdict(manifest)) == manifest
+    with pytest.raises(TypeError, match="optional"):
+        FileEntry(str(tmp_path / "wrong"), optional="true")
+
+
+def test_manifest_allows_one_remote_output_downloaded_to_distinct_local_paths():
+    shared_source = "/remote/result.out"
+    manifest = FileManifest(outputs=(
+        FileEntry("/local/a.out", shared_source),
+        FileEntry("/local/b.out", shared_source),
+    ))
+    assert len(manifest.outputs) == 2
+
+
+def test_manifest_rejects_two_remote_outputs_claiming_one_local_destination():
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest(outputs=(
+            FileEntry("/local/result.out", "/remote/first.out"),
+            FileEntry("/local/result.out", "/remote/second.out"),
+        ))
+
+
+def test_materialized_wildcard_collision_is_deferred_to_delivery():
+    declaration = FileEntry("/local/*.dat", "/remote/*.dat")
+    member = FileEntry("/local/data.dat", "/remote/data.dat",
+                       source="/local/*.dat")
+    cache = FileEntry("/local/data.dat", "/remote/data.dat")
+    # Discovery must preserve both records rather than crash while building
+    # the immutable manifest. The transfer preflight rejects their collision.
+    manifest = FileManifest(outputs=(member,), caches=(cache,))
+    assert manifest.outputs == (member,)
+    assert manifest.caches == (cache,)
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest(outputs=(cache,), caches=(cache,))

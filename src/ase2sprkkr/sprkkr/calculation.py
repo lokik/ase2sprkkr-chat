@@ -20,12 +20,12 @@ from ..ase.symbols import filename_from_symbols
 from ..bindings.empty_spheres import add_empty_spheres
 from ..common.file_utils import Directory
 from ..common.temporary import temporary_option_value
-from ..execution.base import ExecutionResources, ResourceOwnedRunner
-from ..execution.persistence import resolve_project_manager
+from ..execution.base import ExecutionResources
+from ..execution.persistence import resolve_project_manager, default_execution_manager
 from ..execution.postprocessing import PostprocessingRunner
 from ..input_parameters.input_parameters import InputParameters
 from ..potentials.potentials import Potential
-from .profile import SPRKKRProfile, executor_from_profile
+from .profile import SPRKKRProfile
 from .sprkkr_atoms import SPRKKRAtoms
 
 
@@ -81,7 +81,7 @@ class _TemporaryNamedFile:
     created with ``delete=False`` and this small owner removes it explicitly.
     ``close_file()`` closes only the descriptor while retaining the pathname;
     it is used after POTFIL serialization while the prepared calculation still
-    owns the temporary artifact.
+    owns the temporary file.
     """
 
     def __init__(self, *, directory, mode):
@@ -867,9 +867,20 @@ def _create_sprkkr_run(
             print_output=print_output,
             directory=prepared.directory,
         )
+        project_context = resolve_project_manager(project)
+        explicit_executor = executor is not None
         if executor is None:
-            executor = executor_from_profile(profile)
-        manager = resolve_project_manager(project)
+            manager = (
+                project_context[0] if project_context is not None
+                else default_execution_manager()
+            )
+            executor = manager.executors.for_profile(profile)
+        if project_context is not None:
+            manager, project_id = project_context
+            executor_endpoint = (
+                manager.executors.register(executor)
+                if explicit_executor else profile.endpoint
+            )
 
         execution_profile = profile
         if task.mpi:
@@ -877,27 +888,20 @@ def _create_sprkkr_run(
                 mpi=executor.resolve_mpi(profile.mpi)
             )
 
+        # Primary input and streams already have their own declaration fields.
+        # Repeating them in auxiliary declarations is an error, not an alias.
         input_files = tuple(
-            file
-            for file in (
-                prepared.input_file,
+            file for file in (
                 prepared.potential_file,
                 *input_parameters.input_files(prepared.directory),
-            )
-            if file is not None
+            ) if file is not None
         )
         output_files = tuple(
-            file
-            for file in (
-                prepared.output_file,
-                opened_error if opened_error is not prepared.output_file else None,
-                *input_parameters.output_files(prepared.directory),
-            )
+            file for file in input_parameters.output_files(prepared.directory)
             if file is not None
         )
         cache_files = tuple(
-            file
-            for file in input_parameters.cache_files(prepared.directory)
+            file for file in input_parameters.cache_files(prepared.directory)
             if file is not None
         )
 
@@ -918,38 +922,37 @@ def _create_sprkkr_run(
             return reader.read_from_file(
                 outcome.output_file,
                 outcome.error_file,
-                return_code=(
-                    0 if outcome.return_code is None else outcome.return_code
-                ),
+                return_code=outcome.return_code,
                 input_file=outcome.input_file,
             )
 
         def finalized(out):
-            resources.close(suppress_errors=True)
             if callback:
                 callback(out)
 
-        if manager is None:
+        if project_context is None:
             raw_runner = executor.create_run(spec)
             runner = PostprocessingRunner(
                 raw_runner,
                 process_result,
                 callback=finalized,
+                resources=resources,
             )
         else:
             runner = manager.create_run(
-                executor,
                 spec,
+                endpoint=executor_endpoint,
                 process_result=process_result,
                 task=task.name,
                 input_definition=input_parameters.definition_name,
                 dataset=input_parameters.CONTROL.DATASET.result,
                 callback=finalized,
+                project_id=project_id,
+                resources=resources,
             )
         if read_callback:
             runner.add_output_listener(read_callback)
 
-        runner = ResourceOwnedRunner(runner, resources)
         handed_off = True
         return runner
     finally:

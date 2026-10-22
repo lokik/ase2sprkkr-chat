@@ -12,17 +12,18 @@ def test_status_command_forwards_opaque_remote_handle(monkeypatch):
     monkeypatch.setattr(
         remote_service,
         "status_remote",
-        lambda value: calls.append(value) or {"state": "running"},
+        lambda value, files=None: calls.append((value, files)) or {"state": "running"},
     )
     output = []
     monkeypatch.setattr(remote_command, "_print_json", output.append)
+    monkeypatch.setattr(remote_command.sys, "stdin", io.StringIO(""))
 
     remote_command.run(
         SimpleNamespace(remote_action="status", remote_id=remote_id),
         None,
     )
 
-    assert calls == [remote_id]
+    assert calls == [(remote_id, None)]
     assert output == [{"state": "running"}]
 
 
@@ -65,3 +66,23 @@ def test_resolve_mpi_command_preserves_integer_process_count(monkeypatch):
     remote_command.run(SimpleNamespace(remote_action="resolve-mpi"), None)
 
     assert output == [{"mpi": ("mpirun", "-np", "4")}]
+
+
+def test_status_command_forwards_manifest_payload(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        remote_service, "status_remote",
+        lambda remote_id, files=None: calls.append((remote_id, files))
+        or {"state": "finished", "return_code": 0},
+    )
+    payload = {"files": {"outputs": [{"remote_path": "/remote/result.dat"}]}}
+    monkeypatch.setattr(remote_command.sys, "stdin", io.StringIO(json.dumps(payload)))
+    results = []
+    monkeypatch.setattr(remote_command, "_print_json", results.append)
+
+    remote_command.run(
+        SimpleNamespace(remote_action="status", remote_id="job-with-manifest"), None,
+    )
+
+    assert calls == [("job-with-manifest", payload["files"])]
+    assert results == [{"state": "finished", "return_code": 0}]

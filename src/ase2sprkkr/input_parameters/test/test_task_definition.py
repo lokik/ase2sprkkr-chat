@@ -38,19 +38,21 @@ def test_task_binding_is_authoritative():
     assert parameters.task_definition_required() is parameters.task_definition
 
 
-@pytest.mark.parametrize("copy_values", [False, True])
-def test_copy_preserves_task_binding(copy_values):
+def test_copy_preserves_task_binding():
     parameters = InputParameters.create("BSFEK")
 
-    copied = parameters.copy(copy_values=copy_values)
+    # Both copy policies must preserve the same task metadata; preparing the
+    # original input parameters twice would not exercise any extra behavior.
+    for copy_values in (False, True):
+        copied = parameters.copy(copy_values=copy_values)
 
-    assert copied.task_definition is parameters.task_definition
-    assert copied.task_name == "BSFEK"
-    assert copied.requested_task_name == "BSFEK"
-    assert copied.definition_name == "BSF"
-    assert copied._definition is _schema_for(copied.task_definition)
-    np.testing.assert_array_equal(copied.ENERGY.NE(), [200])
-    assert not copied.ENERGY.NE.is_set()
+        assert copied.task_definition is parameters.task_definition
+        assert copied.task_name == "BSFEK"
+        assert copied.requested_task_name == "BSFEK"
+        assert copied.definition_name == "BSF"
+        assert copied._definition is _schema_for(copied.task_definition)
+        np.testing.assert_array_equal(copied.ENERGY.NE(), [200])
+        assert not copied.ENERGY.NE.is_set()
 
 
 def test_change_task_changes_task_and_schema_atomically():

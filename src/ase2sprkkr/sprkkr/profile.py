@@ -18,7 +18,6 @@ from ..execution import (
     ExecutorEndpoint,
     LaunchSpec,
 )
-from ..execution.endpoint import create_executor_from_endpoint
 from ..profiles import ase_command_profile_values
 
 
@@ -58,6 +57,7 @@ class SPRKKRProfile:
     output_sync: str = "changed"
     psij_backend: Any = None
     psij_url: Any = None
+    psij_poll_interval: Any = None
     mpi_warning: bool = True
     ssh_zstd: bool = False
 
@@ -71,6 +71,7 @@ class SPRKKRProfile:
             remote_command=self.remote_command,
             psij_backend=self.psij_backend,
             psij_url=self.psij_url,
+            psij_poll_interval=self.psij_poll_interval,
         )
 
     @property
@@ -267,19 +268,9 @@ def _configured_profile(profile, configuration):
         output_sync=_profile_value(profile, "output_sync") or "changed",
         psij_backend=_profile_value(profile, "psij_backend"),
         psij_url=_profile_value(profile, "psij_url"),
+        psij_poll_interval=_profile_value(profile, "psij_poll_interval"),
         mpi_warning=mpi_warning,
     )
-
-
-def create_executor_from_profile(profile: SPRKKRProfile):
-    """Construct a new execution backend from endpoint identity only."""
-    return create_executor_from_endpoint(profile.endpoint)
-
-
-def executor_from_profile(profile: SPRKKRProfile):
-    from ..execution.pool import default_executor_pool
-
-    return default_executor_pool().for_profile(profile)
 
 
 def resolve_sprkkr_profile(profile=None, *, configuration=None):

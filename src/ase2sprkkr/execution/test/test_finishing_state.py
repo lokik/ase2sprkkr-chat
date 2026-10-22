@@ -4,7 +4,6 @@ from types import SimpleNamespace
 from ase2sprkkr.execution import (
     ExecutionOutcome,
     Executor,
-    ExecutorPool,
     FailurePhase,
     PostprocessingRunner,
     RunState,
@@ -39,6 +38,7 @@ class _Executor(Executor):
 
 class _RawRunner:
     def __init__(self):
+        self.callback = None
         self.result = ExecutionOutcome(return_code=0)
         self.state = RunState.NEW
         self.backend_id = "job-1"
@@ -55,6 +55,9 @@ class _RawRunner:
         return self.result
 
     def complete(self):
+        self.state = RunState.FINISHED
+        if self.callback is not None:
+            self.callback(self.result)
         self._done.set()
 
     def cancel(self):
@@ -70,7 +73,7 @@ class _RawRunner:
 
 def _record(tmp_path, executor, state=RunState.RUNNING):
     manager = ExecutionManager(
-        RunStore(tmp_path / "runs"), executor_pool=ExecutorPool()
+        RunStore(tmp_path / "runs")
     )
     endpoint = manager.register_executor(executor)
     record = manager.new_record(
@@ -121,13 +124,16 @@ def test_postprocessing_is_observable_until_processor_finishes():
 
     runner = PostprocessingRunner(raw, process)
     runner.submit()
-    raw.complete()
+    completion = Thread(target=raw.complete)
+    completion.start()
 
     assert entered.wait(1)
     assert runner.state == RunState.POSTPROCESSING
 
     release.set()
     result = runner.wait()
+    completion.join(timeout=2)
+    assert not completion.is_alive()
 
     assert result.return_code == 0
     assert runner.state == RunState.FINISHED

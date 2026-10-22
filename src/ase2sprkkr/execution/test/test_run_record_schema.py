@@ -6,8 +6,7 @@ import pytest
 from ase2sprkkr.execution import CorruptRunRecord, RunRecord, RunState, RunStore, Execution, WorkingDirectory, ExecutorEndpoint, FileManifest
 
 
-@pytest.mark.parametrize("schema_version", [0, 1, 2, 4, 5])
-def test_only_current_run_record_schema_is_supported(tmp_path, schema_version):
+def test_noncurrent_run_record_schema_is_rejected(tmp_path):
     store = RunStore(tmp_path / "runs")
     created_at = "2026-10-17T12:34:56+00:00"
     directory = store.directory / "2026-10-17"
@@ -22,7 +21,7 @@ def test_only_current_run_record_schema_is_supported(tmp_path, schema_version):
                 "updated_at": created_at,
                 "task": "DOS",
                 "directory": str(tmp_path),
-                "schema_version": schema_version,
+                "schema_version": 4,  # Current format is 3; no legacy compatibility matrix.
             }
         )
     )

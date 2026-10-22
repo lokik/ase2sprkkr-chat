@@ -323,6 +323,12 @@ definition = ConfigFileDefinition(
                     is_optional=True,
                     info="Optional PSI/J executor URL.",
                 ),
+                V(
+                    "psij_poll_interval",
+                    Integer.I,
+                    is_optional=True,
+                    info="Optional PSI/J stdout/stderr polling interval in seconds. Unset disables polling.",
+                ),
             ],
             is_repeated="DICT_SECTION",
             is_optional=True,

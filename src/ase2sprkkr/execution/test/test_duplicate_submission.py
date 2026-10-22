@@ -5,6 +5,7 @@ import pytest
 
 from ase2sprkkr.execution import (
     DuplicateSubmissionError,
+    ExecutionSpec,
     Executor,
     FileEntry,
     FileManifest,
@@ -23,6 +24,15 @@ class _Runner:
         self._done = Event()
         self.result = SimpleNamespace(return_code=None)
         self.exception = None
+        self.failure_phase = None
+        self.failure_message = None
+        self.files = None
+
+    def set_manifest(self, manifest):
+        self.files = manifest
+
+    def prepare_submission(self):
+        return None
 
     def submit(self):
         self.backend_id = "job"
@@ -41,6 +51,9 @@ class _Runner:
         self._done.set()
 
     def add_output_listener(self, callback):
+        pass
+
+    def add_output_error_listener(self, callback):
         pass
 
     def finish(self):
@@ -64,9 +77,13 @@ class _Executor(Executor):
 
 
 def _run(manager, executor, directory, *, task="DOS", dataset="case"):
+    endpoint = manager.executors.register(executor)
     return manager.create_run(
-        executor,
-        spec=SimpleNamespace(directory=str(directory)),
+        ExecutionSpec(
+            argv=(), input_file=None, output_file=None,
+            directory=str(directory),
+        ),
+        endpoint=endpoint,
         process_result=lambda outcome: outcome,
         task=task,
         dataset=dataset,
@@ -264,3 +281,69 @@ def test_wildcard_output_collisions_follow_pattern_overlap(
         assert manager.reserve(second).state == RunState.SUBMITTING
 
 
+
+
+@pytest.mark.parametrize("alias_kind", ("directory", "file"))
+def test_local_submission_detects_symlinked_output_alias(tmp_path, alias_kind):
+    """Distinct names for one writable local file must conflict."""
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    original = tmp_path / "actual"
+    original.mkdir()
+    actual = original / "result.out"
+    if alias_kind == "directory":
+        alias_dir = tmp_path / "linked"
+        alias_dir.symlink_to(original, target_is_directory=True)
+        alias = alias_dir / "result.out"
+    else:
+        actual.write_text("pre-existing output")
+        alias = tmp_path / "result-link.out"
+        alias.symlink_to(actual)
+
+    first = manager.new_record(
+        task="DOS", directory=original, dataset="one",
+        files=FileManifest(stdout=FileEntry(local_path=str(actual))),
+    )
+    second = manager.new_record(
+        task="BSF", directory=tmp_path, dataset="two",
+        files=FileManifest(outputs=(FileEntry(local_path=str(alias)),)),
+    )
+
+    manager.reserve(first)
+    with pytest.raises(DuplicateSubmissionError):
+        manager.reserve(second)
+
+
+def test_local_submission_detects_hardlinked_output_alias(tmp_path):
+    """Distinct local names sharing an inode cannot be written concurrently."""
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    original = tmp_path / "source.out"
+    alias = tmp_path / "alias.out"
+    original.write_text("existing output")
+    import os
+    os.link(original, alias)
+
+    first = manager.new_record(
+        task="DOS", directory=tmp_path, dataset="one",
+        files=FileManifest(stdout=FileEntry(local_path=str(original))),
+    )
+    second = manager.new_record(
+        task="BSF", directory=tmp_path, dataset="two",
+        files=FileManifest(outputs=(FileEntry(local_path=str(alias)),)),
+    )
+    manager.reserve(first)
+    with pytest.raises(DuplicateSubmissionError):
+        manager.reserve(second)
+
+
+def test_scf_submission_detects_symlinked_working_directory(tmp_path):
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    work = tmp_path / "work"
+    work.mkdir()
+    alias = tmp_path / "work-alias"
+    alias.symlink_to(work, target_is_directory=True)
+
+    first = manager.new_record(task="SCF", directory=work)
+    second = manager.new_record(task="DOS", directory=alias)
+    manager.reserve(first)
+    with pytest.raises(DuplicateSubmissionError):
+        manager.reserve(second)

@@ -103,12 +103,23 @@ def durable_write_text(path, text, *, encoding="utf-8", mode=None):
             os.fsync(stream.fileno())
         durable_replace(temporary, path)
     finally:
+        # A failed cleanup must not replace the write/fsync/rename error.
+        # Keep the first cleanup error if there was no primary failure.
+        import sys
+        primary = sys.exc_info()[1]
+        cleanup_error = None
         if descriptor is not None:
-            os.close(descriptor)
+            try:
+                os.close(descriptor)
+            except OSError as exc:
+                cleanup_error = exc
         try:
-            temporary.unlink()
-        except FileNotFoundError:
-            pass
+            temporary.unlink(missing_ok=True)
+        except OSError as exc:
+            if cleanup_error is None:
+                cleanup_error = exc
+        if primary is None and cleanup_error is not None:
+            raise cleanup_error
 
 
 def durable_write_json(path, data, *, mode=None, **json_options):

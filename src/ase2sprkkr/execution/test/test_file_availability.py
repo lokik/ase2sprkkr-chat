@@ -1,7 +1,7 @@
-"""Contracts shared by local project and PSI/J artifact discovery."""
+"""Contracts shared by local project and PSI/J file discovery."""
 
 from ..file_availability import discover_local_files
-from ..run_model import CacheEntry, FileEntry, FileManifest
+from ..run_model import FileEntry, FileManifest
 
 
 def test_discovers_outputs_and_caches_with_independent_pattern_children(tmp_path):
@@ -10,18 +10,18 @@ def test_discovers_outputs_and_caches_with_independent_pattern_children(tmp_path
     manifest = FileManifest(
         outputs=(FileEntry(local_path=str(tmp_path / "out-*.dat"),
                            availability_state="pending"),),
-        caches=(CacheEntry(FileEntry(
+        caches=(FileEntry(
             local_path=str(tmp_path / "cache-*.pot"),
             availability_state="pending",
-        )),),
+        ),),
     )
     found = discover_local_files(manifest)
-    assert len(found.outputs) == 2
+    assert len(found.outputs) == 1
     assert found.outputs[0].availability_state == "available"
-    assert found.outputs[1].source_pattern == str(tmp_path / "out-*.dat")
-    assert len(found.caches) == 2
-    assert found.caches[0].file.availability_state == "available"
-    assert found.caches[1].file.source_pattern == str(tmp_path / "cache-*.pot")
+    assert found.outputs[0].source == str(tmp_path / "out-*.dat")
+    assert len(found.caches) == 1
+    assert found.caches[0].availability_state == "available"
+    assert found.caches[0].source == str(tmp_path / "cache-*.pot")
     assert discover_local_files(found) == found
 
 
@@ -97,8 +97,9 @@ def test_local_wildcard_discovery_uses_same_glob_semantics_as_transport(tmp_path
     )
     discovered = discover_local_files(manifest)
     assert [entry.local_path for entry in discovered.outputs] == [
-        declaration, str(shown / "file.dat")
+        str(shown / "file.dat")
     ]
+    assert discovered.outputs[0].source == declaration
 
 
 def test_cleanup_unlinks_symlink_without_deleting_its_target(tmp_path):
@@ -210,3 +211,58 @@ def test_collision_expands_protected_wildcard_once_for_multiple_outputs(
 
     assert expanded == [os.path.abspath(pattern)]
     assert protected_file.read_bytes() == b"restart"
+
+
+
+
+def test_remote_missing_wildcards_distinguish_required_and_optional(tmp_path):
+    from dataclasses import asdict
+    from ..file_availability import materialize_manifest
+    from ..run_model import FileMapping
+
+    local, remote = tmp_path / "local", tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    files = FileManifest(
+        outputs=(
+            FileEntry(str(local / "optional-*.dat"),
+                      str(remote / "optional-*.dat"), optional=True,
+                      availability_state="pending"),
+            FileEntry(str(local / "required-*.dat"),
+                      str(remote / "required-*.dat"),
+                      availability_state="pending"),
+        ),
+        mapping=FileMapping(str(local), str(remote)),
+    )
+    frozen, error = materialize_manifest(files, remote=True)
+    assert isinstance(error, FileNotFoundError)
+    assert [entry.availability_state for entry in frozen.outputs] == [
+        "skipped", "failed",
+    ]
+    assert "required-*.dat" in frozen.outputs[1].availability_message
+    assert FileManifest(**asdict(frozen)) == frozen
+
+
+def test_remote_optional_glob_does_not_hide_successful_required_result(tmp_path):
+    from ..file_availability import materialize_manifest
+    from ..run_model import FileMapping
+
+    local, remote = tmp_path / "local", tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    (remote / "result-a.dat").write_text("result")
+    files = FileManifest(
+        outputs=(
+            FileEntry(str(local / "optional-*.dat"),
+                      str(remote / "optional-*.dat"), optional=True),
+            FileEntry(str(local / "result-*.dat"),
+                      str(remote / "result-*.dat")),
+        ),
+        mapping=FileMapping(str(local), str(remote)),
+    )
+    frozen, error = materialize_manifest(files, remote=True)
+    assert error is None
+    assert frozen.outputs[0].availability_state == "skipped"
+    assert frozen.outputs[1].local_path == str(local / "result-a.dat")
+    assert frozen.outputs[1].source == str(local / "result-*.dat")
+    assert frozen.outputs[1].optional is False

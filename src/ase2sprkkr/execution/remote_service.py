@@ -21,55 +21,38 @@ import tempfile
 import shutil
 import time
 from pathlib import Path
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from .growing_file_tail import follow_job_files
-from .file_availability import clear_declared_outputs, validate_output_collisions
+from .growing_file_tail import follow_growing_files
+from .file_availability import prepare_local_files
+from .file_availability import materialize_manifest
+from .run_model import FileManifest
+from dataclasses import asdict
 from .base import ExecutionSpec, FailurePhase, LaunchSpec, RunState, SubmissionNotStarted
 from .remote_process_worker import _SPEC_ENV, _START_FD_ENV
-from .remote_mailbox import publish_outcome, read_outcome, acknowledge_outcome, _state_root
-from ._durability import durable_mkdir, durable_write_json, fsync_directory
+from .remote_mailbox import (
+    publish_outcome, read_outcome, acknowledge_outcome,
+    publish_submission, read_submission, drop_submission,
+)
 
 
 
-def _status_reply(state, return_code=None, *, failure_phase=None, error=None):
+
+def _status_reply(state, return_code=None, *, failure_phase=None,
+                  error=None, files=None, materialization_error=None):
     """Encode backend status facts for the common remote-service wire contract."""
     return {
         "state": state.value,
         "return_code": return_code,
         "error": error,
         "failure_phase": None if failure_phase is None else failure_phase.value,
+        "files": files,
+        "materialization_error": materialization_error,
     }
 
 
-def _submission_ticket(run_id):
-    if not isinstance(run_id, str) or re.fullmatch(r"[0-9a-f]{32}", run_id) is None:
-        raise ValueError("Invalid project run id")
-    return _state_root() / "remote-submissions" / (run_id + ".json")
-
-
-def _publish_submission(run_id, reply):
-    """Temporary identity handoff, never a target-side run lifecycle record."""
-    path = _submission_ticket(run_id)
-    durable_mkdir(path.parent, parents=True, exist_ok=True, mode=0o700)
-    durable_write_json(path, reply, mode=0o600)
-
-
-def _recover_submission(run_id):
-    try:
-        return json.loads(_submission_ticket(run_id).read_text())
-    except FileNotFoundError:
-        return None
-
-
 def acknowledge_submission(run_id):
-    path = _submission_ticket(run_id)
-    try:
-        path.unlink()
-    except FileNotFoundError:
-        return {"acknowledged": False}
-    fsync_directory(path.parent)
-    return {"acknowledged": True}
+    return {"acknowledged": drop_submission(run_id)}
 
 
 def _encode_handle(data):
@@ -144,18 +127,21 @@ def _process_running(handle):
 
 def _request_spec(request):
     mpi_argv = request.get("mpi_argv")
-    sync = request.get("client_sync") or {}
-    input_files = tuple(request.get("input_files", ()))
-    output_files = tuple(dict.fromkeys((
-        *request.get("output_files", ()),
-        *sync.get("output_files", ()),
-        *sync.get("output_patterns", ()),
-    )))
-    cache_files = tuple(dict.fromkeys((
-        *request.get("cache_files", ()),
-        *(item["path"] for item in sync.get("cache_files", ())),
-        *sync.get("cache_patterns", ()),
-    )))
+    supplied = request.get("files")
+    manifest = None if supplied is None else FileManifest(**supplied)
+    input_files = (
+        tuple(request.get("input_files", ())) if manifest is None else
+        tuple(entry.remote_path for entry in manifest.inputs if entry.remote_path)
+    )
+    output_files = (
+        tuple(request.get("output_files", ())) if manifest is None else
+        tuple(entry.remote_path for entry in manifest.outputs if entry.remote_path)
+    )
+    cache_files = (
+        tuple(request.get("cache_files", ())) if manifest is None else
+        tuple(entry.remote_path for entry in manifest.caches
+              if entry.remote_path)
+    )
     return ExecutionSpec(
         argv=tuple(request["argv"]),
         input_file=request.get("input_file"),
@@ -170,22 +156,6 @@ def _request_spec(request):
         launch=LaunchSpec(**(request.get("launch") or {})),
         mpi_uses_stdin=request.get("mpi_uses_stdin", True),
     )
-
-
-def _clean_request_outputs(spec, directory, output_path=None, error_path=None):
-    """Clear prior outputs while protecting inputs and caches in the parsed spec."""
-    declared = tuple(
-        _absolute(directory, path)
-        for path in (*spec.output_files, output_path, error_path)
-        if path is not None
-    )
-    protected = tuple(
-        _absolute(directory, path)
-        for path in (spec.input_file, spec.stdin, *spec.input_files, *spec.cache_files)
-        if path is not None
-    )
-    validate_output_collisions(declared, protected=protected)
-    clear_declared_outputs(declared, protected=protected)
 
 
 def _local_submit(request):
@@ -205,9 +175,10 @@ def _local_submit(request):
         for path in (output_path, error_path):
             if path is not None:
                 Path(path).parent.mkdir(parents=True, exist_ok=True)
-        _clean_request_outputs(original_spec, directory, output_path, error_path)
+        prepare_local_files(
+            original_spec, output_file=output_path, error_file=error_path,
+        )
     except (OSError, ValueError) as exc:
-        # Pre-launch validation and filesystem failures are known non-submissions.
         raise SubmissionNotStarted(str(exc)) from exc
 
     run_id = str(request.get("id") or uuid4().hex)
@@ -229,6 +200,7 @@ def _local_submit(request):
             "receipt_id": receipt_id,
             "socket_dir": socket_dir,
             "detached": bool(request.get("detached", True)),
+            "files": request.get("files"),
         }
         env = os.environ.copy()
         env["ASE2SPRKKR_RUN_ID"] = run_id
@@ -274,7 +246,7 @@ def _local_submit(request):
         # Durable identity precedes releasing the supervisor. Until this
         # receipt is safely stored, the child cannot launch a calculation.
         if request.get("detached"):
-            _publish_submission(run_id, {"remote_id": remote_id})
+            publish_submission(run_id, {"remote_id": remote_id})
             published = True
 
         os.write(release_fd, b"1")
@@ -308,6 +280,7 @@ def _local_submit(request):
         "error_file": error_path,
         "return_code": None,
         "failure_phase": None,
+        "files": request.get("files"),
     }
     return reply
 
@@ -317,6 +290,18 @@ def _psij_executor(options):
 
     options = options or {}
     return PsijExecutor(options.get("backend") or "slurm", url=options.get("url"))
+
+
+def _psij_receipt_id(run_id, backend, url, native_id, directory):
+    """Stable project-job receipt across submit and native PSI/J recovery."""
+    if not run_id:
+        return uuid4().hex
+    identity = json.dumps(
+        ("ase2sprkkr-psij", str(run_id), backend, url, str(native_id),
+         os.fspath(directory)),
+        separators=(",", ":"),
+    )
+    return uuid5(NAMESPACE_URL, identity).hex
 
 
 def _psij_submit(request):
@@ -338,7 +323,12 @@ def _psij_submit(request):
             "kind": "psij",
             "backend": executor.backend,
             "url": executor.url,
-            "native_id": backend_id,
+            "native_id": str(backend_id),
+            "receipt_id": _psij_receipt_id(
+                request.get("id"), executor.backend, executor.url,
+                backend_id, request["directory"],
+            ),
+            "directory": request["directory"],
         }
     )
     return {
@@ -349,6 +339,7 @@ def _psij_submit(request):
         "output_file": runner.result.output_file,
         "error_file": runner.result.error_file,
         "return_code": runner.return_code,
+        "files": request.get("files"),
         "failure_phase": (
             None if runner.failure_phase is None else runner.failure_phase.value
         ),
@@ -374,58 +365,108 @@ def _process_outcome(receipt_id):
         raw_phase = data.get("failure_phase")
         failure_phase = None if raw_phase is None else FailurePhase(raw_phase)
     except (KeyError, TypeError, ValueError) as exc:
-        raise RuntimeError("Invalid remote process outcome artifact") from exc
-    return state, return_code, failure_phase, data.get("error")
+        raise RuntimeError("Invalid remote process outcome file") from exc
+    return state, return_code, failure_phase, data.get("error"), data.get("files"), data.get("materialization_error")
 
 
-def status_remote(remote_id):
-    """Query backend facts; the client supplies any terminal receipt path."""
+def status_remote(remote_id, files=None):
+    """Return backend facts and a materialized manifest at completion."""
     handle = _decode_handle(remote_id)
+    receipt_id = handle.get("receipt_id")
+    outcome = _process_outcome(receipt_id) if receipt_id else None
+    if outcome is not None:
+        state, code, phase, error, frozen, resolution_error = outcome
+        return _status_reply(
+            state, code, failure_phase=phase, error=error,
+            files=frozen, materialization_error=resolution_error,
+        )
     if handle["kind"] == "process":
-        outcome = _process_outcome(handle["receipt_id"])
-        if outcome is not None:
-            state, return_code, failure_phase, error = outcome
-        else:
-            state = RunState.RUNNING if _process_running(handle) else RunState.UNKNOWN
-            return_code = None
-            failure_phase = None
-            error = None
-        return _status_reply(
-            state, return_code, failure_phase=failure_phase, error=error,
-        )
+        state = RunState.RUNNING if _process_running(handle) else RunState.UNKNOWN
+        return _status_reply(state)
+    if handle["kind"] != "psij":
+        raise ValueError("Unsupported remote execution id")
+    if str(handle["backend"]).lower() == "slurm" and handle.get("url") is None:
+        from .psij import _slurm_status_native
+        status = _slurm_status_native(handle["native_id"])
+    else:
+        status = _psij_executor(handle).status_native(handle["native_id"])
+    frozen = None
+    resolution_error = None
+    if status.state.is_terminal:
+        supplied = files
+        if supplied is not None:
+            result, issue = materialize_manifest(supplied, remote=True)
+            frozen = asdict(result)
+            resolution_error = None if issue is None else str(issue)
+        if receipt_id and supplied is not None:
+            publish_outcome(
+                receipt_id, status.state, status.return_code,
+                status.failure_phase, error=status.message,
+                files=frozen, materialization_error=resolution_error,
+            )
+            outcome = _process_outcome(receipt_id)
+            if outcome is not None:
+                state, code, phase, error, frozen, resolution_error = outcome
+                return _status_reply(state, code, failure_phase=phase, error=error,
+                                     files=frozen, materialization_error=resolution_error)
+    return _status_reply(
+        status.state, status.return_code,
+        failure_phase=status.failure_phase, error=status.message,
+        files=frozen, materialization_error=resolution_error,
+    )
 
-    if handle["kind"] == "psij":
-        if str(handle["backend"]).lower() == "slurm" and handle.get("url") is None:
-            from .psij import _slurm_status_native
-            status = _slurm_status_native(handle["native_id"])
-        else:
-            executor = _psij_executor(handle)
-            status = executor.status_native(handle["native_id"])
-        return _status_reply(
-            status.state, status.return_code,
-            failure_phase=status.failure_phase, error=status.message,
-        )
-    raise ValueError("Unsupported remote execution id")
+
+def _unique_json_keys(pairs):
+    """Refuse ambiguous duplicate keys in supervisor control replies."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate JSON key: {key}")
+        result[key] = value
+    return result
 
 
 def cancel_remote(remote_id, timeout=1.0):
     handle = _decode_handle(remote_id)
     if handle["kind"] == "process":
-        outcome = _process_outcome(handle["receipt_id"])
-        if outcome is not None:
-            return status_remote(remote_id)
+        # Terminal receipts are immutable. Check once before signalling and
+        # avoid contacting a supervisor whose job has already finished.
+        status = status_remote(remote_id)
+        if RunState(status["state"]).is_terminal:
+            return status
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
                 conn.settimeout(timeout)
                 conn.connect(handle["socket_path"])
                 conn.sendall(b'{"command":"cancel"}\n')
-                reply = conn.recv(256)
-                if b'"accepted":true' not in reply:
+                with conn.makefile("rb") as stream:
+                    reply = stream.readline(256)
+                if not reply.endswith(b"\n"):
+                    # The supervisor may finish after receiving cancel but
+                    # before delivering its acknowledgement.
+                    status = status_remote(remote_id)
+                    if RunState(status["state"]).is_terminal:
+                        return status
+                    raise RuntimeError("Incomplete supervisor cancellation reply")
+                try:
+                    response = json.loads(reply, object_pairs_hook=_unique_json_keys)
+                except ValueError as exc:
+                    raise RuntimeError("Invalid supervisor cancellation reply") from exc
+                if not isinstance(response, dict) or response.get("accepted") is not True:
                     raise RuntimeError("Supervisor rejected cancellation")
-        except (FileNotFoundError, ConnectionRefusedError):
-            return status_remote(remote_id)
-        # The request is not a terminal fact. Only the supervisor waits for and
-        # publishes the final child outcome.
+        except (
+            FileNotFoundError, ConnectionRefusedError,
+            BrokenPipeError, ConnectionResetError, ConnectionAbortedError,
+            TimeoutError,
+        ):
+            # A missing/refusing socket does not mean the cancellation reached
+            # the supervisor. Only a confirmed terminal backend outcome makes
+            # this connection failure safe to ignore.
+            status = status_remote(remote_id)
+            if RunState(status["state"]).is_terminal:
+                return status
+            raise
+        # Accepting cancel is not a terminal fact: observe the backend again.
         return status_remote(remote_id)
 
     if handle["kind"] == "psij":
@@ -440,16 +481,17 @@ def cancel_remote(remote_id, timeout=1.0):
 def acknowledge_remote(remote_id):
     """Drop the terminal receipt only after the client persists its run state."""
     handle = _decode_handle(remote_id)
-    if handle["kind"] != "process":
+    if handle["kind"] not in ("process", "psij"):
         return {"acknowledged": False}
-    return {"acknowledged": acknowledge_outcome(handle["receipt_id"])}
+    receipt_id = handle.get("receipt_id")
+    return {"acknowledged": bool(receipt_id and acknowledge_outcome(receipt_id))}
 
 
 def recover_remote(run_id, request, *, submitted_at=None):
     """Recover an uncertain submit using backend-native identity only."""
     executor = request.get("executor", "local")
     if executor == "local":
-        reply = _recover_submission(run_id)
+        reply = read_submission(run_id)
         if reply is None:
             return None
         return dict(reply, directory=request["directory"], **status_remote(reply["remote_id"]))
@@ -465,7 +507,12 @@ def recover_remote(run_id, request, *, submitted_at=None):
     native_id = facts["native_id"]
     remote_id = _encode_handle({
         "kind": "psij", "backend": backend.backend,
-        "url": backend.url, "native_id": native_id,
+        "url": backend.url, "native_id": str(native_id),
+        "receipt_id": _psij_receipt_id(
+            run_id, backend.backend, backend.url, native_id,
+            request["directory"],
+        ),
+        "directory": request["directory"],
     })
     state = facts["state"]
     return {
@@ -482,7 +529,7 @@ def recover_remote(run_id, request, *, submitted_at=None):
 
 
 async def _follow_scheduler_async(remote_id, streams, paths, offsets, poll_interval):
-    """Follow scheduler-owned files while PSI/J waits for terminal completion."""
+    """Follow PSI/J output files and observe terminal callbacks."""
     from .psij import _psij_state
 
     handle = _decode_handle(remote_id)
@@ -493,24 +540,83 @@ async def _follow_scheduler_async(remote_id, streams, paths, offsets, poll_inter
         streams[kind].write(data)
         streams[kind].flush()
 
-    async def terminal(_native_status):
-        status = await asyncio.to_thread(status_remote, remote_id)
-        if RunState(status["state"]).is_terminal:
-            return status
-        native = job.status
-        state = _psij_state(native)
+    async def uncertain(reason):
+        if str(handle["backend"]).lower() == "slurm" and handle.get("url") is None:
+            try:
+                status = await asyncio.to_thread(status_remote, remote_id)
+            except (OSError, subprocess.CalledProcessError):
+                pass
+            else:
+                if RunState(status["state"]).is_terminal:
+                    return status
+        return _status_reply(RunState.UNKNOWN, error=reason)
+
+    async def terminal(native):
+        state = _psij_state(native, attached=True)
+        if not state.is_terminal:
+            return await uncertain("PSI/J callback returned without a terminal state")
         return _status_reply(
             state, getattr(native, "exit_code", None),
-            failure_phase=(
-                FailurePhase.EXECUTION if state == RunState.FAILED else None
-            ),
+            failure_phase=FailurePhase.EXECUTION if state == RunState.FAILED else None,
             error=getattr(native, "message", None),
         )
 
-    return await follow_job_files(
-        paths, emit, job.wait, terminal=terminal, offsets=offsets,
-        poll_interval=max(poll_interval, 1.0),
-    )
+    # Reuse PSI/J's job-status callback subscription. A blocking job.wait()
+    # thread per FOLLOW would survive cancellation and repeated attachments.
+    # _observe_job() multiplexes listeners on one cached native Job.
+    loop = asyncio.get_running_loop()
+    completed = loop.create_future()
+
+    def receive(native, *, initial=False):
+        def publish():
+            state = _psij_state(native, attached=True)
+            native_name = getattr(getattr(native, "state", None), "name", None)
+            # An attached job starts at NEW while its scheduler state loads.
+            # Only an explicit later UNKNOWN callback ends the observation.
+            # The job remains eligible for another attach in that case.
+            uncertain = (
+                not initial and native_name == "UNKNOWN"
+                and state == RunState.UNKNOWN
+            )
+            if not completed.done() and (state.is_terminal or uncertain):
+                completed.set_result(native)
+
+        # PSI/J may invoke callbacks from a native worker thread, even during
+        # detach. Never mutate the Future directly from that thread.
+        if not loop.is_closed():
+            try:
+                loop.call_soon_threadsafe(publish)
+            except RuntimeError:
+                # The observation's event loop was closed during teardown.
+                pass
+
+    try:
+        detach = executor._observe_job(job, receive)
+    except (OSError, RuntimeError) as exc:
+        # A failed subscription is an inconclusive observation, not evidence
+        # that the calculation failed. Retain #24's independent Slurm probe.
+        reason = f"PSI/J callback registration failed: {exc}"
+
+        async def registration_failed():
+            return await uncertain(reason)
+        return await follow_growing_files(
+            paths, emit, registration_failed, offsets=offsets,
+            poll_interval=max(poll_interval, 1.0),
+        )
+
+    try:
+        # Handles a job already terminal before/while registering the callback.
+        receive(job.status, initial=True)
+
+        async def terminal_status():
+            return await terminal(completed.result()) if completed.done() else None
+
+        return await follow_growing_files(
+            paths, emit, terminal_status, offsets=offsets,
+            poll_interval=max(poll_interval, 1.0), wakeup=completed,
+        )
+    finally:
+        detach()
 
 
 def follow_remote(

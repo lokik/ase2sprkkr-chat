@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -66,7 +67,7 @@ def test_remote_status_wire_reply_is_shared_between_process_and_psij(
 
     monkeypatch.setattr(
         remote_service, "_process_outcome",
-        lambda receipt_id: (state, return_code, phase, error),
+        lambda receipt_id: (state, return_code, phase, error, None, None),
     )
     monkeypatch.setattr(
         psij, "_slurm_status_native",
@@ -80,6 +81,8 @@ def test_remote_status_wire_reply_is_shared_between_process_and_psij(
         "return_code": return_code,
         "error": error,
         "failure_phase": None if phase is None else phase.value,
+        "files": None,
+        "materialization_error": None,
     }
 
     assert remote_service.status_remote(process_id) == expected
@@ -215,7 +218,9 @@ def test_psij_cancellation_does_not_invent_terminal_state(monkeypatch, tmp_path)
     assert calls == ["42", "cancel"]
 
 
-def _stub_terminal_psij_job(monkeypatch, state, return_code, observed):
+def _stub_terminal_psij_job(
+    monkeypatch, state, return_code, observed, *, subscribe_error=None,
+):
     from types import SimpleNamespace
 
     class Job:
@@ -226,13 +231,23 @@ def _stub_terminal_psij_job(monkeypatch, state, return_code, observed):
         )
 
         def wait(self):
-            observed.append("wait")
-            return self.status
+            raise AssertionError("Remote FOLLOW must not create a job.wait thread")
 
     class Backend:
         def attach_native_job(self, native_id):
             observed.append(("attach", native_id))
             return Job()
+
+        def _observe_job(self, job, callback):
+            observed.append("observe")
+            if subscribe_error is not None:
+                raise subscribe_error
+            callback(job.status)
+
+            def detach():
+                observed.append("detach")
+
+            return detach
 
     monkeypatch.setattr(remote_service, "_psij_executor", lambda _: Backend())
 
@@ -251,8 +266,8 @@ def test_follow_waits_for_psij_terminal_without_repeated_status_probes(tmp_path,
     outcome = remote_service.follow_remote(remote_id, io.BytesIO(), io.BytesIO())
 
     assert outcome["state"] == RunState.FINISHED.value
-    assert observed == [("attach", "42"), "wait"]
-    assert checks == [remote_id]
+    assert observed == [("attach", "42"), "observe", "detach"]
+    assert checks == []
 
 
 def test_follow_uses_native_terminal_when_status_query_is_transient_unknown(tmp_path, monkeypatch):
@@ -270,8 +285,8 @@ def test_follow_uses_native_terminal_when_status_query_is_transient_unknown(tmp_
     assert outcome["state"] == RunState.FAILED.value
     assert outcome["return_code"] == 7
     assert outcome["failure_phase"] == FailurePhase.EXECUTION.value
-    assert observed == [("attach", "42"), "wait"]
-    assert checks == [remote_id]
+    assert observed == [("attach", "42"), "observe", "detach"]
+    assert checks == []
 
 
 def test_follow_fallback_treats_completed_nonzero_psij_as_failed(
@@ -292,8 +307,10 @@ def test_follow_fallback_treats_completed_nonzero_psij_as_failed(
         "return_code": 7,
         "failure_phase": FailurePhase.EXECUTION.value,
         "error": None,
+        "files": None,
+        "materialization_error": None,
     }
-    assert observed == [("attach", "42"), "wait"]
+    assert observed == [("attach", "42"), "observe", "detach"]
 
 
 def test_cancel_requests_supervisor_without_inventing_terminal_state(
@@ -315,8 +332,9 @@ def test_cancel_requests_supervisor_without_inventing_terminal_state(
             assert path == "/tmp/test-supervisor.sock"
         def sendall(self, data):
             sent.append(data)
-        def recv(self, count):
-            return b'{"accepted":true}\n'
+        def makefile(self, mode):
+            assert mode == "rb"
+            return io.BytesIO(b'{"accepted":true}\n')
 
     monkeypatch.setattr(remote_service.socket, "socket", lambda *args: Connection())
     status = remote_service.cancel_remote(remote_id)
@@ -360,7 +378,8 @@ def test_uncertain_submit_uses_only_temporary_identity_ticket(tmp_path, monkeypa
         "socket_path": "/tmp/fake-socket",
     })
     reply = {"remote_id": handle, "directory": str(tmp_path), "state": "running"}
-    remote_service._publish_submission(run_id, reply)
+    from ase2sprkkr.execution import remote_mailbox
+    remote_mailbox.publish_submission(run_id, reply)
     recovered = remote_service.recover_remote(run_id, {
         "executor": "local", "directory": str(tmp_path),
     })
@@ -498,20 +517,29 @@ def test_scheduler_request_protects_remote_cache_wildcards(tmp_path):
         "directory": str(tmp_path),
         "argv": ["program"],
         "input_file": "case.inp",
-        "input_files": ["case.inp"],
         "output_file": "case.out",
-        "output_files": ["*.pot", "case.out"],
-        "cache_files": ["known-restart.pot"],
-        "client_sync": {
-            "cache_patterns": ["restart-*.pot"],
-            "cache_files": [{"path": "external-cache.pot", "before": None}],
+        "files": {
+            "inputs": [
+                {"remote_path": "case.inp"},
+                {"local_path": "local-only.inp"},
+            ],
+            "outputs": [
+                {"remote_path": "*.pot"}, {"remote_path": "case.out"},
+                {"local_path": "local-only.out"},
+            ],
+            "caches": [
+                {"remote_path": "known-restart.pot"},
+                {"remote_path": "restart-*.pot"},
+                {"remote_path": "external-cache.pot"},
+            ],
         },
     }
     spec = remote_service._request_spec(request)
-    assert "restart-*.pot" in spec.cache_files
-    assert "external-cache.pot" in spec.cache_files
-    assert "*.pot" in spec.output_files
-    assert "case.inp" in spec.input_files
+    assert spec.input_files == ("case.inp",)
+    assert spec.output_files == ("*.pot", "case.out")
+    assert spec.cache_files == (
+        "known-restart.pot", "restart-*.pot", "external-cache.pot",
+    )
 
 
 
@@ -538,7 +566,7 @@ def test_failed_submission_ticket_cannot_leave_calculation_running(tmp_path, mon
     def reject(_run_id, _reply):
         raise OSError("ticket store unavailable")
 
-    monkeypatch.setattr(remote_service, "_publish_submission", reject)
+    monkeypatch.setattr(remote_service, "publish_submission", reject)
     with pytest.raises(SubmissionNotStarted, match="ticket store unavailable"):
         remote_service.submit_remote(request)
     assert not marker.exists()
@@ -546,6 +574,7 @@ def test_failed_submission_ticket_cannot_leave_calculation_running(tmp_path, mon
 
 def test_remote_cleanup_preserves_cache_matches_while_removing_stale_outputs(tmp_path):
     from ase2sprkkr.execution.base import ExecutionSpec
+    from ase2sprkkr.execution.file_availability import prepare_local_files
 
     # Output patterns may include protected inputs/caches, but must only
     # remove results, not restart state.
@@ -563,7 +592,7 @@ def test_remote_cleanup_preserves_cache_matches_while_removing_stale_outputs(tmp
         output_file="run.log", output_files=("*.out",),
         cache_files=("restart.out",),
     )
-    remote_service._clean_request_outputs(spec, work, str(stdout))
+    prepare_local_files(spec, output_file=str(stdout))
 
     assert cache.read_text() == "restart.out"
     assert input_file.read_text() == "main.inp"
@@ -573,6 +602,7 @@ def test_remote_cleanup_preserves_cache_matches_while_removing_stale_outputs(tmp
 
 def test_remote_cleanup_checks_collisions_before_deleting_any_output(tmp_path):
     from ase2sprkkr.execution.base import ExecutionSpec
+    from ase2sprkkr.execution.file_availability import prepare_local_files
 
     work = tmp_path / "calculation"
     work.mkdir()
@@ -587,7 +617,7 @@ def test_remote_cleanup_checks_collisions_before_deleting_any_output(tmp_path):
         cache_files=("restart.dat",),
     )
     with pytest.raises(ValueError, match="overlaps protected"):
-        remote_service._clean_request_outputs(spec, work)
+        prepare_local_files(spec)
 
     assert stale.read_text() == "old"
     assert cache.read_text() == "restart"
@@ -726,6 +756,46 @@ def test_supervisor_stdin_close_failure_preserves_terminal_receipt(
         assert "stdin close failed" in receipt["error"]
 
 
+def test_psij_terminal_receives_and_freezes_client_manifest(tmp_path, monkeypatch):
+    from dataclasses import asdict
+    from uuid import uuid4
+
+    from ase2sprkkr.execution import FileEntry, FileManifest, FileMapping, remote_mailbox
+
+    monkeypatch.setenv("ASE2SPRKKR_REMOTE_STATE_DIR", str(tmp_path / "state"))
+    local, target = tmp_path / "local", tmp_path / "target"
+    local.mkdir()
+    target.mkdir()
+    (target / "one.dat").write_text("first")
+    manifest = FileManifest(
+        outputs=(FileEntry(str(local / "*.dat"), str(target / "*.dat"),
+                           availability_state="pending"),),
+        mapping=FileMapping(str(local), str(target)),
+    )
+    monkeypatch.setattr(psij, "_slurm_status_native", lambda _id: RunStatus(
+        RunState.FINISHED, backend_id="42", return_code=0,
+    ))
+    receipt = uuid4().hex
+    handle, _ = _psij_handle(tmp_path)
+    handle.update(receipt_id=receipt, directory=str(target))
+    remote_id = remote_service._encode_handle(handle)
+
+    # A status probe without the manifest cannot freeze membership.
+    assert remote_service.status_remote(remote_id)["files"] is None
+    assert remote_mailbox.read_outcome(receipt) is None
+
+    reply = remote_service.status_remote(remote_id, asdict(manifest))
+    assert reply["state"] == "finished"
+    assert reply["materialization_error"] is None
+    assert len(reply["files"]["outputs"]) == 1
+    assert reply["files"]["outputs"][0]["source"] == str(local / "*.dat")
+
+    (target / "two.dat").write_text("later")
+    repeated = remote_service.status_remote(remote_id, asdict(manifest))
+    assert repeated["files"] == reply["files"]
+    assert remote_mailbox.read_outcome(receipt)["files"] == reply["files"]
+
+
 @pytest.mark.parametrize("failure_point", ("socket_directory", "first_pipe", "second_pipe"))
 def test_remote_submit_ipc_setup_failure_closes_every_fd(
     tmp_path, monkeypatch, failure_point,
@@ -779,6 +849,232 @@ def test_remote_submit_ipc_setup_failure_closes_every_fd(
             os.fstat(fd)
 
 
+def _cancel_socket(reply=b'{"accepted":true}\n'):
+    """Small socket double for the one-line cancellation protocol."""
+    connection = MagicMock()
+    connection.__enter__.return_value = connection
+    stream = MagicMock()
+    stream.__enter__.return_value = stream
+    stream.readline.side_effect = lambda limit: reply[:limit]
+    connection.makefile.return_value = stream
+    return connection
+
+
+@pytest.mark.parametrize(
+    "reply, message",
+    [
+        (b'{"accepted":false}\n', "Supervisor rejected cancellation"),
+        (b'{"accepted":true,"accepted":false}\n', "Invalid supervisor cancellation reply"),
+        (b'{"accepted":false,"accepted":true}\n', "Invalid supervisor cancellation reply"),
+        (b'{"accepted":1}\n', "Supervisor rejected cancellation"),
+        (b'["accepted",true]\n', "Supervisor rejected cancellation"),
+        (b'not json\n', "Invalid supervisor cancellation reply"),
+        (b'{"accepted":true', "Incomplete supervisor cancellation reply"),
+        (b'', "Incomplete supervisor cancellation reply"),
+        (b" " * 256 + b"\n", "Incomplete supervisor cancellation reply"),
+    ],
+)
+def test_cancel_rejects_invalid_supervisor_replies(
+    tmp_path, monkeypatch, reply, message,
+):
+    _, remote_id, _ = _process_handle(tmp_path)
+    monkeypatch.setattr(remote_service, "_process_running", lambda _: True)
+    conn = _cancel_socket(reply)
+    monkeypatch.setattr(remote_service.socket, "socket", lambda *args: conn)
+
+    with pytest.raises(RuntimeError, match=message):
+        remote_service.cancel_remote(remote_id)
+    conn.sendall.assert_called_once_with(b'{"command":"cancel"}\n')
+
+
+@pytest.mark.parametrize("failure", ("broken_pipe", "reset", "timeout", "eof"))
+@pytest.mark.parametrize("terminal", (False, True))
+def test_cancel_handles_supervisor_exit_during_ack(
+    tmp_path, monkeypatch, failure, terminal,
+):
+    """A completed backend remains authoritative after the ACK transport dies."""
+    _, remote_id, _ = _process_handle(tmp_path)
+    receipts = []
+
+    def receipt(_id):
+        receipts.append(True)
+        if terminal and len(receipts) >= 2:
+            return (RunState.FINISHED, 0, None, None, None, None)
+        return None
+
+    monkeypatch.setattr(remote_service, "_process_outcome", receipt)
+    monkeypatch.setattr(remote_service, "_process_running", lambda _: True)
+    conn = _cancel_socket(b"")
+    if failure == "broken_pipe":
+        conn.sendall.side_effect = BrokenPipeError("supervisor exited")
+    elif failure == "reset":
+        conn.makefile.return_value.readline.side_effect = ConnectionResetError("reset")
+    elif failure == "timeout":
+        conn.makefile.return_value.readline.side_effect = TimeoutError("timed out")
+    monkeypatch.setattr(remote_service.socket, "socket", lambda *args: conn)
+
+    if terminal:
+        result = remote_service.cancel_remote(remote_id)
+        assert result["state"] == RunState.FINISHED.value
+        assert result["return_code"] == 0
+    else:
+        expected = RuntimeError if failure == "eof" else {
+            "broken_pipe": BrokenPipeError,
+            "reset": ConnectionResetError,
+            "timeout": TimeoutError,
+        }[failure]
+        with pytest.raises(expected):
+            remote_service.cancel_remote(remote_id)
+    assert len(receipts) == 2
+
+
+def test_cancel_reads_split_ack_over_unix_socket(tmp_path, monkeypatch):
+    """The receiver really consumes the prefix before the rest is transmitted."""
+    import socket
+    from threading import Event, Thread
+
+    _, remote_id, _ = _process_handle(tmp_path)
+    monkeypatch.setattr(remote_service, "_process_running", lambda _: True)
+    client, server = socket.socketpair()
+    prefix = b'{"accepted":'
+    prefix_read = Event()
+    received = []
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            client.close()
+
+        def settimeout(self, timeout):
+            client.settimeout(timeout)
+
+        def connect(self, path):
+            assert path == "/tmp/test-supervisor.sock"
+
+        def sendall(self, data):
+            client.sendall(data)
+
+        def makefile(self, mode):
+            stream = client.makefile(mode)
+
+            class SplitReader:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_args):
+                    stream.close()
+
+                def readline(self, limit):
+                    first = stream.read(len(prefix))
+                    assert first == prefix
+                    prefix_read.set()
+                    return first + stream.readline(limit - len(first))
+
+            return SplitReader()
+
+    def respond():
+        with server:
+            with server.makefile("rb") as request_stream:
+                received.append(request_stream.readline())
+            server.sendall(prefix)
+            if prefix_read.wait(2):
+                server.sendall(b'true}\n')
+
+    server.settimeout(2)
+    thread = Thread(target=respond, daemon=True)
+    thread.start()
+    try:
+        monkeypatch.setattr(remote_service.socket, "socket", lambda *args: Connection())
+        status = remote_service.cancel_remote(remote_id)
+    finally:
+        client.close()
+        thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert received == [b'{"command":"cancel"}\n']
+    assert status["state"] == RunState.RUNNING.value
+
+
+def test_cancel_accepts_spaced_json_acknowledgement(tmp_path, monkeypatch):
+    _, remote_id, _ = _process_handle(tmp_path)
+    monkeypatch.setattr(remote_service, "_process_running", lambda _: True)
+    conn = _cancel_socket(b'{ "accepted" : true }\n')
+    monkeypatch.setattr(remote_service.socket, "socket", lambda *args: conn)
+    assert remote_service.cancel_remote(remote_id)["state"] == RunState.RUNNING.value
+
+
+def test_cancel_terminal_receipt_is_read_exactly_once(tmp_path, monkeypatch):
+    _, remote_id, _ = _process_handle(tmp_path)
+    reads = []
+
+    def terminal_outcome(receipt_id):
+        reads.append(receipt_id)
+        return RunState.FINISHED, 0, None, None
+
+    monkeypatch.setattr(remote_service, "_process_outcome", terminal_outcome)
+    monkeypatch.setattr(
+        remote_service.socket, "socket",
+        lambda *_args: pytest.fail("Finished supervisor must not be signalled"),
+    )
+    result = remote_service.cancel_remote(remote_id)
+    assert result["state"] == RunState.FINISHED.value
+    assert result["return_code"] == 0
+    assert reads == ["a" * 32]
+
+
+def test_cancel_rechecks_status_when_supervisor_exits_before_connect(
+    tmp_path, monkeypatch,
+):
+    _, remote_id, _ = _process_handle(tmp_path)
+    calls = []
+
+    def racing_outcome(_id):
+        calls.append(True)
+        return None if len(calls) == 1 else (RunState.FINISHED, 0, None, None, None, None)
+
+    monkeypatch.setattr(remote_service, "_process_outcome", racing_outcome)
+    monkeypatch.setattr(remote_service, "_process_running", lambda _: True)
+    conn = _cancel_socket()
+    conn.connect.side_effect = ConnectionRefusedError("supervisor exited")
+    monkeypatch.setattr(remote_service.socket, "socket", lambda *args: conn)
+    assert remote_service.cancel_remote(remote_id)["state"] == RunState.FINISHED.value
+    assert len(calls) == 2
+
+
+
+@pytest.mark.parametrize("connect_error", [FileNotFoundError, ConnectionRefusedError])
+@pytest.mark.parametrize("terminal", [False, True])
+def test_cancel_missing_supervisor_socket_never_claims_delivery(
+    tmp_path, monkeypatch, connect_error, terminal,
+):
+    _, remote_id, _ = _process_handle(tmp_path)
+    reads = []
+
+    def receipt(_id):
+        reads.append(True)
+        if terminal and len(reads) == 2:
+            return (RunState.FINISHED, 0, None, None, None, None)
+        return None
+
+    monkeypatch.setattr(remote_service, "_process_outcome", receipt)
+    monkeypatch.setattr(remote_service, "_process_running", lambda _: True)
+    conn = _cancel_socket()
+    conn.connect.side_effect = connect_error("supervisor unavailable")
+    monkeypatch.setattr(remote_service.socket, "socket", lambda *args: conn)
+
+    if terminal:
+        result = remote_service.cancel_remote(remote_id)
+        assert result["state"] == RunState.FINISHED.value
+        assert result["return_code"] == 0
+    else:
+        with pytest.raises(connect_error, match="supervisor unavailable"):
+            remote_service.cancel_remote(remote_id)
+    assert len(reads) == 2
+    conn.sendall.assert_not_called()
+
+
 def test_remote_submit_json_setup_failure_cleans_pipes_and_directory(
     tmp_path, monkeypatch,
 ):
@@ -821,3 +1117,353 @@ def test_remote_submit_json_setup_failure_cleans_pipes_and_directory(
     for fd in created:
         with pytest.raises(OSError):
             os.fstat(fd)
+
+
+def test_psij_follow_uses_callback_status_not_stale_job_status(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    _, remote_id = _psij_handle(tmp_path)
+    result_status = SimpleNamespace(
+        state=SimpleNamespace(name="FAILED"), exit_code=4, message="failed",
+    )
+    stale = SimpleNamespace(state=SimpleNamespace(name="ACTIVE"), exit_code=None)
+    subscriptions = []
+
+    class Job:
+        status = stale
+        def wait(self):
+            raise AssertionError("Native wait must not be called")
+
+    class Backend:
+        def attach_native_job(self, native_id):
+            assert native_id == "42"
+            return Job()
+
+        def _observe_job(self, job, callback):
+            callback(result_status)
+            subscriptions.append("subscribe")
+            return lambda: subscriptions.append("detach")
+
+    monkeypatch.setattr(remote_service, "_psij_executor", lambda _: Backend())
+    monkeypatch.setattr(remote_service, "status_remote",
+                        lambda _: pytest.fail("Redundant status probe"))
+    result = remote_service.follow_remote(remote_id, io.BytesIO(), io.BytesIO())
+    assert result == {
+        "state": "failed", "return_code": 4,
+        "failure_phase": "execution", "error": "failed",
+        "files": None, "materialization_error": None,
+    }
+    assert subscriptions == ["subscribe", "detach"]
+
+
+def test_psij_follow_uncertain_subscription_uses_one_slurm_probe(monkeypatch, tmp_path):
+    _, remote_id = _psij_handle(tmp_path)
+    events = []
+    _stub_terminal_psij_job(
+        monkeypatch, "ACTIVE", None, events,
+        subscribe_error=OSError("PSI/J status subscription unavailable"),
+    )
+    probes = []
+    def status(_):
+        probes.append(True)
+        return {"state": "unknown"}
+    monkeypatch.setattr(remote_service, "status_remote", status)
+    result = remote_service.follow_remote(remote_id, io.BytesIO(), io.BytesIO())
+    assert result["state"] == "unknown"
+    assert result["return_code"] is None
+    assert len(probes) == 1
+
+
+def test_psij_follow_uncertain_subscription_other_scheduler_never_reprobes(monkeypatch, tmp_path):
+    handle, _ = _psij_handle(tmp_path)
+    handle["backend"] = "pbs"
+    handle["url"] = "ssh://remote"
+    remote_id = remote_service._encode_handle(handle)
+    events = []
+    _stub_terminal_psij_job(
+        monkeypatch, "ACTIVE", None, events,
+        subscribe_error=OSError("PSI/J status subscription unavailable"),
+    )
+    monkeypatch.setattr(remote_service, "status_remote",
+                        lambda _: pytest.fail("Unexpected PSI/J status probe"))
+    result = remote_service.follow_remote(remote_id, io.BytesIO(), io.BytesIO())
+    assert result["state"] == "unknown"
+
+
+
+def test_psij_follow_receives_late_status_from_another_thread(tmp_path, monkeypatch):
+    import asyncio
+    import threading
+    from types import SimpleNamespace
+
+    _, remote_id = _psij_handle(tmp_path)
+    # PSI/J attach initially reports NEW before any actual scheduler observation.
+    pending = SimpleNamespace(state=SimpleNamespace(name="NEW"), exit_code=None)
+    finished = SimpleNamespace(state=SimpleNamespace(name="COMPLETED"), exit_code=0,
+                               message=None)
+    subscribed = threading.Event()
+    callback = []
+    detached = []
+
+    class Job:
+        status = pending
+
+        def wait(self):
+            raise AssertionError("remote FOLLOW must never call job.wait()")
+
+    class Backend:
+        def attach_native_job(self, native_id):
+            return Job()
+
+        def _observe_job(self, job, receive):
+            callback.append(receive)
+            subscribed.set()
+            return lambda: detached.append(True)
+
+    monkeypatch.setattr(remote_service, "_psij_executor", lambda _: Backend())
+    monkeypatch.setattr(remote_service, "status_remote",
+                        lambda _: pytest.fail("terminal callback needs no probe"))
+
+    def native_worker():
+        assert subscribed.wait(2)
+        callback[0](finished)
+
+    worker = threading.Thread(target=native_worker)
+    worker.start()
+    try:
+        outcome = remote_service.follow_remote(
+            remote_id, io.BytesIO(), io.BytesIO(), poll_interval=0.01,
+        )
+    finally:
+        worker.join(timeout=2)
+
+    assert not worker.is_alive()
+    assert outcome["state"] == RunState.FINISHED.value
+    assert outcome["return_code"] == 0
+    assert detached == [True]
+
+
+def test_psij_follow_cancellation_detaches_without_cancelling_job(
+    tmp_path, monkeypatch,
+):
+    import asyncio
+    from types import SimpleNamespace
+
+    _, remote_id = _psij_handle(tmp_path)
+    calls = []
+    active = SimpleNamespace(state=SimpleNamespace(name="ACTIVE"), exit_code=None)
+
+    class Job:
+        status = active
+
+        def wait(self):
+            raise AssertionError("native wait is forbidden")
+
+        def cancel(self):
+            calls.append("job cancelled")
+
+    async def check():
+        # Bind the event to the running loop, including on Python 3.9.
+        attached = asyncio.Event()
+
+        class Backend:
+            def attach_native_job(self, native_id):
+                return Job()
+
+            def _observe_job(self, job, callback):
+                calls.append("observing")
+                attached.set()
+                return lambda: calls.append("detached")
+
+        monkeypatch.setattr(remote_service, "_psij_executor", lambda _: Backend())
+        task = asyncio.create_task(remote_service._follow_scheduler_async(
+            remote_id, {"out": io.BytesIO(), "err": io.BytesIO()},
+            {"out": None, "err": None}, {"out": 0, "err": 0}, 0.01,
+        ))
+        await asyncio.wait_for(attached.wait(), 2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert calls == ["observing", "detached"]
+
+    asyncio.run(check())
+
+
+
+def test_psij_follow_unknown_callback_ends_observation_without_waiting(
+    tmp_path, monkeypatch,
+):
+    import asyncio
+    from types import SimpleNamespace
+
+    handle, _ = _psij_handle(tmp_path)
+    handle["backend"] = "pbs"
+    handle["url"] = "ssh://remote"
+    remote_id = remote_service._encode_handle(handle)
+    pending = SimpleNamespace(state=SimpleNamespace(name="ACTIVE"), exit_code=None)
+    unknown = SimpleNamespace(state=SimpleNamespace(name="UNKNOWN"), exit_code=None)
+    received = []
+    class Job:
+        status = pending
+        def wait(self):
+            raise AssertionError("No blocking wait permitted")
+        def cancel(self):
+            raise AssertionError("UNKNOWN observation must not cancel job")
+    class Backend:
+        def attach_native_job(self, native_id):
+            return Job()
+        def _observe_job(self, job, callback):
+            received.append(("observe", callback))
+            return lambda: received.append(("detach", None))
+    monkeypatch.setattr(remote_service, "_psij_executor", lambda _: Backend())
+    monkeypatch.setattr(remote_service, "status_remote",
+                        lambda _: pytest.fail("PBS must not invoke Slurm fallback"))
+
+    async def check():
+        task = asyncio.create_task(remote_service._follow_scheduler_async(
+            remote_id, {"out": io.BytesIO(), "err": io.BytesIO()},
+            {"out": None, "err": None}, {"out": 0, "err": 0}, 0.01,
+        ))
+        for _ in range(30):
+            if received:
+                break
+            await asyncio.sleep(0)
+        assert received and received[0][0] == "observe"
+        received[0][1](unknown)
+        return await asyncio.wait_for(task, 2)
+
+    result = asyncio.run(check())
+    assert result["state"] == RunState.UNKNOWN.value
+    assert result["return_code"] is None
+    assert [x[0] for x in received] == ["observe", "detach"]
+
+
+def test_psij_callback_follow_preserves_manifest_receipt_boundary(tmp_path, monkeypatch):
+    from dataclasses import asdict
+    from uuid import uuid4
+    from ase2sprkkr.execution import FileEntry, FileManifest, FileMapping, remote_mailbox
+
+    monkeypatch.setenv("ASE2SPRKKR_REMOTE_STATE_DIR", str(tmp_path / "state"))
+    local, target = tmp_path / "local", tmp_path / "target"
+    local.mkdir()
+    target.mkdir()
+    (target / "one.dat").write_text("first")
+    manifest = FileManifest(
+        outputs=(FileEntry(str(local / "*.dat"), str(target / "*.dat"),
+                           availability_state="pending"),),
+        mapping=FileMapping(str(local), str(target)),
+    )
+    receipt = uuid4().hex
+    handle, _ = _psij_handle(tmp_path)
+    handle.update(receipt_id=receipt, directory=str(target))
+    remote_id = remote_service._encode_handle(handle)
+    observed = []
+    _stub_terminal_psij_job(monkeypatch, "COMPLETED", 0, observed)
+    monkeypatch.setattr(psij, "_slurm_status_native", lambda native_id: RunStatus(
+        RunState.FINISHED, backend_id=native_id, return_code=0,
+    ))
+
+    followed = remote_service.follow_remote(remote_id, io.BytesIO(), io.BytesIO())
+    assert followed["state"] == RunState.FINISHED.value
+    assert followed["files"] is None
+    assert followed["materialization_error"] is None
+    assert remote_mailbox.read_outcome(receipt) is None
+
+    frozen = remote_service.status_remote(remote_id, asdict(manifest))
+    assert frozen["state"] == RunState.FINISHED.value
+    assert len(frozen["files"]["outputs"]) == 1
+    assert frozen["files"]["outputs"][0]["source"] == str(local / "*.dat")
+    assert remote_mailbox.read_outcome(receipt)["files"] == frozen["files"]
+    assert observed == [("attach", "42"), "observe", "detach"]
+
+
+def test_remote_ack_retries_failed_unlink_barrier_without_losing_terminal_state(
+    tmp_path, monkeypatch,
+):
+    """A lost durability barrier on ACK is recoverable through the service API."""
+    from ase2sprkkr.execution import remote_mailbox
+
+    monkeypatch.setenv("ASE2SPRKKR_REMOTE_STATE_DIR", str(tmp_path))
+    _, remote_id, outcome = _process_handle(tmp_path)
+    monkeypatch.setattr(remote_service, "_process_running", lambda _handle: False)
+    assert remote_mailbox.publish_outcome("a" * 32, RunState.FINISHED, 0)
+    assert remote_service.status_remote(remote_id)["state"] == "finished"
+
+    original_sync = remote_mailbox.fsync_directory
+    calls = 0
+
+    def interrupt_ack_sync(directory):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("directory barrier interrupted")
+        return original_sync(directory)
+
+    monkeypatch.setattr(remote_mailbox, "fsync_directory", interrupt_ack_sync)
+    with pytest.raises(OSError, match="directory barrier interrupted"):
+        remote_service.acknowledge_remote(remote_id)
+    assert not outcome.exists()
+
+    # Retrying the same protocol request durably commits the deletion.
+    assert remote_service.acknowledge_remote(remote_id) == {"acknowledged": False}
+    assert calls == 2
+    assert remote_service.status_remote(remote_id)["state"] == "unknown"
+
+
+def test_submission_ack_retries_failed_unlink_barrier_via_service(
+    tmp_path, monkeypatch,
+):
+    from uuid import uuid4
+    from ase2sprkkr.execution import remote_mailbox
+
+    monkeypatch.setenv("ASE2SPRKKR_REMOTE_STATE_DIR", str(tmp_path))
+    run_id = uuid4().hex
+    remote_mailbox.publish_submission(run_id, {"remote_id": "native"})
+    original_sync = remote_mailbox.fsync_directory
+    calls = 0
+
+    def interrupt_ack_sync(directory):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("submission removal not synced")
+        return original_sync(directory)
+
+    monkeypatch.setattr(remote_mailbox, "fsync_directory", interrupt_ack_sync)
+    with pytest.raises(OSError, match="submission removal not synced"):
+        remote_service.acknowledge_submission(run_id)
+    assert remote_mailbox.read_submission(run_id) is None
+    assert remote_service.acknowledge_submission(run_id) == {"acknowledged": False}
+    assert calls == 2
+
+
+def test_submission_to_terminal_receipt_and_both_acks(tmp_path, monkeypatch):
+    """A temporary submit ticket and terminal receipt have independent ACKs."""
+    from uuid import uuid4
+    from ase2sprkkr.execution import remote_mailbox
+
+    monkeypatch.setenv("ASE2SPRKKR_REMOTE_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(remote_service, "_process_running", lambda _handle: False)
+    run_id = uuid4().hex
+    receipt_id = uuid4().hex
+    remote_id = remote_service._encode_handle({
+        "kind": "process", "pid": 123, "start_time": "456",
+        "receipt_id": receipt_id, "socket_path": "/tmp/unneeded-supervisor.sock",
+    })
+    remote_mailbox.publish_submission(run_id, {"remote_id": remote_id})
+    request = {"executor": "local", "directory": str(tmp_path)}
+
+    # Recover the submission before the process has produced a result.
+    recovered = remote_service.recover_remote(run_id, request)
+    assert recovered["remote_id"] == remote_id
+    assert recovered["state"] == RunState.UNKNOWN.value
+
+    assert remote_mailbox.publish_outcome(receipt_id, RunState.FINISHED, 0)
+    assert remote_service.recover_remote(run_id, request)["state"] == "finished"
+    assert remote_service.acknowledge_submission(run_id) == {"acknowledged": True}
+    assert remote_service.recover_remote(run_id, request) is None
+
+    # Submission ACK must not discard the independently retained result.
+    assert remote_service.status_remote(remote_id)["state"] == "finished"
+    assert remote_service.acknowledge_remote(remote_id) == {"acknowledged": True}
+    assert remote_service.acknowledge_remote(remote_id) == {"acknowledged": False}
+    assert remote_service.status_remote(remote_id)["state"] == "unknown"

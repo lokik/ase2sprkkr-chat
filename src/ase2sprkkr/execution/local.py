@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import stat
+import sys
 from threading import Event, Lock, Thread
 
 from .base import (
@@ -13,13 +15,13 @@ from .base import (
     FailurePhase,
     OutputObservers,
     close_output_files,
-    file_path,
     finish_monitor,
+    file_path,
     wait_for_monitor,
     RunState,
     SubmissionNotStarted,
 )
-from .file_availability import clear_declared_outputs, validate_output_collisions
+from .file_availability import prepare_local_files
 from .local_process import (
     materialize_local_spec,
     pump_stream,
@@ -38,11 +40,7 @@ class LocalRunner:
     def __init__(self, spec: ExecutionSpec, callback=None):
         self.spec = spec
         self.callback = callback
-        self.result = ExecutionOutcome(
-            output_file=file_path(spec.output_file, spec.directory),
-            input_file=file_path(spec.input_file, spec.directory),
-            error_file=file_path(spec.error_file, spec.directory),
-        )
+        self.result = ExecutionOutcome.from_spec(spec)
 
         self._state = RunState.NEW
         self._output_observers = OutputObservers()
@@ -60,6 +58,21 @@ class LocalRunner:
         self._callback_exception = None
         self._failure_phase = None
         self._failure_message = None
+        self._stream_handles = {}
+        self._owned_streams = []
+        self._owned_stdin = None
+        self._cleanup_exception = None
+
+    def prepare_submission(self):
+        """Local execution has no separate staging phase."""
+
+    def stop_observation(self):
+        raise NotImplementedError("Local execution cannot detach observation")
+
+    @property
+    def files(self):
+        """Untracked local processes have no persisted file manifest."""
+        return None
 
     @property
     def state(self):
@@ -82,6 +95,10 @@ class LocalRunner:
         return self._failure_message
 
     @property
+    def cleanup_exception(self):
+        return self._cleanup_exception
+
+    @property
     def return_code(self):
         return self.result.return_code
 
@@ -92,9 +109,62 @@ class LocalRunner:
         self._output_observers.add_error_listener(callback)
 
     def _output_target(self, kind):
-        # A missing stderr target means live observation only, not an
-        # implicit merge into the saved stdout artifact.
-        return self.spec.error_file if kind == "err" else self.spec.output_file
+        # A missing stderr target means live observation only.
+        return self._stream_handles.get(kind)
+
+    @staticmethod
+    def _stream_inode(value):
+        """Identify a regular file, including aliases and open descriptors."""
+        try:
+            if isinstance(value, (str, bytes, os.PathLike)):
+                info = os.stat(value)
+            else:
+                info = os.fstat(value.fileno())
+        except (AttributeError, OSError, TypeError, ValueError):
+            return None
+        if not stat.S_ISREG(info.st_mode):
+            return None
+        return (info.st_dev, info.st_ino)
+
+    def _open_streams(self):
+        targets = (("out", self.spec.output_file),
+                   ("err", self.spec.error_file))
+        by_inode = {}
+        by_path = {}
+
+        # Reuse pre-opened file objects before opening any named target:
+        # opening a second alias with "wb" would truncate their contents.
+        for kind, value in targets:
+            if not isinstance(value, (str, bytes, os.PathLike)):
+                inode = self._stream_inode(value) if value is not None else None
+                self._stream_handles[kind] = (
+                    by_inode.setdefault(inode, value) if inode is not None else value
+                )
+
+        for kind, value in targets:
+            if not isinstance(value, (str, bytes, os.PathLike)):
+                continue
+            path = file_path(value, self.spec.directory)
+            inode = self._stream_inode(path)
+            if path in by_path:
+                handle = by_path[path]
+            elif inode is not None and inode in by_inode:
+                handle = by_inode[inode]
+            else:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                handle = open(path, "wb")
+                self._owned_streams.append(handle)
+                inode = self._stream_inode(handle)
+                if inode is not None:
+                    by_inode[inode] = handle
+            by_path[path] = handle
+            self._stream_handles[kind] = handle
+
+        stdin = self.spec.stdin
+        if isinstance(stdin, (str, bytes, os.PathLike)):
+            self._owned_stdin = open(file_path(stdin, self.spec.directory), "rb")
+            return self._owned_stdin
+        return stdin
 
     def _forward_output(self, data, kind):
         target = self._output_target(kind)
@@ -124,33 +194,17 @@ class LocalRunner:
 
     async def _execute(self):
         self._loop = asyncio.get_running_loop()
-        if self._cancel_requested.is_set():
-            self._state = RunState.CANCELLED
-            self._started.set()
-            return self.result
-
         try:
-            protected = [
-                file_path(value, self.spec.directory)
-                for value in (self.spec.input_file, self.spec.stdin,
-                              *self.spec.input_files, *self.spec.cache_files)
-            ]
-            # Preserve already-open stdout/stderr handles: an unlink would
-            # disconnect their inode from the named destination.
-            outputs = [
-                file_path(value, self.spec.directory)
-                for value in self.spec.output_files
-            ]
-            validate_output_collisions(
-                (*outputs, self.result.output_file, self.result.error_file),
-                protected=protected,
-            )
-            clear_declared_outputs(
-                outputs,
-                protected=(*protected, self.result.output_file, self.result.error_file),
+            if self._cancel_requested.is_set():
+                self._state = RunState.CANCELLED
+                self._started.set()
+                return self.result
+            prepare_local_files(
+                self.spec, preserve_open_streams=True,
             )
             try:
-                self._process = await start_local_process(self.spec)
+                stdin = self._open_streams()
+                self._process = await start_local_process(self.spec, stdin=stdin)
             except BaseException as exc:
                 self._failure_phase = FailurePhase.LAUNCH
                 self._failure_message = str(exc)
@@ -207,12 +261,35 @@ class LocalRunner:
                 await stop_local_process(self._process)
             raise
         finally:
-            if self._stop_task is not None:
-                await asyncio.gather(self._stop_task, return_exceptions=True)
-            self._output_observers.finish_bytes()
-            close_output_files(self.spec.output_file, self.spec.error_file)
-            self._process = None
-            self._loop = None
+            primary_error = sys.exc_info()[1]
+            cleanup_error = None
+            try:
+                if self._stop_task is not None:
+                    await asyncio.gather(self._stop_task, return_exceptions=True)
+                self._output_observers.finish_bytes()
+            except BaseException as exc:
+                cleanup_error = exc
+            try:
+                close_output_files(
+                    *self._owned_streams, self._owned_stdin,
+                    self.spec.output_file, self.spec.error_file,
+                )
+            except BaseException as exc:
+                if cleanup_error is None:
+                    cleanup_error = exc
+            finally:
+                self._process = None
+                self._loop = None
+            self._cleanup_exception = cleanup_error
+            if cleanup_error is not None and primary_error is None:
+                if self._state == RunState.FAILED:
+                    # A nonzero exit remains the authoritative failure.
+                    # The secondary close error is available separately.
+                    return self.result
+                self._state = RunState.FAILED
+                self._failure_phase = FailurePhase.FILES
+                self._failure_message = str(cleanup_error)
+                raise cleanup_error
 
     def _thread_main(self):
         try:
@@ -253,15 +330,17 @@ class LocalRunner:
         return self.wait()
 
     async def run_async(self):
-        if self._state == RunState.NEW:
-            self.submit()
-        return await asyncio.to_thread(self.wait)
+        return await asyncio.to_thread(self.run)
 
 
 class LocalExecutor(Executor):
     """Create raw runners executed as local subprocesses."""
 
     name = "local"
+
+    def __init__(self):
+        from .target_connection import LocalConnection
+        self.connection = LocalConnection()
 
     def create_run(self, spec: ExecutionSpec, callback=None):
         return LocalRunner(materialize_local_spec(spec), callback=callback)
@@ -279,12 +358,11 @@ class LocalExecutor(Executor):
         )
 
     def recover_submission(self, run_id, submission, *, submitted_at=None):
-        from .remote_service import recover_remote
+        from ..common.async_utils import run_coro_sync as _run_sync
         from .local_project import _local_status_from_facts
-        reply = recover_remote(run_id, {
-            "executor": "local",
-            "directory": submission.execution.directory.local,
-        })
+        reply = _run_sync(self.connection.recover(
+            run_id, submission.execution.directory.local, submitted_at=submitted_at,
+        ))
         if reply is None:
             # The absence of a ticket is not proof that submission never
             # happened. Never authorize an automatic duplicate launch.
@@ -301,12 +379,12 @@ class LocalExecutor(Executor):
         )
 
     def acknowledge_submission(self, run):
-        from .remote_service import acknowledge_submission
-        acknowledge_submission(run.id)
+        from ..common.async_utils import run_coro_sync as _run_sync
+        _run_sync(self.connection.acknowledge_submission(run.id))
 
     def acknowledge(self, run):
-        from .remote_service import acknowledge_remote
-        acknowledge_remote(run.execution.backend_id)
+        from ..common.async_utils import run_coro_sync as _run_sync
+        _run_sync(self.connection.acknowledge(run.execution.backend_id))
 
     def status(self, *runs):
         from .local_project import local_status

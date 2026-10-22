@@ -6,6 +6,7 @@ from ase2sprkkr.execution import (
 )
 
 from ase2sprkkr.execution.manager import ExecutionManager
+import pytest
 
 
 def _record(manager, tmp_path):
@@ -96,7 +97,7 @@ def test_late_uncaptured_manifest_cannot_destroy_historical_snapshot(tmp_path):
     running = manager.transition(original, state=RunState.RUNNING)
     completed = manager.complete(
         running, state=RunState.FINISHED, return_code=0,
-        artifacts_available=True,
+        files_available=True,
     )
     assert completed.files.captured_at is not None
     assert len(completed.files.output_versions) == 1
@@ -108,3 +109,236 @@ def test_late_uncaptured_manifest_cannot_destroy_historical_snapshot(tmp_path):
     assert late.files == completed.files
     assert late.files.output_versions == completed.files.output_versions
     assert manager.store.get(running.id).files == completed.files
+
+
+def test_submitted_identity_rejects_directory_and_endpoint_changes(tmp_path):
+    from dataclasses import replace
+    import pytest
+    from ase2sprkkr.execution import WorkingDirectory
+
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    original = _record(manager, tmp_path)
+    manager.store.save(original)
+    staged = manager.transition(
+        original,
+        execution=replace(
+            original.execution,
+            directory=WorkingDirectory(str(tmp_path), "/remote/actual"),
+        ),
+    )
+    running = manager.transition(
+        staged, state=RunState.RUNNING,
+        execution=staged.execution.submitted("job-1"),
+    )
+    assert running.execution.directory.remote == "/remote/actual"
+    for changes in (
+        {"directory": WorkingDirectory(str(tmp_path), "/remote/other")},
+        {"directory": WorkingDirectory(str(tmp_path / "other"), "/remote/actual")},
+        {"endpoint": ExecutorEndpoint(executor="psij", psij_backend="slurm")},
+        {"backend_id": "job-2"},
+    ):
+        with pytest.raises(ValueError):
+            manager.transition(
+                running, execution=replace(running.execution, **changes),
+            )
+    assert manager.store.get(running.id).execution == running.execution
+
+
+def test_terminal_refresh_cannot_replace_manifest_or_execution(tmp_path):
+    from dataclasses import replace
+    import pytest
+    from ase2sprkkr.execution import FileEntry, FileManifest, WorkingDirectory
+
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    original = manager.new_record(
+        task="DOS", directory=tmp_path,
+        files=FileManifest(outputs=(FileEntry(local_path=str(tmp_path / "a")),)),
+    )
+    running = manager.transition(original, state=RunState.RUNNING)
+    finished = manager.transition(running, state=RunState.FINISHED)
+    stale_files = FileManifest(outputs=(
+        FileEntry(local_path=str(tmp_path / "different")),
+    ))
+    unchanged = manager.transition(running, state=RunState.RUNNING, files=stale_files)
+    assert unchanged.files == finished.files
+    with pytest.raises(ValueError, match="directory"):
+        manager.transition(
+            running,
+            execution=replace(
+                finished.execution,
+                directory=WorkingDirectory(str(tmp_path / "other")),
+            ),
+        )
+    assert manager.store.get(original.id).execution == finished.execution
+
+
+def test_terminal_persistent_run_state_does_not_query_backend(tmp_path):
+    from ase2sprkkr.execution.manager import PersistentRun
+    from ase2sprkkr.execution.postprocessing import CalculationRun
+
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    record = _record(manager, tmp_path)
+    finished = manager.transition(record, state=RunState.FINISHED)
+
+    class Backend:
+        callback = None
+
+        @property
+        def state(self):
+            raise AssertionError("Terminal state must not query backend")
+
+    run = CalculationRun(Backend(), lambda outcome: outcome)
+    run.hooks = PersistentRun(manager, object(), finished)
+    assert run.state is RunState.FINISHED
+
+
+def test_explicit_availability_update_preserves_terminal_snapshot(tmp_path):
+    """A terminal run rejects unsolicited manifests, not explicit file status."""
+    from ase2sprkkr.execution import FileEntry, FileManifest
+
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    output = str(tmp_path / "optional.out")
+    original = manager.new_record(
+        task="DOS", directory=tmp_path,
+        files=FileManifest(outputs=(FileEntry(local_path=output),)),
+    )
+    terminal = manager.transition(original, state=RunState.FINISHED)
+    updated = manager.update_file_availability(terminal, output, "skipped")
+
+    assert updated.state is RunState.FINISHED
+    assert updated.finished_at == terminal.finished_at
+    assert updated.files.outputs[0].local_path == output
+    assert updated.files.outputs[0].availability_state == "skipped"
+    assert manager.store.get(original.id).files == updated.files
+
+
+def test_terminal_run_cannot_acquire_backend_identity_after_failure(tmp_path):
+    """A failed submission with no backend ID cannot be reassigned later."""
+    from dataclasses import replace
+    import pytest
+
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    failed = manager.transition(
+        _record(manager, tmp_path), state=RunState.FAILED,
+    )
+    with pytest.raises(ValueError, match="Final execution identity"):
+        manager.transition(
+            failed,
+            execution=replace(failed.execution, backend_id="late-job"),
+        )
+    assert manager.store.get(failed.id).execution.backend_id is None
+
+
+def test_endpoint_and_local_directory_are_immutable_before_submission(tmp_path):
+    from dataclasses import replace
+    import pytest
+    from ase2sprkkr.execution import WorkingDirectory
+
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    original = _record(manager, tmp_path)
+    manager.store.save(original)
+    for changes in (
+        {"endpoint": ExecutorEndpoint(executor="psij", psij_backend="slurm")},
+        {"directory": WorkingDirectory(str(tmp_path / "other"))},
+    ):
+        with pytest.raises(ValueError):
+            manager.transition(
+                original, execution=replace(original.execution, **changes),
+            )
+    assert manager.store.get(original.id).execution == original.execution
+
+
+def test_concurrent_completers_reuse_one_durable_terminal_snapshot(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    record = _record(manager, tmp_path)
+    running = manager.transition(record, state=RunState.RUNNING)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(manager.complete, running, state=RunState.FINISHED,
+                        return_code=0, files_available=False)
+            for _ in range(2)
+        ]
+        first, second = (future.result() for future in futures)
+
+    assert first == second == manager.store.get(record.id)
+    assert first.state is RunState.FINISHED
+    assert first.finished_at is not None
+
+
+def test_terminal_retry_after_lost_fsync_confirmation(tmp_path, monkeypatch):
+    import ase2sprkkr.execution.manager as manager_module
+
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    record = _record(manager, tmp_path)
+    running = manager.transition(record, state=RunState.RUNNING)
+    actual_write = manager.store._write_unlocked
+    calls = []
+
+    def lost_confirmation(value):
+        calls.append("write")
+        result = actual_write(value)
+        if len(calls) == 1:
+            raise OSError("lost fsync confirmation")
+        return result
+
+    monkeypatch.setattr(manager.store, "_write_unlocked", lost_confirmation)
+    with pytest.raises(OSError, match="lost fsync confirmation"):
+        manager.complete(running, state=RunState.FINISHED, return_code=0)
+    confirmed = manager.complete(running, state=RunState.FINISHED, return_code=0)
+    assert confirmed == manager.store.get(record.id)
+    assert confirmed.state is RunState.FINISHED
+    assert calls == ["write"]
+
+
+def test_terminal_completion_preserves_first_file_snapshot(tmp_path):
+    from dataclasses import replace
+    from ase2sprkkr.execution import FileEntry, FileManifest
+
+    output = tmp_path / "output.out"
+    output.write_text("durable output")
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    original = manager.new_record(
+        task="DOS", directory=tmp_path,
+        files=FileManifest(stdout=FileEntry(local_path=str(output))),
+    )
+    running = manager.transition(original, state=RunState.RUNNING)
+    first = manager.complete(
+        running, state=RunState.FINISHED, return_code=0,
+        files_available=True,
+    )
+    assert first.files.captured_at is not None
+    assert first.files.output_versions
+
+    # An observer with an older manifest and failed transfer diagnostics
+    # must not invalidate the first durably committed result.
+    stale = replace(
+        running, files=FileManifest(stdout=FileEntry(
+            local_path=str(output), availability_state="failed",
+            availability_message="observer disconnected",
+        )),
+    )
+    second = manager.complete(
+        stale, state=RunState.FAILED, return_code=1, files_available=False,
+        files=stale.files,
+    )
+    assert second == first == manager.store.get(original.id)
+    assert second.files.output_versions == first.files.output_versions
+
+
+def test_terminal_lookup_rejects_foreign_project_identity(tmp_path):
+    from dataclasses import replace
+
+    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    original = _record(manager, tmp_path)
+    final = manager.complete(original, state=RunState.FINISHED)
+    with pytest.raises(ValueError, match="persistent identity"):
+        manager.complete(
+            replace(original, project_id="different-project"),
+            state=RunState.FINISHED,
+        )
+    assert manager.store.get(original.id) == final
+
+

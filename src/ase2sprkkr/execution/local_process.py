@@ -85,7 +85,7 @@ async def pump_stream(source, sink, *, eof=None):
 
 
 async def stop_local_process(
-    process, *, process_group=False, timeout=0.1, waiting=None,
+    process, *, process_group=False, timeout=1.0, waiting=None,
 ):
     """Send SIGTERM, then SIGKILL on timeout, without cancelling process.wait().
 

@@ -65,7 +65,6 @@ def test_remote_executor_over_ssh(docker_execution_image):
     from ase.build import bulk
     from ase2sprkkr.execution import (
         ExecutionManager,
-        ExecutorPool,
         RemoteExecutor,
         ProjectRepository,
         SshTransport,
@@ -151,8 +150,8 @@ def test_remote_executor_over_ssh(docker_execution_image):
             projects = ProjectRepository(tmp / "projects")
             project = projects.create("SSH integration")
             manager = ExecutionManager(
-                executor_pool=ExecutorPool(), project_repository=projects
-            ).for_project(project)
+                project_repository=projects
+            )
             output_seen = Event()
             output = []
             first_output_at = []
@@ -171,7 +170,7 @@ def test_remote_executor_over_ssh(docker_execution_image):
                 directory=workdir,
                 executor=executor,
                 profile=profile,
-                project=manager,
+                project=(manager, project.id),
                 empty_spheres=False,
                 print_output=False,
             )
@@ -185,11 +184,9 @@ def test_remote_executor_over_ssh(docker_execution_image):
                 _remote_error(exc)
 
             assert runner.backend_id is not None
-            assert runner.execution.endpoint.host == "tester@127.0.0.1"
-            assert (
-                runner.execution.directory.remote
-                == "/home/tester/ase2sprkkr-runs/calculation"
-            )
+            assert runner.executor.transport.host == "tester@127.0.0.1"
+            remote_directory = runner.files.mapping.map_path(str(workdir))
+            assert remote_directory == "/home/tester/ase2sprkkr-runs/calculation"
             _wait_for_live_output(runner, output_seen, output)
 
             result = runner.wait()
@@ -204,7 +201,7 @@ def test_remote_executor_over_ssh(docker_execution_image):
             remote_potential = (
                 potfil
                 if posixpath.isabs(potfil)
-                else posixpath.join(runner.execution.directory.remote, potfil)
+                else posixpath.join(remote_directory, potfil)
             )
             remote_pot_new = remote_potential + "_new"
             subprocess.run(ssh + ["test", "-s", remote_pot_new], check=True)
@@ -219,10 +216,10 @@ def test_remote_executor_over_ssh(docker_execution_image):
             # the outputs layer rather than by attaching a live runner.
             run_id = runner.id
             restarted = ExecutionManager(
-                executor_pool=ExecutorPool(), project_repository=projects
-            ).for_project(project)
+                project_repository=projects
+            )
             record = restarted.store.get(run_id)
-            restarted_executor = restarted.executor_for(record)
+            restarted_executor = restarted.executors.for_record(record)
             replayed = load_project_result(restarted, run_id)
 
             assert restarted_executor is not executor

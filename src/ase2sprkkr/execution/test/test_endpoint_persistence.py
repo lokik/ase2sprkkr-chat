@@ -3,7 +3,6 @@ from threading import Event
 from ase2sprkkr.execution import (
     
     ExecutorEndpoint,
-    ExecutorPool,
     LocalExecutor,
     RemoteEndpointExecutor,
     RunState,
@@ -12,6 +11,7 @@ from ase2sprkkr.execution import (
 )
 
 from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.pool import Executors
 from ase2sprkkr.execution.endpoint import endpoint_for_executor
 from ase2sprkkr.sprkkr.profile import SPRKKRProfile
 
@@ -40,7 +40,7 @@ def test_profile_uses_execution_endpoint_value():
 
 def test_run_store_roundtrips_endpoint(tmp_path):
     store = RunStore(tmp_path / "runs")
-    manager = ExecutionManager(store, executor_pool=ExecutorPool())
+    manager = ExecutionManager(store, executors=Executors())
     endpoint = ExecutorEndpoint(
         executor="ssh", host="cluster", ssh_options=("-v",), ssh_zstd=True,
     )
@@ -61,7 +61,7 @@ def test_run_store_roundtrips_endpoint(tmp_path):
 def test_manager_reconstructs_local_executor_after_restart(tmp_path):
     store = RunStore(tmp_path / "runs")
     endpoint = ExecutorEndpoint()
-    first = ExecutionManager(store, executor_pool=ExecutorPool())
+    first = ExecutionManager(store, executors=Executors())
     record = first.new_record(
         task="DOS",
         directory=tmp_path,
@@ -69,15 +69,16 @@ def test_manager_reconstructs_local_executor_after_restart(tmp_path):
     )
     store.save(record)
 
-    restarted = ExecutionManager(store, executor_pool=ExecutorPool())
-    executor = restarted.executor_for(store.get(record.id))
+    restarted = ExecutionManager(store, executors=Executors())
+    executor = restarted.executors.for_record(store.get(record.id))
 
     assert isinstance(executor, LocalExecutor)
 
 
 def test_attach_reconstructs_persisted_endpoint_without_task_reader(tmp_path):
     class AttachedRunner:
-        def __init__(self, run):
+        def __init__(self, run, executor):
+            self.executor = executor
             self.backend_id = run.execution.backend_id
             self.state = RunState.RUNNING
             self.result = None
@@ -114,23 +115,14 @@ def test_attach_reconstructs_persisted_endpoint_without_task_reader(tmp_path):
             start=True,
         ):
             self.calls.append((run, callback, output_listener, start))
-            runner = AttachedRunner(run)
+            runner = AttachedRunner(run, self)
             if start:
                 runner.start()
             return runner
 
-    class RecordingPool:
-        def __init__(self, executor):
-            self.executor = executor
-            self.endpoints = []
-
-        def for_endpoint(self, endpoint):
-            self.endpoints.append(endpoint)
-            return self.executor
-
     store = RunStore(tmp_path / "runs")
     endpoint = ExecutorEndpoint(executor="ssh", host="cluster")
-    first = ExecutionManager(store, executor_pool=ExecutorPool())
+    first = ExecutionManager(store, executors=Executors())
     record = first.new_record(
         task="DOS",
         directory=tmp_path,
@@ -140,15 +132,15 @@ def test_attach_reconstructs_persisted_endpoint_without_task_reader(tmp_path):
     record = first.transition(record, state=RunState.RUNNING, execution=record.execution.submitted("42"))
 
     executor = ReconstructedExecutor()
-    pool = RecordingPool(executor)
-    restarted = ExecutionManager(store, executor_pool=pool)
+    executors = Executors()
+    executors.register(executor, endpoint)
+    restarted = ExecutionManager(store, executors=executors)
 
     attached = restarted.attach(
         record.id,
         process_result=lambda outcome: outcome,
     )
 
-    assert pool.endpoints == [endpoint]
     assert attached.executor is executor
     assert executor.calls == [(record, None, None, False)]
 
@@ -165,10 +157,10 @@ def test_pool_reconstructs_and_reuses_ssh_endpoint():
         psij_backend="slurm",
         psij_url="local://slurm",
     )
-    pool = ExecutorPool()
+    executors = Executors()
 
-    first = pool.for_endpoint(endpoint)
-    second = pool.for_endpoint(endpoint)
+    first = executors.for_endpoint(endpoint)
+    second = executors.for_endpoint(endpoint)
 
     assert first is second
     assert isinstance(first, RemoteEndpointExecutor)
@@ -187,9 +179,28 @@ def test_default_remote_psij_endpoint_survives_restart():
     )
 
     endpoint = endpoint_for_executor(live)
-    restored = ExecutorPool().for_endpoint(endpoint)
+    restored = Executors().for_endpoint(endpoint)
 
     assert endpoint.psij_backend == "slurm"
     assert isinstance(restored, RemoteEndpointExecutor)
     assert restored.backend == "psij"
     assert restored.backend_options == {"backend": "slurm", "url": None}
+
+
+def test_psij_profile_polling_interval_survives_endpoint_roundtrip():
+    from ase2sprkkr.execution.endpoint import create_executor_from_endpoint
+    from ase2sprkkr.execution.psij import PsijExecutor
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    profile = SPRKKRProfile(
+        executor="psij", psij_backend="slurm", psij_poll_interval=5,
+    )
+    assert profile.endpoint.psij_poll_interval == 5
+    with patch("ase2sprkkr.execution.psij._load_psij") as load:
+        load.return_value = SimpleNamespace(
+            JobExecutor=SimpleNamespace(get_instance=lambda *a, **kw: object())
+        )
+        executor = create_executor_from_endpoint(profile.endpoint)
+    assert isinstance(executor, PsijExecutor)
+    assert executor.poll_interval == 5

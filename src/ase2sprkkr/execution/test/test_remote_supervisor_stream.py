@@ -460,3 +460,96 @@ def test_supervisor_start_preserves_failure_when_cleanup_also_fails(
         assert not os.path.exists(streams._socket_dir)
 
     asyncio.run(check())
+
+
+def test_publish_avoids_framing_without_live_recipient_and_preserves_replay(
+    tmp_path, monkeypatch,
+):
+    """No frame is built for unattended or spool-replaying channels."""
+    from .. import remote_supervisor_stream as module
+
+    original_frame = module.frame
+    framed = []
+
+    def track_frame(kind, offset, data):
+        framed.append((kind, offset, data))
+        return original_frame(kind, offset, data)
+
+    monkeypatch.setattr(module, "frame", track_frame)
+
+    async def check():
+        output = tmp_path / "out"
+        streams = SupervisorStreams(output, None)
+        await streams.start()
+        try:
+            streams.publish("out", b"before")
+            assert framed == []
+            assert output.read_bytes() == b"before"
+
+            writer = _FakeFollowerWriter()
+            replaying = _Follower(writer, {"out": 0, "err": 0}, replay=True)
+            streams._followers.add(replaying)
+            try:
+                streams.publish("out", b"later")
+                assert framed == []
+                assert writer.frames == []
+                assert replaying.wake.is_set()
+            finally:
+                streams._followers.discard(replaying)
+
+            received = []
+            streams.terminal({"state": "finished", "return_code": 0})
+            outcome = await follow_socket(
+                streams.socket_path, {"out": 0, "err": 0},
+                lambda kind, offset, data: received.append((kind, offset, data)),
+            )
+            assert outcome["state"] == "finished"
+            assert received == [("out", 0, b"beforelater")]
+            assert framed == [("out", 0, b"beforelater")]
+            assert output.read_bytes() == b"beforelater"
+        finally:
+            await streams.finish()
+
+    asyncio.run(check())
+
+
+def test_publish_frames_once_for_multiple_live_followers(monkeypatch):
+    from .. import remote_supervisor_stream as module
+
+    original_frame = module.frame
+    framed = []
+
+    def track_frame(kind, offset, data):
+        framed.append((kind, offset, data))
+        return original_frame(kind, offset, data)
+
+    monkeypatch.setattr(module, "frame", track_frame)
+    streams = SupervisorStreams(None, None)
+    writers = [_FakeFollowerWriter(), _FakeFollowerWriter()]
+    followers = [
+        _Follower(writer, {"out": 0, "err": 0}, replay=False)
+        for writer in writers
+    ]
+    streams._followers.update(followers)
+    streams.publish("out", b"shared")
+    expected = original_frame("out", 0, b"shared")
+    assert framed == [("out", 0, b"shared")]
+    assert [writer.frames for writer in writers] == [[expected], [expected]]
+    assert all(follower.offsets["out"] == 6 for follower in followers)
+
+
+def test_publish_skips_framing_if_live_only_follower_is_backpressured(monkeypatch):
+    from .. import remote_supervisor_stream as module
+
+    def forbidden_frame(*args):
+        raise AssertionError("No recipient can accept a stream frame")
+
+    monkeypatch.setattr(module, "frame", forbidden_frame)
+    streams = SupervisorStreams(None, None)
+    writer = _FakeFollowerWriter(buffered=_HIGH)
+    follower = _Follower(writer, {"out": 0, "err": 0}, replay=False)
+    streams._followers.add(follower)
+    streams.publish("out", b"unavailable")
+    assert writer.frames == []
+    assert writer.transport.aborted
+    assert follower.offsets["out"] == 0

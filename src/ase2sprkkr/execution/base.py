@@ -106,15 +106,19 @@ def request_cancellation(runner, action):
         return runner._cancel_future
 
 
-def finish_monitor(runner):
-    """Deliver the callback and unblock waiters after backend-specific cleanup."""
+def finish_monitor(runner, *, cleanup=None):
+    """Persist callback state and release owned resources before unblocking waiters."""
     try:
         if runner.callback is not None:
             runner.callback(runner.result)
     except BaseException as exc:
         runner._callback_exception = exc
     finally:
-        runner._done.set()
+        try:
+            if cleanup is not None:
+                cleanup()
+        finally:
+            runner._done.set()
 
 
 def wait_for_monitor(runner):
@@ -242,7 +246,7 @@ class FailurePhase(str, Enum):
     SUBMISSION = "submission"
     LAUNCH = "launch"
     EXECUTION = "execution"
-    ARTIFACTS = "artifacts"
+    FILES = "files"
     DOWNLOAD = "download"
     POSTPROCESSING = "postprocessing"
 
@@ -255,6 +259,27 @@ class ExecutionOutcome:
     input_file: Any = None
     error_file: Any = None
     return_code: Optional[int] = None
+
+    @classmethod
+    def from_spec(cls, spec: "ExecutionSpec", *, flush=False, strict_paths=False):
+        """Snapshot named local paths before the specification's streams close.
+
+        The specification may contain open file objects needed by the executor.
+        The outcome holds their normalized paths for readers and persistence,
+        not another mutable copy of the original stream objects.
+        """
+        def normalized(name):
+            value = getattr(spec, name)
+            return file_path(
+                value, spec.directory, flush=flush,
+                required=strict_paths and value is not None,
+            )
+
+        return cls(
+            output_file=normalized("output_file"),
+            input_file=normalized("input_file"),
+            error_file=normalized("error_file"),
+        )
 
 
 class ExecutionResources:
@@ -279,127 +304,6 @@ class ExecutionResources:
             self._resources = ()
 
         _close_distinct(resources, suppress_errors=suppress_errors)
-
-class ResourceOwnedRunner:
-    """Runner proxy owning resources and the public submit/cancel boundary."""
-
-    def __init__(self, runner, resources: ExecutionResources):
-        self._runner = runner
-        self._resources = resources
-        self._submission_lock = Lock()
-        self._cancel_requested = Event()
-        self._submitted = runner.state != RunState.NEW
-        self._cancel_dispatched = False
-
-    def __getattr__(self, name):
-        return getattr(self._runner, name)
-
-    @property
-    def result(self):
-        return self._runner.result
-
-    @property
-    def state(self):
-        if self._cancel_requested.is_set():
-            with self._submission_lock:
-                if not self._submitted:
-                    return RunState.CANCELLED
-        return self._runner.state
-
-    @property
-    def backend_id(self):
-        return self._runner.backend_id
-
-    @property
-    def exception(self):
-        return self._runner.exception
-
-    def _release_after_failure(self):
-        self._resources.close(suppress_errors=True)
-
-    def _raise_if_cancelled_before_submit(self):
-        if not self._cancel_requested.is_set():
-            return
-        with self._submission_lock:
-            if not self._submitted:
-                raise asyncio.CancelledError("Run was cancelled before submission")
-
-    def submit(self):
-        with self._submission_lock:
-            if self._cancel_requested.is_set():
-                self._resources.close()
-                raise asyncio.CancelledError("Run was cancelled before submission")
-            try:
-                result = self._runner.submit()
-            except BaseException:
-                self._release_after_failure()
-                raise
-            self._submitted = True
-            cancel_after_submit = self._cancel_requested.is_set()
-        if cancel_after_submit:
-            self.cancel()
-        return result
-
-    def wait(self):
-        self._raise_if_cancelled_before_submit()
-        try:
-            result = self._runner.wait()
-        except BaseException:
-            self._release_after_failure()
-            raise
-        self._resources.close()
-        return result
-
-    def run(self):
-        self._raise_if_cancelled_before_submit()
-        if self.state == RunState.NEW:
-            self.submit()
-        return self.wait()
-
-    async def run_async(self):
-        self._raise_if_cancelled_before_submit()
-        if self.state == RunState.NEW:
-            self.submit()
-        try:
-            run_async = getattr(self._runner, "run_async", None)
-            if run_async is not None:
-                result = await run_async()
-            else:
-                result = await asyncio.to_thread(self._runner.wait)
-        except BaseException:
-            self._release_after_failure()
-            raise
-        self._resources.close()
-        return result
-
-    def cancel(self):
-        self._cancel_requested.set()
-        with self._submission_lock:
-            if not self._submitted:
-                self._resources.close()
-                return None
-            if self._cancel_dispatched:
-                return None
-            result = self._runner.cancel()
-            self._cancel_dispatched = True
-            return result
-
-    def close(self):
-        if self._resources.closed:
-            return
-        state = self.state
-        if state != RunState.NEW:
-            raise RuntimeError(
-                f"Cannot close execution resources while run is {state.value}"
-            )
-        self._resources.close()
-
-    def add_output_listener(self, callback):
-        return self._runner.add_output_listener(callback)
-
-    def add_output_error_listener(self, callback):
-        return self._runner.add_output_error_listener(callback)
-
 
 @dataclass(frozen=True)
 class RunStatus:
@@ -537,7 +441,11 @@ class LaunchSpec:
 
 
 def _pathlike(value):
+    # Keep a TaskFile-like declaration's optional policy until FileManifest
+    # has converted it to a file entry. Ordinary PathLike values stay strings.
     if isinstance(value, os.PathLike):
+        if hasattr(value, "optional"):
+            return value
         return os.fspath(value)
     return value
 
@@ -634,6 +542,16 @@ class Executor:
         raise NotImplementedError(
             f"{type(self).__name__} cannot retrieve persistent result files"
         )
+
+    def acknowledge_submission(self, run):
+        """No temporary submission receipt for this executor."""
+
+    def acknowledge(self, run):
+        """No terminal receipt for this executor."""
+
+    def reservation_context(self, spec: ExecutionSpec, files):
+        """Prepare canonical run paths before atomic submission reservation."""
+        return files, None
 
     def submission_directory(self, spec: ExecutionSpec) -> str:
         return os.path.abspath(os.fspath(spec.directory))
