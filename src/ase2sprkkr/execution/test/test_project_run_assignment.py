@@ -5,10 +5,10 @@ from types import SimpleNamespace
 import pytest
 
 from ase2sprkkr.execution import (
-    ExecutionManager, ExecutionSpec, Executor, ProjectRepository, RunState,
+    RunManager, ExecutionSpec, Executor, ProjectRepository, RunState,
     FileManifest,
 )
-from ase2sprkkr.execution.job_files import JobFiles
+from ase2sprkkr.execution.run_files import RunFiles
 
 
 class _Runner:
@@ -16,7 +16,7 @@ class _Runner:
         self.spec = spec
         self.executor = executor
         self.callback = None
-        self.job_files = JobFiles(FileManifest.from_spec(spec))
+        self.run_files = RunFiles(FileManifest.from_spec(spec))
         self.state = RunState.NEW
         self.backend_id = None
         self.result = SimpleNamespace(return_code=0)
@@ -68,7 +68,7 @@ class _Executor(Executor):
 def _fixture(tmp_path):
     projects = ProjectRepository(tmp_path / "projects")
     project = projects.create("Project")
-    manager = ExecutionManager(project_repository=projects)
+    manager = RunManager(project_repository=projects)
     return manager, projects, project
 
 
@@ -100,7 +100,7 @@ def test_run_is_durable_in_project_namespace_before_backend_submit(tmp_path):
 @pytest.mark.parametrize("explicit", (False, True), ids=("missing", "invalid"))
 def test_project_must_exist_before_backend_is_created(tmp_path, explicit):
     projects = ProjectRepository(tmp_path / "projects")
-    manager = ExecutionManager(project_repository=projects)
+    manager = RunManager(project_repository=projects)
     executor = _Executor()
     options = {"project_id": "missing"} if explicit else {}
     errors = (KeyError, ValueError) if explicit else ValueError

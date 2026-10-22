@@ -9,7 +9,7 @@ from .manifest_merge import merge_snapshot, merge_terminal_files
 from .transport import FILE_DELIVERY_ERRORS
 
 
-class JobFiles:
+class RunFiles:
     """Mutable working file state owned by one runner.
 
     Persisted RunRecord snapshots and historical file recovery are separate.
@@ -17,7 +17,7 @@ class JobFiles:
 
     def __init__(self, manifest: FileManifest):
         if not isinstance(manifest, FileManifest):
-            raise TypeError("JobFiles expects a FileManifest")
+            raise TypeError("RunFiles expects a FileManifest")
         self._manifest = manifest
         self._lock = Lock()
 
@@ -29,7 +29,7 @@ class JobFiles:
     def replace(self, manifest: FileManifest) -> FileManifest:
         """Install a reserved or recovered authoritative file state."""
         if not isinstance(manifest, FileManifest):
-            raise TypeError("JobFiles expects a FileManifest")
+            raise TypeError("RunFiles expects a FileManifest")
         with self._lock:
             self._manifest = manifest
             return manifest

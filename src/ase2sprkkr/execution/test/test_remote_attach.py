@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from ..base import ExecutionSpec, LaunchSpec, RunState
-from ..manager import RunRecord
+from ..run_manager import RunRecord
 from ..run_model import Execution, WorkingDirectory, FileManifest
 from ..endpoint import endpoint_for_executor
 from ..postprocessing import CalculationRun
@@ -27,7 +27,7 @@ def _launch(local_root, remote_root):
 
 
 def _record(runner):
-    files = runner.job_files.manifest
+    files = runner.run_files.manifest
     execution = Execution(
         endpoint_for_executor(runner.executor),
         WorkingDirectory(
@@ -301,8 +301,8 @@ def test_remote_attach_preserves_durable_transfer_failure(tmp_path, monkeypatch)
 
     monkeypatch.setattr(endpoint.connection, "status", status)
     attached = endpoint.attach(run, start=False)
-    assert attached.job_files.manifest.outputs[0].availability_state == "failed"
-    assert attached.job_files.manifest.outputs[0].availability_message == "download interrupted"
+    assert attached.run_files.manifest.outputs[0].availability_state == "failed"
+    assert attached.run_files.manifest.outputs[0].availability_message == "download interrupted"
     assert run.files is recorded
 
     # Even an apparently successful stale backend snapshot may not replace
@@ -310,4 +310,4 @@ def test_remote_attach_preserves_durable_transfer_failure(tmp_path, monkeypatch)
     captured = replace(recorded, captured_at="2026-10-13T08:00:01+00:00")
     completed = replace(run, state=RunState.FINISHED, files=captured)
     attached = endpoint.attach(completed, start=False)
-    assert attached.job_files.manifest is captured
+    assert attached.run_files.manifest is captured

@@ -21,21 +21,23 @@ from .run_model import (
 )
 from .endpoint import ExecutorEndpoint
 from .local import LocalExecutor, LocalRunner
-from .manager import DuplicateSubmissionError, ExecutionManager
+from .run_manager import DuplicateSubmissionError, RunManager
 from .run_record import RunRecord
+from .job import Job
 from .run_store import CorruptRunRecord, RunStore
 from .run_persistence import RunPersistence
 from .pool import Executors
 from .postprocessing import CalculationRun
 from .projects import (
     Project,
+    ProjectRecord,
     ProjectConflictError,
     ProjectDeleteError,
     ProjectRepository,
     ProjectRepositoryError,
     default_projects_directory,
 )
-from .job_files import JobFiles
+from .run_files import RunFiles
 from .psij import PsijExecutor, PsijRunner
 from .remote import FileSyncPolicy, RemoteRunner
 from .remote_endpoint import RemoteEndpointExecutor
@@ -50,7 +52,7 @@ __all__ = [
     "FileEntry",
     "FileMapping",
     "FileManifest",
-    "JobFiles",
+    "RunFiles",
     "ExecutionOutcome",
     "ExecutionResources",
     "ExecutionSpec",
@@ -70,9 +72,11 @@ __all__ = [
     "FileVersion",
     "FileVersionCaptureError",
     "RunRecord",
+    "Job",
+    "ProjectRecord",
     "RunStore",
     "CorruptRunRecord",
-    "ExecutionManager",
+    "RunManager",
     "RunPersistence",
     "Project",
     "ProjectRepository",

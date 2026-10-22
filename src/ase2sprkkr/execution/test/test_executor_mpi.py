@@ -12,7 +12,7 @@ from ...execution import (
     MpiSpec,
     RunState,
 )
-from ...execution import JobFiles, FileManifest
+from ...execution import RunFiles, FileManifest
 from ...execution.local import materialize_local_spec
 from ...execution.target_connection import SSHConnection
 from ...input_parameters.input_parameters import InputParameters
@@ -55,7 +55,7 @@ def test_input_parameters_preserve_mpi_launch_intent(tmp_path, monkeypatch):
         state=RunState.NEW,
         result=object(),
         callback=None,
-        job_files=JobFiles(FileManifest()),
+        run_files=RunFiles(FileManifest()),
         reference=None,
         exception=None,
     )
@@ -210,7 +210,7 @@ def test_explicit_local_executor_overrides_remote_profile(tmp_path, monkeypatch)
         state=RunState.NEW,
         result=object(),
         callback=None,
-        job_files=JobFiles(FileManifest()),
+        run_files=RunFiles(FileManifest()),
         reference=None,
         exception=None,
     )

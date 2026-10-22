@@ -16,7 +16,7 @@ from ..common.decorators import class_property
 from .run_model import Execution, FileManifest, FileSyncPolicy
 
 if TYPE_CHECKING:
-    from .job_files import JobFiles
+    from .run_files import RunFiles
 
 
 def file_path(value, directory=None, *, flush=False, required=False):
@@ -524,7 +524,7 @@ class Runner(Protocol):
 
     result: Any
 
-    job_files: "JobFiles"
+    run_files: "RunFiles"
 
     @property
     def state(self) -> RunState: ...

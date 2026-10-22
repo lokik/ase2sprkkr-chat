@@ -225,11 +225,11 @@ def test_remote_executor_runs_psij_slurm_over_ssh(docker_execution_image):
                 ssh_options=ssh_options,
                 psij_backend="slurm",
             )
-            from ase2sprkkr.execution import ExecutionManager, ProjectRepository
+            from ase2sprkkr.execution import RunManager, ProjectRepository
 
             projects = ProjectRepository(tmp / "projects")
             project = projects.create("Remote PSI/J integration")
-            manager = ExecutionManager(project_repository=projects)
+            manager = RunManager(project_repository=projects)
             calculator = SPRKKR(
                 atoms=bulk("Al"),
                 directory=workdir,
@@ -255,7 +255,7 @@ def test_remote_executor_runs_psij_slurm_over_ssh(docker_execution_image):
             assert runner.backend_id is not None
             assert runner.executor.backend_options["backend"] == "slurm"
             assert runner.executor.transport.host == "tester@127.0.0.1"
-            assert runner.job_files.manifest.mapping.map_path(str(workdir)) == (
+            assert runner.run_files.manifest.mapping.map_path(str(workdir)) == (
                 "/home/tester/ase2sprkkr-runs/calculation"
             )
 

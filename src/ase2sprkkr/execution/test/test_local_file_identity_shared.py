@@ -5,7 +5,7 @@ import os
 import pytest
 
 from ase2sprkkr.execution import (
-    ExecutionManager, FileEntry, FileManifest, RunStore,
+    RunManager, FileEntry, FileManifest, RunStore,
 )
 from ase2sprkkr.execution.file_availability import validate_output_collisions
 from ase2sprkkr.execution.file_identity import same_local_file
@@ -83,7 +83,7 @@ def test_same_file_identity_is_shared_across_all_three_policies(tmp_path, alias_
     with pytest.raises(ValueError, match="overlaps protected"):
         validate_output_collisions((str(alias),), protected=(str(file),))
 
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     first = manager.new_record(
         task="DOS", directory=tmp_path,
         files=FileManifest(outputs=(FileEntry(local_path=str(file)),)),

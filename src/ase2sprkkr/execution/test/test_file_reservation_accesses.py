@@ -5,7 +5,7 @@ import os
 import pytest
 
 from ase2sprkkr.execution import (
-    ExecutionManager, FileEntry, FileManifest, FileMapping, RunStore,
+    RunManager, FileEntry, FileManifest, FileMapping, RunStore,
 )
 from ase2sprkkr.execution.endpoint import ExecutorEndpoint
 from ase2sprkkr.execution.file_reservations import reservation_conflict
@@ -29,7 +29,7 @@ def _record(manager, directory, task, files, *, dataset=None, endpoint=None,
     ("cache", "cache", True),
 ))
 def test_local_access_conflict_is_symmetric(tmp_path, first_role, second_role, conflict):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     shared = str(tmp_path / "shared.dat")
 
     def manifest(role):
@@ -49,7 +49,7 @@ def test_local_access_conflict_is_symmetric(tmp_path, first_role, second_role, c
     ("always", True),
 ))
 def test_remote_input_staging_is_conditional_write(tmp_path, sync, conflict):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     remote_root = "/scratch/common"
     remote_input = remote_root + "/stdin.in"
     endpoint = ExecutorEndpoint(executor="ssh", host="cluster")
@@ -70,7 +70,7 @@ def test_remote_input_staging_is_conditional_write(tmp_path, sync, conflict):
 
 
 def test_reservation_uses_endpoint_namespace(tmp_path):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     files = FileManifest(stdout=FileEntry(local_path=str(tmp_path / "out.dat")))
     left = _record(manager, tmp_path, "SCF", files)
     right = _record(
@@ -81,7 +81,7 @@ def test_reservation_uses_endpoint_namespace(tmp_path):
 
 
 def test_local_aliases_and_glob_members_are_writes(tmp_path):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     actual = tmp_path / "real.dat"
     alias = tmp_path / "linked.dat"
     actual.write_bytes(b"existing")
@@ -108,7 +108,7 @@ def test_local_aliases_and_glob_members_are_writes(tmp_path):
 
 
 def test_empty_declarations_keep_task_dataset_fallback(tmp_path):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     first = _record(manager, tmp_path, "DOS", FileManifest(), dataset="same")
     second = _record(manager, tmp_path, "DOS", FileManifest(), dataset="same")
     different = _record(manager, tmp_path, "DOS", FileManifest(), dataset="other")
@@ -117,7 +117,7 @@ def test_empty_declarations_keep_task_dataset_fallback(tmp_path):
 
 
 def test_pure_conflict_check_does_not_mutate_records(tmp_path):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     files = FileManifest(outputs=(FileEntry(local_path=str(tmp_path / "out")),))
     a = _record(manager, tmp_path, "DOS", files)
     b = _record(manager, tmp_path, "BSF", files)

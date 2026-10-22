@@ -1,6 +1,6 @@
 """Manifest reconciliation does not make copies without changing file facts."""
 
-from ase2sprkkr.execution.job_files import JobFiles
+from ase2sprkkr.execution.run_files import RunFiles
 from ase2sprkkr.execution.manifest_merge import merge_snapshot, merge_terminal_files
 from ase2sprkkr.execution.run_model import FileEntry, FileManifest
 

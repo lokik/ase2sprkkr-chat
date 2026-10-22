@@ -376,9 +376,9 @@ def test_restore_existing_staging_file_is_rejected_before_any_download(tmp_path)
     assert second_stage.read_text() == "unrelated"
     assert not first.exists() and not second.exists()
 
-def test_job_files_preflights_all_remote_sources_before_first_download(tmp_path):
-    """The JobFiles path must preserve the handler's batch preflight contract."""
-    from ase2sprkkr.execution.job_files import JobFiles
+def test_run_files_preflights_all_remote_sources_before_first_download(tmp_path):
+    """The RunFiles path must preserve the handler's batch preflight contract."""
+    from ase2sprkkr.execution.run_files import RunFiles
 
     local = tmp_path / "local"
     remote = tmp_path / "remote"
@@ -416,7 +416,7 @@ def test_job_files_preflights_all_remote_sources_before_first_download(tmp_path)
     )
 
     with pytest.raises(ValueError, match="differs from mapped path"):
-        JobFiles.retrieve(record, store=None, executor=executor)
+        RunFiles.retrieve(record, store=None, executor=executor)
 
     assert transport.downloads == []
     assert not first.exists()

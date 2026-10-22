@@ -6,7 +6,7 @@ import pytest
 
 from ase2sprkkr.execution.base import ExecutionOutcome, FailurePhase, RunState
 from ase2sprkkr.execution.postprocessing import CalculationRun
-from ase2sprkkr.execution.job_files import JobFiles
+from ase2sprkkr.execution.run_files import RunFiles
 from ase2sprkkr.execution.run_model import FileManifest
 
 
@@ -14,7 +14,7 @@ class Backend:
     def __init__(self, state=RunState.FINISHED):
         self.callback = None
         self.state = RunState.NEW
-        self.job_files = JobFiles(FileManifest())
+        self.run_files = RunFiles(FileManifest())
         self.terminal = state
         self.result = ExecutionOutcome(return_code=0)
         self.exception = None
@@ -153,7 +153,7 @@ def test_external_wait_only_backend_and_late_callback_finalize_once():
         def __init__(self):
             self.callback = None
             self.state = RunState.NEW
-            self.job_files = JobFiles(FileManifest())
+            self.run_files = RunFiles(FileManifest())
             self.result = ExecutionOutcome(return_code=0)
             self.exception = None
 
@@ -198,7 +198,7 @@ def test_persistence_failure_is_distinct_from_calculation_and_can_be_retried():
 
     class Hooks(_NoopSubmissionOwner):
         def before_submit(self, run):
-            return run.job_files.manifest
+            return run.run_files.manifest
 
         def prepared(self, run):
             pass
@@ -255,7 +255,7 @@ def test_persistent_hook_transaction_order_and_completion():
     class Hooks(_NoopSubmissionOwner):
         def before_submit(self, run):
             stages.append("reserved")
-            return run.job_files.manifest
+            return run.run_files.manifest
 
         def prepared(self, run):
             stages.append("prepared")
@@ -316,7 +316,7 @@ def test_persistent_cancel_after_preflight_does_not_launch():
     class Hooks(_NoopSubmissionOwner):
         def before_submit(self, run):
             phases.append("reserved")
-            return run.job_files.manifest
+            return run.run_files.manifest
 
         def prepared(self, run):
             phases.append("prepared")
@@ -344,7 +344,7 @@ def test_persistent_prepared_hook_runs_without_backend_preflight():
     class Hooks(_NoopSubmissionOwner):
         def before_submit(self, run):
             events.append("reserved")
-            return run.job_files.manifest
+            return run.run_files.manifest
 
         def prepared(self, run):
             events.append("prepared")
@@ -378,7 +378,7 @@ def test_synchronous_completion_waits_for_durable_backend_identity():
         failure_message = None
 
         def __init__(self):
-            self.job_files = JobFiles(FileManifest())
+            self.run_files = RunFiles(FileManifest())
             self.result = SimpleNamespace(return_code=0)
 
         def prepare_submission(self):
@@ -397,7 +397,7 @@ def test_synchronous_completion_waits_for_durable_backend_identity():
     class Hooks(_NoopSubmissionOwner):
         def before_submit(self, run):
             order.append("reserve")
-            return run.job_files.manifest
+            return run.run_files.manifest
 
         def prepared(self, run):
             order.append("prepared")
@@ -436,7 +436,7 @@ def test_fast_completion_does_not_publish_if_identity_persistence_fails():
         failure_message = None
 
         def __init__(self):
-            self.job_files = JobFiles(FileManifest())
+            self.run_files = RunFiles(FileManifest())
             self.result = SimpleNamespace(return_code=0)
 
         def prepare_submission(self):
@@ -454,7 +454,7 @@ def test_fast_completion_does_not_publish_if_identity_persistence_fails():
 
     class Hooks(_NoopSubmissionOwner):
         def before_submit(self, run):
-            return run.job_files.manifest
+            return run.run_files.manifest
 
         def prepared(self, run):
             pass

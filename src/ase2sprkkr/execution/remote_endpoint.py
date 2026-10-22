@@ -17,7 +17,7 @@ from .base import (
 )
 from .remote import FileSyncPolicy, RemoteRunner, _run_sync
 from .remote_file_handler import RemoteFileHandler
-from .job_files import JobFiles
+from .run_files import RunFiles
 from .manifest_merge import merge_snapshot
 from .target_connection import SSHConnection
 from .supervisor_monitor import backend_status_from_facts
@@ -184,7 +184,7 @@ class RemoteEndpointExecutor(Executor):
         )
 
     def preflight_result_files(self, run, files):
-        """Validate all historical sources before JobFiles starts downloading."""
+        """Validate all historical sources before RunFiles starts downloading."""
         self._validate_run(run)
         self.file_handler.plan_restore(run, files)
 

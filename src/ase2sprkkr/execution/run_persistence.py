@@ -69,7 +69,7 @@ class RunPersistence:
             self._record = self.manager.transition(
                 self._record,
                 execution=self._execution_for(run, self._record),
-                files=run.job_files.manifest,
+                files=run.run_files.manifest,
             )
 
     def submitted(self, run: CalculationRun):
@@ -78,7 +78,7 @@ class RunPersistence:
             if not self._record.state.is_terminal:
                 self._record = self.manager.record_submitted(
                     self._record, backend_id=run.backend_id, state=run.state,
-                    failure_phase=run.failure_phase, files=run.job_files.manifest,
+                    failure_phase=run.failure_phase, files=run.run_files.manifest,
                 )
             record = self._record
         self.manager._acknowledge_submission(self.executor, record)
@@ -142,7 +142,7 @@ class RunPersistence:
                     execution=self._execution_for(run, self._record),
                     return_code=run.return_code, message=message,
                     failure_phase=run.failure_phase,
-                    files=run.job_files.manifest,
+                    files=run.run_files.manifest,
                     expected_updated_at=self._record.updated_at,
                 )
                 if updated is None:

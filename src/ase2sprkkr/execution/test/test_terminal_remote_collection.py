@@ -3,7 +3,7 @@
 import asyncio
 from types import SimpleNamespace
 
-from ase2sprkkr.execution import FileEntry, FileManifest, JobFiles
+from ase2sprkkr.execution import FileEntry, FileManifest, RunFiles
 
 
 def test_collection_preserves_a_previously_delivered_output(tmp_path):
@@ -24,7 +24,7 @@ def test_collection_preserves_a_previously_delivered_output(tmp_path):
         async def verify_stream_availability(self, manifest, spec):
             return manifest, None
 
-    owner = JobFiles(previous)
+    owner = RunFiles(previous)
     error = asyncio.run(owner.collect_remote(
         frozen, Handler(), SimpleNamespace(), SimpleNamespace(),
         required=True,
@@ -59,7 +59,7 @@ def test_materialization_error_wins_without_losing_partial_delivery(tmp_path):
                 remote_path=stream.remote_path,
             ), None
 
-    owner = JobFiles(frozen)
+    owner = RunFiles(frozen)
     error = asyncio.run(owner.collect_remote(
         frozen, Handler(), SimpleNamespace(), SimpleNamespace(),
         required=True, materialization_error="wildcard scan failed",
@@ -90,7 +90,7 @@ def test_failed_backend_skips_stream_verification_but_collects_diagnostics(tmp_p
         async def verify_stream_availability(self, manifest, spec):
             raise AssertionError("Failed backend must not verify FOLLOW streams")
 
-    owner = JobFiles(frozen)
+    owner = RunFiles(frozen)
     error = asyncio.run(owner.collect_remote(
         frozen, Handler(), SimpleNamespace(), SimpleNamespace(),
         required=False,
@@ -126,7 +126,7 @@ def test_concurrent_failed_transfer_keeps_verified_local_copy(tmp_path):
         async def verify_stream_availability(self, manifest, spec):
             return manifest, None
 
-    owner = JobFiles(initial)
+    owner = RunFiles(initial)
     error = asyncio.run(owner.collect_remote(
         initial, FailedHandler(), SimpleNamespace(), SimpleNamespace(),
         required=True,
@@ -188,7 +188,7 @@ def test_simultaneous_collections_keep_verified_success_after_late_failure(tmp_p
     target = tmp_path / "same.out"
     entry = FileEntry(str(target), "/remote/same.out", availability_state="pending")
     frozen = FileManifest(outputs=(entry,))
-    owner = JobFiles(frozen)
+    owner = RunFiles(frozen)
     began_failure = asyncio.Event()
     release_failure = asyncio.Event()
 

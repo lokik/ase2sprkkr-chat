@@ -5,7 +5,7 @@ from ase2sprkkr.execution import (
     RunStore,
 )
 
-from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.run_manager import RunManager
 import pytest
 
 
@@ -18,7 +18,7 @@ def _record(manager, tmp_path):
 
 
 def test_stale_transition_cannot_regress_newer_lifecycle_state(tmp_path):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     original = _record(manager, tmp_path)
     submitting = manager.transition(original, state=RunState.SUBMITTING)
     running = manager.transition(
@@ -39,7 +39,7 @@ def test_stale_transition_cannot_regress_newer_lifecycle_state(tmp_path):
 
 
 def test_none_does_not_erase_known_completion_metadata(tmp_path):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     original = _record(manager, tmp_path)
     stale = manager.transition(original, state=RunState.RUNNING)
     finished = manager.transition(
@@ -64,7 +64,7 @@ def test_none_does_not_erase_known_completion_metadata(tmp_path):
 
 
 def test_late_conflicting_final_state_does_not_replace_known_final_outcome(tmp_path):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     original = _record(manager, tmp_path)
     running = manager.transition(original, state=RunState.RUNNING)
     manager.transition(
@@ -87,7 +87,7 @@ def test_late_conflicting_final_state_does_not_replace_known_final_outcome(tmp_p
 def test_late_uncaptured_manifest_cannot_destroy_historical_snapshot(tmp_path):
     from ase2sprkkr.execution import FileEntry, FileManifest
 
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     output = tmp_path / "out"
     output.write_bytes(b"historical contents")
     original = manager.new_record(
@@ -116,7 +116,7 @@ def test_submitted_identity_rejects_directory_and_endpoint_changes(tmp_path):
     import pytest
     from ase2sprkkr.execution import WorkingDirectory
 
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     original = _record(manager, tmp_path)
     manager.store.save(original)
     staged = manager.transition(
@@ -149,7 +149,7 @@ def test_terminal_refresh_cannot_replace_manifest_or_execution(tmp_path):
     import pytest
     from ase2sprkkr.execution import FileEntry, FileManifest, WorkingDirectory
 
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     original = manager.new_record(
         task="DOS", directory=tmp_path,
         files=FileManifest(outputs=(FileEntry(local_path=str(tmp_path / "a")),)),
@@ -175,15 +175,15 @@ def test_terminal_refresh_cannot_replace_manifest_or_execution(tmp_path):
 def test_terminal_persistent_run_state_does_not_query_backend(tmp_path):
     from ase2sprkkr.execution.run_persistence import RunPersistence
     from ase2sprkkr.execution.postprocessing import CalculationRun
-    from ase2sprkkr.execution import JobFiles, FileManifest
+    from ase2sprkkr.execution import RunFiles, FileManifest
 
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     record = _record(manager, tmp_path)
     finished = manager.transition(record, state=RunState.FINISHED)
 
     class Backend:
         callback = None
-        job_files = JobFiles(FileManifest())
+        run_files = RunFiles(FileManifest())
 
         @property
         def state(self):
@@ -198,15 +198,15 @@ def test_explicit_availability_update_preserves_terminal_snapshot(tmp_path):
     """A terminal run rejects unsolicited manifests, not explicit file status."""
     from ase2sprkkr.execution import FileEntry, FileManifest
 
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     output = str(tmp_path / "optional.out")
     original = manager.new_record(
         task="DOS", directory=tmp_path,
         files=FileManifest(outputs=(FileEntry(local_path=output),)),
     )
     terminal = manager.transition(original, state=RunState.FINISHED)
-    from ase2sprkkr.execution import JobFiles
-    updated = JobFiles(terminal.files).update_availability(terminal, manager.store, output, "skipped")
+    from ase2sprkkr.execution import RunFiles
+    updated = RunFiles(terminal.files).update_availability(terminal, manager.store, output, "skipped")
 
     assert updated.state is RunState.FINISHED
     assert updated.finished_at == terminal.finished_at
@@ -220,7 +220,7 @@ def test_terminal_run_cannot_acquire_backend_identity_after_failure(tmp_path):
     from dataclasses import replace
     import pytest
 
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     failed = manager.transition(
         _record(manager, tmp_path), state=RunState.FAILED,
     )
@@ -237,7 +237,7 @@ def test_endpoint_and_local_directory_are_immutable_before_submission(tmp_path):
     import pytest
     from ase2sprkkr.execution import WorkingDirectory
 
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     original = _record(manager, tmp_path)
     manager.store.save(original)
     for changes in (
@@ -254,7 +254,7 @@ def test_endpoint_and_local_directory_are_immutable_before_submission(tmp_path):
 def test_concurrent_completers_reuse_one_durable_terminal_snapshot(tmp_path):
     from concurrent.futures import ThreadPoolExecutor
 
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     record = _record(manager, tmp_path)
     running = manager.transition(record, state=RunState.RUNNING)
 
@@ -273,7 +273,7 @@ def test_concurrent_completers_reuse_one_durable_terminal_snapshot(tmp_path):
 
 def test_terminal_retry_after_lost_fsync_confirmation(tmp_path, monkeypatch):
 
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     record = _record(manager, tmp_path)
     running = manager.transition(record, state=RunState.RUNNING)
     actual_write = manager.store._write_unlocked
@@ -301,7 +301,7 @@ def test_terminal_completion_preserves_first_file_snapshot(tmp_path):
 
     output = tmp_path / "output.out"
     output.write_text("durable output")
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     original = manager.new_record(
         task="DOS", directory=tmp_path,
         files=FileManifest(stdout=FileEntry(local_path=str(output))),
@@ -333,7 +333,7 @@ def test_terminal_completion_preserves_first_file_snapshot(tmp_path):
 def test_terminal_lookup_rejects_foreign_project_identity(tmp_path):
     from dataclasses import replace
 
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     original = _record(manager, tmp_path)
     final = manager.complete(original, state=RunState.FINISHED)
     with pytest.raises(ValueError, match="persistent project identity"):
@@ -350,7 +350,7 @@ def test_non_project_run_identity_is_immutable_across_day_shards(tmp_path):
     from dataclasses import replace
 
     store = RunStore(tmp_path / "runs")
-    manager = ExecutionManager(store)
+    manager = RunManager(store)
     timestamp = "2030-01-01T10:00:00+00:00"
     original = replace(
         _record(manager, tmp_path), created_at=timestamp, updated_at=timestamp,
@@ -373,7 +373,7 @@ def test_non_project_store_rejects_duplicate_ids_across_day_shards(tmp_path):
     from dataclasses import replace
 
     store = RunStore(tmp_path / "runs")
-    manager = ExecutionManager(store)
+    manager = RunManager(store)
     original = replace(
         _record(manager, tmp_path), created_at="2030-01-01T10:00:00+00:00",
     )
@@ -400,7 +400,7 @@ def test_file_revalidation_releases_store_lock_and_retries(tmp_path, monkeypatch
     from ase2sprkkr.common.file_versions import FileVersion
     from ase2sprkkr.execution.run_model import FileEntry, FileManifest
 
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     record = _record(manager, tmp_path)
     output = tmp_path / "out.dat"
     output.write_bytes(b"good")
@@ -446,7 +446,7 @@ def test_file_revalidation_releases_store_lock_and_retries(tmp_path, monkeypatch
 
 
 def test_optimistic_noop_does_not_rewrite_terminal_record(tmp_path, monkeypatch):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     original = _record(manager, tmp_path)
     completed = manager.transition(original, state=RunState.FINISHED)
     writes = []

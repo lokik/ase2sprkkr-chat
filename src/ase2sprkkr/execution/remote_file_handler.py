@@ -481,7 +481,7 @@ class RemoteFileHandler:
         staged_targets = {
             os.path.abspath(os.fspath(target)) for target in destinations.values()
         }
-        # Explicit staging targets are owned by JobFiles: an existing target
+        # Explicit staging targets are owned by RunFiles: an existing target
         # is an error, never evidence of a completed historical download.
         # Canonical direct fetches retain their documented keep-existing
         # behavior for callers that do not request staging.

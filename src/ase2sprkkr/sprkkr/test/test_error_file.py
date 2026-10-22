@@ -8,7 +8,7 @@ from ...input_parameters.input_parameters import InputParameters
 from ...potentials.potentials import Potential
 
 from ...execution.base import RunState
-from ...execution import JobFiles, FileManifest
+from ...execution import RunFiles, FileManifest
 from ..calculator import SPRKKR
 from ..profile import SPRKKRProfile
 
@@ -16,7 +16,7 @@ from ..profile import SPRKKRProfile
 class _UnstartedRunner:
     def __init__(self, spec):
         self.spec = spec
-        self.job_files = JobFiles(FileManifest.from_spec(spec))
+        self.run_files = RunFiles(FileManifest.from_spec(spec))
         self.state = RunState.NEW
         self.result = None
         self.reference = None

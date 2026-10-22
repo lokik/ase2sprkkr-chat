@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from ase2sprkkr.execution.base import RunState, RunStatus, SubmissionRecovery
-from ase2sprkkr.execution.manager import DuplicateSubmissionError, ExecutionManager
+from ase2sprkkr.execution.run_manager import DuplicateSubmissionError, RunManager
 from ase2sprkkr.execution.run_store import RunStore
 from ase2sprkkr.execution.run_record import SubmissionPhase
 
@@ -21,7 +21,7 @@ def _dispatch(manager, record):
 
 
 def test_conflict_does_not_write_unclaimed_record(tmp_path):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     first = manager.reserve(manager.new_record(task="SCF", directory=tmp_path))
     second = manager.new_record(task="SCF", directory=tmp_path)
     claimed, conflicts = manager.store.reserve_files(second)
@@ -32,7 +32,7 @@ def test_conflict_does_not_write_unclaimed_record(tmp_path):
 
 def test_distinct_endpoints_are_independent(tmp_path):
     from ase2sprkkr.execution.endpoint import ExecutorEndpoint
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     a = manager.new_record(task="SCF", directory=tmp_path)
     b = manager.new_record(task="SCF", directory=tmp_path,
                            endpoint=ExecutorEndpoint(executor="ssh", host="example.org"))
@@ -43,7 +43,7 @@ def test_distinct_endpoints_are_independent(tmp_path):
 def test_reservation_rejects_stale_new_record(tmp_path):
     """An outdated claimant cannot replace a newer persisted run."""
     store = RunStore(tmp_path / "runs")
-    manager = ExecutionManager(store)
+    manager = RunManager(store)
     original = manager.new_record(task="DOS", directory=tmp_path, dataset="old")
     store.save(replace(original, dataset="updated"))
 
@@ -58,7 +58,7 @@ def test_reservation_rejects_stale_new_record(tmp_path):
 
 def test_recovery_does_not_fail_concurrently_refreshed_submission(tmp_path, monkeypatch):
     store = RunStore(tmp_path / "runs")
-    manager = ExecutionManager(store, submitting_grace=0)
+    manager = RunManager(store, submitting_grace=0)
     submitted = _dispatch(manager, manager.new_record(task="DOS", directory=tmp_path))
 
     def recover(run_id, record, *, submitted_at):
@@ -83,7 +83,7 @@ def test_recovery_does_not_fail_concurrently_refreshed_submission(tmp_path, monk
 
 def test_unsubmitted_record_does_not_reserve_files(tmp_path):
     store = RunStore(tmp_path / "runs")
-    manager = ExecutionManager(store)
+    manager = RunManager(store)
     draft = manager.new_record(task="SCF", directory=tmp_path)
     store.save(draft)
 
@@ -94,7 +94,7 @@ def test_unsubmitted_record_does_not_reserve_files(tmp_path):
 
 def test_stale_claim_does_not_sync_files(tmp_path, monkeypatch):
     store = RunStore(tmp_path / "runs")
-    manager = ExecutionManager(store)
+    manager = RunManager(store)
     original = manager.new_record(task="DOS", directory=tmp_path)
     store.save(replace(original, dataset="newer"))
 
@@ -112,8 +112,8 @@ def test_reservations_are_atomic_across_store_instances(tmp_path):
     from threading import Barrier
 
     directory = tmp_path / "runs"
-    first = ExecutionManager(RunStore(directory))
-    second = ExecutionManager(RunStore(directory))
+    first = RunManager(RunStore(directory))
+    second = RunManager(RunStore(directory))
     records = (
         first.new_record(task="SCF", directory=tmp_path),
         second.new_record(task="SCF", directory=tmp_path),
@@ -140,7 +140,7 @@ def test_recovered_status_does_not_overwrite_newer_backend_observation(
     tmp_path, monkeypatch,
 ):
     store = RunStore(tmp_path / "runs")
-    manager = ExecutionManager(store, submitting_grace=0)
+    manager = RunManager(store, submitting_grace=0)
     submitted = _dispatch(manager, manager.new_record(task="DOS", directory=tmp_path))
 
     def recover(*args, **kwargs):
@@ -170,7 +170,7 @@ def test_corrupt_run_blocks_reservation_but_history_remains_readable(tmp_path):
     from ase2sprkkr.execution.run_store import CorruptRunRecord
 
     store = RunStore(tmp_path / "runs")
-    manager = ExecutionManager(store)
+    manager = RunManager(store)
     original = manager.reserve(manager.new_record(task="SCF", directory=tmp_path))
     path = store._path(original)
     path.write_text("{broken json")
@@ -186,7 +186,7 @@ def test_corrupt_run_blocks_reservation_but_history_remains_readable(tmp_path):
 
 
 def test_stale_missing_submission_releases_reservation(tmp_path, monkeypatch):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"), submitting_grace=0)
+    manager = RunManager(RunStore(tmp_path / "runs"), submitting_grace=0)
     first = _dispatch(manager, manager.new_record(task="SCF", directory=tmp_path))
     second = manager.new_record(task="SCF", directory=tmp_path)
     calls = []
@@ -210,7 +210,7 @@ def test_stale_missing_submission_releases_reservation(tmp_path, monkeypatch):
 
 
 def test_recovered_active_backend_still_blocks_reservation(tmp_path, monkeypatch):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"), submitting_grace=0)
+    manager = RunManager(RunStore(tmp_path / "runs"), submitting_grace=0)
     first = _dispatch(manager, manager.new_record(task="SCF", directory=tmp_path))
     second = manager.new_record(task="SCF", directory=tmp_path)
     calls = []
@@ -238,7 +238,7 @@ def test_recovered_active_backend_still_blocks_reservation(tmp_path, monkeypatch
 
 
 def test_unsupported_recovery_preserves_reservation(tmp_path, monkeypatch):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"), submitting_grace=0)
+    manager = RunManager(RunStore(tmp_path / "runs"), submitting_grace=0)
     first = _dispatch(manager, manager.new_record(task="SCF", directory=tmp_path))
     second = manager.new_record(task="SCF", directory=tmp_path)
     calls = []
@@ -262,7 +262,7 @@ def test_unsupported_recovery_preserves_reservation(tmp_path, monkeypatch):
 
 
 def test_fresh_submission_is_not_recovered(tmp_path, monkeypatch):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"), submitting_grace=3600)
+    manager = RunManager(RunStore(tmp_path / "runs"), submitting_grace=3600)
     first = _dispatch(manager, manager.new_record(task="SCF", directory=tmp_path))
     second = manager.new_record(task="SCF", directory=tmp_path)
 
@@ -283,7 +283,7 @@ def test_fresh_submission_is_not_recovered(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("safe", (False, True))
 def test_abandoned_preparing_requires_executor_safety(tmp_path, monkeypatch, safe):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"), submitting_grace=3600)
+    manager = RunManager(RunStore(tmp_path / "runs"), submitting_grace=3600)
     first = manager.reserve(manager.new_record(task="SCF", directory=tmp_path))
     second = manager.new_record(task="SCF", directory=tmp_path)
     assert first.submission_phase == SubmissionPhase.PREPARING
@@ -316,7 +316,7 @@ def test_abandoned_preparing_requires_executor_safety(tmp_path, monkeypatch, saf
 
 @pytest.mark.parametrize("phase", (SubmissionPhase.PREPARING, SubmissionPhase.DISPATCHING))
 def test_submission_owner_lock_prevents_recovery(tmp_path, monkeypatch, phase):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"), submitting_grace=0)
+    manager = RunManager(RunStore(tmp_path / "runs"), submitting_grace=0)
     first = manager.reserve(manager.new_record(task="SCF", directory=tmp_path))
     if phase == SubmissionPhase.DISPATCHING:
         first = manager.store.begin_dispatch(first)
@@ -345,7 +345,7 @@ def test_submission_owner_lock_prevents_recovery(tmp_path, monkeypatch, phase):
 
 
 def test_inconclusive_dispatch_recovery_keeps_reservation(tmp_path, monkeypatch):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"), submitting_grace=0)
+    manager = RunManager(RunStore(tmp_path / "runs"), submitting_grace=0)
     first = _dispatch(manager, manager.new_record(task="SCF", directory=tmp_path))
     second = manager.new_record(task="SCF", directory=tmp_path)
 
@@ -364,7 +364,7 @@ def test_malformed_run_record_json_value_is_corrupt(tmp_path, payload):
     from ase2sprkkr.execution.run_store import CorruptRunRecord
 
     store = RunStore(tmp_path / "runs")
-    manager = ExecutionManager(store)
+    manager = RunManager(store)
     record = manager.reserve(manager.new_record(task="SCF", directory=tmp_path))
     store._path(record).write_text(payload)
 

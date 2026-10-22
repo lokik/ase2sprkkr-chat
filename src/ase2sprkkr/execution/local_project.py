@@ -112,7 +112,7 @@ class LocalProjectRunner(ManagedRunner):
         if (self._backend_id is None or self._state.is_terminal
                 or self._thread is not None):
             return self._state
-        status = local_status(self._backend_id, self.job_files.manifest)
+        status = local_status(self._backend_id, self.run_files.manifest)
         return self._apply_status(status)
 
     @property
@@ -127,15 +127,15 @@ class LocalProjectRunner(ManagedRunner):
 
     async def _follow_once(self):
         return await self.executor.connection.follow(
-            self._backend_id, self.job_files.manifest,
+            self._backend_id, self.run_files.manifest,
             on_chunk=lambda kind, data: self._output_observers.emit_bytes(data, kind),
         )
 
     async def _backend_status(self):
-        return await self.executor.connection.status(self._backend_id, self.job_files.manifest)
+        return await self.executor.connection.status(self._backend_id, self.run_files.manifest)
 
     async def _complete_terminal(self, facts, state):
-        status = _local_status_from_facts(self._backend_id, facts, self.job_files.manifest)
+        status = _local_status_from_facts(self._backend_id, facts, self.run_files.manifest)
         self._apply_status(status)
 
     def _request(self):
@@ -145,7 +145,7 @@ class LocalProjectRunner(ManagedRunner):
             *self.spec.output_files, *self.spec.cache_files,
         ):
             file_path(value, self.spec.directory, flush=True)
-        files = self.job_files.manifest
+        files = self.run_files.manifest
         return {
             "executor": "local",
             "id": self._run_id,
@@ -190,7 +190,7 @@ class LocalProjectRunner(ManagedRunner):
             raise
         self._backend_id = reply["remote_id"]
         if reply.get("files") is not None:
-            self.job_files.merge(FileManifest(**reply["files"]))
+            self.run_files.merge(FileManifest(**reply["files"]))
         self._state = RunState(reply["state"])
         start_monitor(self, missing_backend="Local run has no backend identity")
 
@@ -219,7 +219,7 @@ def attach_local(executor, run, *, callback=None, output_listener=None, start=Tr
         failure_message=status.message,
     )
     observed = status.files
-    runner.job_files.replace(
+    runner.run_files.replace(
         files if observed is None or files.captured_at is not None
         else merge_snapshot(files, observed)
     )

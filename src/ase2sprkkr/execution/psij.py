@@ -384,7 +384,7 @@ class PsijRunner(ManagedRunner):
         return None if status is None else status.exit_code
 
     def _update_files(self):
-        self.job_files.merge(discover_local_files(self.job_files.manifest))
+        self.run_files.merge(discover_local_files(self.run_files.manifest))
 
     @property
     def backend_id(self):
@@ -867,7 +867,7 @@ class PsijExecutor(Executor):
             self, spec, callback=callback, output_listener=output_listener,
             start=False, job=job, attached=True,
         )
-        runner.job_files.replace(run.files)
+        runner.run_files.replace(run.files)
         if start:
             runner.start()
         return runner
