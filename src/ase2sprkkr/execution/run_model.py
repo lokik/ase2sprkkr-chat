@@ -370,6 +370,22 @@ class FileManifest:
             *(("output", entry) for entry in self.outputs),
             *(("cache", entry) for entry in self.caches),
         ), primary_input=self.primary_input)
+
+        if self.mapping is not None:
+            import posixpath
+
+            for entry in (
+                *self.inputs, self.primary_input, self.stdin, self.stdout,
+                self.stderr, *self.outputs, *self.caches,
+            ):
+                if entry is None or entry.local_path is None or entry.remote_path is None:
+                    continue
+                expected = self.mapping.map_path(entry.local_path)
+                if posixpath.normpath(entry.remote_path) != posixpath.normpath(expected):
+                    raise ValueError(
+                        f"Remote path {entry.remote_path} does not match "
+                        f"the file mapping for {entry.local_path}: {expected}"
+                    )
     @property
     def files(self):
         """Distinct downloadable file states; shared streams count only once.
