@@ -283,11 +283,19 @@ class RunStore:
 
     def _path_for_id(self, run_id):
         filename = f"{run_id}.json"
+        found = None
         for day in self._day_directories(newest=True):
             path = day / filename
-            if path.is_file():
+            if not path.is_file():
+                continue
+            if self.projects_directory is None:
                 return path
-        raise FileNotFoundError(run_id)
+            if found is not None:
+                raise ValueError(f"Duplicate run ID {run_id!r} across date shards")
+            found = path
+        if found is None:
+            raise FileNotFoundError(run_id)
+        return found
 
     @staticmethod
     def _decode(path):
@@ -364,21 +372,25 @@ class RunStore:
                 )
             return self.update(record, claim), ()
 
-    def _check_persisted_project(self, record):
+    def _check_persisted_identity(self, record):
         if self.projects_directory is None:
             return
-        filename = f"{record.id}.json"
-        for day in self._day_directories(newest=False):
-            path = day / filename
-            if path.is_file() and self._decode(path).project_id != record.project_id:
-                raise ValueError("Run write cannot change persistent project identity")
+        try:
+            path = self._path_for_id(record.id)
+        except FileNotFoundError:
+            return
+        existing = self._decode(path)
+        if existing.project_id != record.project_id:
+            raise ValueError("Run write cannot change persistent project identity")
+        if existing.created_at != record.created_at:
+            raise ValueError("Run write cannot change persistent creation time")
 
     @contextmanager
     def _locked_run(self, record):
         """Serialize durable access and validate the run's project."""
         with self._lock, FileLock(self._run_lock_path(record)):
-            self._check_persisted_project(record)
             with self._project_guard(record):
+                self._check_persisted_identity(record)
                 yield
 
     def save(self, record: RunRecord):
@@ -446,16 +458,21 @@ class RunStore:
 
         with self._lock:
             records = []
+            seen_ids = set() if self.projects_directory is not None else None
             for day in self._day_directories(newest=newest):
                 for record in self._records_in_directory(day, newest=newest, strict=strict):
+                    if seen_ids is not None:
+                        if record.id in seen_ids:
+                            raise ValueError(f"Duplicate run ID {record.id!r} across date shards")
+                        seen_ids.add(record.id)
                     if active is True and record.state.is_terminal:
                         continue
                     if active is False and not record.state.is_terminal:
                         continue
                     records.append(record)
-                    if limit is not None and len(records) >= limit:
+                    if seen_ids is None and limit is not None and len(records) >= limit:
                         return tuple(records)
-            return tuple(records)
+            return tuple(records if limit is None else records[:limit])
 
 
 class ExecutionManager:
