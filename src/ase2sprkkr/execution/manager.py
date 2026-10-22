@@ -376,14 +376,6 @@ class ExecutionManager:
         self.executors = executors if executors is not None else Executors()
         self.submitting_grace = float(submitting_grace)
 
-    def input_file_is_current(self, run):
-        record = self.store.get(run) if isinstance(run, str) else self.store.get(run.id)
-        return record.job_files.input_file_is_current()
-
-    def output_file_is_current(self, run):
-        record = self.store.get(run) if isinstance(run, str) else self.store.get(run.id)
-        return record.job_files.output_file_is_current()
-
     def new_record(
         self, *, task, directory, dataset=None, endpoint=None,
         remote_directory=None, files=None, input_definition=None, run_id=None,
@@ -506,9 +498,6 @@ class ExecutionManager:
             return replace(latest, **changes)
 
         return self.store.update(record, merge)
-
-    def update_file_availability(self, record, path, state, message=None):
-        return record.job_files.update_availability(self.store, path, state, message)
 
     def _is_stale_submitting(self, record, *, now=None):
         if record.state != RunState.SUBMITTING or record.execution.backend_id is not None:
