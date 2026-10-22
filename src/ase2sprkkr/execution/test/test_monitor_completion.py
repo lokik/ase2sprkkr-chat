@@ -67,6 +67,7 @@ def test_start_monitor_is_idempotent():
 
     runner = SimpleNamespace(
         _lock=Lock(), _thread=None, _backend_id="job-1", _thread_main=monitor,
+        detached=False,
     )
     try:
         start_monitor(runner, missing_backend="No job ID")
@@ -86,6 +87,7 @@ def test_start_monitor_is_idempotent():
 def test_start_monitor_requires_backend_identity():
     runner = SimpleNamespace(
         _lock=Lock(), _thread=None, _backend_id=None, _thread_main=lambda: None,
+        detached=False,
     )
     with pytest.raises(RuntimeError, match="No backend identity"):
         start_monitor(runner, missing_backend="No backend identity")

@@ -7,6 +7,7 @@ an SPR-KKR executable to check this lightweight adapter contract.
 from types import SimpleNamespace
 
 from ...execution.base import ExecutionOutcome, ExecutionSpec, RunState
+from ...execution.endpoint import ExecutorEndpoint
 from .. import calculation
 
 
@@ -20,11 +21,13 @@ def test_finished_execution_passes_unknown_return_code_to_reader(tmp_path):
 
     reader = SimpleNamespace(read_from_file=read_from_file)
     task = SimpleNamespace(
-        executable="unused", mpi=False,
+        executable="unused", mpi=False, name="SCF",
         output_reader=lambda **kwargs: reader,
     )
     input_parameters = SimpleNamespace(
         task_definition_required=lambda: task,
+        definition_name="SCF",
+        CONTROL=SimpleNamespace(DATASET=SimpleNamespace(result="unknown")),
         input_files=lambda directory: (),
         output_files=lambda directory: (),
         cache_files=lambda directory: (),
@@ -49,7 +52,7 @@ def test_finished_execution_passes_unknown_return_code_to_reader(tmp_path):
             directory=directory,
         )
 
-    profile = SimpleNamespace(create_execution=create_execution)
+    profile = SimpleNamespace(create_execution=create_execution, endpoint=ExecutorEndpoint())
 
     from ase2sprkkr.execution import JobFiles, FileManifest
 
@@ -74,7 +77,10 @@ def test_finished_execution_passes_unknown_return_code_to_reader(tmp_path):
             self.state = RunState.FINISHED
             return self.result
 
-    executor = SimpleNamespace(create_run=lambda spec: FinishedRunner(spec))
+    executor = SimpleNamespace(
+        create_run=lambda spec: FinishedRunner(spec),
+        resolve_spec=lambda spec: spec,
+    )
     runner = calculation._create_sprkkr_run(
         prepared,
         result_context=None,
