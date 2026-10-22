@@ -90,12 +90,17 @@ class JobFiles:
         FileManifest already rejects output/cache identity collisions.
         """
         # Remote-only caches are not in FileManifest.files.
-        recorded = {
-            (entry.local_path, entry.remote_path): entry
-            for entry in (previous.stdout, previous.stderr,
-                          *previous.outputs, *previous.caches)
-            if entry is not None
-        }
+        recorded = {}
+        priority = {"failed": 3, "available": 2, "skipped": 1, "pending": 0, None: 0}
+        for entry in (previous.stdout, previous.stderr,
+                      *previous.outputs, *previous.caches):
+            if entry is None:
+                continue
+            identity = (entry.local_path, entry.remote_path)
+            prior = recorded.get(identity)
+            if (prior is None or
+                    priority[entry.availability_state] > priority[prior.availability_state]):
+                recorded[identity] = entry
 
         def merged(entry):
             if entry is None:
