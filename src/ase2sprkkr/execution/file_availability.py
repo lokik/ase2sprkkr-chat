@@ -81,7 +81,17 @@ def materialize_manifest(manifest, *, remote=False, include_streams=True):
             return (replace(entry, availability_state=(
                 "available" if os.path.isfile(pattern) else "skipped"
             )),)
-        root = manifest.mapping.remote_root if remote else _pattern_root(pattern)
+        if remote:
+            if manifest.mapping is None:
+                if first_error is None:
+                    first_error = ValueError(
+                        "Remote wildcard materialization requires a file mapping"
+                    )
+                return (entry,)
+            # expand_local_files returns canonical paths below its resolved root.
+            root = os.path.realpath(os.path.expanduser(manifest.mapping.remote_root))
+        else:
+            root = _pattern_root(pattern)
         try:
             matches = expand_local_files(pattern, root)
         except (OSError, ValueError) as exc:
@@ -106,21 +116,18 @@ def materialize_manifest(manifest, *, remote=False, include_streams=True):
         found = []
         for path in matches:
             if remote:
-                relative = os.path.relpath(path, manifest.mapping.remote_root)
-                if relative == ".." or relative.startswith(".." + os.sep):
-                    if first_error is None:
-                        first_error = ValueError("Materialized file is outside remote root")
-                    continue
-                found.append(replace(
-                    entry, local_path=os.path.join(manifest.mapping.local_root, relative),
-                    remote_path=path, source=entry.local_path,
-                    availability_state="pending",
-                ))
+                relative = os.path.relpath(path, root)
+                local_path = os.path.join(manifest.mapping.local_root, relative)
+                remote_path = path
+                state = "pending"
             else:
-                found.append(replace(
-                    entry, local_path=path, source=entry.local_path,
-                    availability_state="available",
-                ))
+                local_path = path
+                remote_path = entry.remote_path
+                state = "available"
+            found.append(replace(
+                entry, local_path=local_path, remote_path=remote_path,
+                source=entry.local_path, availability_state=state,
+            ))
         return tuple(found)
 
     outputs = tuple(concrete for entry in manifest.outputs

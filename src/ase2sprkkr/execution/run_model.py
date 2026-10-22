@@ -471,12 +471,20 @@ class FileManifest:
             if item.availability_state is None else item
         )
 
-    def _map_files(self, transform):
-        """Apply a delivery-state transformation without replacing unchanged facts."""
-        stdout = None if self.stdout is None else transform(self.stdout)
-        stderr = None if self.stderr is None else transform(self.stderr)
-        outputs = tuple(transform(entry) for entry in self.outputs)
-        caches = tuple(transform(entry) for entry in self.caches)
+    def _map_files(self, transform, *, kind=None):
+        """Transform delivery state for selected file roles without copying unchanged facts."""
+        if kind not in (None, "output", "cache"):
+            raise ValueError(f"Unknown file kind: {kind!r}")
+        output_files = kind in (None, "output")
+        cache_files = kind in (None, "cache")
+        stdout = (
+            None if self.stdout is None else transform(self.stdout)
+        ) if output_files else self.stdout
+        stderr = (
+            None if self.stderr is None else transform(self.stderr)
+        ) if output_files else self.stderr
+        outputs = tuple(transform(entry) for entry in self.outputs) if output_files else self.outputs
+        caches = tuple(transform(entry) for entry in self.caches) if cache_files else self.caches
         if (stdout == self.stdout and stderr == self.stderr
                 and outputs == self.outputs and caches == self.caches):
             return self
@@ -497,27 +505,11 @@ class FileManifest:
             ) if item.availability_state == "failed" else item
         )
 
-    def with_added_file(self, entry: FileEntry, *, kind="output"):
-        """Explicitly register a new output/cache file.
-
-        Availability updates and registration share identity validation,
-        but only registration can extend the manifest.
-        """
-        if not isinstance(entry, FileEntry):
-            raise TypeError("entry must be a FileEntry")
-        if entry.local_path is None:
-            raise ValueError("A registered file requires a local path")
-        return self.with_file_availability(
-            entry.local_path, entry.availability_state,
-            entry.availability_message, remote_path=entry.remote_path,
-            kind=kind, source=entry.source, _allow_new=True,
-        )
-
     def with_file_availability(
         self, local_path, state, message=None, *,
-        remote_path=None, kind=None, source=None, _allow_new=False,
+        remote_path=None, kind=None,
     ):
-        """Update one declared file identity; registration alone may add members.
+        """Update one declared file identity; never register new members.
 
         A shared stdout/stderr destination is one output identity when both
         entries name the same remote file. Ambiguous output/cache destinations
@@ -546,9 +538,8 @@ class FileManifest:
         if identities:
             selected_kind, selected_remote = next(iter(identities))
 
-            def update(entry, category):
-                if (entry is not None and category == selected_kind
-                        and entry.local_path == path
+            def update(entry):
+                if (entry is not None and entry.local_path == path
                         and entry.remote_path == selected_remote):
                     return replace(
                         entry, availability_state=state,
@@ -556,28 +547,9 @@ class FileManifest:
                     )
                 return entry
 
-            stdout = update(self.stdout, "output")
-            stderr = update(self.stderr, "output")
-            outputs = tuple(update(entry, "output") for entry in self.outputs)
-            caches = tuple(update(entry, "cache") for entry in self.caches)
-            if (stdout == self.stdout and stderr == self.stderr
-                    and outputs == self.outputs and caches == self.caches):
-                return self
-            return replace(
-                self, stdout=stdout, stderr=stderr,
-                outputs=outputs, caches=caches,
-            )
+            return self._map_files(update, kind=selected_kind)
 
-        if not _allow_new:
-            raise KeyError(f"File is not declared in manifest: {path}")
-        file = FileEntry(
-            local_path=path, remote_path=remote_path,
-            availability_state=state, availability_message=message,
-            source=source,
-        )
-        if kind in (None, "output"):
-            return replace(self, outputs=(*self.outputs, file))
-        return replace(self, caches=(*self.caches, file))
+        raise KeyError(f"File is not declared in manifest: {path}")
 
     def has_wildcards(self):
         """Whether any declared output/cache path still needs materializing."""

@@ -243,6 +243,19 @@ def test_remote_missing_wildcards_distinguish_required_and_optional(tmp_path):
     assert FileManifest(**asdict(frozen)) == frozen
 
 
+def test_remote_wildcard_requires_mapping(tmp_path):
+    from ..file_availability import materialize_manifest
+
+    manifest = FileManifest(outputs=(
+        FileEntry("/local/*.dat", "/remote/*.dat", "pending"),
+    ))
+    resolved, error = materialize_manifest(manifest, remote=True)
+    assert isinstance(error, ValueError)
+    assert "requires a file mapping" in str(error)
+    assert resolved.outputs == manifest.outputs
+    assert resolved.has_wildcards()
+
+
 def test_remote_optional_glob_does_not_hide_successful_required_result(tmp_path):
     from ..file_availability import materialize_manifest
     from ..run_model import FileMapping

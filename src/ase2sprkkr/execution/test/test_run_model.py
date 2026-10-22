@@ -90,7 +90,7 @@ def test_each_file_tracks_its_own_transfer_outcome():
     assert FileManifest(**asdict(manifest)) == manifest
 
 
-def test_wildcard_members_require_explicit_registration():
+def test_wildcard_declaration_does_not_register_concrete_members():
     manifest = FileManifest(
         outputs=(FileEntry("/local/*.dat", "/remote/*.dat", "pending"),)
     )
@@ -98,20 +98,6 @@ def test_wildcard_members_require_explicit_registration():
         manifest.with_file_availability(
             "/local/one.dat", "available", remote_path="/remote/one.dat",
         )
-    for name in ("one", "two"):
-        manifest = manifest.with_added_file(
-            FileEntry(f"/local/{name}.dat", f"/remote/{name}.dat", "pending",
-                      source="/local/*.dat"),
-        )
-    manifest = manifest.with_file_availability("/local/one.dat", "available")
-    manifest = manifest.with_file_availability(
-        "/local/two.dat", "failed", "I/O error",
-    )
-    assert len(manifest.outputs) == 3
-    assert manifest.outputs[1].availability_state == "available"
-    assert manifest.outputs[2].availability_state == "failed"
-    assert manifest.outputs[1].source == "/local/*.dat"
-    assert FileManifest(**asdict(manifest)) == manifest
 
 
 def test_merged_stdout_stderr_has_only_one_file_status():
@@ -126,26 +112,36 @@ def test_merged_stdout_stderr_has_only_one_file_status():
     assert FileManifest(**asdict(manifest)) == manifest
 
 
-def test_materialized_wildcard_members_have_independent_availability():
-    """Concrete results keep source provenance but no wildcard parent state."""
+def test_materialized_wildcard_members_have_independent_availability(tmp_path):
+    """Concrete members are materialized once, then receive independent states."""
+    from ..file_availability import materialize_manifest
+
+    local, remote = tmp_path / "local", tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    (remote / "one.dat").write_text("one")
+    (remote / "two.dat").write_text("two")
     files = FileManifest(
-        outputs=(
-            FileEntry("/local/one.dat", "/remote/one.dat", "pending",
-                      source="/local/*.dat"),
-            FileEntry("/local/two.dat", "/remote/two.dat", "pending",
-                      source="/local/*.dat"),
-        ),
+        outputs=(FileEntry(
+            str(local / "*.dat"), str(remote / "*.dat"), "pending",
+        ),),
+        mapping=FileMapping(str(local), str(remote)),
     )
-    files = files.with_file_availability("/local/one.dat", "available")
+    files, error = materialize_manifest(files, remote=True)
+    assert error is None
+    assert [entry.local_path for entry in files.outputs] == [
+        str(local / "one.dat"), str(local / "two.dat"),
+    ]
+    files = files.with_file_availability(str(local / "one.dat"), "available")
     files = files.with_file_availability(
-        "/local/two.dat", "failed", "transfer failed",
+        str(local / "two.dat"), "failed", "transfer failed",
     )
     assert [entry.availability_state for entry in files.outputs] == [
         "available", "failed",
     ]
     assert files.availability_state == "failed"
     assert files.availability_message == "transfer failed"
-    assert all(entry.source == "/local/*.dat" for entry in files.outputs)
+    assert all(entry.source == str(local / "*.dat") for entry in files.outputs)
     assert not files.has_wildcards()
     assert FileManifest(**asdict(files)) == files
 
