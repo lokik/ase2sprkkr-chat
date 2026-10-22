@@ -145,6 +145,7 @@ def test_profile_executor_is_selected_before_mpi_resolution(monkeypatch, tmp_pat
         result=object(),
         reference=None,
         exception=None,
+        callback=None,
         add_output_listener=lambda callback: None,
     )
     calls = []
