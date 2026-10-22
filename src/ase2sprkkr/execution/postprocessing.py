@@ -66,6 +66,40 @@ class CalculationRun:
             raise ValueError("Raw runner already has a completion callback")
         runner.callback = self._backend_completed
 
+    @classmethod
+    def create(
+        cls, spec, *, process_result, endpoint=None, executor=None,
+        project=None, task=None, input_definition=None, dataset=None,
+        callback=None, resources=None, run_id=None,
+    ):
+        """Create untracked and project-backed jobs through one public API."""
+        from .endpoint import ExecutorEndpoint
+        from .persistence import default_executors, resolve_project_manager
+
+        context = resolve_project_manager(project)
+        if context is None:
+            if executor is None:
+                executor = default_executors().for_endpoint(
+                    endpoint if endpoint is not None else ExecutorEndpoint()
+                )
+            spec = executor.resolve_spec(spec)
+            return cls(
+                executor.create_run(spec), process_result,
+                callback=callback, resources=resources,
+            )
+
+        manager, project_id = context
+        if executor is not None:
+            endpoint = manager.executors.register(executor)
+        elif endpoint is None:
+            endpoint = ExecutorEndpoint()
+        return manager.create_run(
+            spec, endpoint=endpoint, process_result=process_result,
+            task=task, input_definition=input_definition, dataset=dataset,
+            callback=callback, resources=resources, project_id=project_id,
+            run_id=run_id,
+        )
+
     @property
     def job_files(self):
         """Runner-owned working file state; never maintain a second reference."""

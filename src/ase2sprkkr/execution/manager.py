@@ -455,6 +455,7 @@ class ExecutionManager:
     ):
         """Create a project run from raw execution plus generic processing."""
         executor = self.executors.for_endpoint(endpoint)
+        spec = executor.resolve_spec(spec)
         record = self.new_record(
             task=task,
             input_definition=input_definition,

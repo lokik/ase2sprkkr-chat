@@ -140,7 +140,7 @@ def test_profile_executor_is_selected_before_mpi_resolution(monkeypatch, tmp_pat
     parameters = InputParameters.create("DOS")
     parameters.CONTROL.DATASET = "test"
     parameters.CONTROL.POTFIL = "test.pot"
-    from ase2sprkkr.execution import JobFiles, FileManifest
+    from ase2sprkkr.execution import JobFiles, FileManifest, LaunchSpec
     backend_runner = SimpleNamespace(
         state=RunState.NEW,
         result=object(),
@@ -153,9 +153,9 @@ def test_profile_executor_is_selected_before_mpi_resolution(monkeypatch, tmp_pat
     calls = []
 
     class FakeExecutor:
-        def resolve_mpi(self, value):
-            calls.append(("resolve_mpi", value))
-            return False
+        def resolve_spec(self, spec):
+            calls.append(("resolve_spec", spec.launch.mpi))
+            return spec
 
         def create_run(self, spec, callback=None):
             calls.append(("create_run", spec.argv))
@@ -168,8 +168,8 @@ def test_profile_executor_is_selected_before_mpi_resolution(monkeypatch, tmp_pat
             return fake_executor
 
     monkeypatch.setattr(
-        calculation_module, "default_execution_manager",
-        lambda: SimpleNamespace(executors=FakeExecutors()),
+        "ase2sprkkr.execution.persistence.default_executors",
+        lambda: FakeExecutors(),
     )
     monkeypatch.setattr(
         TaskDefinition,
@@ -205,7 +205,7 @@ def test_profile_executor_is_selected_before_mpi_resolution(monkeypatch, tmp_pat
     try:
         assert result.result is None  # Postprocessing starts only after submit
         assert calls[0] == ("factory", "ssh")
-        assert calls[1] == ("resolve_mpi", 8)
+        assert calls[1] == ("resolve_spec", LaunchSpec().mpi)
         assert calls[2][0] == "create_run"
     finally:
         result.close()

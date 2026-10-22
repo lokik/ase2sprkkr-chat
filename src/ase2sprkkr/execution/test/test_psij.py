@@ -431,6 +431,7 @@ def test_psij_mpi_process_count_becomes_resource_spec(monkeypatch, tmp_path):
         output_file=output_file,
         directory=str(tmp_path),
         stdin=input_file,
+        mpi_stdin=input_file,
     )
 
     runner = executor.create_run(spec)
@@ -458,6 +459,7 @@ def test_psij_auto_uses_mpi_without_fixed_process_count(monkeypatch, tmp_path):
         output_file=output_file,
         directory=str(tmp_path),
         stdin=input_file,
+        mpi_stdin=input_file,
     )
 
     runner = executor.create_run(spec)
@@ -929,11 +931,12 @@ def test_psij_mpi_respects_explicit_stdin_policy(monkeypatch, tmp_path):
         launch=LaunchSpec.from_mpi(2),
         input_file=None, output_file=None, directory=str(tmp_path),
         stdin=str(tmp_path / "stdin.dat"),
-        mpi_uses_stdin=False,
+        mpi_stdin=None,
     )
     runner = executor.create_run(spec)
     assert runner._job.spec.stdin_path is None
-    assert replace(spec, mpi_uses_stdin=True).mpi_uses_stdin
+    enabled = executor.create_run(replace(spec, mpi_stdin=str(tmp_path / "mpi.in")))
+    assert enabled._job.spec.stdin_path == str(tmp_path / "mpi.in")
 
 
 @pytest.mark.parametrize("merged", (False, True))

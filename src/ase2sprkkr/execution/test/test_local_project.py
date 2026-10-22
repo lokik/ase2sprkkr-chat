@@ -323,22 +323,28 @@ def test_submission_cleanup_uses_manifest_to_protect_caches(tmp_path):
         assert (tmp_path / name).read_text() == name
 
 
-def test_local_project_request_uses_common_command_fields(tmp_path):
+def test_local_project_request_uses_common_command_fields(tmp_path, monkeypatch):
     from ase2sprkkr.execution import LaunchSpec
     from ase2sprkkr.execution.remote_service import _request_spec
 
+    monkeypatch.setattr(
+        "ase2sprkkr.execution.local_process.resolve_mpi_command",
+        lambda _: ("mpirun", "-np", "3"),
+    )
     spec = replace(
         _spec(tmp_path),
         mpi_argv=("mpi-program", "input.inp"),
-        mpi_uses_stdin=False,
+        mpi_stdin=None,
         launch=LaunchSpec.from_mpi(3),
     )
-    request = LocalExecutor().create_project_run(spec, run_id=RUN_ID)._request()
-    for key, value in spec.command_request().items():
+    runner = LocalExecutor().create_project_run(spec, run_id=RUN_ID)
+    request = runner._request()
+    for key, value in runner.spec.command_request().items():
         assert request[key] == value
     reconstructed = _request_spec(request)
-    assert reconstructed.mpi_uses_stdin is False
-    assert reconstructed.mpi_argv == spec.mpi_argv
+    assert reconstructed.stdin is None
+    assert reconstructed.mpi_argv is None
+    assert reconstructed.argv[:3] == ("mpirun", "-np", "3")
 
 
 def test_terminal_project_runner_does_not_query_backend(monkeypatch, tmp_path):

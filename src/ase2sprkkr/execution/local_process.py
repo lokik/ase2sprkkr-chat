@@ -9,7 +9,7 @@ import signal
 import warnings
 from dataclasses import replace
 
-from .base import ExecutionSpec, MpiNotFoundWarning
+from .base import ExecutionSpec, MpiNotFoundWarning, MpiSpec
 from .mpi import resolve_mpi_command
 
 _DEFAULT_STDIN = object()
@@ -36,21 +36,35 @@ def _mpi_command(launch):
     return command
 
 
-def materialize_local_spec(spec: ExecutionSpec) -> ExecutionSpec:
-    """Choose serial/MPI argv immediately before local process creation."""
-    if not spec.launch or spec.mpi_argv is None:
-        return spec
+def select_mpi_spec(spec: ExecutionSpec, launcher=None, *, scheduler=False):
+    """Select exactly one command and stdin before creating a file manifest.
 
-    launcher = _mpi_command(spec.launch)
-    if launcher is None:
-        # ``auto`` may fall back to the serial command on this machine.
+    Scheduler jobs keep launch metadata so PSI/J can configure resources.
+    The unused command and stdin never enter the persistent execution state.
+    """
+    if spec.mpi_argv is None:
         return spec
-
+    enabled = scheduler or launcher is not None
+    if scheduler:
+        argv = tuple(spec.mpi_argv)
+    elif launcher is not None:
+        argv = (*launcher, *spec.mpi_argv)
+    else:
+        argv = spec.argv
     return replace(
-        spec,
-        argv=(*launcher, *spec.mpi_argv),
-        stdin=spec.stdin if spec.mpi_uses_stdin else None,
+        spec, argv=argv, stdin=spec.mpi_stdin if enabled else spec.stdin,
+        mpi_argv=None, mpi_stdin=None,
+        launch=(spec.launch if enabled else replace(spec.launch, mpi=MpiSpec())),
     )
+
+
+def materialize_local_spec(spec: ExecutionSpec) -> ExecutionSpec:
+    """Choose serial/MPI before file reservation and local process creation."""
+    if spec.mpi_argv is None:
+        return spec
+    if not spec.launch:
+        return select_mpi_spec(spec)
+    return select_mpi_spec(spec, _mpi_command(spec.launch))
 
 
 async def start_local_process(

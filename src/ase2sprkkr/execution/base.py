@@ -476,15 +476,15 @@ class ExecutionSpec:
     cache_files: Sequence[Any] = ()
     mpi_argv: Optional[Sequence[str]] = None
     launch: LaunchSpec = LaunchSpec()
-    # The MPI command may have a different stdin contract from serial argv.
-    # Generic executors preserve stdin unless the caller explicitly opts out.
-    mpi_uses_stdin: bool = True
+    # Each command has an independent input stream.
+    mpi_stdin: Any = None
 
     def __post_init__(self):
         object.__setattr__(self, "directory", os.fspath(self.directory))
         object.__setattr__(self, "input_file", _pathlike(self.input_file))
         object.__setattr__(self, "output_file", _pathlike(self.output_file))
         object.__setattr__(self, "stdin", _pathlike(self.stdin))
+        object.__setattr__(self, "mpi_stdin", _pathlike(self.mpi_stdin))
         object.__setattr__(self, "error_file", _pathlike(self.error_file))
         object.__setattr__(
             self, "input_files", tuple(_pathlike(value) for value in self.input_files),
@@ -512,7 +512,6 @@ class ExecutionSpec:
         return {
             "argv": transform(self.argv),
             "mpi_argv": None if self.mpi_argv is None else transform(self.mpi_argv),
-            "mpi_uses_stdin": self.mpi_uses_stdin,
             "launch": asdict(self.launch),
         }
 
@@ -585,8 +584,10 @@ class Executor:
     def submission_directory(self, spec: ExecutionSpec) -> str:
         return os.path.abspath(os.fspath(spec.directory))
 
-    def resolve_mpi(self, mpi=None):
-        return LaunchSpec.from_mpi(mpi)
+    def resolve_spec(self, spec: ExecutionSpec) -> ExecutionSpec:
+        """Choose a concrete command before reserving/staging its files."""
+        from .local_process import materialize_local_spec
+        return materialize_local_spec(spec)
 
     def status(self, *runs) -> Tuple[RunStatus, ...]:
         if not runs:

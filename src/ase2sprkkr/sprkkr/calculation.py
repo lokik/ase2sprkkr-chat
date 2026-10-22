@@ -21,7 +21,6 @@ from ..bindings.empty_spheres import add_empty_spheres
 from ..common.file_utils import Directory
 from ..common.temporary import temporary_option_value
 from ..execution.base import ExecutionResources
-from ..execution.persistence import resolve_project_manager, default_executors
 from ..execution.postprocessing import CalculationRun
 from ..input_parameters.input_parameters import InputParameters
 from ..potentials.potentials import Potential
@@ -905,26 +904,6 @@ def _create_sprkkr_run(
             print_output=print_output,
             directory=prepared.directory,
         )
-        project_context = resolve_project_manager(project)
-        explicit_executor = executor is not None
-        if executor is None:
-            registry = (
-                project_context[0].executors if project_context is not None
-                else default_executors()
-            )
-            executor = registry.for_endpoint(profile.endpoint)
-        if project_context is not None:
-            manager, project_id = project_context
-            executor_endpoint = (
-                manager.executors.register(executor)
-                if explicit_executor else profile.endpoint
-            )
-
-        execution_profile = profile
-        if task.mpi:
-            execution_profile = profile.with_overrides(
-                mpi=executor.resolve_mpi(profile.mpi)
-            )
 
         # Primary input and streams already have their own declaration fields.
         # Repeating them in auxiliary declarations is an error, not an alias.
@@ -943,7 +922,7 @@ def _create_sprkkr_run(
             if file is not None
         )
 
-        spec = execution_profile.create_execution(
+        spec = profile.create_execution(
             task.executable,
             prepared.input_file,
             prepared.output_file,
@@ -968,26 +947,13 @@ def _create_sprkkr_run(
             if callback:
                 callback(out)
 
-        if project_context is None:
-            raw_runner = executor.create_run(spec)
-            runner = CalculationRun(
-                raw_runner,
-                process_result,
-                callback=finalized,
-                resources=resources,
-            )
-        else:
-            runner = manager.create_run(
-                spec,
-                endpoint=executor_endpoint,
-                process_result=process_result,
-                task=task.name,
-                input_definition=input_parameters.definition_name,
-                dataset=input_parameters.CONTROL.DATASET.result,
-                callback=finalized,
-                project_id=project_id,
-                resources=resources,
-            )
+        runner = CalculationRun.create(
+            spec, endpoint=profile.endpoint, executor=executor, project=project,
+            process_result=process_result, task=task.name,
+            input_definition=input_parameters.definition_name,
+            dataset=input_parameters.CONTROL.DATASET.result,
+            callback=finalized, resources=resources,
+        )
         if read_callback:
             runner.add_output_listener(read_callback)
 
