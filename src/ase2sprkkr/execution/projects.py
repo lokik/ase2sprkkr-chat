@@ -302,7 +302,7 @@ class ProjectRepository:
         """Canonical project run store, guarded across repository instances."""
         with self._state_lock:
             if self._run_store is None:
-                from .manager import RunStore
+                from .run_store import RunStore
                 self._run_store = RunStore(
                     self.runs_directory, projects_directory=self.directory,
                 )

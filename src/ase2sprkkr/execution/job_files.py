@@ -10,7 +10,7 @@ from threading import RLock
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .manager import RunRecord
+    from .run_record import RunRecord
 
 from ..common.file_locks import FileLock
 from .run_model import FileAvailabilityState, FileManifest
