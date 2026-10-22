@@ -450,6 +450,31 @@ def test_direct_follow_uses_shared_socket_protocol(tmp_path, monkeypatch):
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize("offset, expected", [(None, b""), (0, b"already finished"), (8, b"finished")])
+def test_completed_follow_without_socket_respects_live_offset(
+    tmp_path, monkeypatch, offset, expected,
+):
+    """Fallback to a finished spool respects the requested replay offset."""
+    import asyncio
+
+    spool = tmp_path / "output.log"
+    spool.write_bytes(b"already finished")
+    handle, _, _ = _process_handle(tmp_path)
+    handle["socket_path"] = str(tmp_path / "missing-supervisor.sock")
+    remote_id = remote_service._encode_handle(handle)
+    terminal = {"state": RunState.FINISHED.value, "return_code": 0}
+    monkeypatch.setattr(remote_service, "status_remote", lambda _id: terminal)
+
+    out, err = io.BytesIO(), io.BytesIO()
+    result = asyncio.run(remote_service.follow_remote_async(
+        remote_id, out, err, stdout_offset=offset, stderr_offset=None,
+        stdout_path=str(spool),
+    ))
+    assert result == terminal
+    assert out.getvalue() == expected
+    assert err.getvalue() == b""
+
+
 def test_direct_follow_without_stream_files_is_live_only(tmp_path, monkeypatch):
     import asyncio
     import os

@@ -696,6 +696,10 @@ async def follow_remote_async(
             if path is None or path in seen:
                 continue
             seen.add(path)
+            # A None offset means live-only observation; once the supervisor
+            # has exited there are no new bytes to replay from its spool.
+            if offsets[kind] is None:
+                continue
             with open(path, "rb") as source:
                 source.seek(offsets[kind])
                 while True:
