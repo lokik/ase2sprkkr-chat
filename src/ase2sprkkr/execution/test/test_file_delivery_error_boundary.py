@@ -80,7 +80,7 @@ def test_programming_error_escapes_collection_coordinator(tmp_path):
             raise AssertionError("Should never be reached")
 
     with pytest.raises(TypeError, match="internal typo"):
-        asyncio.run(JobFiles.collect_remote(
-            None, files, BrokenHandler(), ExecutionOutcome(), SimpleNamespace(),
+        asyncio.run(JobFiles(files).collect_remote(
+            files, BrokenHandler(), ExecutionOutcome(), SimpleNamespace(),
             required=True,
         ))
