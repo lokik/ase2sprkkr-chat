@@ -63,6 +63,12 @@ class LocalRunner:
         self._owned_stdin = None
         self._cleanup_exception = None
 
+    def prepare_submission(self):
+        """Local execution has no separate staging phase."""
+
+    def stop_observation(self):
+        raise NotImplementedError("Local execution cannot detach observation")
+
     @property
     def state(self):
         return self._state
