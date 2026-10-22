@@ -41,7 +41,7 @@ def test_cross_project_active_conflict_and_project_deletion(tmp_path):
     b = ExecutionManager(project_repository=projects)
     first_record = a.new_record(task="SCF", directory=tmp_path / "work", project_id=first.id)
     second_record = b.new_record(task="DOS", directory=tmp_path / "work", project_id=second.id)
-    a.reserve(first_record)
+    a.store.begin_dispatch(a.reserve(first_record))
     with pytest.raises(DuplicateSubmissionError):
         b.reserve(second_record)
     with pytest.raises(ProjectDeleteError, match="active"):

@@ -94,6 +94,11 @@ def _run(manager, executor, directory, *, task="DOS", dataset="case"):
     )
 
 
+def _reserve_active(manager, record):
+    """Model an in-flight submission, not an abandoned PREPARING claim."""
+    return manager.store.begin_dispatch(manager.reserve(record))
+
+
 def test_duplicate_task_and_dataset_is_rejected_across_managers(tmp_path):
     directory = tmp_path / "work"
     store_path = tmp_path / "runs"
@@ -198,7 +203,7 @@ def test_declared_exact_outputs_conflict_only_if_they_share_a_target(
         ),
     )
 
-    manager.reserve(first)
+    _reserve_active(manager, first)
     if overlap:
         with pytest.raises(DuplicateSubmissionError):
             manager.reserve(second)
@@ -240,7 +245,7 @@ def test_declared_read_write_conflicts_respect_access_and_absolute_paths(
         task="BSF", directory=second_directory, dataset="two", files=second_files,
     )
 
-    manager.reserve(first)
+    _reserve_active(manager, first)
     if conflict:
         with pytest.raises(DuplicateSubmissionError):
             manager.reserve(second)
@@ -277,7 +282,7 @@ def test_wildcard_output_collisions_follow_pattern_overlap(
         ),
     )
 
-    manager.reserve(first)
+    _reserve_active(manager, first)
     if conflict:
         with pytest.raises(DuplicateSubmissionError):
             manager.reserve(second)
@@ -312,7 +317,7 @@ def test_local_submission_detects_symlinked_output_alias(tmp_path, alias_kind):
         files=FileManifest(outputs=(FileEntry(local_path=str(alias)),)),
     )
 
-    manager.reserve(first)
+    _reserve_active(manager, first)
     with pytest.raises(DuplicateSubmissionError):
         manager.reserve(second)
 
@@ -334,7 +339,7 @@ def test_local_submission_detects_hardlinked_output_alias(tmp_path):
         task="BSF", directory=tmp_path, dataset="two",
         files=FileManifest(outputs=(FileEntry(local_path=str(alias)),)),
     )
-    manager.reserve(first)
+    _reserve_active(manager, first)
     with pytest.raises(DuplicateSubmissionError):
         manager.reserve(second)
 
@@ -348,6 +353,6 @@ def test_scf_submission_detects_symlinked_working_directory(tmp_path):
 
     first = manager.new_record(task="SCF", directory=work)
     second = manager.new_record(task="DOS", directory=alias)
-    manager.reserve(first)
+    _reserve_active(manager, first)
     with pytest.raises(DuplicateSubmissionError):
         manager.reserve(second)

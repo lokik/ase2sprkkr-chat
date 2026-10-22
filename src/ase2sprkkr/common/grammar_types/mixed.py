@@ -132,7 +132,11 @@ class CustomMixed(BaseMixed):
 
     def get_type(self, value):
         if isinstance(value, str):
-            if self.string_type not in self.types:
+            if not any(
+                candidate is self.string_type
+                or type(candidate) is type(self.string_type)
+                for candidate in self.types
+            ):
                 raise ValueError(f"String values are not allowed for {self}")
             return self.string_type
 
