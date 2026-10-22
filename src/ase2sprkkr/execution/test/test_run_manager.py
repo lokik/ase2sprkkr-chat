@@ -417,3 +417,14 @@ def test_refresh_does_not_query_terminal_runs(tmp_path):
     result = manager.refresh((finished, active))
     assert [item.state for item in result] == [RunState.FINISHED, RunState.RUNNING]
     assert executor.polled == [active.id]
+
+
+def test_update_without_backend_does_not_reconstruct_executor(tmp_path):
+    from ase2sprkkr.execution import ExecutorEndpoint
+
+    manager = _manager(tmp_path)
+    endpoint = ExecutorEndpoint(executor="custom:cannot-reconstruct")
+    record = manager.new_record(task="DOS", directory=tmp_path, endpoint=endpoint)
+    updated = manager.update(record, RunStatus(state=RunState.SUBMITTING))
+    assert updated.state is RunState.SUBMITTING
+    assert updated.execution.backend_id is None

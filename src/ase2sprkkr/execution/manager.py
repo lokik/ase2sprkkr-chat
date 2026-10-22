@@ -608,7 +608,10 @@ class ExecutionManager:
             failure_phase=phase,
             expected_updated_at=expected_updated_at,
         )
-        self._acknowledge_submission(self.executors.for_endpoint(updated.execution.endpoint), updated)
+        if updated.execution.backend_id is not None:
+            self._acknowledge_submission(
+                self.executors.for_endpoint(updated.execution.endpoint), updated,
+            )
         return updated
 
     def complete(
