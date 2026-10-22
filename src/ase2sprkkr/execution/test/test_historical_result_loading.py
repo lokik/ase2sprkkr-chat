@@ -478,8 +478,8 @@ def test_uncaptured_external_file_is_never_overwritten(tmp_path, monkeypatch):
     assert list(tmp_path.glob(".uncaptured.out.*.tmp")) == []
 
 
-def test_uncaptured_wildcard_restore_never_creates_literal_pattern_directory(tmp_path):
-    """Restoration locks reside outside wildcard path components."""
+def test_uncaptured_wildcard_requires_concrete_historical_membership(tmp_path):
+    """Historical retrieval must never materialize new wildcard members."""
     from ase2sprkkr.execution.run_model import FileEntry
 
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
@@ -487,7 +487,6 @@ def test_uncaptured_wildcard_restore_never_creates_literal_pattern_directory(tmp
     endpoint = endpoint_for_executor(executor)
     manager.executors.register(executor, endpoint)
     wildcard = tmp_path / "results-*" / "out.dat"
-    actual = tmp_path / "results-1" / "out.dat"
     record = manager.new_record(
         task="DOS", directory=tmp_path, endpoint=endpoint,
         files=FileManifest(outputs=(
@@ -499,17 +498,11 @@ def test_uncaptured_wildcard_restore_never_creates_literal_pattern_directory(tmp
         execution=record.execution.submitted("job-1"),
     )
 
-    def fetch(run, files, *, destinations=None):
-        assert files == (str(wildcard),)
-        actual.parent.mkdir()
-        actual.write_text("restored")
-
-    executor.fetch_result_files = fetch
-    restored = manager.retrieve_result_files(record.id)
-    assert actual.read_text() == "restored"
+    with pytest.raises(ValueError, match="unresolved historical wildcard"):
+        manager.retrieve_result_files(record.id)
+    assert executor.fetch_calls == []
     assert not (tmp_path / "results-*").exists()
-    assert restored.files.outputs[0].availability_state == "available"
-
+    assert record.files.captured_at is None
 
 def test_restore_directory_sync_failure_does_not_erase_published_file(
     tmp_path, monkeypatch,
