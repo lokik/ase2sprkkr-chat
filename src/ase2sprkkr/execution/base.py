@@ -543,6 +543,12 @@ class Executor:
             f"{type(self).__name__} cannot retrieve persistent result files"
         )
 
+    def acknowledge_submission(self, run):
+        """No temporary submission receipt for this executor."""
+
+    def acknowledge(self, run):
+        """No terminal receipt for this executor."""
+
     def reservation_context(self, spec: ExecutionSpec, files):
         """Prepare canonical run paths before atomic submission reservation."""
         return files, None
