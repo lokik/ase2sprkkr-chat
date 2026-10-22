@@ -202,6 +202,7 @@ def _validate_file_declarations(entries, *, primary_input=None):
     primary_input is a reference to an inputs entry, not an extra declaration.
     Remote-only cache baselines are metadata, not file declarations.
     """
+    import os
     import posixpath
     import fnmatch
     from .transport import has_file_magic
