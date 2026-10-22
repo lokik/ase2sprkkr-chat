@@ -1,0 +1,396 @@
+"""Common parsing support for structured SPR-KKR result files."""
+
+from ..sprkkr.configuration import ConfigurationFile, ConfigurationValue
+from ..potentials.potentials import Potential
+import pyparsing as pp
+import numpy as np
+from pathlib import Path
+from ..common.decorators import cached_class_property, cached_property
+from ..common.grammar_types.data import RestOfTheFile
+import io
+import os
+from numbers import Number
+
+
+class UnknownDataValue(ConfigurationValue):
+    def as_array(self):
+        out = self()
+        if not isinstance(out, np.ndarray):
+            out = np.genfromtxt(io.StringIO(out))
+        return out
+
+
+class ResultFile(ConfigurationFile):
+    """Representation of a structured SPR-KKR result file."""
+
+    plot_parameters = {}
+    additional_actions = ()
+
+    def __init__(self, definition=None, container=None, potential=None):
+        super().__init__(definition, container)
+        self._potential = None
+        self._potential_filename = None
+        if potential is not None:
+            self.potential = potential
+
+    def read_from_file(
+        self,
+        file,
+        clear_first=True,
+        allow_dangerous=False,
+        potential=None,
+    ):
+        """Read result data and optionally associate its potential."""
+
+        if potential is not None:
+            self.potential = potential
+        return super().read_from_file(
+            file,
+            clear_first=clear_first,
+            allow_dangerous=allow_dangerous,
+        )
+
+    @classmethod
+    def can_be_plotted(cls):
+        return callable(getattr(cls, "plot", None))
+
+    def set_potential_filename(self, potential_filename):
+        self.__dict__["potential_filename"] = potential_filename
+        self.__dict__.pop("potential", None)
+
+    @cached_property
+    def potential_filename(self):
+        if not getattr(self, "_filename", None):
+            raise ValueError("The result file has no filename. Set the potential filename manually.")
+
+        path = Path(self._filename)
+        directory = path.parent
+        stem = path.stem
+
+        while True:
+            for suffix in (".pot_new", ".pot"):
+                candidate = Path(directory) / (stem + suffix)
+                if candidate.is_file():
+                    return str(candidate)
+            stem = stem.rsplit("_", 1)
+            if len(stem) == 1:
+                break
+            stem = stem[0]
+
+        raise ValueError(
+            f"No potential file found for {self._filename}. Set it manually using set_potential_filename()."
+        )
+
+    @potential_filename.setter
+    def potential_filename(self, value):
+        self.set_potential_filename(value)
+
+    @cached_property
+    def potential(self):
+        return Potential.from_file(self.potential_filename)
+
+    @potential.setter
+    def potential(self, value):
+        if isinstance(value, Potential):
+            self.__dict__["potential"] = value
+            if hasattr(value, "_filename"):
+                self.__dict__["potential_filename"] = value._filename
+            else:
+                self.__dict__.pop("potential_filename", None)
+        else:
+            self.__dict__["potential_filename"] = value
+            self.__dict__.pop("potential", None)
+
+    @property
+    def atoms(self):
+        return self.potential.atoms
+
+    @cached_class_property
+    def unknown_result_file_definition(cls):
+        """Definition used for an unknown result file that stores the remaining data verbatim."""
+        V = result_files_definitions.ResultFileValueDefinition
+        return result_files_definitions.create_result_file_definition(
+            V("KEYWORD", str), [V("DATA", RestOfTheFile(), name_in_grammar=False, result_class=UnknownDataValue)]
+        )
+
+    @cached_class_property
+    def definitions(cls):
+        """Return all known definitions of the SPR-KKR result files."""
+        # Discovery imports individual definition modules. Defer construction
+        # until ResultFile and result_files_definitions are fully initialized so
+        # definition modules can safely import this class.
+        from .definition_registry import result_file_definition_registry
+
+        return result_file_definition_registry.by_name()
+
+    @classmethod
+    def definition(cls, self):
+        return cls.definitions[self]
+
+    @classmethod
+    def from_file(
+        cls,
+        filename,
+        first_try=None,
+        try_only=None,
+        unknown=None,
+        potential=None,
+    ):
+        """
+        Read SPRKKR result file (DOS, BSF....). The type of content of the
+        result file is guessed from the content, however you can get hint what
+        to try first or force to read only certain file type(s).
+
+        Parameters
+        ----------
+        filename
+          The file to read
+
+        first_try
+          Result file type(s) to try first. If omitted, the type is guessed
+          from the file extension.
+
+        try_only
+          Result file type(s) allowed to be read.
+          None means any known result file type.
+
+        unknown
+          If True, fall back to an unknown result file: its header is parsed and
+          the remaining content is stored as text.
+          If False, raise an exception if no known (and allowed) file type is
+          recognized.
+          None means True if try_only is None, False otherwise.
+
+        potential
+          A :class:`Potential` or its filename. If omitted, it is looked up
+          lazily from the result filename when it is needed.
+        """
+        from .definition_registry import result_file_definition_registry
+
+        registry = result_file_definition_registry
+        definitions = cls.definitions
+        # Candidate discovery follows cls.definitions, not the global registry:
+        # subclasses can supply their own parsers for the same extension.
+        by_extension = {}
+        for name, definition in definitions.items():
+            # Legacy/custom mappings may use an extension as the key without
+            # exposing an extension attribute on the parser object.
+            extension = getattr(definition, "extension", None)
+            if extension is None:
+                extension = name
+            extension = extension.lower().lstrip(".")
+            candidates = by_extension.setdefault(extension, [])
+            if not any(definition is item for item in candidates):
+                candidates.append(definition)
+
+        # Parsing several candidate formats from a stream must start each
+        # attempt from the same position. Path-based readers already reopen.
+        stream_position = None
+        is_stream = hasattr(filename, "read")
+        if is_stream and hasattr(filename, "seek") and hasattr(filename, "tell"):
+            seekable = getattr(filename, "seekable", None)
+            if seekable is None or seekable():
+                stream_position = filename.tell()
+        nonseekable = is_stream and stream_position is None
+        attempted_stream = False
+
+        if isinstance(filename, (str, os.PathLike)):
+            filename_path = os.fspath(filename)
+            if not os.path.isfile(filename_path):
+                raise FileNotFoundError(filename_path)
+        elif hasattr(filename, "name"):
+            filename_path = os.fspath(filename.name)
+        else:
+            filename_path = None
+
+        def normalize_names(hints):
+            if hints is None or hints is False:
+                return ()
+            if isinstance(hints, str):
+                hints = (hints,)
+            return tuple(str(hint).lower().lstrip(".") for hint in hints)
+
+        def resolve(hints, *, prefer_extension=False):
+            candidates = []
+            for hint in normalize_names(hints):
+                if prefer_extension and hint in by_extension:
+                    found = by_extension[hint]
+                elif hint in definitions:
+                    found = (definitions[hint],)
+                else:
+                    found = by_extension.get(hint, ())
+                for candidate in found:
+                    if not any(candidate is existing for existing in candidates):
+                        candidates.append(candidate)
+            return candidates
+
+        def matches(candidates, *, first_success=False):
+            nonlocal attempted_stream
+            if nonseekable and (len(candidates) > 1 or (candidates and attempted_stream)):
+                raise ValueError(
+                    "Autodetecting multiple result formats requires a seekable "
+                    "input stream; supply an explicit single format using try_only"
+                )
+            successes = []
+            errors = []
+            for definition in candidates:
+                if stream_position is not None:
+                    filename.seek(stream_position)
+                if is_stream:
+                    attempted_stream = True
+                try:
+                    result = definition.read_from_file(filename, potential=potential)
+                except (pp.ParseBaseException, ValueError) as exc:
+                    errors.append(exc)
+                else:
+                    if first_success:
+                        return result, errors
+                    successes.append((definition, result))
+            if len(successes) > 1:
+                names = ", ".join(definition.name for definition, _ in successes)
+                raise ValueError(f"Ambiguous result file {filename!s}: matches {names}")
+            return successes[0][1] if successes else None, errors
+
+        if try_only is not None:
+            allowed = resolve(try_only)
+            if not allowed:
+                raise ValueError(f"Unknown result file format: {try_only!r}")
+            preferred = resolve(first_try, prefer_extension=True)
+            candidates = [candidate for candidate in preferred if any(
+                candidate is item for item in allowed
+            )]
+            candidates.extend(
+                candidate for candidate in allowed
+                if not any(candidate is item for item in candidates)
+            )
+            parsed, errors = matches(candidates, first_success=True)
+            if parsed is not None:
+                return parsed
+            if unknown is None:
+                unknown = False
+        else:
+            if first_try is None:
+                ext = os.path.splitext(filename_path)[1].lower().lstrip(".") if filename_path else ""
+                candidates = resolve((ext,), prefer_extension=True)
+            else:
+                candidates = resolve(first_try, prefer_extension=True)
+            parsed, errors = matches(candidates)
+            if parsed is not None:
+                return parsed
+            # definitions already contains the canonical registry values
+            # (plus extension aliases). No second registry enumeration needed.
+            remaining = []
+            for definition in definitions.values():
+                if not any(definition is candidate for candidate in (*candidates, *remaining)):
+                    remaining.append(definition)
+            parsed, further_errors = matches(remaining)
+            errors.extend(further_errors)
+            if parsed is not None:
+                return parsed
+            if unknown is None:
+                unknown = True
+
+        if unknown:
+            if nonseekable and attempted_stream:
+                raise ValueError(
+                    "Unknown-format fallback requires a seekable input stream "
+                    "after a failed format detection"
+                )
+            if stream_position is not None:
+                filename.seek(stream_position)
+            try:
+                return cls.unknown_result_file_definition.read_from_file(
+                    filename, potential=potential
+                )
+            except pp.ParseBaseException as exc:
+                raise ValueError(f"Cannot parse result file: {filename}") from exc
+        if errors:
+            raise errors[0]
+        raise ValueError(f"File {filename} is not recognized as any known result format")
+
+
+class CommonResultFile(ResultFile):
+    def n_atoms(self):
+        return len(self.ORBITALS)
+
+    def n_types(self):
+        return len(self.TYPES)
+
+    def site_type_index(self, type):
+        if isinstance(type, int):
+            return type
+        for i, t in enumerate(self.TYPES):
+            if t["TXT_T"] == type:
+                return i
+        raise ValueError(f"There is no {type} atom in the result file")
+
+    def n_orbitals(self, type):
+        type = self.site_type_index(type)
+        return self.ORBITALS[self.TYPES[type]["IQAT"][0]]["NLQ"]
+
+
+class Arithmetic:
+    def _check_arithmetic(self, other):
+        if isinstance(other, Number):
+            return
+        if not isinstance(other, type(self)):
+            raise TypeError(
+                f"Cannot combine {type(self).__name__} with {type(other).__name__}"
+            )
+
+    def __add__(self, other):
+        out = self.copy(copy_values=True)
+        out += other
+        return out
+
+    def __sub__(self, other):
+        out = self.copy(copy_values=True)
+        out -= other
+        return out
+
+    def __mul__(self, other):
+        out = self.copy(copy_values=True)
+        out *= other
+        return out
+
+    def __truediv__(self, other):
+        out = self.copy(copy_values=True)
+        out /= other
+        return out
+
+    def __rmul__(self, other):
+        out = self.copy(copy_values=True)
+        out *= other
+        return out
+
+    def _do_arithmetic(self, func, other):
+        """Run given function for all "summable/subtractable/etc... data"""
+        vals = self._arithmetic_values
+        if callable(vals):
+            vals = vals()
+        for val, selector in vals:
+            operand = other if isinstance(other, Number) else other[val]()[selector]
+            getattr(self[val]()[selector], func)(operand)
+
+    def __iadd__(self, other):
+        self._check_arithmetic(other)
+        self._do_arithmetic("__iadd__", other)
+        return self
+
+    def __isub__(self, other):
+        self._check_arithmetic(other)
+        self._do_arithmetic("__isub__", other)
+        return self
+
+    def __imul__(self, other):
+        self._check_arithmetic(other)
+        self._do_arithmetic("__imul__", other)
+        return self
+
+    def __itruediv__(self, other):
+        self._check_arithmetic(other)
+        self._do_arithmetic("__itruediv__", other)
+        return self
+
+
+from . import result_files_definitions  # NOQA: E402
