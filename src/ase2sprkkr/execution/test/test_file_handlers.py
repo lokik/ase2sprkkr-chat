@@ -594,8 +594,8 @@ def test_job_files_reconciles_terminal_delivery(tmp_path):
     assert result.outputs[0].availability_state == "available"
     failed = frozen.with_file_availability(str(path), "failed", "transfer error")
     assert failed.failed_files
-    available = frozen.with_file_availability(str(path), "available")
-    assert available.outputs[0].availability_state == "available"
+    updated = frozen.with_file_availability(str(path), "available")
+    assert updated.outputs[0].availability_state == "available"
     assert old.outputs == (available,)
 
     path.unlink()
