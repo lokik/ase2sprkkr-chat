@@ -1,10 +1,13 @@
 """Shared lifecycle contract of reconnectable local and SSH runners."""
 import asyncio
+from threading import Event, Thread
 from types import SimpleNamespace
 
 import pytest
 
 from ase2sprkkr.execution import ExecutionSpec, RunState
+from ase2sprkkr.execution.base import ObservationDetached
+from ase2sprkkr.execution.postprocessing import CalculationRun
 from ase2sprkkr.execution.managed_runner import ManagedRunner
 from ase2sprkkr.execution.local_project import LocalProjectRunner
 from ase2sprkkr.execution.remote import RemoteRunner
@@ -160,3 +163,106 @@ def test_supervisor_runner_delegates_to_shared_monitor(
         runner._complete_terminal,
     )]
 
+
+
+@pytest.mark.parametrize("runner_class", (LocalProjectRunner, RemoteRunner))
+def test_detach_unblocks_shared_waiters_without_completing_backend(
+    tmp_path, runner_class,
+):
+    spec = ExecutionSpec(argv=(), directory=str(tmp_path),
+                         input_file=None, output_file=None)
+    runner = runner_class(
+        SimpleNamespace(file_handler=None), spec, backend_id="job",
+        run_id="persistent", state=RunState.RUNNING,
+    )
+    listening = Event()
+    callbacks = []
+
+    async def following():
+        listening.set()
+        await asyncio.Event().wait()
+
+    runner._follow_once = following
+    runner.callback = callbacks.append
+    runner.start()
+    assert listening.wait(5)
+    observed = []
+
+    def waiter():
+        try:
+            runner.wait()
+        except ObservationDetached:
+            observed.append("detached")
+
+    threads = [Thread(target=waiter) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    assert runner.stop_observation()
+    runner._thread.join(5)
+    for thread in threads:
+        thread.join(5)
+        assert not thread.is_alive()
+    assert not runner._thread.is_alive()
+    assert observed == ["detached"] * 4
+    assert runner._state == RunState.DETACHED
+    assert callbacks == []
+    assert not runner.stop_observation()
+    with pytest.raises(ObservationDetached):
+        runner.wait()
+
+
+def test_async_waiter_cancellation_does_not_cancel_shared_observation(tmp_path):
+    spec = ExecutionSpec(argv=(), directory=str(tmp_path),
+                         input_file=None, output_file=None)
+    runner = _ManagedStub(spec)
+    observing = Event()
+    release = Event()
+
+    async def following():
+        observing.set()
+        await asyncio.to_thread(release.wait)
+        return {"state": "finished", "return_code": 0, "files": {"outputs": []}}
+
+    runner._follow_once = following
+    runner.start()
+    assert observing.wait(5)
+
+    async def check():
+        one = asyncio.create_task(runner.wait_async())
+        two = asyncio.create_task(runner.wait_async())
+        await asyncio.sleep(0)
+        one.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await one
+        release.set()
+        assert await asyncio.wait_for(two, 5) is runner.result
+
+    asyncio.run(check())
+    assert runner._state == RunState.FINISHED
+
+
+def test_calculation_detach_does_not_postprocess(tmp_path):
+    spec = ExecutionSpec(argv=(), directory=str(tmp_path),
+                         input_file=None, output_file=None)
+    raw = _ManagedStub(spec)
+    raw._state = RunState.RUNNING
+    entered = Event()
+    parsed = []
+    callbacks = []
+
+    async def following():
+        entered.set()
+        await asyncio.Event().wait()
+
+    raw._follow_once = following
+    run = CalculationRun(raw, lambda x: parsed.append(x) or x,
+                         callback=callbacks.append)
+    run.start(attached=True)
+    assert entered.wait(5)
+    assert run.stop_observation()
+    raw._thread.join(5)
+    assert run.state == RunState.DETACHED
+    with pytest.raises(ObservationDetached):
+        run.wait()
+    assert parsed == []
+    assert callbacks == []

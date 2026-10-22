@@ -5,6 +5,7 @@ mocked monitor. SSH here means the SSH protocol/client path with LocalTransport
 as its transport, so no login credentials or network service are required.
 """
 import sys
+from threading import Event
 from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
@@ -15,6 +16,7 @@ from ase2sprkkr.execution import (
     Execution, ExecutionSpec, FileManifest, LaunchSpec, LocalExecutor,
     RunRecord, RunState, WorkingDirectory,
 )
+from ase2sprkkr.execution.base import ObservationDetached
 from ase2sprkkr.execution.endpoint import endpoint_for_executor
 from ase2sprkkr.execution.remote_endpoint import RemoteEndpointExecutor
 from ase2sprkkr.execution.transport import LocalTransport
@@ -176,3 +178,41 @@ def test_failed_project_can_reconnect_without_changing_backend_result(mode, tmp_
     assert attached.wait().return_code == 7
     assert attached.state == RunState.FAILED
     assert (directory / "run.out").read_text() == "before failure\n"
+
+
+@pytest.mark.parametrize("mode", ("local", "ssh"))
+def test_detach_follow_then_reattach_running_job(mode, tmp_path):
+    directory = tmp_path / "local" / "calculation"
+    directory.mkdir(parents=True)
+    executor = _executor(mode)
+    run_id = uuid4().hex
+    ready = Event()
+    callbacks = []
+    spec = ExecutionSpec(
+        argv=(sys.executable, "-u", "-c",
+              "import time; print('ready', flush=True); "
+              "time.sleep(2); print('finished', flush=True)"),
+        input_file=None, output_file=str(directory / "run.out"),
+        directory=str(directory),
+        launch=LaunchSpec(local_root=str(tmp_path / "local"),
+                          remote_root=str(tmp_path / "remote")),
+    )
+    runner = executor.create_project_run(spec, run_id=run_id)
+    runner.callback = callbacks.append
+    runner.add_output_listener(
+        lambda text, kind: ready.set() if kind == "out" and "ready" in text else None
+    )
+    runner.submit()
+    assert ready.wait(10)
+    assert runner.stop_observation()
+    runner._thread.join(10)
+    assert not runner._thread.is_alive()
+    with pytest.raises(ObservationDetached):
+        runner.wait()
+    assert callbacks == []
+    assert runner._state == RunState.DETACHED
+    record = _record(executor, runner, run_id, directory)
+    attached = executor.attach(record, start=True)
+    assert attached.wait().return_code == 0
+    assert attached.state == RunState.FINISHED
+    assert (directory / "run.out").read_text() == "ready\\nfinished\\n"
