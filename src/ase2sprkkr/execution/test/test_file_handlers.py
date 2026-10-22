@@ -720,3 +720,20 @@ def test_preparation_preserves_open_streams_inside_output_wildcard(tmp_path):
     assert (tmp_path / "stdout.log").read_text() == "stdout.log"
     assert (tmp_path / "stderr.log").read_text() == "stderr.log"
     assert not (tmp_path / "obsolete.log").exists()
+
+
+def test_preparation_protects_stdin_matched_by_output_wildcard(tmp_path):
+    """The manifest's stdin entry must protect the file during cleanup."""
+    stdin = tmp_path / "command.dat"
+    old_output = tmp_path / "obsolete.dat"
+    stdin.write_text("command")
+    old_output.write_text("old")
+    spec = ExecutionSpec(
+        argv=(), directory=str(tmp_path), input_file=None,
+        stdin="command.dat", output_files=("*.dat",),
+    )
+
+    prepare_local_files(spec)
+
+    assert stdin.read_text() == "command"
+    assert not old_output.exists()
