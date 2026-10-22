@@ -141,8 +141,8 @@ def test_remote_follow_creates_missing_named_output_without_losing_bytes(
         assert backend_id == "test-backend"
         assert offsets == {"out": 0, "err": None}
         assert output.read_bytes() == b""
-        on_chunk("out", b"ready\\n")
-        on_chunk("out", b"finished\\n")
+        on_chunk("out", b"ready\n")
+        on_chunk("out", b"finished\n")
         return {"state": "finished", "return_code": 0}
 
     monkeypatch.setattr(executor.connection, "follow", follow)
@@ -150,8 +150,8 @@ def test_remote_follow_creates_missing_named_output_without_losing_bytes(
 
     asyncio.run(runner._follow_once())
 
-    assert output.read_bytes() == b"ready\\nfinished\\n"
-    assert observed == [("out", "ready\\n"), ("out", "finished\\n")]
+    assert output.read_bytes() == b"ready\nfinished\n"
+    assert observed == [("out", "ready\n"), ("out", "finished\n")]
 
 
 def test_remote_executor_local_transport_streams_output(tmp_path):
