@@ -521,7 +521,7 @@ class ExecutionManager:
         except NotImplementedError:
             return record
         if status is not None:
-            return self.update(record, status)
+            return self.update(record, status, expected_updated_at=record.updated_at)
 
         def mark_absent(latest):
             # Do not invalidate a newer submission observation while backend
@@ -566,7 +566,7 @@ class ExecutionManager:
             if not progressed:
                 raise DuplicateSubmissionError(record, conflicts)
 
-    def update(self, record, status: RunStatus):
+    def update(self, record, status: RunStatus, *, expected_updated_at=_UNCHANGED):
         phase = _failure_phase(status.failure_phase)
         return_code = status.return_code
         state = RunState.POSTPROCESSING if status.state == RunState.FINISHED else status.state
@@ -581,6 +581,7 @@ class ExecutionManager:
             return_code=return_code,
             message=status.message,
             failure_phase=phase,
+            expected_updated_at=expected_updated_at,
         )
         self._acknowledge_submission(self.executors.for_endpoint(updated.execution.endpoint), updated)
         return updated
