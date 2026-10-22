@@ -10,10 +10,13 @@ from concurrent.futures import Future
 from dataclasses import asdict, dataclass
 from enum import Enum
 from threading import Event, Lock, Thread
-from typing import Any, Optional, Protocol, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Optional, Protocol, Sequence, Tuple
 
 from ..common.decorators import class_property
 from .run_model import Execution, FileManifest, FileSyncPolicy
+
+if TYPE_CHECKING:
+    from .job_files import JobFiles
 
 
 def file_path(value, directory=None, *, flush=False, required=False):
@@ -514,9 +517,7 @@ class Runner(Protocol):
 
     result: Any
 
-    def file_snapshot(self) -> FileManifest: ...
-    def replace_file_manifest(self, manifest: FileManifest) -> FileManifest: ...
-    def merge_file_manifest(self, observed: FileManifest) -> FileManifest: ...
+    job_files: "JobFiles"
 
     @property
     def state(self) -> RunState: ...
