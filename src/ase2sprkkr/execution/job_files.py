@@ -248,15 +248,28 @@ class JobFiles:
         if not record.state.is_terminal:
             raise RuntimeError(f"Run {record.id} is not finished")
         missing = self.missing_files()
-        if not missing or record.execution.backend_id is None:
-            return record
-        if executor is None or not executor.supports_result_file_retrieval:
-            return record
-
         versions = {
             os.path.abspath(os.fspath(version.path)): version
             for version in record.files.all_versions
         }
+        # A previous attempt may have published a correct historical file
+        # before its directory fsync failed. In that case the bytes are
+        # present but the persisted availability still says FAILED. Verify
+        # and sync such files again instead of downloading them a second time.
+        recoverable = tuple(
+            os.path.abspath(os.fspath(entry.local_path))
+            for entry in record.files.failed_files
+            if entry.local_path is not None
+            and (version := versions.get(os.path.abspath(entry.local_path))) is not None
+            and version.is_current()
+        )
+        can_fetch = (
+            record.execution.backend_id is not None
+            and executor is not None
+            and executor.supports_result_file_retrieval
+        )
+        if not recoverable and (not missing or not can_fetch):
+            return record
         # Captured input versions are recoverable too, but inputs have no
         # availability field: only output/cache entries may be updated through
         # FileManifest.with_file_availability().
@@ -264,7 +277,7 @@ class JobFiles:
             os.path.abspath(os.fspath(item.local_path))
             for item in record.files.files if item.local_path is not None
         }
-        for path in missing:
+        for path in dict.fromkeys((*missing, *recoverable)):
             path = os.path.abspath(os.fspath(path))
             # A historical restore must have a concrete, frozen file identity.
             # Expanding a wildcard now would invent members absent at capture.
@@ -284,9 +297,12 @@ class JobFiles:
                     # A previous restorer might already have completed while
                     # this caller was waiting for the filesystem lock.
                     if version is not None and version.is_current():
-                        pass
+                        if path in recoverable:
+                            sync_file(path)
                     elif version is None and os.path.isfile(path):
                         pass
+                    elif not can_fetch:
+                        continue
                     elif version is not None and os.path.lexists(path):
                         raise HistoricalFileMismatchError(
                             f"Historical result file was modified: {path}"
