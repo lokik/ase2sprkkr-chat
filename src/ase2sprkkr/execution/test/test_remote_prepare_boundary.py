@@ -29,7 +29,8 @@ def test_prepared_manifest_is_durable_before_remote_backend_submit(tmp_path, mon
         ),
     )
     run = manager.create_run(
-        executor, spec, task="DOS", process_result=lambda outcome: outcome,
+        spec, endpoint=manager.executors.register(executor),
+        task="DOS", process_result=lambda outcome: outcome,
     )
     expected = FileManifest(
         stdout=FileEntry(str(output), "/target/prepared/run.out", availability_state="pending"),
