@@ -35,6 +35,7 @@ def test_explicit_input_roles_roundtrip(tmp_path):
 def test_reserved_remote_input_upload_access(tmp_path, sync, conflict):
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
     executor = RemoteEndpointExecutor(LocalTransport())
+    endpoint = manager.executors.register(executor)
     records = []
     for name in ("one", "two"):
         root = tmp_path / name
@@ -53,7 +54,7 @@ def test_reserved_remote_input_upload_access(tmp_path, sync, conflict):
         records.append(manager.new_record(
             task=name, directory=spec.directory,
             remote_directory=target,
-            endpoint=endpoint_for_executor(executor), files=manifest,
+            endpoint=endpoint, files=manifest,
         ))
     manager.reserve(records[0])
     if conflict:

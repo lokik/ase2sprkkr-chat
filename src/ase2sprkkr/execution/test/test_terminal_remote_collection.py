@@ -191,34 +191,35 @@ def test_simultaneous_collections_keep_verified_success_after_late_failure(tmp_p
     entry = FileEntry(str(target), "/remote/same.out", availability_state="pending")
     frozen = FileManifest(outputs=(entry,))
     owner = JobFiles(frozen)
-    began_failure = asyncio.Event()
-    release_failure = asyncio.Event()
-
-    class LateFailure:
-        async def collect(self, mapping, manifest, outcome, *, required):
-            began_failure.set()
-            await release_failure.wait()
-            return manifest.with_file_availability(
-                str(target), "failed", "connection lost",
-            ), OSError("connection lost")
-
-        async def verify_stream_availability(self, manifest, spec):
-            return manifest, None
-
-    class SuccessfulTransfer:
-        async def collect(self, mapping, manifest, outcome, *, required):
-            target.write_bytes(b"completed")
-            version = await asyncio.to_thread(
-                FileVersion.capture, target, require_digest=True,
-            )
-            return manifest.with_file_availability(
-                str(target), "available", verified_local_version=version,
-            ), None
-
-        async def verify_stream_availability(self, manifest, spec):
-            return manifest, None
 
     async def scenario():
+        began_failure = asyncio.Event()
+        release_failure = asyncio.Event()
+
+        class LateFailure:
+            async def collect(self, mapping, manifest, outcome, *, required):
+                began_failure.set()
+                await release_failure.wait()
+                return manifest.with_file_availability(
+                    str(target), "failed", "connection lost",
+                ), OSError("connection lost")
+
+            async def verify_stream_availability(self, manifest, spec):
+                return manifest, None
+
+        class SuccessfulTransfer:
+            async def collect(self, mapping, manifest, outcome, *, required):
+                target.write_bytes(b"completed")
+                version = await asyncio.to_thread(
+                    FileVersion.capture, target, require_digest=True,
+                )
+                return manifest.with_file_availability(
+                    str(target), "available", verified_local_version=version,
+                ), None
+
+            async def verify_stream_availability(self, manifest, spec):
+                return manifest, None
+
         failed = asyncio.create_task(owner.collect_remote(
             frozen, LateFailure(), SimpleNamespace(), SimpleNamespace(),
             required=True,
@@ -247,33 +248,34 @@ def test_stream_error_superseded_by_concurrent_verified_delivery(tmp_path):
     path = str(stream)
     frozen = FileManifest(stdout=FileEntry(path, "/remote/stdout", "pending"))
     owner = JobFiles(frozen)
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    class FailedObserver:
-        async def collect(self, mapping, manifest, outcome, *, required):
-            return manifest, None
-
-        async def verify_stream_availability(self, manifest, spec):
-            started.set()
-            await release.wait()
-            return manifest.with_file_availability(
-                path, "failed", "lost connection",
-            ), OSError("lost connection")
-
-    class SuccessfulObserver:
-        async def collect(self, mapping, manifest, outcome, *, required):
-            return manifest, None
-
-        async def verify_stream_availability(self, manifest, spec):
-            version = await asyncio.to_thread(
-                FileVersion.capture, stream, require_digest=True,
-            )
-            return manifest.with_file_availability(
-                path, "available", verified_local_version=version,
-            ), None
 
     async def scenario():
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class FailedObserver:
+            async def collect(self, mapping, manifest, outcome, *, required):
+                return manifest, None
+
+            async def verify_stream_availability(self, manifest, spec):
+                started.set()
+                await release.wait()
+                return manifest.with_file_availability(
+                    path, "failed", "lost connection",
+                ), OSError("lost connection")
+
+        class SuccessfulObserver:
+            async def collect(self, mapping, manifest, outcome, *, required):
+                return manifest, None
+
+            async def verify_stream_availability(self, manifest, spec):
+                version = await asyncio.to_thread(
+                    FileVersion.capture, stream, require_digest=True,
+                )
+                return manifest.with_file_availability(
+                    path, "available", verified_local_version=version,
+                ), None
+
         first = asyncio.create_task(owner.collect_remote(
             frozen, FailedObserver(), SimpleNamespace(), SimpleNamespace(),
             required=True,
