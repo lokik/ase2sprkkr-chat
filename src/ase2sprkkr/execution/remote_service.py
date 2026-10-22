@@ -21,6 +21,7 @@ import tempfile
 import shutil
 import time
 from pathlib import Path
+from datetime import datetime, timezone
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from .growing_file_tail import follow_growing_files
