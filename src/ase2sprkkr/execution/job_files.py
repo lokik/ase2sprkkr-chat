@@ -106,13 +106,21 @@ class JobFiles:
 
         FileManifest already rejects output/cache identity collisions.
         """
-        # Remote-only cache baselines are absent from the availability summary.
-        recorded = {
-            (entry.local_path, entry.remote_path): entry
-            for entry in (previous.stdout, previous.stderr,
-                          *previous.outputs, *previous.caches)
-            if entry is not None
-        }
+        # Remote-only caches are not in FileManifest.files. Shared stream
+        # aliases may also have inconsistent observations; never let a later
+        # alias silently overwrite an already recorded transfer failure.
+        priority = {None: 0, "pending": 1, "skipped": 2,
+                    "available": 3, "failed": 4}
+        recorded = {}
+        for entry in (previous.stdout, previous.stderr,
+                      *previous.outputs, *previous.caches):
+            if entry is None:
+                continue
+            key = (entry.local_path, entry.remote_path)
+            known = recorded.get(key)
+            if (known is None or priority[entry.availability_state]
+                    > priority[known.availability_state]):
+                recorded[key] = entry
 
         def merged(entry):
             if entry is None:
