@@ -388,3 +388,28 @@ def test_mandatory_input_alias_cannot_be_made_optional(tmp_path):
     )
     with pytest.raises(SubmissionNotStarted, match="neither locally nor remotely"):
         _processed_run(executor, spec).run()
+
+
+def test_remote_collects_exact_cache_created_during_run(tmp_path):
+    """An absent cache is not an input, but can become a new output."""
+    from .test_remote import _SpyTransport
+
+    transport = _SpyTransport()
+    workdir = tmp_path / "local" / "calculation"
+    cache_file = workdir / "fresh-cache.dat"
+    executor, spec, _, remote_root = _text_run(
+        tmp_path, transport,
+        declared_cache_files=(cache_file,),
+        code=(
+            "from pathlib import Path; "
+            "Path('fresh-cache.dat').write_text('fresh')"
+        ),
+    )
+    runner = _processed_run(executor, spec)
+    assert runner.run().return_code == 0
+    assert cache_file.read_text() == "fresh"
+    remote_cache = remote_root / "calculation" / "fresh-cache.dat"
+    assert all(source != cache_file for source, _ in transport.put_files)
+    assert sum(source == remote_cache for source, _ in transport.get_files) == 1
+    entries = {entry.file.local_path: entry.file for entry in runner.files.caches}
+    assert entries[str(cache_file)].availability_state == "available"

@@ -317,7 +317,9 @@ class RemoteRunner:
             # inputs, except that a missing local cache is allowed.
             remote = await self._stage_file(local, used, required=False)
             if remote is None:
-                continue
+                # A missing cache need not be uploaded, but remains declared:
+                # the calculation may create it and it must be collected.
+                remote = await self.executor.map_path(local)
 
             before = None
             if output_policy != FileSyncPolicy.NEVER:
