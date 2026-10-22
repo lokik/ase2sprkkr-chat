@@ -386,7 +386,7 @@ def test_mandatory_input_alias_cannot_be_made_optional(tmp_path):
         tmp_path,
         declared_input_files=(TaskFile(missing, optional=True), missing),
     )
-    with pytest.raises(SubmissionNotStarted, match="neither locally nor remotely"):
+    with pytest.raises(SubmissionNotStarted, match="Conflicting optionality"):
         _processed_run(executor, spec).run()
 
 

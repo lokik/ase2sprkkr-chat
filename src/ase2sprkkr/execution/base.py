@@ -40,7 +40,7 @@ def file_path(value, directory=None, *, flush=False, required=False):
 
 
 def declared_file_paths(values, directory, *, excluded=(), flush=False):
-    """Combine declarations by physical path; any required use wins.
+    """Combine identical input declarations; reject contradictory optionality.
 
     The execution layer accepts ordinary filenames, file objects and TaskFile
     metadata without depending on the task-schema implementation.
@@ -52,7 +52,13 @@ def declared_file_paths(values, directory, *, excluded=(), flush=False):
         if path is None or path in excluded:
             continue
         required = not getattr(value, "optional", False)
-        merged[path] = merged.get(path, False) or required
+        previous = merged.get(path)
+        if previous is not None and previous != required:
+            raise ValueError(
+                f"Conflicting optionality for file {path}: "
+                "the same input cannot be both required and optional"
+            )
+        merged[path] = required
     return tuple(merged.items())
 
 
