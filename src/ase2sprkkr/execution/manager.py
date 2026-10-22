@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import fnmatch
 import json
 import os
 import warnings
@@ -35,7 +34,6 @@ from .postprocessing import CalculationRun
 from .run_model import (
     FileAvailabilityState, Execution, WorkingDirectory, FileManifest,
 )
-from .transport import has_file_magic
 
 
 class HistoricalFileMismatchError(OSError):
@@ -147,92 +145,6 @@ class RunRecord:
         return JobFiles(self)
 
 
-def _manifest_accesses(record):
-    """Resolve declared read/write paths on the execution host."""
-    files = record.files
-    directory = record.execution.directory
-    remote = directory.remote is not None
-
-    def path(entry):
-        if entry is None:
-            return None
-        value = entry.remote_path if remote else entry.local_path
-        if value is None:
-            return None
-        resolved = value if os.path.isabs(value) else os.path.join(directory.target, value)
-        # Resolve aliases only on the host whose filesystem is accessible.
-        return os.path.normpath(resolved) if remote else os.path.realpath(resolved)
-
-    inputs = {path(entry) for entry in files.input_entries} - {None}
-    caches = {path(entry) for entry in files.caches} - {None}
-    reads = inputs | caches
-    writes = {path(entry) for entry in (files.stdout, files.stderr, *files.outputs)} - {None}
-    writes.update(caches)
-    if remote and (files.mapping is None or files.mapping.input_sync != "never"):
-        writes.update(inputs)
-    return reads, writes
-
-
-def _path_overlap(a, b, *, local=False):
-    """Conservatively compare paths, glob patterns and local hardlinks."""
-    a_magic, b_magic = has_file_magic(a), has_file_magic(b)
-    if not a_magic and not b_magic:
-        if a == b:
-            return True
-        if local:
-            try:
-                return os.path.samefile(a, b)
-            except (FileNotFoundError, NotADirectoryError):
-                pass
-        return False
-    if not a_magic:
-        return fnmatch.fnmatchcase(a, b)
-    if not b_magic:
-        return fnmatch.fnmatchcase(b, a)
-    if a == b:
-        return True
-
-    # Only disjoint literal prefixes prove that two glob patterns cannot overlap.
-    def prefix(pattern):
-        return pattern[:min((pattern.find(c) for c in "*?[" if c in pattern),
-                            default=len(pattern))]
-
-    pa, pb = prefix(a), prefix(b)
-    return pa.startswith(pb) or pb.startswith(pa)
-
-
-def _paths_overlap(first, second, *, local=False):
-    return any(_path_overlap(a, b, local=local) for a in first for b in second)
-
-
-def submission_conflicts(left: RunRecord, right: RunRecord) -> bool:
-    """Conservatively exclude overlapping declared read/write operations."""
-    a, b = left.execution, right.execution
-    if a.endpoint != b.endpoint:
-        return False
-    local = a.directory.remote is None and b.directory.remote is None
-    same_directory = (
-        os.path.realpath(a.directory.target) == os.path.realpath(b.directory.target)
-        if local else a.directory.target == b.directory.target
-    )
-    # SCF can overwrite undeclared canonical files in its working directory.
-    if same_directory and (left.task == "SCF" or right.task == "SCF"):
-        return True
-    left_reads, left_writes = _manifest_accesses(left)
-    right_reads, right_writes = _manifest_accesses(right)
-    if (_paths_overlap(left_writes, right_reads | right_writes, local=local)
-            or _paths_overlap(right_writes, left_reads, local=local)):
-        return True
-    # Without declared writes, preserve namespace-based protection for generic
-    # executors that cannot describe their output footprint.
-    return (
-        (not left_writes or not right_writes)
-        and same_directory
-        and left.task == right.task
-        and left.dataset == right.dataset
-    )
-
-
 class RunStore:
     """Project run history stored as date-sharded durable JSON files."""
 
@@ -332,6 +244,33 @@ class RunStore:
         durable_mkdir(self.directory, parents=True, exist_ok=True, mode=0o700)
         with self._lock, FileLock(self.directory / ".submit.lock"):
             yield
+
+    def reserve_files(self, record):
+        """Atomically claim the file namespace using the persisted run record.
+
+        Return a pair (reserved_record, conflicts). No separate reservation
+        state exists: an active run record holds the claim until completion.
+        """
+        with self.submission_lock():
+            conflicts = tuple(
+                active for active in self.runs(active=True)
+                if active.id != record.id
+                and record.job_files.conflicts_with(active.job_files)
+            )
+            if conflicts:
+                return None, conflicts
+            record.job_files.sync_inputs()
+
+            def claim(latest):
+                if latest.state != RunState.NEW:
+                    raise RuntimeError("Only new runs can reserve files")
+                return replace(
+                    latest, state=RunState.SUBMITTING,
+                    files=record.files, execution=record.execution,
+                    updated_at=_now(),
+                )
+
+            return self.update(record, claim), ()
 
     def _check_persisted_project(self, record):
         if self.projects_directory is None:
@@ -631,37 +570,25 @@ class ExecutionManager:
         return self.store.update(record, mark_absent)
 
     def reserve(self, record):
+        """Reserve job files, recovering stalled submissions only if needed."""
         attempted_recovery = set()
         while True:
-            with self.store.submission_lock():
-                conflicts = tuple(
-                    active
-                    for active in self.store.runs(active=True)
-                    if active.id != record.id
-                    and submission_conflicts(record, active)
-                )
-                if not conflicts:
-                    record.job_files.sync_inputs()
-                    return self.transition(
-                        record,
-                        state=RunState.SUBMITTING,
-                        files=record.files,
-                        execution=record.execution,
-                    )
-                stale = tuple(
-                    conflict
-                    for conflict in conflicts
-                    if conflict.id not in attempted_recovery
-                    and self._is_stale_submitting(conflict)
-                )
-
+            reserved, conflicts = self.store.reserve_files(record)
+            if reserved is not None:
+                return reserved
+            stale = tuple(
+                conflict for conflict in conflicts
+                if conflict.id not in attempted_recovery
+                and self._is_stale_submitting(conflict)
+            )
             if not stale:
                 raise DuplicateSubmissionError(record, conflicts)
             progressed = False
             for conflict in stale:
                 attempted_recovery.add(conflict.id)
                 recovered = self.recover_submitting(conflict)
-                if recovered.state != RunState.SUBMITTING or recovered.execution.backend_id is not None:
+                if (recovered.state != RunState.SUBMITTING
+                        or recovered.execution.backend_id is not None):
                     progressed = True
             if not progressed:
                 raise DuplicateSubmissionError(record, conflicts)
