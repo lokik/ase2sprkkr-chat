@@ -157,7 +157,8 @@ def test_retrieve_rejects_existing_modified_historical_output(
 
         monkeypatch.setattr(project_results, "_reader_for_record", lambda *_: Reader())
 
-    with pytest.raises(expected_error, match="modified"):
+    expected_message = "overwritten" if entrypoint == "load" else "modified"
+    with pytest.raises(expected_error, match=expected_message):
         if entrypoint == "load":
             load_project_result(manager, record.id)
         else:
@@ -177,6 +178,13 @@ def test_retrieve_allows_modified_historical_input_with_intact_output(tmp_path):
     assert restored.files.state is FileState.CURRENT
 
 
+@pytest.mark.parametrize(
+    "entrypoint, expected_error",
+    [
+        pytest.param("load", ProjectResultUnavailableError, id="load-project-result"),
+        pytest.param("retrieve", HistoricalFileMismatchError, id="retrieve-files"),
+    ],
+)
 def test_restored_changed_content_is_rejected_as_overwritten(
     tmp_path, monkeypatch, entrypoint, expected_error,
 ):

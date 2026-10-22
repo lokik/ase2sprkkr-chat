@@ -119,13 +119,15 @@ def test_empty_remote_wildcard_respects_required_output(optional, tmp_path):
     )
     frozen, error = materialize_manifest(manifest, remote=True)
 
-    assert len(frozen.outputs) == 1
-    assert frozen.outputs[0].optional is optional
     if optional:
+        # Unmatched optional patterns freeze to empty membership, not a
+        # placeholder which could accidentally be expanded after completion.
         assert error is None
-        assert frozen.outputs[0].availability_state == "skipped"
+        assert frozen.outputs == ()
     else:
         assert isinstance(error, FileNotFoundError)
+        assert len(frozen.outputs) == 1
+        assert frozen.outputs[0].optional is False
         assert frozen.outputs[0].availability_state == "failed"
         assert str(error) in frozen.outputs[0].availability_message
 
@@ -431,7 +433,9 @@ def test_cheap_remote_sync_decisions_do_not_hash_files(tmp_path, monkeypatch):
         ))
         assert error is None
         assert target.read_text() == expected
-        assert result.outputs[0].availability_state == "available"
+        assert result.outputs[0].availability_state == (
+            "skipped" if policy == "missing" and local_exists else "available"
+        )
 
 
 def test_cache_missing_policy_uses_signature_and_local_existence(tmp_path, monkeypatch):
@@ -583,7 +587,12 @@ def test_job_files_reconciles_terminal_delivery(tmp_path):
 
     path = tmp_path / "result.dat"
     path.write_text("downloaded")
-    available = FileEntry(str(path), "/remote/result.dat", "available")
+    from ase2sprkkr.common.file_versions import FileVersion
+    verified = FileVersion.capture(path, require_digest=True)
+    available = FileEntry(
+        str(path), "/remote/result.dat", "available",
+        verified_local_version=verified,
+    )
     pending = FileEntry(str(path), "/remote/result.dat", "pending")
     old = FileManifest(outputs=(available,))
     frozen = FileManifest(outputs=(pending,))

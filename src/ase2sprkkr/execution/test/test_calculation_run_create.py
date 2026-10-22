@@ -23,10 +23,10 @@ class _Executor(Executor):
         return select_mpi_spec(spec, ("mpirun",))
 
     def create_run(self, spec, callback=None):
-        return _Raw(self, spec)
+        return _Raw(self, self.resolve_spec(spec))
 
     def create_project_run(self, spec, *, run_id, callback=None):
-        return _Raw(self, spec)
+        return _Raw(self, self.resolve_spec(spec))
 
 
 def _spec(tmp_path):

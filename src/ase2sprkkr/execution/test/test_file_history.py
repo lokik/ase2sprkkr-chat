@@ -130,5 +130,5 @@ def test_capture_merged_stream_rejects_changed_verified_alias(tmp_path):
                          verified_local_version=stale),
         mapping=FileMapping(str(tmp_path), "/remote"),
     )
-    with pytest.raises(FileVersionCaptureError, match="unverified or changed"):
+    with pytest.raises(FileVersionCaptureError, match="Conflicting remote delivery versions"):
         capture_result_files(files)
