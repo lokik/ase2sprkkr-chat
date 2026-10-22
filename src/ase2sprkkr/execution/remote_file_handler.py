@@ -199,113 +199,111 @@ class RemoteFileHandler:
 
 
     async def _sync_file(self, mapping, entry, *, is_cache, before=None, required=False):
-        """One transfer mechanism; cache and output policies differ only in decision."""
-        remote, local = entry.remote_path, entry.local_path
+        """Apply one output policy; cache changes use the pre-run signature."""
         policy = FileSyncPolicy(mapping.output_sync)
+        if policy == FileSyncPolicy.NEVER:
+            return "skipped"
+
+        remote, local = entry.remote_path, entry.local_path
         local_exists = os.path.isfile(local)
+
+        # MISSING never replaces an existing local copy. Caches still need
+        # their terminal signature checked against the pre-run baseline.
+        if not is_cache and policy == FileSyncPolicy.MISSING and local_exists:
+            return "available"
+
         if is_cache:
-            # Cache membership was frozen at termination; compare to the
-            # target's pre-run signature, not the client's current contents.
             after = await self.transport.file_signature(remote)
             if after is None or after == before:
                 return "skipped"
+            if policy == FileSyncPolicy.MISSING and local_exists:
+                return "skipped"
         elif policy == FileSyncPolicy.CHANGED and local_exists:
-            # Hash only when both sides have a file and contents matter.
             remote_digest = await self.transport.file_digest(remote)
             if remote_digest is None:
                 if required:
-                    raise FileNotFoundError(f"Declared remote output was not created: {remote}")
+                    raise FileNotFoundError(
+                        f"Declared remote output was not created: {remote}"
+                    )
                 return "skipped"
             if remote_digest == file_digest(local, missing_ok=True):
                 return "available"
         elif await self.transport.file_signature(remote) is None:
             if required:
-                raise FileNotFoundError(f"Declared remote output was not created: {remote}")
+                raise FileNotFoundError(
+                    f"Declared remote output was not created: {remote}"
+                )
             return "skipped"
 
-        # The MISSING policy applies to both kinds, but an unchanged cache is
-        # "skipped", while a locally present output is already "available".
-        if policy == FileSyncPolicy.MISSING and local_exists:
-            return "skipped" if is_cache else "available"
         await self.transport.get_file(remote, local)
         return "available"
 
-
     async def collect(self, mapping, manifest, result, *, required=False):
-        """Return partial manifest and failure; never silently lose successful files."""
+        """Collect independent file results; retain successes after a failure."""
         if manifest is None:
             return None, None
         primary = {p for p in (result.output_file, result.error_file) if p}
         baselines = {
-            c.remote_path: c.pre_run_signature for c in manifest.caches
-            if c.local_path is None
+            cache.remote_path: cache.pre_run_signature for cache in manifest.caches
+            if cache.local_path is None
         }
-        candidates = (
-            *((False, entry, None) for entry in manifest.outputs),
-            *((True, cache, baselines.get(cache.remote_path, cache.pre_run_signature))
-              for cache in manifest.caches),
-        )
-        seen = set()
-        # Overlapping output globs can materialize the same physical file.
-        # The first declaration must not make a second mandatory declaration
-        # optional: resolve the effective requirement across all aliases.
+        # An optional wildcard and a mandatory declaration can refer to one
+        # concrete output. The strictest requirement governs both aliases.
         mandatory_outputs = {
             (entry.local_path, entry.remote_path)
             for entry in manifest.outputs if not entry.optional
         }
+
+        seen = set()
         first_error = None
-        for is_cache, entry, before in candidates:
-            if entry.local_path is None or entry.remote_path is None:
-                continue
-            # Terminal receipts describe a frozen file set. An already
-            # delivered local file (or an intentionally skipped declaration)
-            # must not be re-evaluated on attach. Retry only incomplete
-            # deliveries, including available files subsequently removed.
-            if entry.availability_state == "skipped":
-                continue
-            if entry.availability_state == "available" and os.path.isfile(entry.local_path):
-                continue
-            kind = "cache" if is_cache else "output"
-            if has_file_magic(entry.remote_path):
-                exc = RuntimeError("Cannot collect unresolved wildcard")
-                manifest = manifest.with_file_availability(
-                    entry.local_path, "failed", str(exc),
-                    kind=kind, remote_path=entry.remote_path,
-                )
-                if first_error is None:
-                    first_error = exc
-                continue
-            # One source may legitimately be requested at several local paths.
-            # Suppress only repeated declarations of the same transfer.
-            identity = (kind, entry.remote_path, entry.local_path)
-            if identity in seen:
-                continue
-            seen.add(identity)
-            if not is_cache and entry.local_path in primary:
-                continue
-            try:
-                state = ("skipped" if FileSyncPolicy(mapping.output_sync) == FileSyncPolicy.NEVER
-                         else await self._sync_file(
-                             mapping, entry, is_cache=is_cache,
-                             before=before,
-                             required=required and (
-                                 not entry.optional if is_cache else
-                                 (entry.local_path, entry.remote_path)
-                                 in mandatory_outputs
-                             ),
-                         ))
-            except Exception as exc:
-                manifest = manifest.with_file_availability(
-                    entry.local_path, "failed", str(exc),
-                    kind=kind, remote_path=entry.remote_path,
-                )
-                if first_error is None:
-                    first_error = exc
-                continue
-            manifest = manifest.with_file_availability(
-                entry.local_path, state, kind=kind,
-                remote_path=entry.remote_path,
-            )
+        for kind, entries in (
+            ("output", manifest.outputs),
+            ("cache", manifest.caches),
+        ):
+            is_cache = kind == "cache"
+            for entry in entries:
+                if entry.local_path is None or entry.remote_path is None:
+                    continue
+                if entry.availability_state == "skipped":
+                    continue
+                if (entry.availability_state == "available"
+                        and os.path.isfile(entry.local_path)):
+                    continue
+
+                identity = (kind, entry.remote_path, entry.local_path)
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                if not is_cache and entry.local_path in primary:
+                    continue
+
+                try:
+                    if has_file_magic(entry.remote_path):
+                        raise RuntimeError("Cannot collect unresolved wildcard")
+                    before = (
+                        baselines.get(entry.remote_path, entry.pre_run_signature)
+                        if is_cache else None
+                    )
+                    mandatory = required and (
+                        not entry.optional if is_cache else
+                        (entry.local_path, entry.remote_path) in mandatory_outputs
+                    )
+                    state = await self._sync_file(
+                        mapping, entry, is_cache=is_cache, before=before,
+                        required=mandatory,
+                    )
+                except Exception as exc:
+                    manifest = manifest.with_file_availability(
+                        entry.local_path, "failed", str(exc),
+                        kind=kind, remote_path=entry.remote_path,
+                    )
+                    if first_error is None:
+                        first_error = exc
+                else:
+                    manifest = manifest.with_file_availability(
+                        entry.local_path, state, kind=kind,
+                        remote_path=entry.remote_path,
+                    )
         return manifest, first_error
 
     async def verify_stream_availability(self, manifest, spec):
