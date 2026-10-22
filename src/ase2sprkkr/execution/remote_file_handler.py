@@ -32,11 +32,17 @@ class RemoteFileHandler:
         previous = used.get(target)
         if previous is not None and previous != source:
             raise ValueError(f"Remote input target collision: {target}")
-        if previous is not None:
-            return target
         policy = FileSyncPolicy(mapping.input_sync)
         if policy == FileSyncPolicy.NEVER:
+            # NEVER disables uploading, not mandatory input validation.
+            # A previous optional alias must not suppress this check.
+            if required and await self.transport.file_signature(target) is None:
+                raise FileNotFoundError(
+                    f"Required remote input file does not exist: {target}"
+                )
             used[target] = source
+            return target
+        if previous is not None:
             return target
         local_exists = os.path.isfile(source)
         if policy == FileSyncPolicy.ALWAYS:
@@ -74,11 +80,25 @@ class RemoteFileHandler:
                                    required=True):
         if not os.path.isabs(source):
             raise ValueError("Manifest input patterns must be absolute")
-        matches = expand_local_files(source, mapping.local_root)
-        if not matches and required:
-            raise FileNotFoundError(
-                f"Local input pattern did not match any files: {source}"
+        if FileSyncPolicy(mapping.input_sync) == FileSyncPolicy.NEVER:
+            # Remote inputs may exist even when no local wildcard member does.
+            remote_pattern = mapping.map_path(source)
+            remotes = await self.transport.expand_files(
+                remote_pattern, mapping.remote_root,
             )
+            matches = tuple(
+                os.fspath(mapping.unmap_path(remote)) for remote in remotes
+            )
+            if not matches and required:
+                raise FileNotFoundError(
+                    f"Required remote input pattern did not match any files: {remote_pattern}"
+                )
+        else:
+            matches = expand_local_files(source, mapping.local_root)
+            if not matches and required:
+                raise FileNotFoundError(
+                    f"Local input pattern did not match any files: {source}"
+                )
         uploads = []
         for match in matches:
             await self._stage_file(

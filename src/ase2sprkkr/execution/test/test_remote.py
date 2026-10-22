@@ -278,27 +278,33 @@ def test_remote_input_file_policies(
     assert sum(dst == remote_file for _, dst in transport.put_files) == uploads
 
 
-@pytest.mark.parametrize("direction", ("input", "output"))
-def test_remote_never_policy_ignores_missing_declared_file(tmp_path, direction):
+def test_remote_never_output_policy_ignores_missing_declared_file(tmp_path):
     transport = _SpyTransport()
     missing = tmp_path / "local" / "calculation" / "missing.dat"
-    kwargs = (
-        {"declared_input_files": (missing,), "input_files": "never"}
-        if direction == "input" else
-        {"declared_output_files": (missing,), "output_files": "never"}
+    executor, spec, _, _ = _text_run(
+        tmp_path, transport, code="print('done')",
+        declared_output_files=(missing,), output_files="never",
     )
-    executor, spec, _, remote_root = _text_run(
-        tmp_path, transport, code="print('done')", **kwargs,
-    )
-    if direction == "input":
-        _expose_shared_input(remote_root, "input.txt", b"hello")
     result = _processed_run(executor, spec).run()
     assert result.return_code == 0
     assert not missing.exists()
-    if direction == "input":
-        assert all(src != missing for src, _ in transport.put_files)
-    else:
-        assert all(dst != missing for _, dst in transport.get_files)
+    assert all(dst != missing for _, dst in transport.get_files)
+
+
+@pytest.mark.parametrize("local_exists", (True, False))
+def test_remote_never_required_input_must_exist_on_target(tmp_path, local_exists):
+    transport = _SpyTransport()
+    missing = tmp_path / "local" / "calculation" / "missing.dat"
+    executor, spec, _, remote_root = _text_run(
+        tmp_path, transport, declared_input_files=(missing,),
+        input_files="never", code="print('must not execute')",
+    )
+    if local_exists:
+        missing.write_text("local")
+    _expose_shared_input(remote_root, "input.txt", b"hello")
+    with pytest.raises(SubmissionNotStarted, match="Required remote input file"):
+        _processed_run(executor, spec).run()
+    assert all(src != missing for src, _ in transport.put_files)
 
 
 def test_remote_input_policy_always_requires_local_file(tmp_path):

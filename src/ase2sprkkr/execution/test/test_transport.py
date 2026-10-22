@@ -554,3 +554,10 @@ def test_ssh_download_preserves_original_error_when_temp_unlink_fails(
     asyncio.run(check())
     assert cleanup_calls == [True]
     assert not (tmp_path / "result").exists()
+
+
+def test_local_transport_file_signature_rejects_directory(tmp_path):
+    """A directory cannot satisfy a required remote-file declaration."""
+    directory = tmp_path / "input.in"
+    directory.mkdir()
+    assert asyncio.run(LocalTransport().file_signature(directory)) is None
