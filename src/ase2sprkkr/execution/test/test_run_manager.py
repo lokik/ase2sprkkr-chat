@@ -379,6 +379,9 @@ def test_refresh_groups_by_endpoint_not_executor_hash(tmp_path):
     class UnhashableExecutor:
         __hash__ = None
 
+        def acknowledge_submission(self, record):
+            pass
+
         def status(self, *records):
             return tuple(RunStatus(state=RunState.RUNNING) for _ in records)
 
@@ -399,6 +402,9 @@ def test_refresh_does_not_query_terminal_runs(tmp_path):
     class RecordingExecutor:
         def __init__(self):
             self.polled = []
+
+        def acknowledge_submission(self, record):
+            pass
 
         def status(self, *records):
             self.polled.extend(record.id for record in records)
