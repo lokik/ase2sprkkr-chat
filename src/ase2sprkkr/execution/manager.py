@@ -456,21 +456,22 @@ class ExecutionManager:
     ):
         """Create a project run from raw execution plus generic processing."""
         executor = self.executors.for_endpoint(endpoint)
-        spec = executor.resolve_spec(spec)
+        # Validate the project identity and assign the persistent ID first.
+        # No output files are reserved or persisted until submission.
         record = self.new_record(
             task=task,
             input_definition=input_definition,
             dataset=dataset,
             directory=spec.directory,
             endpoint=endpoint,
-            files=FileManifest.from_spec(spec),
             run_id=run_id,
             project_id=project_id,
         )
+        # The executor selects serial/MPI exactly once before its runner
+        # constructs JobFiles. Freeze those declarations in RunRecord.
         raw = executor.create_project_run(spec, run_id=record.id)
-        # The runner owns mutable working files; RunRecord holds frozen snapshots.
-        raw.job_files.replace(record.files)
-        persistence = RunPersistence(self, executor, record, spec=spec)
+        record = replace(record, files=raw.job_files.manifest)
+        persistence = RunPersistence(self, executor, record, spec=raw.spec)
         return CalculationRun(
             raw, process_result, callback=callback,
             resources=resources, persistence=persistence,

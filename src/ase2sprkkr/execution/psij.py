@@ -309,7 +309,7 @@ class PsijRunner(ManagedRunner):
         run_id=None,
         cleanup_side="local",
     ):
-        spec = executor.resolve_spec(spec)
+        # The executor factory selects the concrete variant before construction.
         # File names must be concrete for PSI/J; execution monitoring and
         # public runner lifecycle are inherited from ManagedRunner.
         self._stdout_path = _path(spec.output_file, spec.directory)
@@ -611,13 +611,16 @@ class PsijExecutor(Executor):
         return select_mpi_spec(spec, scheduler=bool(spec.launch))
 
     def create_run(self, spec: ExecutionSpec, callback=None, *, cleanup_side="local"):
-        return PsijRunner(self, spec, callback=callback, cleanup_side=cleanup_side)
+        return PsijRunner(
+            self, self.resolve_spec(spec), callback=callback,
+            cleanup_side=cleanup_side,
+        )
 
     def create_project_run(
         self, spec: ExecutionSpec, *, run_id, callback=None, cleanup_side="local"
     ):
         return PsijRunner(
-            self, spec, callback=callback, run_id=run_id,
+            self, self.resolve_spec(spec), callback=callback, run_id=run_id,
             cleanup_side=cleanup_side,
         )
 

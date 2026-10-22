@@ -93,8 +93,7 @@ class LocalProjectRunner(ManagedRunner):
         output_listener=None, start=False, backend_id=None, state=RunState.NEW,
         failure_phase=None, failure_message=None,
     ):
-        if backend_id is None and state == RunState.NEW:
-            spec = executor.resolve_spec(spec)
+        # New and attached runners alike receive an already-selected spec.
         super().__init__(
             executor, spec, callback, output_listener=output_listener,
             backend_id=backend_id, state=state,

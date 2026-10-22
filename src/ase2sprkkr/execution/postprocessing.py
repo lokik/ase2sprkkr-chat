@@ -82,7 +82,6 @@ class CalculationRun:
                 executor = default_executors().for_endpoint(
                     endpoint if endpoint is not None else ExecutorEndpoint()
                 )
-            spec = executor.resolve_spec(spec)
             return cls(
                 executor.create_run(spec), process_result,
                 callback=callback, resources=resources,
