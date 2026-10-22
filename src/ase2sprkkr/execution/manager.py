@@ -665,66 +665,24 @@ class ExecutionManager:
         return self.store.update(record, reopen)
 
     def retry_postprocessing(self, run, process_result):
-        """Retry parsing captured files, never submitting/attaching a backend.
-
-        The durable FAILED -> POSTPROCESSING transition is atomic, so competing
-        callers cannot both claim the same retry.
-        """
-        from .base import ExecutionOutcome
+        """Retry historical parsing without resubmitting or attaching a backend."""
+        from .postprocessing import claim_historical_postprocessing, parse_historical_result
 
         record = self.store.get(run) if isinstance(run, str) else self.store.get(run.id)
-
-        def eligible(latest):
-            files = latest.files
-            if (latest.state != RunState.FAILED
-                    or latest.failure_phase != FailurePhase.POSTPROCESSING
-                    or latest.return_code != 0
-                    or latest.execution.backend_id is None):
-                raise ValueError("Only postprocessing failures of successful backend runs can be retried")
-            if files.captured_at is None or files.output_file is None:
-                raise ValueError("Postprocessing retry requires captured output files")
-            if files.failed_files:
-                raise ValueError("Postprocessing retry requires locally available files")
-            # Captured output is authoritative; input may no longer be present.
-            if (not files.output_versions
-                    or any(version.state() is not FileState.CURRENT
-                           for version in files.output_versions)
-                    or not file_is_current(files, files.output_file,
-                                                 files.output_versions)):
-                raise ValueError("Postprocessing retry requires unchanged historical files")
-            return replace(
-                latest, state=RunState.POSTPROCESSING, finished_at=None,
-                failure_phase=None, message=None, updated_at=_now(),
-            )
-
-        reopened = self.store.update(record, eligible)
-        files = reopened.files
-        outcome = ExecutionOutcome(
-            input_file=(files.input_file if file_is_current(
-                files, files.input_file, files.input_versions) else None),
-            output_file=files.output_file,
-            error_file=None if files.stderr is None else files.stderr.local_path,
-            return_code=reopened.return_code,
-        )
+        reopened = self.store.update(record, claim_historical_postprocessing)
         try:
-            result = process_result(outcome)
-            # A concurrent external rewrite must not turn into a successful
-            # historical result, even if it happened while parsing.
-            if any(version.state() is not FileState.CURRENT
-                   for version in files.output_versions):
-                raise RuntimeError("Historical files changed during postprocessing retry")
+            result = parse_historical_result(reopened, process_result)
         except BaseException as exc:
             self.complete(
                 reopened, state=RunState.FAILED,
                 return_code=reopened.return_code,
                 message=str(exc), failure_phase=FailurePhase.POSTPROCESSING,
-                files_available=False,
-                expected_record=reopened,
+                files_available=False, expected_record=reopened,
             )
             raise
         self.complete(
             reopened, state=RunState.FINISHED,
-            return_code=reopened.return_code, files=files,
+            return_code=reopened.return_code, files=reopened.files,
             files_available=False, expected_record=reopened,
         )
         return result

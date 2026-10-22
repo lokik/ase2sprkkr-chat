@@ -535,3 +535,52 @@ class CalculationRun:
 
 # Keep the published import while consolidating the lifecycle.
 PostprocessingRunner = CalculationRun
+
+
+def claim_historical_postprocessing(latest):
+    """Atomically claim a retriable historical parse, validating its snapshot."""
+    from dataclasses import replace
+    from datetime import datetime, timezone
+    from .base import FailurePhase, RunState
+    from ..common.file_versions import FileState
+    from .file_history import file_is_current
+
+    files = latest.files
+    if (latest.state != RunState.FAILED
+            or latest.failure_phase != FailurePhase.POSTPROCESSING
+            or latest.return_code != 0
+            or latest.execution.backend_id is None):
+        raise ValueError("Only postprocessing failures of successful backend runs can be retried")
+    if files.captured_at is None or files.output_file is None:
+        raise ValueError("Postprocessing retry requires captured output files")
+    if files.failed_files:
+        raise ValueError("Postprocessing retry requires locally available files")
+    if (not files.output_versions
+            or any(version.state() is not FileState.CURRENT
+                   for version in files.output_versions)
+            or not file_is_current(files, files.output_file, files.output_versions)):
+        raise ValueError("Postprocessing retry requires unchanged historical files")
+    return replace(latest, state=RunState.POSTPROCESSING, finished_at=None,
+                   failure_phase=None, message=None,
+                   updated_at=datetime.now(timezone.utc).isoformat())
+
+
+def parse_historical_result(reopened, process_result):
+    """Parse captured output without a backend, checking for concurrent rewrites."""
+    from .base import ExecutionOutcome
+    from ..common.file_versions import FileState
+    from .file_history import file_is_current
+
+    files = reopened.files
+    outcome = ExecutionOutcome(
+        input_file=(files.input_file if file_is_current(
+            files, files.input_file, files.input_versions) else None),
+        output_file=files.output_file,
+        error_file=None if files.stderr is None else files.stderr.local_path,
+        return_code=reopened.return_code,
+    )
+    result = process_result(outcome)
+    if any(version.state() is not FileState.CURRENT
+           for version in files.output_versions):
+        raise RuntimeError("Historical files changed during postprocessing retry")
+    return result
