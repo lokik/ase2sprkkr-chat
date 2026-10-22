@@ -10,6 +10,10 @@ def test_job_files_public_identity():
     assert JobFiles is ModuleJobFiles
     assert JobFiles.__module__ == "ase2sprkkr.execution.job_files"
     assert not hasattr(RunRecord, "job_files")
+    assert not hasattr(JobFiles, "retrieve")
+    assert not hasattr(JobFiles, "update_availability")
+    assert not hasattr(JobFiles, "input_file_is_current")
+    assert not hasattr(JobFiles, "output_file_is_current")
 
 
 def test_terminal_manifest_merge_preserves_only_verified_local_delivery(tmp_path):
