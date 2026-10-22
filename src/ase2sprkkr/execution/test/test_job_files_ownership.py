@@ -76,7 +76,7 @@ def test_job_files_coordinates_remote_collection_and_verification():
     assert pending.outputs[0].availability_state == "pending"
 
 
-def test_job_files_does_not_verify_after_failed_transfer():
+def test_job_files_verifies_streams_after_failed_transfer():
     import asyncio
     from types import SimpleNamespace
     from ase2sprkkr.execution.run_model import FileEntry, FileManifest
@@ -91,7 +91,8 @@ def test_job_files_does_not_verify_after_failed_transfer():
                 entry.local_path, "failed", str(cause), remote_path=entry.remote_path,
             ), cause
         async def verify_stream_availability(self, manifest, spec):
-            raise AssertionError("must not verify after download failure")
+            assert manifest.outputs[0].availability_state == "failed"
+            return manifest, None
 
     updated, error = asyncio.run(JobFiles.collect_remote(
         files, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
@@ -100,12 +101,31 @@ def test_job_files_does_not_verify_after_failed_transfer():
     assert updated.outputs[0].availability_state == "failed"
 
 
-def test_merge_snapshot_never_overwrites_captured_history():
-    from dataclasses import replace
-    from ase2sprkkr.execution.run_model import FileManifest
+def test_job_files_preserves_transfer_error_and_verified_stream(tmp_path):
+    import asyncio
+    from types import SimpleNamespace
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
 
-    captured = FileManifest(captured_at="2026-10-22T00:00:00+00:00")
-    fresh = FileManifest()
-    assert JobFiles.merge_snapshot(captured, fresh) is captured
-    assert JobFiles.merge_snapshot(fresh, captured) is captured
-    assert JobFiles.merge_snapshot(None, fresh) is fresh
+    stream = FileEntry(str(tmp_path / "stdout"), "/remote/stdout", "pending")
+    output = FileEntry(str(tmp_path / "result"), "/remote/result", "pending")
+    files = FileManifest(stdout=stream, outputs=(output,))
+    cause = OSError("result transfer failed")
+
+    class Handler:
+        async def collect(self, mapping, manifest, outcome, *, required):
+            return manifest.with_file_availability(
+                output.local_path, "failed", str(cause),
+                remote_path=output.remote_path,
+            ), cause
+
+        async def verify_stream_availability(self, manifest, spec):
+            return manifest.with_file_availability(
+                stream.local_path, "available", remote_path=stream.remote_path,
+            ), None
+
+    final, error = asyncio.run(JobFiles.collect_remote(
+        files, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
+    ))
+    assert error is cause
+    assert final.outputs[0].availability_state == "failed"
+    assert final.stdout.availability_state == "available"

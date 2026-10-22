@@ -122,9 +122,14 @@ class JobFiles:
         manifest, error = await handler.collect(
             manifest.mapping, manifest, outcome, required=required,
         )
-        if error is not None or not required or manifest is None:
+        if not required or manifest is None:
             return manifest, error
-        return await handler.verify_stream_availability(manifest, spec)
+        # A failed output/cache transfer does not imply failed FOLLOW streams.
+        # Verify them independently, retaining the first transfer error.
+        manifest, stream_error = await handler.verify_stream_availability(
+            manifest, spec,
+        )
+        return manifest, error if error is not None else stream_error
 
     def retry_failed_downloads(self):
         return self.manifest._map_files(
