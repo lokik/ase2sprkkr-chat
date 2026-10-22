@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import Future
 from contextlib import nullcontext
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -10,7 +11,7 @@ from threading import Event, Lock
 from typing import Callable, Protocol
 
 from ..common.file_versions import FileState
-from .base import (ExecutionOutcome, FailurePhase, RunState,
+from .base import (ExecutionOutcome, FailurePhase, ObservationDetached, RunState,
                    SubmissionNotStarted, finish_monitor)
 from .file_history import file_is_current
 from .run_hooks import PersistenceError, RunPersistenceHooks
@@ -57,6 +58,9 @@ class CalculationRun:
         self._processing = False
         self._settled = False
         self._done = Event()
+        self._completion = Future()
+        self._wait_claimed = False
+        self._detached = False
         self._lock = Lock()
         self._completion_lock = Lock()
 
@@ -65,6 +69,8 @@ class CalculationRun:
         if runner.callback is not None:
             raise ValueError("Raw runner already has a completion callback")
         runner.callback = self._backend_completed
+        if hasattr(runner, 'observation_detached_callback'):
+            runner.observation_detached_callback = self._observation_detached
 
     @classmethod
     def create(
@@ -160,7 +166,13 @@ class CalculationRun:
         return self._runner.return_code
 
     @property
+    def detached(self):
+        return self._detached
+
+    @property
     def state(self):
+        if self.detached:
+            return self._runner.state
         if self._settled:
             return self._state
         # Reattached persistent runs may already be terminal, even if their
@@ -181,6 +193,24 @@ class CalculationRun:
 
     def add_output_error_listener(self, callback):
         return self._runner.add_output_error_listener(callback)
+
+    def _wake_waiters(self, error=None):
+        self._done.set()
+        if not self._completion.done():
+            if error is None:
+                self._completion.set_result(self.result)
+            else:
+                self._completion.set_exception(error)
+
+    def _observation_detached(self):
+        with self._completion_lock:
+            if self._settled:
+                return
+            self._detached = True
+            try:
+                self._close_resources()
+            finally:
+                self._wake_waiters(ObservationDetached("Observer detached"))
 
     def _backend_completed(self, outcome):
         """Called on the backend monitor thread, before its waiters wake up."""
@@ -283,9 +313,12 @@ class CalculationRun:
             try:
                 self._close_resources()
             finally:
-                self._done.set()
+                self._wake_waiters()
         else:
-            finish_monitor(self, cleanup=self._close_resources)
+            try:
+                finish_monitor(self, cleanup=self._close_resources)
+            finally:
+                self._wake_waiters()
 
     def retry_persistence(self):
         """Retry the durable completion without executing or parsing the job again."""
@@ -389,7 +422,7 @@ class CalculationRun:
             if self._cancel_requested.is_set():
                 self._state = RunState.CANCELLED
                 self._settled = True
-                self._done.set()
+                self._wake_waiters()
                 cancelled = True
             else:
                 cancelled = False
@@ -417,7 +450,7 @@ class CalculationRun:
                 self._close_resources()
             finally:
                 # No backend exists to signal completion; wake all waiters.
-                self._done.set()
+                self._wake_waiters()
             raise
         except BaseException as exc:
             # Only backend I/O can make submission ambiguous. Reservation,
@@ -442,7 +475,7 @@ class CalculationRun:
                         else str(exc)
                     )
                     self._settled = True
-                    self._done.set()
+                    self._wake_waiters()
             if deferred:
                 # The backend finished, but the submission transaction did
                 # not complete. Do not publish a terminal record without
@@ -455,7 +488,7 @@ class CalculationRun:
                 try:
                     self._close_resources()
                 finally:
-                    self._done.set()
+                    self._wake_waiters()
             elif not uncertain:
                 self._close_resources()
             raise
@@ -500,34 +533,52 @@ class CalculationRun:
                 self._cancel_dispatched = False
             raise
 
-    def wait(self):
-        if not self._started and not self._settled:
-            raise RuntimeError("Run has not been started")
-        # A definitely rejected or closed run never started a backend; its
-        # terminal exception/state is already available locally. An uncertain
-        # submission, however, may still have a live backend to observe.
-        if self._started or self._submission_uncertain:
-            # Production runners notify before raw.wait() returns. A lightweight
-            # external runner may only report its terminal state from wait().
-            # Preserve a callback's canonical completion if raw.wait() fails.
-            try:
-                outcome = self._runner.wait()
-            except BaseException as exc:
-                if not self._done.is_set():
-                    self._complete_observation(
-                        self._runner.result, error=exc,
-                    )
-            else:
-                if not self._done.is_set():
-                    self._complete_observation(outcome)
-        self._done.wait()
-        if self.persistence_error is not None:
-            raise self.persistence_error
-        if self._exception is not None:
-            raise self._exception
-        if self._callback_exception is not None:
-            raise self._callback_exception
+    def _claim_wait(self):
+        with self._lock:
+            if self._wait_claimed or self._completion.done():
+                return False
+            self._wait_claimed = True
+            return True
+
+    def _drive_raw_wait(self):
+        try:
+            outcome = self._runner.wait()
+        except ObservationDetached:
+            self._observation_detached()
+        except BaseException as exc:
+            if not self._done.is_set():
+                self._complete_observation(self._runner.result, error=exc)
+        else:
+            if not self._done.is_set():
+                self._complete_observation(outcome)
+
+    def _wait_result(self):
+        if self.detached:
+            raise ObservationDetached('Observer detached')
+        for error in (self.persistence_error, self._exception, self._callback_exception):
+            if error is not None:
+                raise error
         return self.result
+
+    def wait(self):
+        if self.detached:
+            raise ObservationDetached('Observer detached')
+        if not self._started and not self._settled and not self._submission_uncertain:
+            raise RuntimeError('Run has not been started')
+        if (self._started or self._submission_uncertain) and self._claim_wait():
+            self._drive_raw_wait()
+        self._completion.result()
+        return self._wait_result()
+
+    async def wait_async(self):
+        if self.detached:
+            raise ObservationDetached('Observer detached')
+        if not self._started and not self._settled and not self._submission_uncertain:
+            raise RuntimeError('Run has not been started')
+        if (self._started or self._submission_uncertain) and self._claim_wait():
+            asyncio.get_running_loop().run_in_executor(None, self._drive_raw_wait)
+        await asyncio.shield(asyncio.wrap_future(self._completion))
+        return self._wait_result()
 
     def close(self):
         """Release an unstarted calculation without launching a backend."""
@@ -541,7 +592,7 @@ class CalculationRun:
                 self._resources.close()
             self._state = RunState.CANCELLED
             self._settled = True
-            self._done.set()
+            self._wake_waiters()
 
     def run(self):
         if self._submission_uncertain:
@@ -552,11 +603,16 @@ class CalculationRun:
 
     async def run_async(self):
         # Submission can block on filesystem or scheduler I/O.
-        return await asyncio.to_thread(self.run)
+        if not self._started:
+            await asyncio.to_thread(self.start)
+        return await self.wait_async()
 
     def stop_observation(self):
         """Stop this client's monitor; leave the backend calculation intact."""
-        return self._runner.stop_observation()
+        stopped = self._runner.stop_observation()
+        if stopped:
+            self._detached = True
+        return stopped
 
     def cancel(self):
         if self.persistence is not None and not self.persistence.can_cancel(self):
@@ -575,7 +631,7 @@ class CalculationRun:
                     and self._runner.state == RunState.NEW):
                 self._state = RunState.CANCELLED
                 self._settled = True
-                self._done.set()
+                self._wake_waiters()
                 release = True
             else:
                 release = False
