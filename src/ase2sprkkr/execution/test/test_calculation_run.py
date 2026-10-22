@@ -185,7 +185,7 @@ def test_persistence_failure_is_distinct_from_calculation_and_can_be_retried():
 
     class Hooks:
         def before_submit(self, run):
-            pass
+            return run.job_files.manifest
 
         def prepared(self, run):
             pass
@@ -242,6 +242,7 @@ def test_persistent_hook_transaction_order_and_completion():
     class Hooks:
         def before_submit(self, run):
             stages.append("reserved")
+            return run.job_files.manifest
 
         def prepared(self, run):
             stages.append("prepared")
@@ -302,6 +303,7 @@ def test_persistent_cancel_after_preflight_does_not_launch():
     class Hooks:
         def before_submit(self, run):
             phases.append("reserved")
+            return run.job_files.manifest
 
         def prepared(self, run):
             phases.append("prepared")
@@ -329,6 +331,7 @@ def test_persistent_prepared_hook_runs_without_backend_preflight():
     class Hooks:
         def before_submit(self, run):
             events.append("reserved")
+            return run.job_files.manifest
 
         def prepared(self, run):
             events.append("prepared")
@@ -381,6 +384,7 @@ def test_synchronous_completion_waits_for_durable_backend_identity():
     class Hooks:
         def before_submit(self, run):
             order.append("reserve")
+            return run.job_files.manifest
 
         def prepared(self, run):
             order.append("prepared")
@@ -437,7 +441,7 @@ def test_fast_completion_does_not_publish_if_identity_persistence_fails():
 
     class Hooks:
         def before_submit(self, run):
-            pass
+            return run.job_files.manifest
 
         def prepared(self, run):
             pass
