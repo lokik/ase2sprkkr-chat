@@ -66,7 +66,7 @@ def test_corrupted_local_output_is_downloaded_again(tmp_path):
     assert collected.outputs[0].verified_delivery_is_current()
 
 
-def test_missing_policy_requires_matching_remote_copy(tmp_path):
+def test_missing_policy_skips_unverified_existing_copy_without_remote_comparison(tmp_path):
     local, remote, available, pending, mapping = _case(tmp_path)
     mapping = FileMapping(mapping.local_root, mapping.remote_root, output_sync="missing")
     handler = RemoteFileHandler(LocalTransport())
@@ -75,7 +75,8 @@ def test_missing_policy_requires_matching_remote_copy(tmp_path):
         mapping, pending, ExecutionOutcome(), required=True,
     ))
     assert error is None
-    assert matching.outputs[0].verified_delivery_is_current()
+    assert matching.outputs[0].availability_state == "skipped"
+    assert matching.outputs[0].verified_local_version is None
     local.write_bytes(b"stale local data")
     altered, error = asyncio.run(handler.collect(
         mapping, pending, ExecutionOutcome(), required=True,

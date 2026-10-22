@@ -221,19 +221,11 @@ class RemoteFileHandler:
         remote, local = entry.remote_path, entry.local_path
         local_exists = os.path.isfile(local)
 
-        # MISSING preserves a conflicting local copy without claiming delivery.
+        # MISSING governs transfer only. An existing local copy is never
+        # overwritten or newly blessed as this run's delivered output.
+        # Do not require remote access merely to preserve that local copy.
         if not is_cache and policy == FileSyncPolicy.MISSING and local_exists:
-            remote_digest = await self.transport.file_digest(remote)
-            if remote_digest is None:
-                if required:
-                    raise FileNotFoundError(f"Declared remote output was not created: {remote}")
-                return "skipped"
-            local_digest = await asyncio.to_thread(file_digest, local, missing_ok=True)
-            if local_digest == remote_digest:
-                return "available"
-            if local_digest is not None:
-                return "skipped"
-            # The local copy vanished during hashing: download normally.
+            return "skipped"
 
         if is_cache:
             after = await self.transport.file_signature(remote)

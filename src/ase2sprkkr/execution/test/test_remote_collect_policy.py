@@ -38,6 +38,26 @@ def test_collect_existing_output_without_remote_access(tmp_path):
     assert files.outputs[0].availability_state == "pending"
 
 
+@pytest.mark.parametrize("policy", ("missing", "never"))
+def test_collect_existing_output_without_remote_access_for_skipping_policies(
+    tmp_path, policy,
+):
+    local = tmp_path / "existing-output.dat"
+    local.write_text("retained")
+    manifest = FileManifest(outputs=(
+        FileEntry(str(local), str(tmp_path / "inaccessible-remote.dat"),
+                  availability_state="pending"),
+    ))
+    mapping = FileMapping(str(tmp_path), str(tmp_path), output_sync=policy)
+    observed, error = asyncio.run(RemoteFileHandler(NoRemoteAccess()).collect(
+        mapping, manifest, ExecutionOutcome(), required=True,
+    ))
+    assert error is None
+    assert observed.outputs[0].availability_state == "skipped"
+    assert observed.outputs[0].verified_local_version is None
+    assert local.read_text() == "retained"
+
+
 def test_new_submission_cleanup_allows_missing_to_fetch_new_result(tmp_path):
     from ase2sprkkr.execution import ExecutionSpec, LaunchSpec
     from ase2sprkkr.execution.file_availability import prepare_local_files
