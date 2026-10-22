@@ -38,6 +38,7 @@ from .projects import (
     ProjectRepositoryError,
     default_projects_directory,
 )
+from .job_files import JobFiles
 from .manager import ExecutionManager
 from .psij import PsijExecutor, PsijRunner
 from .remote import FileSyncPolicy, RemoteRunner
@@ -53,6 +54,7 @@ __all__ = [
     "FileEntry",
     "FileMapping",
     "FileManifest",
+    "JobFiles",
     "ExecutionOutcome",
     "ExecutionResources",
     "ExecutionSpec",
