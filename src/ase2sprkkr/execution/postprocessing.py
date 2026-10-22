@@ -107,9 +107,9 @@ class CalculationRun:
         )
 
     @property
-    def job_files(self):
+    def run_files(self):
         """Runner-owned working file state; never maintain a second reference."""
-        return self._runner.job_files
+        return self._runner.run_files
 
     @property
     def id(self):
@@ -383,7 +383,7 @@ class CalculationRun:
             try:
                 if self.persistence is not None:
                     reserved_files = self.persistence.before_submit(self)
-                    self.job_files.replace(reserved_files)
+                    self.run_files.replace(reserved_files)
 
                 try:
                     self._runner.prepare_submission()

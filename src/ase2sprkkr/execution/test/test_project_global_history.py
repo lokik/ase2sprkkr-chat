@@ -9,9 +9,9 @@ import pytest
 
 from ..base import RunState
 from ...common.file_locks import FileLock
-from ..manager import DuplicateSubmissionError
+from ..run_manager import DuplicateSubmissionError
 from ..run_store import RunStore
-from ..manager import ExecutionManager
+from ..run_manager import RunManager
 from ..projects import ProjectRepository, ProjectDeleteError
 
 
@@ -20,8 +20,8 @@ def test_different_projects_share_one_store_and_keep_project_identity(tmp_path):
     root = projects.create("Root")
     first = projects.create("First", parent_id=root.id)
     second = projects.create("Second", parent_id=root.id)
-    a = ExecutionManager(project_repository=projects)
-    b = ExecutionManager(project_repository=projects)
+    a = RunManager(project_repository=projects)
+    b = RunManager(project_repository=projects)
     assert a.store.directory == b.store.directory
     first_run = a.new_record(task="DOS", directory=tmp_path / "work", dataset="same", project_id=first.id)
     second_run = b.new_record(task="DOS", directory=tmp_path / "work", dataset="same", project_id=second.id)
@@ -37,8 +37,8 @@ def test_cross_project_active_conflict_and_project_deletion(tmp_path):
     root = projects.create("Root")
     first = projects.create("First", parent_id=root.id)
     second = projects.create("Second", parent_id=root.id)
-    a = ExecutionManager(project_repository=projects)
-    b = ExecutionManager(project_repository=projects)
+    a = RunManager(project_repository=projects)
+    b = RunManager(project_repository=projects)
     first_record = a.new_record(task="SCF", directory=tmp_path / "work", project_id=first.id)
     second_record = b.new_record(task="DOS", directory=tmp_path / "work", project_id=second.id)
     a.reserve(first_record)
@@ -57,11 +57,11 @@ def test_project_bound_manager_rejects_noncanonical_run_store(tmp_path):
     custom_store = RunStore(tmp_path / "custom-runs")
 
     with pytest.raises(ValueError, match="repository run store"):
-        ExecutionManager(
+        RunManager(
             store=custom_store, project_repository=projects,
         )
     canonical = projects.run_store
-    manager = ExecutionManager(
+    manager = RunManager(
         store=canonical, project_repository=projects, submitting_grace=17,
     )
     assert manager.store is canonical
@@ -78,7 +78,7 @@ def test_project_bound_manager_rejects_noncanonical_run_store(tmp_path):
 def test_default_project_store_shared_across_projects(tmp_path):
     projects = ProjectRepository(tmp_path / "projects")
     one, two = projects.create("First"), projects.create("Second")
-    manager = ExecutionManager(project_repository=projects)
+    manager = RunManager(project_repository=projects)
     first = manager.new_record(task="DOS", directory=tmp_path / "a", project_id=one.id)
     second = manager.new_record(task="DOS", directory=tmp_path / "b", project_id=two.id)
     manager.store.save(first)
@@ -92,7 +92,7 @@ def test_unknown_run_prevents_project_deletion_until_terminal(tmp_path):
     projects = ProjectRepository(tmp_path / "projects")
     root = projects.create("Root")
     project = projects.create("Child", parent_id=root.id)
-    manager = ExecutionManager(project_repository=projects)
+    manager = RunManager(project_repository=projects)
     record = replace(
         manager.new_record(task="DOS", directory=tmp_path / "work", project_id=project.id),
         state=RunState.UNKNOWN,
@@ -113,8 +113,8 @@ def test_unknown_run_prevents_project_deletion_until_terminal(tmp_path):
 def test_default_project_store_is_guarded_and_shared(tmp_path):
     projects = ProjectRepository(tmp_path / "projects")
     project = projects.create("Project")
-    first = ExecutionManager(project_repository=projects)
-    second = ExecutionManager(project_repository=projects)
+    first = RunManager(project_repository=projects)
+    second = RunManager(project_repository=projects)
     assert first.store is second.store is projects.run_store
     assert first.store.projects_directory == projects.directory
     assert first.store.directory == projects.runs_directory
@@ -132,8 +132,8 @@ def test_deleted_project_cannot_resurrect_run_history(tmp_path):
     projects = ProjectRepository(tmp_path / "projects")
     root = projects.create("Root")
     child = projects.create("Child", parent_id=root.id)
-    manager = ExecutionManager(project_repository=projects)
-    other = ExecutionManager(
+    manager = RunManager(project_repository=projects)
+    other = RunManager(
         project_repository=ProjectRepository(projects.directory),
     )
     record = manager.new_record(task="DOS", directory=tmp_path / "work", project_id=child.id)
@@ -152,7 +152,7 @@ def test_project_deletion_waits_for_in_progress_run_update(tmp_path, monkeypatch
     projects = ProjectRepository(tmp_path / "projects")
     root = projects.create("Root")
     child = projects.create("Child", parent_id=root.id)
-    manager = ExecutionManager(project_repository=projects)
+    manager = RunManager(project_repository=projects)
     record = manager.new_record(task="DOS", directory=tmp_path / "work", project_id=child.id)
     manager.store.save(record)
     started, release, deletion_at_guard = Event(), Event(), Event()
@@ -205,7 +205,7 @@ def test_guarded_run_store_rejects_noncanonical_project_identity(tmp_path):
     """An alias must not persist a run that deletion would fail to recognize."""
     projects = ProjectRepository(tmp_path / "projects")
     project = projects.create("Project")
-    manager = ExecutionManager(project_repository=projects)
+    manager = RunManager(project_repository=projects)
     record = manager.new_record(task="DOS", directory=tmp_path / "work", project_id=project.id)
     aliased = replace(record, project_id=str(UUID(project.id)))
     with pytest.raises(ValueError, match="canonical project ID"):
@@ -225,7 +225,7 @@ def test_guarded_run_store_rejects_missing_or_foreign_project_id(tmp_path):
     projects = ProjectRepository(tmp_path / "projects")
     project = projects.create("First")
     another = projects.create("Second")
-    manager = ExecutionManager(project_repository=projects)
+    manager = RunManager(project_repository=projects)
     original = manager.new_record(task="DOS", directory=tmp_path / "work", project_id=project.id)
     manager.store.save(original)
 
@@ -247,7 +247,7 @@ def test_guarded_run_identity_across_day_shards(tmp_path):
     first = projects.create("First")
     second = projects.create("Second")
     store = projects.run_store
-    manager = ExecutionManager(project_repository=projects)
+    manager = RunManager(project_repository=projects)
     timestamp = "2030-01-01T10:00:00+00:00"
     original = replace(manager.new_record(
         task="DOS", directory=tmp_path / "work", project_id=first.id,
@@ -281,7 +281,7 @@ def test_guarded_run_detects_preexisting_duplicate_ids(tmp_path):
     project = projects.create("Project")
     store = projects.run_store
     record = replace(
-        ExecutionManager(project_repository=projects).new_record(
+        RunManager(project_repository=projects).new_record(
             task="DOS", directory=tmp_path / "work", project_id=project.id,
         ),
         created_at="2030-01-01T10:00:00+00:00",
@@ -309,7 +309,7 @@ def test_guarded_run_cross_day_save_serializes_across_store_instances(
     second = projects.create("Second")
     a = projects.run_store
     b = ProjectRepository(projects.directory).run_store
-    record = ExecutionManager(
+    record = RunManager(
         project_repository=projects,
     ).new_record(task="DOS", directory=tmp_path / "work", project_id=first.id)
     foreign = replace(
@@ -350,7 +350,7 @@ def test_project_deletion_removes_distinct_runs_across_day_shards(tmp_path):
     projects = ProjectRepository(tmp_path / "projects")
     root = projects.create("Root")
     child = projects.create("Child", parent_id=root.id)
-    manager = ExecutionManager(project_repository=projects)
+    manager = RunManager(project_repository=projects)
     first = replace(manager.new_record(
         task="DOS", directory=tmp_path / "work", project_id=child.id,
     ), state=RunState.FINISHED, created_at="2030-01-01T10:00:00+00:00")
@@ -371,7 +371,7 @@ def test_project_deletion_removes_distinct_runs_across_day_shards(tmp_path):
 def test_run_store_delete_records_validates_whole_batch(tmp_path):
     """Invalid history must not leave a partially erased project."""
     store = RunStore(tmp_path / "runs")
-    manager = ExecutionManager(store=store)
+    manager = RunManager(store=store)
     finished = replace(
         manager.new_record(task="DOS", directory=tmp_path / "work"),
         state=RunState.FINISHED,

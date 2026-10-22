@@ -48,7 +48,7 @@ _NO_FILES_FAILURES = frozenset((
 ))
 
 
-class ExecutionManager:
+class RunManager:
     """Persist public run lifecycle without task-specific knowledge."""
 
     def __init__(self, store=None, *, executors=None, submitting_grace=60.0,
@@ -474,7 +474,7 @@ class ExecutionManager:
         )
         raw = executor.create_project_run(spec, run_id=record.id)
         # The runner owns mutable working files; RunRecord holds frozen snapshots.
-        raw.job_files.replace(record.files)
+        raw.run_files.replace(record.files)
         persistence = RunPersistence(self, executor, record, spec=spec)
         return CalculationRun(
             raw, process_result, callback=callback,
@@ -509,6 +509,7 @@ class ExecutionManager:
         run,
         *,
         process_result,
+        executor=None,
         callback=None,
         output_listener=None,
     ):
@@ -516,7 +517,8 @@ class ExecutionManager:
         record = self.store.get(run if isinstance(run, str) else run.id)
         if record.execution.backend_id is None:
             raise RuntimeError(f"Run {record.id} has no backend reference")
-        executor = self.executors.for_endpoint(record.execution.endpoint)
+        if executor is None:
+            executor = self.executors.for_endpoint(record.execution.endpoint)
 
         raw = executor.attach(
             record,

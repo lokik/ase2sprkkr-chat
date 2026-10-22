@@ -281,11 +281,11 @@ def test_local_project_request_preserves_reserved_manifest(tmp_path):
         stdout=FileEntry(local_path=str(tmp_path / "out.txt"),
                          availability_state="pending"),
     )
-    runner.job_files.replace(reserved)
+    runner.run_files.replace(reserved)
     runner.spec = replace(spec, output_files=("unreserved.dat",),
                           cache_files=("unreserved.cache",))
     assert runner._request()["files"] == asdict(reserved)
-    assert runner.job_files.manifest is reserved
+    assert runner.run_files.manifest is reserved
 
 
 def test_submission_cleanup_uses_manifest_to_protect_caches(tmp_path):
@@ -374,12 +374,12 @@ def test_local_project_freezes_wildcards_at_supervisor_termination(tmp_path):
     runner.submit()
     assert runner.wait().return_code == 0
     assert result.read_text() == "one"
-    assert len(runner.job_files.manifest.outputs) == 1
+    assert len(runner.run_files.manifest.outputs) == 1
     (tmp_path / "result-late.dat").write_text("late")
     status = LocalExecutor().status(_record(tmp_path, runner.backend_id))[0]
     assert status.files is not None
     assert [entry.local_path for entry in status.files.outputs] == [str(result)]
-    assert [entry.local_path for entry in runner.job_files.manifest.outputs] == [str(result)]
+    assert [entry.local_path for entry in runner.run_files.manifest.outputs] == [str(result)]
 
 
 def test_local_prepare_publishes_manifest_before_submit(tmp_path, monkeypatch):
@@ -390,10 +390,10 @@ def test_local_prepare_publishes_manifest_before_submit(tmp_path, monkeypatch):
     outfile = tmp_path / "result.dat"
     spec = replace(_spec(tmp_path), output_files=(str(outfile),))
     runner = LocalExecutor().create_project_run(spec, run_id=RUN_ID)
-    assert isinstance(runner.job_files.manifest, FileManifest)
+    assert isinstance(runner.run_files.manifest, FileManifest)
 
     assert runner.prepare_submission() is True
-    manifest = runner.job_files.manifest
+    manifest = runner.run_files.manifest
     assert isinstance(manifest, FileManifest)
     assert manifest.outputs[0].local_path == str(outfile)
     request = runner._prepared_request
@@ -407,7 +407,7 @@ def test_local_prepare_publishes_manifest_before_submit(tmp_path, monkeypatch):
     monkeypatch.setattr(remote_service, "submit_remote", lost_reply)
     with pytest.raises(ConnectionError, match="lost submit response"):
         runner.submit()
-    assert runner.job_files.manifest is manifest
+    assert runner.run_files.manifest is manifest
     assert runner._prepared_request is request
     assert runner.backend_id is None
 
@@ -465,10 +465,10 @@ def test_attach_local_preserves_durable_file_delivery(tmp_path, monkeypatch):
         lambda *args: RunStatus(RunState.RUNNING, files=stale),
     )
     attached = attach_local(LocalExecutor(), record, start=False)
-    assert attached.job_files.manifest.outputs[0].availability_state == "failed"
-    assert attached.job_files.manifest.outputs[0].availability_message == "transfer interrupted"
+    assert attached.run_files.manifest.outputs[0].availability_state == "failed"
+    assert attached.run_files.manifest.outputs[0].availability_message == "transfer interrupted"
 
     captured = replace(previous, captured_at="2026-10-13T08:00:01+00:00")
     completed = replace(record, files=captured, state=RunState.FINISHED)
     attached = attach_local(LocalExecutor(), completed, start=False)
-    assert attached.job_files.manifest is captured
+    assert attached.run_files.manifest is captured

@@ -83,7 +83,7 @@ def test_remote_submission_uses_reserved_primary_input_and_stdin(tmp_path):
     for name in ("main.in", "stdin.in", "extra.in"):
         (remote / name).write_text(name)
     reserved = FileManifest.from_spec(spec).with_mapping(mapping)
-    runner.job_files.replace(reserved)
+    runner.run_files.replace(reserved)
     # With NEVER sync the mandatory inputs must already exist remotely.
     remote = tmp_path / "remote"
     remote.mkdir(exist_ok=True)
@@ -124,7 +124,7 @@ def test_local_submission_uses_reserved_file_declarations(tmp_path):
     spec = _spec(tmp_path)
     reserved = FileManifest.from_spec(spec)
     runner = LocalProjectRunner(LocalExecutor(), spec, run_id="reserved-job")
-    runner.job_files.replace(reserved)
+    runner.run_files.replace(reserved)
     runner.spec = replace(spec, input_file="wrong.in", stdin="wrong.stdin",
                           output_file="wrong.out", error_file="wrong.err")
     request = runner._request()

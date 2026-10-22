@@ -13,14 +13,14 @@ from ase2sprkkr.execution.base import (
 )
 from ase2sprkkr.execution.endpoint import endpoint_for_executor
 from ase2sprkkr.execution.local import LocalExecutor, LocalRunner
-from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.run_manager import RunManager
 from ase2sprkkr.execution.run_persistence import RunPersistence
 from ase2sprkkr.execution.run_store import RunStore
 from ase2sprkkr.execution.postprocessing import CalculationRun
 from ase2sprkkr.execution.run_model import (
     FileAvailabilityState, FileManifest, FileEntry,
 )
-from ase2sprkkr.execution.job_files import JobFiles
+from ase2sprkkr.execution.run_files import RunFiles
 from ase2sprkkr.execution.transport import LocalTransport
 
 
@@ -95,7 +95,7 @@ def test_callback_failure_does_not_change_local_execution_state(tmp_path):
 
 class _UnknownRunner:
     def __init__(self):
-        self.job_files = JobFiles(FileManifest())
+        self.run_files = RunFiles(FileManifest())
 
     callback = None
     result = object()
@@ -139,7 +139,7 @@ def test_unknown_raw_state_is_preserved_and_not_postprocessed():
 class _NotStartedRunner:
     callback = None
     def __init__(self):
-        self.job_files = JobFiles(FileManifest())
+        self.run_files = RunFiles(FileManifest())
 
     backend_id = None
     result = None
@@ -175,7 +175,7 @@ class _UncertainRunner(_NotStartedRunner):
 
 
 def _project_wrapper(tmp_path, runner):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     executor = LocalExecutor()
     endpoint = endpoint_for_executor(executor)
     record = manager.new_record(
@@ -214,7 +214,7 @@ def test_uncertain_submit_without_reference_stays_submitting(tmp_path):
 
 
 def test_file_availability_failure_does_not_change_finished_state(tmp_path):
-    manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager = RunManager(RunStore(tmp_path / "runs"))
     record = manager.new_record(
         task="SCF",
         directory=tmp_path,
@@ -223,7 +223,7 @@ def test_file_availability_failure_does_not_change_finished_state(tmp_path):
     record = manager.store.save(record)
     record = manager.transition(record, state=RunState.FINISHED)
 
-    record = JobFiles(record.files).update_availability(
+    record = RunFiles(record.files).update_availability(
         record, manager.store, str(tmp_path / "out"), FileAvailabilityState.FAILED, "ssh disconnected"
     )
 

@@ -1,19 +1,19 @@
 """Stable ownership boundary for run file operations."""
 
-from ase2sprkkr.execution import JobFiles
-from ase2sprkkr.execution.job_files import JobFiles as ModuleJobFiles
+from ase2sprkkr.execution import RunFiles
+from ase2sprkkr.execution.run_files import RunFiles as ModuleJobFiles
 from ase2sprkkr.execution.manifest_merge import merge_snapshot, merge_terminal_files, discard_capture
 from ase2sprkkr.execution.run_record import RunRecord
 
 
-def test_job_files_public_identity():
-    assert JobFiles is ModuleJobFiles
-    assert JobFiles.__module__ == "ase2sprkkr.execution.job_files"
-    assert not hasattr(RunRecord, "job_files")
-    assert not hasattr(JobFiles, "retrieve")
-    assert not hasattr(JobFiles, "update_availability")
-    assert not hasattr(JobFiles, "input_file_is_current")
-    assert not hasattr(JobFiles, "output_file_is_current")
+def test_run_files_public_identity():
+    assert RunFiles is ModuleJobFiles
+    assert RunFiles.__module__ == "ase2sprkkr.execution.run_files"
+    assert not hasattr(RunRecord, "run_files")
+    assert not hasattr(RunFiles, "retrieve")
+    assert not hasattr(RunFiles, "update_availability")
+    assert not hasattr(RunFiles, "input_file_is_current")
+    assert not hasattr(RunFiles, "output_file_is_current")
 
 
 def test_terminal_manifest_merge_preserves_only_verified_local_delivery(tmp_path):
@@ -51,7 +51,7 @@ def test_terminal_manifest_merge_never_overwrites_frozen_failure(tmp_path):
     assert merge_terminal_files(previous, frozen) == frozen
 
 
-def test_job_files_coordinates_remote_collection_and_verification():
+def test_run_files_coordinates_remote_collection_and_verification():
     import asyncio
     from types import SimpleNamespace
     from ase2sprkkr.execution.run_model import FileEntry, FileManifest
@@ -72,7 +72,7 @@ def test_job_files_coordinates_remote_collection_and_verification():
             return manifest, None
 
     handler = Handler()
-    owner = JobFiles(pending)
+    owner = RunFiles(pending)
     error = asyncio.run(owner.collect_remote(
         pending, handler, SimpleNamespace(), SimpleNamespace(), required=True,
     ))
@@ -83,7 +83,7 @@ def test_job_files_coordinates_remote_collection_and_verification():
     assert pending.outputs[0].availability_state == "pending"
 
 
-def test_job_files_verifies_streams_after_failed_transfer():
+def test_run_files_verifies_streams_after_failed_transfer():
     import asyncio
     from types import SimpleNamespace
     from ase2sprkkr.execution.run_model import FileEntry, FileManifest
@@ -101,7 +101,7 @@ def test_job_files_verifies_streams_after_failed_transfer():
             assert manifest.outputs[0].availability_state == "failed"
             return manifest, None
 
-    owner = JobFiles(files)
+    owner = RunFiles(files)
     error = asyncio.run(owner.collect_remote(
         files, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
     ))
@@ -110,7 +110,7 @@ def test_job_files_verifies_streams_after_failed_transfer():
     assert updated.outputs[0].availability_state == "failed"
 
 
-def test_job_files_preserves_transfer_error_and_verified_stream(tmp_path):
+def test_run_files_preserves_transfer_error_and_verified_stream(tmp_path):
     import asyncio
     from types import SimpleNamespace
     from ase2sprkkr.execution.run_model import FileEntry, FileManifest
@@ -132,7 +132,7 @@ def test_job_files_preserves_transfer_error_and_verified_stream(tmp_path):
                 stream.local_path, "available", remote_path=stream.remote_path,
             ), None
 
-    owner = JobFiles(files)
+    owner = RunFiles(files)
     error = asyncio.run(owner.collect_remote(
         files, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
     ))
@@ -142,7 +142,7 @@ def test_job_files_preserves_transfer_error_and_verified_stream(tmp_path):
     assert final.stdout.availability_state == "available"
 
 
-def test_job_files_verifies_streams_after_collection_preflight_error(tmp_path):
+def test_run_files_verifies_streams_after_collection_preflight_error(tmp_path):
     import asyncio
     from types import SimpleNamespace
     from ase2sprkkr.execution.run_model import FileEntry, FileManifest
@@ -162,7 +162,7 @@ def test_job_files_verifies_streams_after_collection_preflight_error(tmp_path):
                 stream.local_path, "available", remote_path=stream.remote_path,
             ), None
 
-    owner = JobFiles(initial)
+    owner = RunFiles(initial)
     error = asyncio.run(owner.collect_remote(
         initial, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
     ))
@@ -197,7 +197,7 @@ def test_capture_failure_does_not_falsely_mark_unprocessed_files_failed(monkeypa
     class Store:
         def terminal_record(self, record):
             return None
-    manager = manager_module.ExecutionManager(Store())
+    manager = manager_module.RunManager(Store())
     record = SimpleNamespace(files=files)
     monkeypatch.setattr(
         manager_module, "capture_result_files",
@@ -288,7 +288,7 @@ def test_stream_verification_exception_preserves_partial_download(tmp_path):
         async def verify_stream_availability(self, manifest, spec):
             raise OSError("stream verification unavailable")
 
-    owner = JobFiles(initial)
+    owner = RunFiles(initial)
     error = asyncio.run(owner.collect_remote(
         initial, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
     ))
@@ -317,14 +317,14 @@ def test_snapshot_merge_preserves_concurrent_failure_over_captured_skip(tmp_path
 def test_atomic_completion_downgrades_stale_capture_after_download_failure(tmp_path):
     from dataclasses import replace
     from ase2sprkkr.execution.base import FailurePhase, RunState
-    from ase2sprkkr.execution.manager import ExecutionManager
+    from ase2sprkkr.execution.run_manager import RunManager
     from ase2sprkkr.execution.run_model import FileEntry, FileManifest
 
     path = str(tmp_path / "result.dat")
     files = FileManifest(outputs=(
         FileEntry(path, "/remote/result", availability_state="pending"),
     ))
-    record = ExecutionManager().new_record(
+    record = RunManager().new_record(
         task="SCF", directory=tmp_path, files=files,
     )
     # An independent download observer persists failure while an older
@@ -365,7 +365,7 @@ def test_failed_atomic_completion_discards_captured_versions(tmp_path):
     from dataclasses import replace
     from ase2sprkkr.common.file_versions import FileVersion
     from ase2sprkkr.execution.base import RunState, FailurePhase
-    from ase2sprkkr.execution.manager import ExecutionManager
+    from ase2sprkkr.execution.run_manager import RunManager
     from ase2sprkkr.execution.run_model import FileEntry, FileManifest
 
     result_path = tmp_path / "result"
@@ -373,7 +373,7 @@ def test_failed_atomic_completion_discards_captured_versions(tmp_path):
     version = FileVersion.capture(result_path)
     path = str(result_path)
     entry = FileEntry(path, "/remote/result", availability_state="pending")
-    base = ExecutionManager().new_record(
+    base = RunManager().new_record(
         task="SCF", directory=tmp_path,
         files=FileManifest(outputs=(entry,)),
     )
@@ -427,12 +427,12 @@ def test_discard_capture_removes_real_version_records(tmp_path):
     assert original.output_versions == (version,)
 
 
-def test_job_files_working_updates_do_not_modify_old_snapshots(tmp_path):
+def test_run_files_working_updates_do_not_modify_old_snapshots(tmp_path):
     from ase2sprkkr.execution.run_model import FileEntry, FileManifest
 
     path = str(tmp_path / "output.dat")
     initial = FileManifest(outputs=(FileEntry(path, availability_state="pending"),))
-    files = JobFiles(initial)
+    files = RunFiles(initial)
     first = files.manifest
     files.mark_availability(path, "available")
     second = files.manifest
@@ -444,7 +444,7 @@ def test_job_files_working_updates_do_not_modify_old_snapshots(tmp_path):
     assert files.manifest is second
 
 
-def test_job_files_reconciles_stale_observation_with_working_changes(tmp_path):
+def test_run_files_reconciles_stale_observation_with_working_changes(tmp_path):
     from ase2sprkkr.execution.run_model import FileEntry, FileManifest
 
     first, second = (str(tmp_path / name) for name in ("one.dat", "two.dat"))
@@ -452,7 +452,7 @@ def test_job_files_reconciles_stale_observation_with_working_changes(tmp_path):
         FileEntry(first, availability_state="pending"),
         FileEntry(second, availability_state="pending"),
     ))
-    files = JobFiles(original)
+    files = RunFiles(original)
     observed = original.with_file_availability(first, "available")
 
     files.mark_availability(second, "failed", "download failed")
@@ -464,7 +464,7 @@ def test_job_files_reconciles_stale_observation_with_working_changes(tmp_path):
     assert original.outputs[1].availability_state == "pending"
 
 
-def test_runner_owns_job_files_and_preserves_immutable_snapshots(tmp_path):
+def test_runner_owns_run_files_and_preserves_immutable_snapshots(tmp_path):
     from ase2sprkkr.execution.base import ExecutionSpec
     from ase2sprkkr.execution.local import LocalRunner
     from ase2sprkkr.execution.run_model import FileEntry, FileManifest
@@ -474,26 +474,26 @@ def test_runner_owns_job_files_and_preserves_immutable_snapshots(tmp_path):
         output_file=None, error_file=None, stdin=None, cache_files=(),
     )
     runner = LocalRunner(spec)
-    assert isinstance(runner.job_files, JobFiles)
+    assert isinstance(runner.run_files, RunFiles)
 
     path = str(tmp_path / "output.dat")
     manifest = FileManifest(outputs=(FileEntry(path, availability_state="pending"),))
-    assert runner.job_files.replace(manifest) is manifest
-    assert runner.job_files.manifest is manifest
+    assert runner.run_files.replace(manifest) is manifest
+    assert runner.run_files.manifest is manifest
 
     observed = manifest.with_file_availability(path, "available")
-    assert runner.job_files.merge(observed).outputs[0].availability_state == "available"
-    assert runner.job_files.manifest.outputs[0].availability_state == "available"
+    assert runner.run_files.merge(observed).outputs[0].availability_state == "available"
+    assert runner.run_files.manifest.outputs[0].availability_state == "available"
     assert manifest.outputs[0].availability_state == "pending"
 
-def test_collect_updates_same_job_files_without_changing_old_snapshot(tmp_path):
+def test_collect_updates_same_run_files_without_changing_old_snapshot(tmp_path):
     import asyncio
     from types import SimpleNamespace
     from ase2sprkkr.execution.run_model import FileEntry, FileManifest
 
     path = str(tmp_path / "result")
     initial = FileManifest(outputs=(FileEntry(path, availability_state="pending"),))
-    owner = JobFiles(initial)
+    owner = RunFiles(initial)
 
     class Handler:
         async def collect(self, mapping, manifest, outcome, *, required):
