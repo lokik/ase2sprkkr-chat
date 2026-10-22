@@ -118,3 +118,28 @@ def test_reservations_are_atomic_across_store_instances(tmp_path):
     assert sum(claimed is not None for claimed, _ in results) == 1
     assert sum(bool(conflicts) for _, conflicts in results) == 1
     assert len(first.store.runs(active=True)) == 1
+
+
+def test_recovered_status_does_not_overwrite_newer_backend_observation(
+    tmp_path, monkeypatch,
+):
+    from types import SimpleNamespace
+    from ase2sprkkr.execution.base import RunStatus
+
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store, submitting_grace=0)
+    submitted = manager.reserve(manager.new_record(task="DOS", directory=tmp_path))
+
+    def recover(*args, **kwargs):
+        manager.transition(submitted, state=RunState.RUNNING)
+        return RunStatus(state=RunState.FAILED, message="stale recovery")
+
+    monkeypatch.setattr(
+        manager.executors, "for_endpoint",
+        lambda endpoint: SimpleNamespace(
+            recover_submission=recover, acknowledge_submission=lambda record: None,
+        ),
+    )
+    result = manager.recover_submitting(submitted)
+    assert result.state == RunState.RUNNING
+    assert store.get(submitted.id).state == RunState.RUNNING
