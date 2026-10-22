@@ -106,7 +106,7 @@ def test_submit_persists_submitting_before_backend_call(tmp_path):
     manager = _manager(tmp_path)
     executor = _Executor()
     run = manager.create_run(
-        _spec(tmp_path), endpoint=manager.register_executor(executor),
+        _spec(tmp_path), endpoint=manager.executors.register(executor),
         process_result=lambda outcome: outcome,
         task="ARPES",
         dataset="case",
@@ -142,7 +142,7 @@ def test_completion_postprocesses_only_successful_execution(
     executor = _Executor()
     processed = []
     run = manager.create_run(
-        _spec(tmp_path), endpoint=manager.register_executor(executor),
+        _spec(tmp_path), endpoint=manager.executors.register(executor),
         process_result=lambda outcome: processed.append(outcome) or outcome,
         task="DOS",
     )
@@ -165,7 +165,7 @@ def test_completion_postprocesses_only_successful_execution(
 def test_refresh_batches_status_queries(tmp_path):
     manager = _manager(tmp_path)
     executor = _Executor()
-    endpoint = manager.register_executor(executor)
+    endpoint = manager.executors.register(executor)
     records = []
     for index in range(2):
         record = manager.new_record(
@@ -193,7 +193,7 @@ def test_duplicate_submission_is_blocked_by_persisted_namespace(tmp_path):
     manager = _manager(tmp_path)
     executor = _Executor()
     first = manager.create_run(
-        _spec(tmp_path), endpoint=manager.register_executor(executor),
+        _spec(tmp_path), endpoint=manager.executors.register(executor),
         process_result=lambda outcome: outcome,
         task="DOS",
         dataset="case",
@@ -201,7 +201,7 @@ def test_duplicate_submission_is_blocked_by_persisted_namespace(tmp_path):
     first.submit()
 
     second = manager.create_run(
-        _spec(tmp_path), endpoint=manager.register_executor(executor),
+        _spec(tmp_path), endpoint=manager.executors.register(executor),
         process_result=lambda outcome: outcome,
         task="DOS",
         dataset="case",
@@ -216,7 +216,7 @@ def test_project_manager_returns_one_public_calculation_runner(tmp_path):
 
     manager = _manager(tmp_path)
     run = manager.create_run(
-        _spec(tmp_path), endpoint=manager.register_executor(_Executor()), task="DOS",
+        _spec(tmp_path), endpoint=manager.executors.register(_Executor()), task="DOS",
         process_result=lambda value: value,
     )
 
@@ -241,7 +241,7 @@ def test_executors_are_owned_by_manager_and_keyed_by_endpoint(tmp_path):
     endpoint = manager.executors.register(executor)
     record = manager.new_record(task="DOS", directory=tmp_path, endpoint=endpoint)
     assert manager.executors.for_record(record) is executor
-    assert manager.executor_for(record) is executor
+    assert manager.executors.for_record(record) is executor
 
 
 def test_executor_registries_have_independent_lifetimes():
@@ -290,6 +290,6 @@ def test_explicit_executor_for_run_is_the_registered_instance(tmp_path):
     manager = _manager(tmp_path)
     executor = _Executor()
     run = manager.create_run(
-        _spec(tmp_path), endpoint=manager.register_executor(executor), process_result=lambda value: value, task="DOS",
+        _spec(tmp_path), endpoint=manager.executors.register(executor), process_result=lambda value: value, task="DOS",
     )
-    assert run.hooks.executor is manager.executor_for(run.record)
+    assert run.hooks.executor is manager.executors.for_record(run.record)

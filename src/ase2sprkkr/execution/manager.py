@@ -442,12 +442,6 @@ class ExecutionManager:
         self.executors = executors if executors is not None else Executors()
         self.submitting_grace = float(submitting_grace)
 
-    def register_executor(self, executor: Executor, endpoint=None):
-        return self.executors.register(executor, endpoint)
-
-    def executor_for(self, record):
-        return self.executors.for_record(record)
-
     def input_file_is_current(self, run):
         record = self.store.get(run) if isinstance(run, str) else self.store.get(run.id)
         result_files = record.files
@@ -613,7 +607,7 @@ class ExecutionManager:
         record = self.store.get(record.id)
         if not self._is_stale_submitting(record):
             return record
-        executor = self.executor_for(record)
+        executor = self.executors.for_record(record)
         try:
             status = executor.recover_submission(
                 record.id,
@@ -692,7 +686,7 @@ class ExecutionManager:
             message=status.message,
             failure_phase=phase,
         )
-        self._acknowledge_submission(self.executor_for(updated), updated)
+        self._acknowledge_submission(self.executors.for_record(updated), updated)
         return updated
 
     def complete(
@@ -860,7 +854,7 @@ class ExecutionManager:
         if not missing or record.execution.backend_id is None:
             return record
 
-        executor = self.executor_for(record)
+        executor = self.executors.for_record(record)
         if not executor.supports_result_file_retrieval:
             return record
 
@@ -967,7 +961,7 @@ class ExecutionManager:
         for record in records:
             if record.execution.backend_id is None:
                 continue
-            executor = self.executor_for(record)
+            executor = self.executors.for_record(record)
             groups.setdefault(executor, []).append(record)
 
         for executor, group in groups.items():
@@ -983,7 +977,6 @@ class ExecutionManager:
         run,
         *,
         process_result,
-        executor=None,
         callback=None,
         output_listener=None,
     ):
@@ -991,12 +984,7 @@ class ExecutionManager:
         record = self.store.get(run) if isinstance(run, str) else run
         if record.execution.backend_id is None:
             raise RuntimeError(f"Run {record.id} has no backend reference")
-        if executor is None:
-            executor = self.executor_for(record)
-        else:
-            endpoint = record.execution.endpoint
-            self.register_executor(executor, endpoint)
-            executor = self.executor_for(record)
+        executor = self.executors.for_record(record)
 
         raw = executor.attach(
             record,
@@ -1094,7 +1082,7 @@ class PersistentRun:
             backend_id = run.backend_id
             if backend_id is None:
                 raise RuntimeError("Executor submit returned without a backend ID")
-            self.manager.register_executor(
+            self.manager.executors.register(
                 self.executor, self._record.execution.endpoint,
             )
             with self._completion_lock:
