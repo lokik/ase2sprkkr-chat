@@ -312,27 +312,6 @@ class RemoteFileHandler:
 
         return received._map_files(preserve)
 
-    @staticmethod
-    def _mark_entries(manifest, entries, state, message=None):
-        """Change existing file identities without registering new files."""
-        if manifest is None:
-            return None
-        for entry in entries:
-            if entry is not None and entry.local_path is not None:
-                manifest = manifest.with_file_availability(
-                    entry.local_path, state, message,
-                    remote_path=entry.remote_path,
-                )
-        return manifest
-
-    @classmethod
-    def mark_streams_failed(cls, manifest, message):
-        if manifest is None:
-            return None
-        return cls._mark_entries(
-            manifest, (manifest.stdout, manifest.stderr), "failed", message,
-        )
-
     async def collect(self, mapping, manifest, result, *, required=False):
         """Return partial manifest and failure; never silently lose successful files."""
         if manifest is None:

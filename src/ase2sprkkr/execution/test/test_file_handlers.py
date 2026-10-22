@@ -654,3 +654,33 @@ def test_stream_verification_records_success_and_failure_separately(tmp_path):
     assert isinstance(error, FileNotFoundError)
     assert updated.stdout.availability_state == "available"
     assert updated.stderr.availability_state == "failed"
+
+
+
+def test_collect_does_not_mark_untouched_streams_available(tmp_path):
+    """Stream availability is owned by FOLLOW verification, not collect."""
+    import asyncio
+    from types import SimpleNamespace
+    from ase2sprkkr.execution.remote_file_handler import RemoteFileHandler
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest, FileMapping
+
+    local = tmp_path / "local"
+    local.mkdir()
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    manifest = FileManifest(
+        stdout=FileEntry(str(local / "out.txt"), str(remote / "out.txt"), "pending"),
+        mapping=FileMapping(str(local), str(remote)),
+    )
+
+    class NoTransfer:
+        pass
+
+    updated, error = asyncio.run(
+        RemoteFileHandler(NoTransfer()).collect(
+            manifest.mapping, manifest,
+            SimpleNamespace(output_file=str(local / "out.txt"), error_file=None),
+        )
+    )
+    assert error is None
+    assert updated.stdout.availability_state == "pending"
