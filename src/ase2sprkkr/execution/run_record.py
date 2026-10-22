@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from enum import Enum
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -10,7 +11,7 @@ from .base import FailurePhase, RunState
 from .job_files import JobFiles
 from .run_model import Execution, FileManifest
 
-_RUN_RECORD_SCHEMA_VERSION = 3
+_RUN_RECORD_SCHEMA_VERSION = 4
 _STATE_RANK = {
     RunState.NEW: 0,
     RunState.SUBMITTING: 1,
@@ -34,6 +35,11 @@ def _failure_phase(value):
     return FailurePhase(value)
 
 
+class SubmissionPhase(str, Enum):
+    PREPARING = "preparing"
+    DISPATCHING = "dispatching"
+
+
 @dataclass(frozen=True)
 class RunRecord:
     """Single durable identity, file manifest and lifecycle of one calculation."""
@@ -53,6 +59,7 @@ class RunRecord:
     failure_phase: Optional[FailurePhase] = None
     schema_version: int = _RUN_RECORD_SCHEMA_VERSION
     project_id: Optional[str] = None
+    submission_phase: Optional[SubmissionPhase] = None
 
     def __post_init__(self):
         object.__setattr__(self, "task", str(self.task).upper())
@@ -70,6 +77,10 @@ class RunRecord:
             object.__setattr__(self, "state", RunState(self.state))
         if self.failure_phase is not None and not isinstance(self.failure_phase, FailurePhase):
             object.__setattr__(self, "failure_phase", FailurePhase(self.failure_phase))
+        if self.submission_phase is not None and not isinstance(self.submission_phase, SubmissionPhase):
+            object.__setattr__(self, "submission_phase", SubmissionPhase(self.submission_phase))
+        if self.submission_phase is not None and (self.state != RunState.SUBMITTING or self.execution.backend_id is not None):
+            raise ValueError("Submission phase requires SUBMITTING without a backend identity")
         if self.schema_version != _RUN_RECORD_SCHEMA_VERSION:
             raise ValueError(
                 f"unsupported schema version {self.schema_version}; "
@@ -127,6 +138,9 @@ class RunRecord:
             # and file metadata, not merely its proposed state.
             return self
         changes = {"state": merged_state, "updated_at": now}
+        target_execution = self.execution if execution is _UNCHANGED or execution is None else execution
+        if merged_state != RunState.SUBMITTING or target_execution.backend_id is not None:
+            changes["submission_phase"] = None
         if not self.state.is_terminal and merged_state.is_terminal:
             changes["finished_at"] = now
         if not final_locked and files is not _UNCHANGED and files is not None:
