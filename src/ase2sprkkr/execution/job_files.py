@@ -285,11 +285,11 @@ class JobFiles:
                 except OSError as exc:
                     if path in tracked:
                         record = self.update_availability(
-                            store, path, FileAvailabilityState.FAILED, str(exc),
+                            record, store, path, FileAvailabilityState.FAILED, str(exc),
                         )
                     raise
                 if path in tracked:
                     record = self.update_availability(
-                        store, path, FileAvailabilityState.AVAILABLE,
+                        record, store, path, FileAvailabilityState.AVAILABLE,
                     )
         return store.get(record.id)
