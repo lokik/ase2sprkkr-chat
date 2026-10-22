@@ -47,3 +47,24 @@ def test_shared_stream_failure_has_priority_without_overwriting_membership(tmp_p
     assert merged.stdout.availability_message == "transfer lost"
     assert merged.stderr.availability_message == "transfer lost"
     assert previous.stderr.availability_state == "pending"
+
+
+def test_status_only_available_merge_preserves_verified_identity(tmp_path):
+    from ase2sprkkr.common.file_versions import FileVersion
+    path = tmp_path / "output.dat"
+    path.write_bytes(b"verified")
+    version = FileVersion.capture(path, require_digest=True)
+    current = FileManifest(outputs=(FileEntry(
+        str(path), "/remote/output", availability_state="available",
+        verified_local_version=version,
+    ),))
+    status_only = FileManifest(outputs=(FileEntry(
+        str(path), "/remote/output", availability_state="available",
+    ),))
+    merged = merge_snapshot(current, status_only)
+    assert merged.outputs[0].verified_local_version == version
+    assert merged.outputs[0].availability_state == "available"
+    assert merge_terminal_files(current, status_only).outputs[0].verified_local_version == version
+    path.write_bytes(b"changed")
+    stale = merge_snapshot(current, status_only)
+    assert stale.outputs[0].verified_local_version is None

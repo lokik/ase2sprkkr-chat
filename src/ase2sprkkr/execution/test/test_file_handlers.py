@@ -578,7 +578,7 @@ def test_collect_does_not_recheck_skipped_terminal_files(tmp_path):
 
 
 def test_job_files_reconciles_terminal_delivery(tmp_path):
-    from ase2sprkkr.execution.job_files import JobFiles
+    from ase2sprkkr.execution.manifest_merge import merge_terminal_files
     from ase2sprkkr.execution.run_model import FileManifest, FileEntry
 
     path = tmp_path / "result.dat"
@@ -588,7 +588,7 @@ def test_job_files_reconciles_terminal_delivery(tmp_path):
     old = FileManifest(outputs=(available,))
     frozen = FileManifest(outputs=(pending,))
 
-    result = JobFiles.merge_terminal_files(old, frozen)
+    result = merge_terminal_files(old, frozen)
     assert result.outputs[0].availability_state == "available"
     failed = frozen.with_file_availability(str(path), "failed", "transfer error")
     assert failed.failed_files
@@ -599,7 +599,7 @@ def test_job_files_reconciles_terminal_delivery(tmp_path):
     assert updated.outputs == (available,)
 
     path.unlink()
-    assert JobFiles.merge_terminal_files(old, frozen).outputs == (pending,)
+    assert merge_terminal_files(old, frozen).outputs == (pending,)
 
 
 def test_manifest_does_not_add_files_on_availability_change(tmp_path):

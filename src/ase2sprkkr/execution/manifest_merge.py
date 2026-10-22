@@ -31,7 +31,8 @@ def _merge_availability(previous, received, preserve):
         if prior is None or not preserve(prior, entry):
             return entry
         if (entry.availability_state == prior.availability_state
-                and entry.availability_message == prior.availability_message):
+                and entry.availability_message == prior.availability_message
+                and entry.verified_local_version == prior.verified_local_version):
             return entry
         return replace(
             entry, availability_state=prior.availability_state,
@@ -60,6 +61,12 @@ def merge_snapshot(current, requested):
         if prior.availability_state not in ("available", "failed", "skipped"):
             return False
         if entry.availability_state == "pending":
+            return True
+        if (prior.availability_state == entry.availability_state == "available"
+                and prior.verified_local_version is not None
+                and entry.verified_local_version is None
+                and prior.verified_local_version.is_current()):
+            # A status-only observation does not invalidate the verified copy.
             return True
         if (prior.availability_state == "available"
                 and entry.availability_state == "failed"
@@ -92,7 +99,11 @@ def merge_terminal_files(previous, received):
         return (
             prior.availability_state == "available"
             and entry.local_path is not None
-            and os.path.isfile(entry.local_path)
+            and (
+                prior.verified_local_version.is_current()
+                if prior.verified_local_version is not None
+                else os.path.isfile(entry.local_path)
+            )
         )
 
     return _merge_availability(previous, received, preserve)
