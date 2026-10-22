@@ -79,6 +79,19 @@ def durable_replace(source, destination):
         fsync_directory(source.parent)
 
 
+def durable_publish_new(source, destination):
+    """Atomically publish a staged file only when destination is absent.
+
+    A hard link gives an atomic no-overwrite operation on the same filesystem,
+    unlike a check followed by os.replace().  The caller owns and must remove
+    the staging path (including after a failed publication).
+    """
+    source = Path(source)
+    destination = Path(destination)
+    os.link(source, destination)
+    fsync_directory(destination.parent)
+
+
 def durable_write_text(path, text, *, encoding="utf-8", mode=None):
     """Atomically replace text after synchronizing contents and its new name."""
     path = Path(path)
