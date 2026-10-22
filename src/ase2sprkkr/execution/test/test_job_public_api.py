@@ -121,3 +121,27 @@ def test_calculation_run_job_reuses_its_persistence_manager(tmp_path):
     )
     assert isinstance(run.job, Job)
     assert run.job.record == record
+
+
+def test_uncaptured_existing_files_are_not_certified_as_job_results(tmp_path):
+    from ase2sprkkr.execution import FileEntry
+
+    repository = ProjectRepository(tmp_path / "projects")
+    project = repository.create("Uncaptured history")
+    input_path = tmp_path / "run.inp"
+    output_path = tmp_path / "run.out"
+    input_path.write_text("previous input")
+    output_path.write_text("output from another run")
+
+    files = FileManifest(
+        inputs=(FileEntry(local_path=str(input_path)),),
+        stdout=FileEntry(local_path=str(output_path)),
+    )
+    manager = repository.manager
+    record = manager.store.save(manager.new_record(
+        task="DOS", directory=tmp_path, project_id=project.id, files=files,
+    ))
+    job = repository.job(record.id)
+    assert job.files.captured_at is None
+    assert not job.input_is_current()
+    assert not job.output_is_current()
