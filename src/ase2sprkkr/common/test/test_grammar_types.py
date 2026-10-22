@@ -536,6 +536,17 @@ def test_generated_variant_classes_have_unique_pickle_identity():
     assert pickle.loads(pickle.dumps(gt.pot_mixed)).__class__ is gt.PotMixed
 
 
+def test_variant_and_potential_mixed_are_distinct_pickleable_types():
+    import pickle
+
+    assert gt.Variant is not gt.PotMixed
+    assert gt.Variant.__name__ == "Variant"
+    assert gt.PotMixed.__name__ == "PotMixed"
+    for kind in (gt.Variant, gt.PotMixed):
+        assert pickle.loads(pickle.dumps(kind)) is kind
+        assert isinstance(pickle.loads(pickle.dumps(kind())), kind)
+
+
 def test_mixed_string_sets_can_be_assigned_and_pickled():
     import pickle
 
