@@ -22,6 +22,11 @@ def test_incomplete_utf8_replaced_at_eof_once():
     observers.finish_bytes()
     assert seen == [("prefix:", "out"), ("\ufffd", "out")]
 
+    # Finishing an observation resets decoder state for the next run.
+    observers.emit_bytes("ž".encode("utf8"), "out")
+    observers.finish_bytes()
+    assert seen[-1] == ("ž", "out")
+
 
 def test_incomplete_utf8_is_independent_per_channel():
     seen = []

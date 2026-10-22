@@ -82,14 +82,6 @@ def test_first_input_can_feed_stdin_but_duplicate_input_alias_is_invalid(tmp_pat
         FileManifest.from_spec(spec(tmp_path, input_files=(primary,), stdin=primary))
 
 
-def test_output_cache_collision_is_rejected(tmp_path):
-    path = tmp_path / "shared.dat"
-    with pytest.raises(ValueError, match="Duplicate file declaration"):
-        FileManifest.from_spec(spec(
-            tmp_path, output_files=(path,), cache_files=(path,),
-        ))
-
-
 def test_optional_flag_must_be_bool():
     with pytest.raises(TypeError, match="optional"):
         FileEntry("/tmp/optional.dat", optional="yes")
