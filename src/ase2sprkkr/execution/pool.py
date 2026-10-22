@@ -43,9 +43,4 @@ class Executors:
         endpoint = self._endpoint(endpoint)
         return self._get(endpoint, lambda: create_executor_from_endpoint(endpoint))
 
-    def for_record(self, record):
-        return self.for_endpoint(record.execution.endpoint)
-
-    def for_profile(self, profile):
-        return self.for_endpoint(profile.endpoint)
 

@@ -219,7 +219,7 @@ def test_remote_executor_over_ssh(docker_execution_image):
                 project_repository=projects
             )
             record = restarted.store.get(run_id)
-            restarted_executor = restarted.executors.for_record(record)
+            restarted_executor = restarted.executors.for_endpoint(record.execution.endpoint)
             replayed = load_project_result(restarted, run_id)
 
             assert restarted_executor is not executor

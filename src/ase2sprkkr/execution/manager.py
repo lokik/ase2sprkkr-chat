@@ -511,7 +511,7 @@ class ExecutionManager:
         record = self.store.get(record.id)
         if not self._is_stale_submitting(record):
             return record
-        executor = self.executors.for_record(record)
+        executor = self.executors.for_endpoint(record.execution.endpoint)
         try:
             status = executor.recover_submission(
                 record.id,
@@ -582,7 +582,7 @@ class ExecutionManager:
             message=status.message,
             failure_phase=phase,
         )
-        self._acknowledge_submission(self.executors.for_record(updated), updated)
+        self._acknowledge_submission(self.executors.for_endpoint(updated.execution.endpoint), updated)
         return updated
 
     def complete(
@@ -693,7 +693,7 @@ class ExecutionManager:
             raise RuntimeError(f"Run {record.id} is not finished")
         missing = record.job_files.missing_files()
         executor = (
-            self.executors.for_record(record)
+            self.executors.for_endpoint(record.execution.endpoint)
             if missing and record.execution.backend_id is not None else None
         )
         return record.job_files.retrieve(self.store, executor)
@@ -752,7 +752,7 @@ class ExecutionManager:
         for record in records:
             if record.execution.backend_id is None:
                 continue
-            executor = self.executors.for_record(record)
+            executor = self.executors.for_endpoint(record.execution.endpoint)
             groups.setdefault(executor, []).append(record)
 
         for executor, group in groups.items():
@@ -775,7 +775,7 @@ class ExecutionManager:
         record = self.store.get(run) if isinstance(run, str) else run
         if record.execution.backend_id is None:
             raise RuntimeError(f"Run {record.id} has no backend reference")
-        executor = self.executors.for_record(record)
+        executor = self.executors.for_endpoint(record.execution.endpoint)
 
         raw = executor.attach(
             record,

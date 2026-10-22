@@ -240,7 +240,7 @@ def test_executors_are_owned_by_manager_and_keyed_by_endpoint(tmp_path):
     executor = _Executor()
     endpoint = manager.executors.register(executor)
     record = manager.new_record(task="DOS", directory=tmp_path, endpoint=endpoint)
-    assert manager.executors.for_record(record) is executor
+    assert manager.executors.for_endpoint(record.execution.endpoint) is executor
 
 
 def test_executor_registries_isolate_endpoint_instances():
@@ -274,7 +274,7 @@ def test_explicit_executor_for_run_is_the_registered_instance(tmp_path):
     run = manager.create_run(
         _spec(tmp_path), endpoint=manager.executors.register(executor), process_result=lambda value: value, task="DOS",
     )
-    assert run.hooks.executor is manager.executors.for_record(run.record)
+    assert run.hooks.executor is manager.executors.for_endpoint(run.record.execution.endpoint)
 
 
 def test_executor_registration_normalizes_serialized_endpoint():

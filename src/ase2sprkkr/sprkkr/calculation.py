@@ -874,7 +874,7 @@ def _create_sprkkr_run(
                 project_context[0] if project_context is not None
                 else default_execution_manager()
             )
-            executor = manager.executors.for_profile(profile)
+            executor = manager.executors.for_endpoint(profile.endpoint)
         if project_context is not None:
             manager, project_id = project_context
             executor_endpoint = (
