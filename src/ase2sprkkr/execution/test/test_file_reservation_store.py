@@ -64,3 +64,14 @@ def test_recovery_does_not_fail_concurrently_refreshed_submission(tmp_path, monk
     result = manager.recover_submitting(submitted)
     assert result.state == RunState.SUBMITTING
     assert store.get(submitted.id).state == RunState.SUBMITTING
+
+
+def test_unsubmitted_record_does_not_reserve_files(tmp_path):
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    draft = manager.new_record(task="SCF", directory=tmp_path)
+    store.save(draft)
+
+    next_run = manager.new_record(task="SCF", directory=tmp_path)
+    assert manager.reserve(next_run).state == RunState.SUBMITTING
+    assert store.get(draft.id).state == RunState.NEW
