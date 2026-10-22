@@ -263,8 +263,6 @@ class RunStore:
             def claim(latest):
                 if latest.state != RunState.NEW:
                     raise RuntimeError("Only new runs can reserve files")
-                if latest.files != record.files or latest.execution != record.execution:
-                    raise RuntimeError("Run file declarations changed during reservation")
                 return replace(
                     latest, state=RunState.SUBMITTING,
                     files=record.files, execution=record.execution,
