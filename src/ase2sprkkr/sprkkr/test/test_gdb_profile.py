@@ -28,7 +28,7 @@ def test_serial_gdb_execution(tmp_path):
         input_sync="changed",
         output_sync="changed",
     )
-    assert spec.stdin is None
+    assert spec.stdin is False
 
 
 def test_mpi_gdb_execution_uses_xterm_per_rank(tmp_path):
@@ -53,7 +53,7 @@ def test_mpi_gdb_execution_uses_xterm_per_rank(tmp_path):
         input_sync="changed",
         output_sync="changed",
     )
-    assert spec.stdin is None
+    assert spec.stdin is False
 
 
 def test_auto_gdb_keeps_serial_fallback_command(tmp_path):
@@ -69,4 +69,4 @@ def test_auto_gdb_keeps_serial_fallback_command(tmp_path):
         str(tmp_path / "run.inp"),
     )
     assert spec.launch.mpi == MpiSpec(autodetect=True, warning=False)
-    assert spec.stdin is None
+    assert spec.stdin is False

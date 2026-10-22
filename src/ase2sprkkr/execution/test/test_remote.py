@@ -651,7 +651,7 @@ def test_remote_staging_flushes_buffered_source_handles(tmp_path, source_kind):
         kwargs = {
             "input_files": (handle,) if source_kind == "input" else (),
             "cache_files": (handle,) if source_kind == "cache" else (),
-            "stdin": handle if source_kind == "stdin" else None,
+            "stdin": handle if source_kind == "stdin" else False,
         }
         spec = ExecutionSpec(
             argv=("true",), directory=str(local),

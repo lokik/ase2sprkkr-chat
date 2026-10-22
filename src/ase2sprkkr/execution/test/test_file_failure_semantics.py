@@ -10,7 +10,7 @@ from ase2sprkkr.execution import (
 from ase2sprkkr.execution.manager import ExecutionManager
 
 
-def _record(tmp_path):
+def _record(tmp_path, *, initial_state=RunState.POSTPROCESSING):
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
     record = manager.new_record(
         task="DOS",
@@ -19,7 +19,7 @@ def _record(tmp_path):
             stdout=FileEntry(local_path=str(tmp_path / "run.out"), availability_state="pending"),
         ),
     )
-    record = manager.transition(record, state=RunState.POSTPROCESSING)
+    record = manager.transition(record, state=initial_state)
     return manager, record
 
 
@@ -100,7 +100,7 @@ def test_resume_download_rejects_execution_failure_and_nonzero_code(tmp_path):
 def test_retry_failed_download_preserves_backend_then_captures_clean_snapshot(
     tmp_path,
 ):
-    manager, initial = _record(tmp_path)
+    manager, initial = _record(tmp_path, initial_state=RunState.DOWNLOADING)
     output = tmp_path / "run.out"
     output.write_bytes(b"partial")
     initial = manager.transition(
