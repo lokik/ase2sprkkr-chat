@@ -90,3 +90,31 @@ def test_stale_claim_does_not_sync_files(tmp_path, monkeypatch):
     monkeypatch.setattr(JobFiles, "sync_inputs", unexpected_sync)
     with pytest.raises(RuntimeError, match="changed during file reservation"):
         store.reserve_files(original)
+
+
+def test_reservations_are_atomic_across_store_instances(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    directory = tmp_path / "runs"
+    first = ExecutionManager(RunStore(directory))
+    second = ExecutionManager(RunStore(directory))
+    records = (
+        first.new_record(task="SCF", directory=tmp_path),
+        second.new_record(task="SCF", directory=tmp_path),
+    )
+    barrier = Barrier(2)
+
+    def reserve(manager, record):
+        barrier.wait()
+        claimed, conflicts = manager.store.reserve_files(record)
+        return claimed, conflicts
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        a = pool.submit(reserve, first, records[0])
+        b = pool.submit(reserve, second, records[1])
+        results = (a.result(), b.result())
+
+    assert sum(claimed is not None for claimed, _ in results) == 1
+    assert sum(bool(conflicts) for _, conflicts in results) == 1
+    assert len(first.store.runs(active=True)) == 1
