@@ -6,7 +6,6 @@ references.  This module contains only serializable value objects.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Optional
@@ -422,21 +421,6 @@ class FileManifest:
             )
 
         return self._merge_availability(requested, preserve)
-
-    def merge_terminal(self, received):
-        """Retain only still-present local deliveries in terminal facts."""
-        def preserve(prior, entry):
-            if entry.availability_state in ("failed", "skipped"):
-                return False
-            if prior.availability_state == "skipped":
-                return True
-            return (
-                prior.availability_state == "available"
-                and entry.local_path is not None
-                and os.path.isfile(entry.local_path)
-            )
-
-        return self._merge_availability(received, preserve)
 
     @property
     def files(self):

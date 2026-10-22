@@ -26,7 +26,7 @@ def test_terminal_merge_reuses_manifest_when_status_is_already_correct(tmp_path)
     received = FileManifest(outputs=(
         FileEntry(str(path), "/remote/output", availability_state="available"),
     ))
-    assert received.merge_terminal(received) is received
+    assert JobFiles(received).merge_terminal(received) is received
 
 
 def test_shared_stream_failure_has_priority_without_overwriting_membership(tmp_path):

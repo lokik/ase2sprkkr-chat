@@ -25,7 +25,7 @@ def test_terminal_manifest_merge_preserves_only_verified_local_delivery(tmp_path
         FileEntry(str(good), "/remote/good", availability_state="pending"),
         FileEntry(str(vanished), "/remote/gone", availability_state="pending"),
     ))
-    merged = previous.merge_terminal(frozen)
+    merged = JobFiles(previous).merge_terminal(frozen)
     assert [file.availability_state for file in merged.outputs] == [
         "available", "pending",
     ]
@@ -43,7 +43,7 @@ def test_terminal_manifest_merge_never_overwrites_frozen_failure(tmp_path):
     frozen = FileManifest(outputs=(
         FileEntry(str(path), "/remote/output", availability_state="failed"),
     ))
-    assert previous.merge_terminal(frozen) == frozen
+    assert JobFiles(previous).merge_terminal(frozen) == frozen
 
 
 def test_job_files_coordinates_remote_collection_and_verification():
@@ -219,7 +219,7 @@ def test_terminal_merge_does_not_restore_vanished_available_file(tmp_path):
     received = FileManifest(outputs=(
         FileEntry(missing, "/remote/vanished.dat", availability_state="pending"),
     ))
-    assert previous.merge_terminal(received) == received
+    assert JobFiles(previous).merge_terminal(received) == received
 
 
 def test_snapshot_merge_preserves_failed_transfer_over_stale_captured_success(tmp_path):

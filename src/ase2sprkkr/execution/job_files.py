@@ -76,6 +76,25 @@ class JobFiles:
         files = record.files
         return file_is_current(files, files.output_file, files.output_versions)
 
+    def merge_terminal(self, frozen):
+        """Install terminal membership while retaining existing local deliveries."""
+        with self._lock:
+            previous = self._manifest
+
+            def preserve(prior, entry):
+                if entry.availability_state in ("failed", "skipped"):
+                    return False
+                if prior.availability_state == "skipped":
+                    return True
+                return (
+                    prior.availability_state == "available"
+                    and entry.local_path is not None
+                    and os.path.isfile(entry.local_path)
+                )
+
+            self._manifest = previous._merge_availability(frozen, preserve)
+            return self._manifest
+
     async def collect_remote(
         self, frozen, handler, outcome, spec, *,
         required, materialization_error=None,
@@ -86,9 +105,7 @@ class JobFiles:
         verification observations are installed independently so a later
         failure cannot discard a successful earlier delivery.
         """
-        with self._lock:
-            self._manifest = self._manifest.merge_terminal(frozen)
-            manifest = self._manifest
+        manifest = self.merge_terminal(frozen)
 
         try:
             observed, transfer_error = await handler.collect(
