@@ -116,9 +116,8 @@ class CalculationRun:
 
     @property
     def return_code(self):
-        value = None if self.result is None else self.result.return_code
-        if value is not None:
-            return value
+        # Processing may return any object (including bytes), so the
+        # backend's execution status is the sole source for its exit code.
         return self._runner.return_code
 
     @property

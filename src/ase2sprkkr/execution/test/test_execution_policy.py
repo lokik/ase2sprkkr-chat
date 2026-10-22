@@ -55,6 +55,14 @@ def test_output_observer_failure_is_reported_but_does_not_fail_process(tmp_path)
     assert str(observer_errors[0][1]) == "observer failed"
 
 
+def test_arbitrary_processed_result_keeps_backend_return_code(tmp_path):
+    raw = LocalRunner(_local_spec(tmp_path))
+    run = CalculationRun(raw, lambda outcome: b"parsed content")
+    run.submit()
+    assert run.wait() == b"parsed content"
+    assert run.return_code == 0
+
+
 def test_postprocessing_failure_does_not_change_raw_execution_state(tmp_path):
     raw = LocalRunner(_local_spec(tmp_path))
 
