@@ -662,3 +662,17 @@ def test_failed_published_history_remains_failed_without_backend_if_missing(tmp_
     unchanged = JobFiles(failed).retrieve(manager.store, executor=None)
     assert unchanged.files.availability_state == FileAvailabilityState.FAILED
     assert not output.exists()
+
+
+def test_historical_restore_rejects_symlink_to_captured_contents(tmp_path):
+    manager, _, record = _terminal_run(tmp_path)
+    output = tmp_path / "run.out"
+    original = tmp_path / "original.out"
+    output.rename(original)
+    output.symlink_to(original)
+
+    with pytest.raises(HistoricalFileMismatchError, match="symlink"):
+        manager.retrieve_result_files(record.id)
+    assert output.is_symlink()
+    assert original.read_text() == "original output"
+    assert manager.store.get(record.id).state is RunState.FINISHED
