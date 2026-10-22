@@ -333,6 +333,9 @@ def _psij_submit(request):
                 backend_id, request["directory"],
             ),
             "directory": request["directory"],
+            "submitted_at": datetime.now(timezone.utc).isoformat(),
+            "output_file": _absolute(Path(request["directory"]), spec.output_file),
+            "error_file": _absolute(Path(request["directory"]), spec.error_file),
         }
     )
     return {
@@ -391,7 +394,10 @@ def status_remote(remote_id, files=None):
         raise ValueError("Unsupported remote execution id")
     if str(handle["backend"]).lower() == "slurm" and handle.get("url") is None:
         from .psij import _slurm_status_native
-        status = _slurm_status_native(handle["native_id"])
+        status = _slurm_status_native(
+            handle["native_id"], submitted_at=handle.get("submitted_at"),
+            output_paths=(handle.get("output_file"), handle.get("error_file")),
+        )
     else:
         status = _psij_executor(handle).status_native(handle["native_id"])
     frozen = None

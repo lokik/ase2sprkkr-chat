@@ -14,7 +14,7 @@ from dataclasses import replace
 from pathlib import Path
 from threading import Event, Lock, RLock
 
-from .file_availability import prepare_local_files, discover_local_files
+from .file_availability import prepare_local_files, discover_local_files, cleanup_enabled
 from .growing_file_tail import follow_growing_files
 from .base import (
     ExecutionSpec, Executor, FailurePhase, close_output_files, file_path,
@@ -203,7 +203,28 @@ def _slurm_accounting_matches(run_id, submitted_at):
     return tuple(matches)
 
 
-def _slurm_status_native(native_id):
+def _slurm_new_output_since(paths, submitted_at):
+    """Heuristic only, never used to prove abandoned submission is absent."""
+    try:
+        moment = datetime.fromisoformat(submitted_at)
+        if moment.tzinfo is None:
+            return False
+        threshold = moment.timestamp()
+    except (TypeError, ValueError, OverflowError):
+        return False
+    for path in paths:
+        if not path:
+            continue
+        try:
+            info = os.stat(path)
+        except OSError:
+            continue
+        if info.st_size > 0 and info.st_mtime > threshold:
+            return True
+    return False
+
+
+def _slurm_status_native(native_id, *, submitted_at=None, output_paths=()):
     """Read scheduler facts for a local Slurm job without initializing PSI/J."""
     native_id = str(native_id)
     # A PSI/J attach initially reports NEW; short-lived remote commands
@@ -234,6 +255,13 @@ def _slurm_status_native(native_id):
                 return_code = _slurm_exit_code(fields[2].strip())
                 break
 
+    if state == RunState.UNKNOWN and submitted_at is not None:
+        # Scheduler accounting can expire before the job is inspected.
+        # File mtimes are only a best-effort hint: require a genuine known
+        # submission time and a non-empty newly written output, never a
+        # pre-existing file. An UNKNOWN scheduler state is otherwise retained.
+        if _slurm_new_output_since(output_paths, submitted_at):
+            state = RunState.FINISHED
     if not state.is_terminal:
         return_code = None
     elif state == RunState.FINISHED and return_code is None:
@@ -376,7 +404,9 @@ class PsijRunner(ManagedRunner):
         )
         for path in {self._stdout_path, self._stderr_path} - {None}:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
-            Path(path).write_bytes(b"")
+            if (cleanup_enabled(self.spec.launch.cleanup_outputs, self._cleanup_side)
+                    or not Path(path).exists()):
+                Path(path).write_bytes(b"")
 
     async def _monitor(self):
         paths = {}
