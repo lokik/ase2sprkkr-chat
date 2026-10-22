@@ -51,7 +51,7 @@ _NO_FILES_FAILURES = frozenset((
 class ExecutionManager:
     """Persist public run lifecycle without task-specific knowledge."""
 
-    def __init__(self, store=None, *, executors=None, submitting_grace=60.0,
+    def __init__(self, store=None, *, executors=None, submitting_grace=300.0,
                  project_repository=None):
         if submitting_grace < 0:
             raise ValueError("submitting_grace must be non-negative")
@@ -122,10 +122,9 @@ class ExecutionManager:
             return False
         if record.submission_phase == SubmissionPhase.PREPARING:
             return True  # Owner lock, not age, determines whether it is abandoned.
-        if record.submission_phase != SubmissionPhase.DISPATCHING:
-            return False
-        now = now or datetime.now(timezone.utc)
-        return (now - _timestamp(record.updated_at)).total_seconds() >= self.submitting_grace
+        # Owner lock prevents reclaiming a still-live submitter. Query the
+        # scheduler immediately; age controls only the negative assumption.
+        return record.submission_phase == SubmissionPhase.DISPATCHING
 
     def recover_submitting(self, record):
         with self.store.submission_owner(record) as acquired:
@@ -156,6 +155,41 @@ class ExecutionManager:
                 return record
             if status is SubmissionRecovery.ABSENT:
                 return self.store.update(record, mark_absent)
+            if status is SubmissionRecovery.NOT_FOUND:
+                try:
+                    evidence = executor.submission_output_evidence(
+                        record, submitted_at=record.updated_at,
+                    )
+                except (NotImplementedError, OSError, subprocess.CalledProcessError):
+                    return record
+                if evidence is True:
+                    note = ("Slurm job not found, but fresh output files suggest "
+                            "it ran; its status is unknown. Reservation retained.")
+                    def mark_probable(latest):
+                        if latest != record or (not latest.confirmed and latest.error == note):
+                            return latest
+                        # Do not change updated_at: it is the dispatch timestamp.
+                        return replace(latest, confirmed=False, error=note)
+                    return self.store.update(record, mark_probable)
+                if evidence is None:
+                    return record  # Partial or old output: never auto-resubmit.
+                age = (datetime.now(timezone.utc) - _timestamp(record.updated_at)).total_seconds()
+                if age < self.submitting_grace:
+                    return record
+                # A deliberate bounded-risk guess, never proof of no launch.
+                def mark_assumed_absent(latest):
+                    if latest != record:
+                        return latest
+                    now = _now()
+                    return replace(
+                        latest, state=RunState.FAILED, submission_phase=None,
+                        updated_at=now, finished_at=now,
+                        confirmed=False,
+                        message=("No Slurm job or new output after the recovery "
+                                 "timeout; assuming no launch (not proven)"),
+                        failure_phase=FailurePhase.SUBMISSION,
+                    )
+                return self.store.update(record, mark_assumed_absent)
             if status is None:
                 return record
             if not isinstance(status, RunStatus):

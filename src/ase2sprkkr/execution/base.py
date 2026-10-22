@@ -244,8 +244,9 @@ class RunState(str, Enum):
 
 
 class SubmissionRecovery(str, Enum):
-    """Conclusive absence of backend submission (None is uncertain)."""
+    """Absence proof or a successful but inconclusive scheduler search."""
     ABSENT = "absent"
+    NOT_FOUND = "not_found"
 
 
 class FailurePhase(str, Enum):
@@ -594,6 +595,10 @@ class Executor:
         raise NotImplementedError(
             f"{type(self).__name__} cannot query persistent run status"
         )
+
+    def submission_output_evidence(self, submission, *, submitted_at):
+        """True: all required outputs are fresh; False: none exist; None: uncertain."""
+        return None
 
     def recover_submission(
         self, run_id, submission, *, submitted_at=None

@@ -504,6 +504,9 @@ def recover_remote(run_id, request, *, submitted_at=None):
     facts = backend.recover_native(
         run_id, request["directory"], submitted_at=submitted_at,
     )
+    from .base import SubmissionRecovery
+    if isinstance(facts, SubmissionRecovery):
+        return {"recovery": facts.value}
     if facts is None:
         return None
     native_id = facts["native_id"]

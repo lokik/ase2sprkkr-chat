@@ -23,6 +23,8 @@ from .target_connection import SSHConnection
 from .supervisor_monitor import backend_status_from_facts
 from .run_model import FileManifest, FileMapping, WorkingDirectory
 from .endpoint import endpoint_for_executor
+from .base import SubmissionRecovery
+from .file_availability import probe_submission_outputs
 
 
 _REMOTE_BACKENDS = {"local", "psij"}
@@ -133,6 +135,8 @@ class RemoteEndpointExecutor(Executor):
         )
         if state is None:
             return None
+        if state.get("recovery") is not None:
+            return SubmissionRecovery(state["recovery"])
         if state.get("unsupported"):
             raise NotImplementedError(
                 state.get("error") or "Remote recovery unsupported"
@@ -162,6 +166,13 @@ class RemoteEndpointExecutor(Executor):
                 run_id, submission, submitted_at=submitted_at
             )
         )
+
+    def submission_output_evidence(self, submission, *, submitted_at):
+        if self.backend != "psij":
+            return None
+        return _run_sync(probe_submission_outputs(
+            submission.files, self.transport, submitted_at, remote=True,
+        ))
 
     def create_run(self, spec, callback=None):
         return RemoteRunner(self, spec, callback=callback)

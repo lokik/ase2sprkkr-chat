@@ -14,11 +14,13 @@ from dataclasses import replace
 from pathlib import Path
 from threading import Event, Lock, RLock
 
-from .file_availability import prepare_local_files, discover_local_files
+from .file_availability import (
+    prepare_local_files, discover_local_files, probe_submission_outputs,
+)
 from .growing_file_tail import follow_growing_files
 from .base import (
     ExecutionSpec, Executor, FailurePhase, close_output_files, file_path,
-    RunState, RunStatus, SubmissionNotStarted, start_monitor,
+    RunState, RunStatus, SubmissionRecovery, SubmissionNotStarted, start_monitor,
 )
 from .managed_runner import ManagedRunner
 
@@ -141,7 +143,7 @@ def _slurm_details(native_id):
 def _slurm_current_matches(run_id):
     marker = f"ase2sprkkr:{run_id}"
     output = _scheduler_output(
-        ("squeue", "--noheader", "--me", "--format=%i|%k|%T|%Z")
+        ("squeue", "--noheader", "--me", "--states=all", "--format=%i|%k|%T|%Z")
     )
     matches = []
     for line in output.splitlines():
@@ -377,8 +379,8 @@ class PsijRunner(ManagedRunner):
             error_file=self._stderr_path,
         )
         for path in {self._stdout_path, self._stderr_path} - {None}:
+            # The scheduler, not staging, creates the stream on job launch.
             Path(path).parent.mkdir(parents=True, exist_ok=True)
-            Path(path).write_bytes(b"")
 
     async def _monitor(self):
         paths = {}
@@ -751,35 +753,55 @@ class PsijExecutor(Executor):
             try:
                 details = _slurm_details(native_id)
             except (FileNotFoundError, subprocess.CalledProcessError):
-                # The job may have finished between squeue and scontrol.
-                # Recover its terminal facts from accounting instead.
-                details = None
-            if details:
-                return {
-                    "native_id": str(native_id), "state": _slurm_state(state),
-                    "directory": details.get("WorkDir") or workdir or directory,
-                    "stdout": details.get("StdOut"),
-                    "stderr": details.get("StdErr"), "return_code": None,
-                }
+                # Preserve identity from squeue, but attempt accounting for a
+                # terminal state if the job vanished from the controller.
+                details = {}
+                if submitted_at is not None:
+                    try:
+                        if _slurm_accounting_stores_comments():
+                            accounted = _slurm_accounting_matches(run_id, submitted_at)
+                            if len(accounted) > 1:
+                                raise RuntimeError(
+                                    f"Multiple accounting entries for ASE2SPRKKR run {run_id!r}"
+                                )
+                            if accounted:
+                                accounted_id, accounted_state, accounted_dir, out, err, code = accounted[0]
+                                if accounted_id != native_id:
+                                    raise RuntimeError("Slurm run identity changed during recovery")
+                                resolved = _slurm_state(accounted_state)
+                                if resolved == RunState.FINISHED and code not in (None, 0):
+                                    resolved = RunState.FAILED
+                                return {
+                                    "native_id": native_id, "state": resolved,
+                                    "directory": accounted_dir or workdir or directory,
+                                    "stdout": out, "stderr": err,
+                                    "return_code": code,
+                                }
+                    except (FileNotFoundError, subprocess.CalledProcessError):
+                        pass
+            return {
+                "native_id": str(native_id), "state": _slurm_state(state),
+                "directory": details.get("WorkDir") or workdir or directory,
+                "stdout": details.get("StdOut"),
+                "stderr": details.get("StdErr"), "return_code": None,
+            }
 
-        if submitted_at is None or not _slurm_accounting_stores_comments():
-            raise NotImplementedError(
-                "Slurm cannot safely determine whether this submission already "
-                "finished because job comments are unavailable in accounting"
-            )
-        accounting = _slurm_accounting_matches(run_id, submitted_at)
+        if submitted_at is None:
+            return SubmissionRecovery.NOT_FOUND
+        try:
+            if not _slurm_accounting_stores_comments():
+                return SubmissionRecovery.NOT_FOUND
+            accounting = _slurm_accounting_matches(run_id, submitted_at)
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            # squeue worked, but accounting may be offline or delayed.
+            return SubmissionRecovery.NOT_FOUND
         if len(accounting) > 1:
             raise RuntimeError(
                 f"Multiple Slurm accounting records carry ASE2SPRKKR run id {run_id!r}"
             )
         if not accounting:
-            # An empty sacct result is not authoritative negative evidence:
-            # Slurm accounting can lag behind the scheduler. Do not release
-            # the client's SUBMITTING reservation and risk a duplicate job.
-            raise NotImplementedError(
-                "Slurm has no matching job in squeue or accounting yet; "
-                "submission acceptance is still uncertain"
-            )
+            # No match is not proof of absence: the client examines outputs.
+            return SubmissionRecovery.NOT_FOUND
         native_id, state, workdir, stdout, stderr, return_code = accounting[0]
         recovered_state = _slurm_state(state)
         if recovered_state == RunState.FINISHED and return_code not in (None, 0):
@@ -790,12 +812,19 @@ class PsijExecutor(Executor):
             "stderr": stderr, "return_code": return_code,
         }
 
+    def submission_output_evidence(self, submission, *, submitted_at):
+        from ..common.async_utils import run_coro_sync
+        from .transport import LocalTransport
+        return run_coro_sync(probe_submission_outputs(
+            submission.files, LocalTransport(), submitted_at,
+        ))
+
     def recover_submission(self, run_id, submission, *, submitted_at=None):
         facts = self.recover_native(
             run_id, submission.execution.directory.target, submitted_at=submitted_at,
         )
-        if facts is None:
-            return None
+        if facts is None or isinstance(facts, SubmissionRecovery):
+            return facts
         execution = submission.execution.submitted(facts["native_id"])
         directory = facts["directory"]
         if directory != execution.directory.target:
