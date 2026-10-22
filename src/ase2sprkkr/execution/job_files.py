@@ -66,12 +66,16 @@ class JobFiles:
             )
             return self._manifest
 
-    def input_file_is_current(self):
-        files = self.manifest
+    @staticmethod
+    def input_file_is_current(record):
+        """Check the input file against the immutable historical snapshot."""
+        files = record.files
         return file_is_current(files, files.input_file, files.input_versions)
 
-    def output_file_is_current(self):
-        files = self.manifest
+    @staticmethod
+    def output_file_is_current(record):
+        """Check the primary output against the immutable historical snapshot."""
+        files = record.files
         return file_is_current(files, files.output_file, files.output_versions)
 
     def sync_inputs(self):
@@ -211,7 +215,8 @@ class JobFiles:
             stream_error = exc
         return manifest, error if error is not None else stream_error
 
-    def update_availability(self, record, store, path, state, message=None):
+    @staticmethod
+    def update_availability(record, store, path, state, message=None):
         """Update one file's availability using the latest durable record."""
         state = FileAvailabilityState(state)
 
@@ -227,7 +232,8 @@ class JobFiles:
 
         return store.update(record, update)
 
-    def retrieve(self, record, store, executor=None):
+    @classmethod
+    def retrieve(cls, record, store, executor=None):
         """Restore missing history and reconcile already-published failed files.
 
         A captured file may be present and hash-correct after a failed
@@ -284,12 +290,12 @@ class JobFiles:
                     restore_historical_file(record, path, version, executor)
                 except OSError as exc:
                     if path in tracked:
-                        record = self.update_availability(
+                        record = cls.update_availability(
                             record, store, path, FileAvailabilityState.FAILED, str(exc),
                         )
                     raise
                 if path in tracked:
-                    record = self.update_availability(
+                    record = cls.update_availability(
                         record, store, path, FileAvailabilityState.AVAILABLE,
                     )
         return store.get(record.id)
