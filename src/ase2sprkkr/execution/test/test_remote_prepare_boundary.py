@@ -1,11 +1,12 @@
-import asyncio
-import pytest
-
 """Crash boundary: remote staging metadata must be persisted before submit."""
+
+import asyncio
+
+import pytest
 
 from ase2sprkkr.execution.remote import RemoteRunner
 from ase2sprkkr.execution import (
-    ExecutionSpec, FileEntry, FileManifest, FileMapping,
+    ExecutionSpec, FileManifest,
     LaunchSpec, RemoteEndpointExecutor, RunState, RunStore, LocalTransport,
 )
 
@@ -68,9 +69,6 @@ def test_prepared_manifest_is_durable_before_remote_backend_submit(tmp_path, mon
 
 
 def test_remote_manifest_uses_same_declarations_as_local(tmp_path):
-    import asyncio
-    from ase2sprkkr.execution.run_model import FileManifest
-
     directory = tmp_path / "local"
     directory.mkdir(exist_ok=True)
     remote = tmp_path / "target"
