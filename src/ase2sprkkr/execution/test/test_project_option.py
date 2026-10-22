@@ -8,7 +8,7 @@ from ase2sprkkr.execution import (
     RunState,
     FileManifest,
 )
-from ase2sprkkr.execution.job_files import JobFiles, JobFilesOwner
+from ase2sprkkr.execution.job_files import JobFiles
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from ase2sprkkr.input_parameters.task_definition import TaskDefinition
 from ase2sprkkr.sprkkr import calculation as calculation_module
@@ -23,7 +23,7 @@ class _Runner:
         self.state = RunState.NEW
         self.backend_id = None
         self.spec = spec
-        self._job_files = JobFiles(FileManifest())
+        self.job_files = JobFiles(FileManifest())
         self.failure_phase = None
         self.failure_message = None
         self.result = ExecutionOutcome(
