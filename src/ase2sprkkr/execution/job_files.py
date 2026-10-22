@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import replace
 
 from .file_history import (
@@ -43,6 +44,34 @@ class JobFiles:
                 item, availability_state="failed", availability_message=message,
             ) if item.availability_state in (None, "pending") else item
         )
+
+    @staticmethod
+    def merge_terminal_files(previous, received):
+        """Preserve completed local deliveries in frozen terminal facts."""
+        if previous is None:
+            return received
+        delivered = {
+            (entry.local_path, entry.remote_path): entry
+            for entry in previous.files
+        }
+
+        def preserve(entry):
+            if entry is None or entry.availability_state in ("failed", "skipped"):
+                return entry
+            prior = delivered.get((entry.local_path, entry.remote_path))
+            if prior is None or prior.availability_state not in ("available", "skipped"):
+                return entry
+            if (prior.availability_state == "available"
+                    and (entry.local_path is None
+                         or not os.path.isfile(entry.local_path))):
+                return entry
+            return replace(
+                entry, availability_state=prior.availability_state,
+                availability_message=prior.availability_message,
+            )
+
+        return received._map_files(preserve)
+
 
     def retry_failed_downloads(self):
         return self.manifest._map_files(

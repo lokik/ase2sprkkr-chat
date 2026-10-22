@@ -10,6 +10,7 @@ from dataclasses import asdict
 from .base import FailurePhase, RunState, SubmissionNotStarted, file_path, start_monitor
 from ..common.async_utils import run_coro_sync as _run_sync
 from .remote_file_handler import FileSyncPolicy
+from .job_files import JobFiles
 from .managed_runner import ManagedRunner
 from .supervisor_monitor import backend_status_from_facts, monitor_supervisor
 
@@ -148,7 +149,7 @@ class RemoteRunner(ManagedRunner):
         try:
             from .run_model import FileManifest
             if status.get("files") is not None:
-                self._files = self.file_handler.merge_terminal_files(
+                self._files = JobFiles.merge_terminal_files(
                     self._files, FileManifest(**status["files"]),
                 )
             freeze_error = (
