@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from dataclasses import replace
 from datetime import datetime, timezone
-from threading import RLock
+from threading import Lock
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -35,7 +35,7 @@ class JobFiles:
         if not isinstance(manifest, FileManifest):
             raise TypeError("JobFiles expects a FileManifest")
         self._manifest = manifest
-        self._lock = RLock()
+        self._lock = Lock()
 
     @property
     def manifest(self) -> FileManifest:
