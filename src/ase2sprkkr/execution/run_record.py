@@ -150,10 +150,17 @@ class RunRecord:
                 and self.updated_at != expected_updated_at):
             # An independent refresh has superseded this observation.
             return self
-        inconclusive = state is not None and RunState(state) == RunState.UNKNOWN
-        if observed and (state is None or inconclusive):
+        requested = None if state is None else RunState(state)
+        inconclusive = requested == RunState.UNKNOWN
+        if observed and (requested is None or inconclusive):
             raise ValueError("Successful observation requires a known state")
         if inconclusive and self.state.is_terminal:
+            return self
+        if (requested is not None and not inconclusive
+                and self.state != RunState.UNKNOWN
+                and _STATE_RANK[requested] < _STATE_RANK[self.state]):
+            # The backend reported an earlier lifecycle phase. Ignore the
+            # entire stale observation, not just its proposed state.
             return self
         final_locked = self.state.is_terminal
         now = _now()

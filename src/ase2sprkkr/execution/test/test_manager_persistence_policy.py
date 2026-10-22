@@ -188,3 +188,51 @@ def test_previous_run_record_schema_defaults_are_accepted(manager, tmp_path):
     assert old_record.last_observed is None
     manager.store.save(old_record)
     assert manager.store.get(record.id) == old_record
+
+
+@pytest.mark.parametrize("stale", [RunState.NEW, RunState.SUBMITTING, RunState.QUEUED])
+def test_older_status_does_not_change_running_observation(manager, tmp_path, stale):
+    initial = manager.new_record(task="DOS", directory=tmp_path)
+    running = manager.update(initial, RunStatus(state=RunState.RUNNING))
+    assert running.last_observed is not None
+    stale_result = manager.update(running, RunStatus(
+        state=stale, message="outdated status", return_code=9,
+        failure_phase=FailurePhase.EXECUTION,
+    ))
+    assert stale_result == running
+    assert manager.store.get(initial.id) == running
+
+
+def test_stale_queued_cannot_confirm_previously_unverified_running(manager, tmp_path):
+    initial = manager.new_record(task="DOS", directory=tmp_path)
+    running = manager.update(initial, RunStatus(state=RunState.RUNNING))
+    unverified = manager.update(
+        running, RunStatus(state=RunState.UNKNOWN, message="scheduler unavailable"),
+    )
+    stale = manager.update(unverified, RunStatus(state=RunState.QUEUED))
+    assert stale == unverified
+    assert stale.state == RunState.RUNNING
+    assert not stale.confirmed
+    assert stale.error == "scheduler unavailable"
+    assert stale.last_observed == running.last_observed
+
+    # An inconclusive reply, unlike a stale known lifecycle phase, is the
+    # current verification result and may update the diagnostic.
+    another_unknown = manager.update(
+        stale, RunStatus(state=RunState.UNKNOWN, message="connection lost"),
+    )
+    assert another_unknown.state == RunState.RUNNING
+    assert not another_unknown.confirmed
+    assert another_unknown.error == "connection lost"
+    assert another_unknown.last_observed == running.last_observed
+
+
+def test_same_running_state_reconfirms_and_advances_last_observed(manager, tmp_path):
+    initial = manager.new_record(task="DOS", directory=tmp_path)
+    running = manager.update(initial, RunStatus(state=RunState.RUNNING))
+    uncertain = manager.update(running, RunStatus(state=RunState.UNKNOWN))
+    renewed = manager.update(uncertain, RunStatus(state=RunState.RUNNING))
+    assert renewed.state == RunState.RUNNING
+    assert renewed.confirmed
+    assert renewed.error is None
+    assert renewed.last_observed is not None
