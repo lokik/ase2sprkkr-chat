@@ -765,11 +765,11 @@ class ExecutionManager:
         # The manifest is owned by RunRecord. Local execution observes its
         # publication outcomes, without persisting an independent file list.
         raw.set_manifest(record.files)
-        processed = CalculationRun(raw, process_result, resources=resources)
         persistence = PersistentRun(self, executor, record, spec=spec)
-        processed.hooks = persistence
-        processed.callback = callback
-        return processed
+        return CalculationRun(
+            raw, process_result, callback=callback,
+            resources=resources, hooks=persistence,
+        )
 
     def refresh(self, records=None):
         records = tuple(self.store.runs(active=True) if records is None else records)
@@ -808,10 +808,10 @@ class ExecutionManager:
             output_listener=output_listener,
             start=False,
         )
-        processed = CalculationRun(raw, process_result)
         persistence = PersistentRun(self, executor, record)
-        processed.hooks = persistence
-        processed.callback = callback
+        processed = CalculationRun(
+            raw, process_result, callback=callback, hooks=persistence,
+        )
         processed.start(attached=True)
         return processed
 
