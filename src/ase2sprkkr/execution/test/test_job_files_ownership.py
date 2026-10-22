@@ -86,33 +86,6 @@ def test_job_files_coordinates_remote_collection_and_verification():
     assert pending.outputs[0].availability_state == "pending"
 
 
-def test_job_files_verifies_streams_after_failed_transfer():
-    import asyncio
-    from types import SimpleNamespace
-    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
-
-    entry = FileEntry("/tmp/output.dat", "/remote/output.dat", "pending")
-    files = FileManifest(outputs=(entry,))
-    cause = OSError("download failed")
-
-    class Handler:
-        async def collect(self, mapping, manifest, outcome, *, required):
-            return manifest.with_file_availability(
-                entry.local_path, "failed", str(cause), remote_path=entry.remote_path,
-            ), cause
-        async def verify_stream_availability(self, manifest, spec):
-            assert manifest.outputs[0].availability_state == "failed"
-            return manifest, None
-
-    owner = JobFiles(files)
-    error = asyncio.run(owner.collect_remote(
-        files, Handler(), SimpleNamespace(), SimpleNamespace(), required=True,
-    ))
-    updated = owner.manifest
-    assert error is cause
-    assert updated.outputs[0].availability_state == "failed"
-
-
 def test_job_files_preserves_transfer_error_and_verified_stream(tmp_path):
     import asyncio
     from types import SimpleNamespace
@@ -131,6 +104,8 @@ def test_job_files_preserves_transfer_error_and_verified_stream(tmp_path):
             ), cause
 
         async def verify_stream_availability(self, manifest, spec):
+            assert manifest.outputs[0].availability_state == "failed"
+            assert manifest.outputs[0].availability_message == str(cause)
             return manifest.with_file_availability(
                 stream.local_path, "available", remote_path=stream.remote_path,
             ), None
