@@ -439,3 +439,22 @@ def test_discard_capture_removes_real_version_records(tmp_path):
     assert cleared.outputs == original.outputs
     assert original.input_versions == (version,)
     assert original.output_versions == (version,)
+
+
+def test_merge_snapshot_alias_failure_precedence_independent_of_order(tmp_path):
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+
+    path = str(tmp_path / "shared.log")
+    available = FileEntry(path, "/remote/shared", availability_state="available")
+    failed = FileEntry(path, "/remote/shared", availability_state="failed",
+                       availability_message="stream mismatch")
+    pending = FileEntry(path, "/remote/shared", availability_state="pending")
+    received = FileManifest(stdout=pending, outputs=(pending,))
+    for previous in (
+        FileManifest(stdout=failed, outputs=(available,)),
+        FileManifest(stdout=available, outputs=(failed,)),
+    ):
+        merged = JobFiles.merge_snapshot(previous, received)
+        assert merged.stdout.availability_state == "failed"
+        assert merged.outputs[0].availability_state == "failed"
+        assert merged.stdout.availability_message == "stream mismatch"
