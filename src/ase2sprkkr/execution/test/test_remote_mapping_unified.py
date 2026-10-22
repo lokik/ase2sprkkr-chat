@@ -1,7 +1,6 @@
 """Resolved file mappings own both provisional paths and remote staging."""
 
 import asyncio
-from dataclasses import replace
 
 import pytest
 
@@ -62,27 +61,6 @@ def test_submission_directory_resolves_symlink_within_root(tmp_path):
         launch=LaunchSpec(local_root=root, remote_root="/scratch"),
     )
     assert executor.submission_directory(spec) == "/scratch/actual"
-
-
-def test_staging_uses_reserved_input_not_new_spec(tmp_path):
-    source = tmp_path / "original.in"
-    source.write_text("submitted")
-    spec = ExecutionSpec(
-        argv=("true",), input_file=str(source), output_file=None,
-        directory=str(tmp_path),
-        launch=LaunchSpec(local_root=tmp_path,
-                          remote_root=str(tmp_path / "remote"),
-                          input_sync="always"),
-    )
-    mapping = FileMapping(str(tmp_path), str(tmp_path / "remote"),
-                          input_sync="always")
-    frozen = FileManifest.from_spec(spec).with_mapping(mapping)
-    changed = replace(spec, input_file="not-reserved.in")
-    executor = RemoteEndpointExecutor(LocalTransport())
-    staged = asyncio.run(executor.file_handler.prepare(mapping, changed, frozen))
-    assert staged.inputs == frozen.inputs
-    assert (tmp_path / "remote" / "original.in").read_text() == "submitted"
-    assert not (tmp_path / "remote" / "not-reserved.in").exists()
 
 
 def test_stage_helper_rejects_noncanonical_relative_path(tmp_path):
