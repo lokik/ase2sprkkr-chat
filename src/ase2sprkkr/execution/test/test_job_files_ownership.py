@@ -416,3 +416,15 @@ def test_file_merge_never_loses_failure_on_shared_output_alias(
     assert merged.outputs[0].availability_state == "failed"
     assert merged.stdout.availability_message == "transfer failed"
     assert merged.outputs[0].availability_message == "transfer failed"
+
+
+def test_discard_capture_keeps_file_delivery_facts(tmp_path):
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+    entry = FileEntry(str(tmp_path / "result"), "/remote/result",
+                      availability_state="failed")
+    original = FileManifest(outputs=(entry,),
+                            captured_at="2026-10-22T00:00:00+00:00")
+    updated = JobFiles.discard_capture(original)
+    assert updated.captured_at is None
+    assert updated.input_versions == updated.output_versions == ()
+    assert updated.outputs == original.outputs

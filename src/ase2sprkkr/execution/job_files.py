@@ -132,6 +132,11 @@ class JobFiles:
         return received._map_files(merged)
 
     @staticmethod
+    def discard_capture(manifest):
+        """Invalidate speculative captured versions, preserving file statuses."""
+        return replace(manifest, captured_at=None, input_versions=(), output_versions=())
+
+    @staticmethod
     def merge_snapshot(current, requested):
         """Do not let stale observations erase independently persisted delivery."""
         from .run_model import FileManifest
