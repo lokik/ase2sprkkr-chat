@@ -6,7 +6,7 @@ from ase2sprkkr.execution import (
     ExecutionOutcome,
     ProjectRepository,
     RunState,
-    JobFiles, FileManifest,
+    FileManifest,
 )
 from ase2sprkkr.execution.job_files import JobFilesOwner
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
