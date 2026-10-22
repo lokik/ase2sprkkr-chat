@@ -449,12 +449,11 @@ class RemoteFileHandler:
         # is an error, never evidence of a completed historical download.
         # Canonical direct fetches retain their documented keep-existing
         # behavior for callers that do not request staging.
+        for _, target in planned.values():
+            if target in staged_targets and os.path.lexists(target):
+                raise FileExistsError(
+                    f"Historical staging destination already exists: {target}"
+                )
         for remote, target in planned.values():
-            if target in staged_targets:
-                if os.path.lexists(target):
-                    raise FileExistsError(
-                        f"Historical staging destination already exists: {target}"
-                    )
-                await self.transport.get_file(remote, target)
-            elif not os.path.isfile(target):
+            if target in staged_targets or not os.path.isfile(target):
                 await self.transport.get_file(remote, target)
