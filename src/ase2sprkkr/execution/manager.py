@@ -491,16 +491,7 @@ class ExecutionManager:
     def _merged_result_files(latest, requested):
         if requested is _UNCHANGED or requested is None:
             return latest.files
-        if isinstance(requested, dict):
-            requested = FileManifest(**requested)
-        current = latest.files
-        if current is None:
-            return requested
-        if current.captured_at is not None:
-            # Immutable historical evidence: an old runner must not replace
-            # the captured digests with its uncaptured in-memory manifest.
-            return current
-        return requested
+        return JobFiles.merge_snapshot(latest.files, requested)
 
     def transition(
         self,
