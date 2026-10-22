@@ -32,13 +32,12 @@ def test_prepared_manifest_is_durable_before_remote_backend_submit(tmp_path, mon
         spec, endpoint=manager.executors.register(executor),
         task="DOS", process_result=lambda outcome: outcome,
     )
-    expected = FileManifest(
-        stdout=FileEntry(str(output), "/target/prepared/run.out", availability_state="pending"),
-        mapping=FileMapping(str(tmp_path), "/target/prepared"),
-    )
+    # Match the mapping actually reserved by PersistentRun.before_submit().
+    # The fake prepare step must not invent another remote file namespace.
+    expected, remote_directory = executor.reservation_context(spec, run.record.files)
 
     async def prepare(_runner):
-        return {"directory": "/target/prepared", "id": run.id}, expected
+        return {"directory": remote_directory, "id": run.id}, expected
 
     submitted = []
 
@@ -63,7 +62,7 @@ def test_prepared_manifest_is_durable_before_remote_backend_submit(tmp_path, mon
     snapshot = submitted[0]
     assert snapshot.state == RunState.SUBMITTING
     assert snapshot.execution.backend_id is None
-    assert snapshot.execution.directory.remote == "/target/prepared"
+    assert snapshot.execution.directory.remote == remote_directory
     assert snapshot.files == expected
     assert manager.store.get(run.id).execution.backend_id == "opaque-job"
 
