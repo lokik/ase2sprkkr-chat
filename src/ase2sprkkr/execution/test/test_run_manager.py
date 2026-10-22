@@ -471,19 +471,6 @@ def test_executor_registries_isolate_endpoint_instances():
     assert second.for_endpoint(endpoint) is second_executor
 
 
-def test_register_executor_rejects_conflicting_instance():
-    from ase2sprkkr.execution import ExecutorEndpoint
-
-    executors = Executors()
-    endpoint = ExecutorEndpoint()
-    original, conflicting = _Executor(), _Executor()
-    assert executors.register(original, endpoint) == endpoint
-    assert executors.register(original, endpoint) == endpoint
-    with pytest.raises(ValueError, match="already registered"):
-        executors.register(conflicting, endpoint)
-    assert executors.for_endpoint(endpoint) is original
-
-
 def test_explicit_executor_for_run_is_the_registered_instance(tmp_path):
     manager = _manager(tmp_path)
     executor = _Executor()
@@ -493,19 +480,21 @@ def test_explicit_executor_for_run_is_the_registered_instance(tmp_path):
     assert run.persistence.executor is manager.executors.for_endpoint(run.record.execution.endpoint)
 
 
-def test_executor_registration_normalizes_serialized_endpoint():
+@pytest.mark.parametrize("serialized", (False, True))
+def test_executor_registration_normalizes_and_rejects_conflicts(serialized):
     from dataclasses import asdict
     from ase2sprkkr.execution import ExecutorEndpoint
 
     executors = Executors()
     endpoint = ExecutorEndpoint(executor="custom:test")
+    registration = asdict(endpoint) if serialized else endpoint
     executor = _Executor()
-    assert executors.register(executor, asdict(endpoint)) == endpoint
+    assert executors.register(executor, registration) == endpoint
     assert executors.for_endpoint(endpoint) is executor
     assert executors.for_endpoint(asdict(endpoint)) is executor
     assert executors.register(executor, endpoint) == endpoint
     with pytest.raises(ValueError, match="already registered"):
-        executors.register(_Executor(), asdict(endpoint))
+        executors.register(_Executor(), registration)
 
 
 def test_parallel_endpoint_lookup_constructs_one_executor(monkeypatch):
