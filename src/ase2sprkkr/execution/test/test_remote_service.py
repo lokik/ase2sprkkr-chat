@@ -1467,3 +1467,24 @@ def test_submission_to_terminal_receipt_and_both_acks(tmp_path, monkeypatch):
     assert remote_service.acknowledge_remote(remote_id) == {"acknowledged": True}
     assert remote_service.acknowledge_remote(remote_id) == {"acknowledged": False}
     assert remote_service.status_remote(remote_id)["state"] == "unknown"
+
+
+def test_request_spec_does_not_duplicate_primary_input():
+    from dataclasses import asdict
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+
+    primary = FileEntry("/local/main.in", "/remote/main.in")
+    auxiliary = FileEntry("/local/extra.in", "/remote/extra.in")
+    manifest = FileManifest(
+        inputs=(primary, auxiliary), primary_input=primary, stdin=primary,
+    )
+    spec = remote_service._request_spec({
+        "argv": ("true",), "directory": "/remote",
+        "input_file": "/remote/main.in", "stdin": "/remote/main.in",
+        "files": asdict(manifest),
+    })
+    assert spec.input_file == spec.stdin == "/remote/main.in"
+    assert spec.input_files == ("/remote/extra.in",)
+    assert FileManifest.from_spec(spec).input_files == (
+        "/remote/main.in", "/remote/extra.in",
+    )
