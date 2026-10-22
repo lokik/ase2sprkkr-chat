@@ -58,8 +58,8 @@ def test_recovery_does_not_fail_concurrently_refreshed_submission(tmp_path, monk
         return None
 
     monkeypatch.setattr(
-        manager.executors, "for_record",
-        lambda record: SimpleNamespace(recover_submission=recover),
+        manager.executors, "for_endpoint",
+        lambda endpoint: SimpleNamespace(recover_submission=recover),
     )
     result = manager.recover_submitting(submitted)
     assert result.state == RunState.SUBMITTING
