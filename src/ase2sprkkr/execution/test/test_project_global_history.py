@@ -247,32 +247,57 @@ def test_guarded_run_identity_across_day_shards(tmp_path):
     second = projects.create("Second")
     store = projects.run_store
     manager = ExecutionManager(project_repository=projects)
-    original = manager.new_record(task="DOS", directory=tmp_path / "work", project_id=first.id)
+    timestamp = "2030-01-01T10:00:00+00:00"
+    original = replace(manager.new_record(
+        task="DOS", directory=tmp_path / "work", project_id=first.id,
+    ), created_at=timestamp, updated_at=timestamp)
     store.save(original)
+    store.save(original)
+    for changed_at in ("2030-01-01T11:00:00+00:00", "2030-01-02T10:00:00+00:00"):
+        changed = replace(original, created_at=changed_at, updated_at=changed_at)
+        with pytest.raises(ValueError, match="persistent creation time"):
+            store.save(changed)
+        with pytest.raises(ValueError, match="persistent creation time"):
+            store.update(changed, lambda current: current)
+        assert store.get(original.id) == original
+        assert store.runs() == (original,)
 
-    next_day = "2030-01-02T10:00:00+00:00"
-    earlier = replace(
-        original, created_at="2030-01-01T10:00:00+00:00",
-        updated_at="2030-01-01T10:00:00+00:00",
-    )
-    # Duplicate IDs within one project retain the historical newest-first
-    # semantics; only crossing project boundaries is forbidden.
-    store.save(earlier)
-    assert store.get(original.id) == earlier
-
-    foreign = replace(
-        original, created_at=next_day, updated_at=next_day,
-        project_id=second.id,
-    )
+    foreign = replace(original, project_id=second.id)
     independent = ProjectRepository(projects.directory).run_store
-    for action in (
-        lambda: independent.save(foreign),
-        lambda: independent.update(foreign, lambda current: current),
-    ):
+    for action in (lambda: independent.save(foreign),
+                   lambda: independent.update(foreign, lambda current: current)):
         with pytest.raises(ValueError, match="persistent project identity"):
             action()
-    assert not independent._path(foreign).exists()
-    assert {r.project_id for r in independent.runs()} == {first.id}
+    updated = store.update(
+        original, lambda current: replace(current, state=RunState.FINISHED),
+    )
+    assert store.get(original.id) == updated
+    assert store.runs() == (updated,)
+
+
+def test_guarded_run_detects_preexisting_duplicate_ids(tmp_path):
+    projects = ProjectRepository(tmp_path / "projects")
+    project = projects.create("Project")
+    store = projects.run_store
+    record = replace(
+        ExecutionManager(project_repository=projects).new_record(
+            task="DOS", directory=tmp_path / "work", project_id=project.id,
+        ),
+        created_at="2030-01-01T10:00:00+00:00",
+    )
+    duplicate = replace(record, created_at="2030-01-02T10:00:00+00:00")
+    store.save(record)
+    store._write_unlocked(duplicate)  # Simulate corrupted persisted history.
+    for operation in (
+        lambda: store.get(record.id),
+        lambda: store.runs(),
+        lambda: store.runs(limit=1),
+        lambda: store.runs(active=True, limit=1),
+        lambda: store.save(record),
+        lambda: store.update(record, lambda current: current),
+    ):
+        with pytest.raises(ValueError, match="Duplicate run ID"):
+            operation()
 
 
 def test_guarded_run_cross_day_save_serializes_across_store_instances(
@@ -320,24 +345,23 @@ def test_guarded_run_cross_day_save_serializes_across_store_instances(
     assert a.get(record.id) == record
 
 
-def test_project_deletion_removes_every_day_shard_for_same_run(tmp_path):
+def test_project_deletion_removes_distinct_runs_across_day_shards(tmp_path):
     projects = ProjectRepository(tmp_path / "projects")
     root = projects.create("Root")
     child = projects.create("Child", parent_id=root.id)
     manager = ExecutionManager(project_repository=projects)
-    original = replace(
-        manager.new_record(task="DOS", directory=tmp_path / "work", project_id=child.id),
-        state=RunState.FINISHED,
-    )
-    later = replace(
-        original, created_at="2030-01-02T10:00:00+00:00",
-        updated_at="2030-01-02T10:00:00+00:00",
-    )
-    manager.store.save(original)
-    manager.store.save(later)
+    first = replace(manager.new_record(
+        task="DOS", directory=tmp_path / "work", project_id=child.id,
+    ), state=RunState.FINISHED, created_at="2030-01-01T10:00:00+00:00")
+    second = replace(manager.new_record(
+        task="DOS", directory=tmp_path / "later", project_id=child.id,
+    ), state=RunState.FINISHED, created_at="2030-01-02T10:00:00+00:00")
+    assert first.id != second.id
+    manager.store.save(first)
+    manager.store.save(second)
     assert len(manager.store.runs()) == 2
-
     projects.delete(child.id, expected_generation=child.generation)
     assert manager.store.runs() == ()
-    with pytest.raises(FileNotFoundError):
-        manager.store.get(original.id)
+    for run_id in (first.id, second.id):
+        with pytest.raises(FileNotFoundError):
+            manager.store.get(run_id)
