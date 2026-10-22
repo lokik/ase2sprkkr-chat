@@ -20,6 +20,10 @@ class _ManagedStub(ManagedRunner):
         super().__init__(SimpleNamespace(), spec, backend_id="job")
         self.cancel_calls = 0
 
+    @property
+    def state(self):
+        return self._state
+
     async def _monitor(self):
         return await monitor_supervisor(
             self, self._follow_once, self._backend_status,
