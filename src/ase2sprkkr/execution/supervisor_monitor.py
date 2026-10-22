@@ -86,6 +86,8 @@ async def monitor_supervisor(runner, follow, status, complete):
 
         await complete(facts, state)
         return runner.result
+    except asyncio.CancelledError:
+        raise
     except BaseException as exc:
         if runner._failure_phase is None:
             runner._failure_phase = FailurePhase.EXECUTION
