@@ -171,3 +171,37 @@ def test_stream_output_remote_wildcard_overlap_rejected(
             **{role: FileEntry("/local/stream", stream_remote)},
             outputs=(FileEntry("/local/other", output_remote),),
         )
+
+
+def test_manifest_rejects_remote_path_outside_shared_mapping():
+    from ase2sprkkr.execution.run_model import FileMapping
+
+    mapping = FileMapping("/local/project", "/remote/project")
+    with pytest.raises(ValueError, match="does not match the file mapping"):
+        FileManifest(
+            mapping=mapping,
+            stdout=FileEntry("/local/project/stdout.log", "/remote/elsewhere/stdout.log"),
+        )
+
+
+def test_manifest_accepts_remote_path_derived_from_shared_mapping():
+    from ase2sprkkr.execution.run_model import FileMapping
+
+    mapping = FileMapping("/local/project", "/remote/project")
+    files = FileManifest(
+        mapping=mapping,
+        outputs=(FileEntry("/local/project/out.dat", "/remote/project/out.dat"),),
+    )
+    assert files.outputs[0].remote_path == mapping.map_path(files.outputs[0].local_path)
+
+
+def test_recovered_stream_path_cannot_escape_shared_mapping():
+    from ase2sprkkr.execution.run_model import FileMapping
+
+    mapping = FileMapping("/local/project", "/remote/project")
+    files = FileManifest(
+        mapping=mapping,
+        stdout=FileEntry("/local/project/stdout.log", "/remote/project/stdout.log"),
+    )
+    with pytest.raises(ValueError, match="does not match the file mapping"):
+        files.with_remote_stream_paths(stdout="/remote/elsewhere/stdout.log")
