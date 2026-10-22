@@ -90,11 +90,11 @@ class CalculationRun:
 
     @property
     def execution(self):
-        return getattr(self._runner, 'execution', None)
+        return self._runner.execution
 
     @property
     def files(self):
-        return getattr(self._runner, 'files', None)
+        return self._runner.files
 
     @property
     def exception(self):
