@@ -1,0 +1,423 @@
+import pytest
+
+from ase2sprkkr.common.file_versions import FileState, FileVersion
+from ase2sprkkr.execution import (
+    LocalTransport, RemoteExecutor, RunRecord, RunState, Execution,
+    WorkingDirectory, FileManifest, FileEntry,
+)
+from ase2sprkkr.execution.run_model import FileMapping
+from ase2sprkkr.execution.endpoint import endpoint_for_executor
+
+
+def test_remote_executor_fetches_only_requested_historical_files(tmp_path):
+    local_root = tmp_path / "local"
+    remote_root = tmp_path / "remote"
+    local_directory = local_root / "calculation"
+    remote_directory = remote_root / "calculation"
+    local_directory.mkdir(parents=True)
+    remote_directory.mkdir(parents=True)
+
+    remote_input = remote_directory / "run.inp"
+    remote_potential = remote_directory / "start.pot"
+    remote_output = remote_directory / "run.out"
+    remote_first = remote_directory / "result-1.dat"
+    remote_second = remote_directory / "result-2.dat"
+    remote_later = remote_directory / "result-later.dat"
+    remote_input.write_text("input")
+    remote_potential.write_text("potential")
+    remote_output.write_text("output")
+    remote_first.write_text("one")
+    remote_second.write_text("two")
+    remote_later.write_text("not part of the historical snapshot")
+
+    local_first = local_directory / "result-1.dat"
+    local_first.write_text("keep-local")
+
+    executor = RemoteExecutor(LocalTransport())
+    run = RunRecord(
+        id="historical", state=RunState.FINISHED,
+        created_at="2026-10-13T08:00:00+00:00",
+        updated_at="2026-10-13T08:00:00+00:00",
+        task="DOS",
+        execution=Execution(
+            endpoint_for_executor(executor),
+            WorkingDirectory(str(local_directory), str(remote_directory)),
+            "opaque-historical-handle",
+        ),
+        files=FileManifest(
+            mapping=FileMapping(str(local_root), str(remote_root)),
+            inputs=(
+                FileEntry(str(local_directory / "run.inp"), str(remote_input)),
+                FileEntry(str(local_directory / "start.pot"), str(remote_potential)),
+            ),
+            stdout=FileEntry(str(local_directory / "run.out"), str(remote_output)),
+            outputs=(
+                FileEntry(str(local_directory / "result-1.dat"), str(remote_first)),
+                FileEntry(str(local_directory / "result-2.dat"), str(remote_second)),
+            ),
+        ),
+    )
+    local_input = local_directory / "run.inp"
+    local_potential = local_directory / "start.pot"
+    local_output = local_directory / "run.out"
+    local_second = local_directory / "result-2.dat"
+    local_later = local_directory / "result-later.dat"
+
+    assert executor.supports_result_file_retrieval is True
+    executor.fetch_result_files(
+        run,
+        (local_input, local_potential, local_output, local_second),
+    )
+
+    assert local_input.read_text() == "input"
+    assert local_potential.read_text() == "potential"
+    assert local_output.read_text() == "output"
+    assert local_first.read_text() == "keep-local"
+    assert local_second.read_text() == "two"
+    assert not local_later.exists()
+    assert local_output.stat().st_mtime_ns == remote_output.stat().st_mtime_ns
+    assert local_second.stat().st_mtime_ns == remote_second.stat().st_mtime_ns
+
+
+
+def test_remote_fetch_uses_transport_expansion_for_exact_and_wildcard(tmp_path):
+    import os
+
+    class SpyTransport(LocalTransport):
+        def __init__(self):
+            self.expanded = []
+            self.downloaded = []
+
+        async def expand_files(self, sources, root):
+            self.expanded.append(os.fspath(sources))
+            return await super().expand_files(sources, root)
+
+        async def get_file(self, source, destination):
+            self.downloaded.append(os.fspath(source))
+            return await super().get_file(source, destination)
+
+    local_root = tmp_path / "local"
+    remote_root = tmp_path / "remote"
+    (local_root / "calc").mkdir(parents=True)
+    remote_dir = remote_root / "calc"
+    remote_dir.mkdir(parents=True)
+
+    (remote_dir / "exact.dat").write_text("exact")
+    (remote_dir / "part-a.dat").write_text("a")
+    (remote_dir / "part-b.dat").write_text("b")
+    (remote_dir / ".hidden.dat").write_text("hidden")
+    existing = local_root / "calc" / "part-a.dat"
+    existing.write_text("keep")
+
+    transport = SpyTransport()
+    executor = RemoteExecutor(transport)
+    run = RunRecord(
+        id="wildcard-fetch", state=RunState.FINISHED,
+        created_at="2026-10-13T08:00:00+00:00",
+        updated_at="2026-10-13T08:00:00+00:00",
+        task="DOS",
+        execution=Execution(
+            endpoint_for_executor(executor),
+            WorkingDirectory(str(local_root / "calc"), str(remote_dir)),
+            "opaque-handle",
+        ),
+        files=FileManifest(
+            mapping=FileMapping(str(local_root), str(remote_root)),
+            outputs=(
+                FileEntry(str(local_root / "calc" / "exact.dat"),
+                          str(remote_dir / "exact.dat")),
+                FileEntry(str(local_root / "calc" / "part-a.dat"),
+                          str(remote_dir / "part-a.dat"),
+                          source=str(local_root / "calc" / "part-*.dat")),
+                FileEntry(str(local_root / "calc" / "part-b.dat"),
+                          str(remote_dir / "part-b.dat"),
+                          source=str(local_root / "calc" / "part-*.dat")),
+            ),
+        ),
+    )
+
+    executor.fetch_result_files(
+        run, (local_root / "calc" / "exact.dat",
+              local_root / "calc" / "part-*.dat"),
+    )
+    # Historical recovery never expands wildcards on the target.
+    assert transport.expanded == []
+    assert transport.downloaded == [
+        str(remote_dir / "exact.dat"), str(remote_dir / "part-b.dat"),
+    ]
+    assert (local_root / "calc" / "exact.dat").read_text() == "exact"
+    assert existing.read_text() == "keep"
+    assert (local_root / "calc" / "part-b.dat").read_text() == "b"
+    assert not (local_root / "calc" / ".hidden.dat").exists()
+
+
+def test_remote_staged_result_keeps_canonical_file_absent(tmp_path):
+    local_root = tmp_path / "local"
+    remote_root = tmp_path / "remote"
+    local_dir = local_root / "calc"
+    remote_dir = remote_root / "calc"
+    local_dir.mkdir(parents=True)
+    remote_dir.mkdir(parents=True)
+    local = local_dir / "run.out"
+    local.write_bytes(b"original result")
+    captured = FileVersion.capture(local, require_digest=True)
+    local.unlink()
+    (remote_dir / "run.out").write_bytes(b"original result")
+
+    executor = RemoteExecutor(LocalTransport())
+    run = RunRecord(
+        id="staged-result", state=RunState.FINISHED,
+        created_at="2026-10-13T08:00:00+00:00",
+        updated_at="2026-10-13T08:00:00+00:00",
+        task="DOS",
+        execution=Execution(
+            endpoint_for_executor(executor),
+            WorkingDirectory(str(local_dir), str(remote_dir)),
+            "backend-id",
+        ),
+        files=FileManifest(
+            mapping=FileMapping(str(local_root), str(remote_root)),
+            stdout=FileEntry(str(local), str(remote_dir / "run.out")),
+            output_versions=(captured,),
+            captured_at="2026-10-13T08:00:00+00:00",
+        ),
+    )
+    staged = local_dir / ".staged-run.out"
+    executor.fetch_result_files(
+        run, (local,), destinations={str(local): str(staged)},
+    )
+    assert not local.exists()
+    assert captured.state() is FileState.MISSING
+    assert staged.read_bytes() == b"original result"
+
+
+@pytest.mark.parametrize("wildcard", (False, True))
+def test_fetch_rejects_local_symlink_escape(tmp_path, wildcard):
+    local_root = tmp_path / "local"
+    remote_root = tmp_path / "remote"
+    outside = tmp_path / "outside"
+    local_root.mkdir()
+    remote_root.mkdir()
+    outside.mkdir()
+    (local_root / "alias").symlink_to(outside, target_is_directory=True)
+    remote_dir = remote_root / "alias"
+    remote_dir.mkdir()
+    (remote_dir / "result.dat").write_text("remote result")
+    existing = outside / "result.dat"
+    existing.write_text("preserved")
+
+    name = "*.dat" if wildcard else "result.dat"
+    local_path = local_root / "alias" / name
+    remote_path = remote_dir / name
+    executor = RemoteExecutor(LocalTransport())
+    run = RunRecord(
+        id="escaped-result", state=RunState.FINISHED,
+        created_at="2026-10-13T08:00:00+00:00",
+        updated_at="2026-10-13T08:00:00+00:00",
+        task="DOS",
+        execution=Execution(
+            endpoint_for_executor(executor),
+            WorkingDirectory(str(local_root), str(remote_root)), "backend-id",
+        ),
+        files=FileManifest(
+            outputs=(FileEntry(str(local_path), str(remote_path)),),
+            mapping=FileMapping(str(local_root), str(remote_root)),
+        ),
+    )
+    with pytest.raises(ValueError, match="outside mapped root"):
+        executor.fetch_result_files(run, (local_path,))
+    assert existing.read_text() == "preserved"
+    assert sorted(path.name for path in outside.iterdir()) == ["result.dat"]
+
+
+
+def test_fetch_validates_canonical_path_before_explicit_staging(tmp_path):
+    """An explicit destination must not bypass checks on mapped source paths."""
+    local = tmp_path / "local"
+    remote = tmp_path / "remote"
+    outside = tmp_path / "outside"
+    local.mkdir()
+    remote.mkdir()
+    outside.mkdir()
+    (local / "bad").symlink_to(outside, target_is_directory=True)
+    (remote / "bad").mkdir()
+    (remote / "bad" / "output.dat").write_bytes(b"remote")
+    canonical = local / "bad" / "output.dat"
+    staged = local / "staged-output.dat"
+    executor = RemoteExecutor(LocalTransport())
+    run = RunRecord(
+        id="escaped-staged", state=RunState.FINISHED,
+        created_at="2026-10-13T08:00:00+00:00",
+        updated_at="2026-10-13T08:00:00+00:00",
+        task="DOS",
+        execution=Execution(
+            endpoint_for_executor(executor),
+            WorkingDirectory(str(local), str(remote)), "backend-id",
+        ),
+        files=FileManifest(
+            outputs=(FileEntry(str(canonical), str(remote / "bad" / "output.dat")),),
+            mapping=FileMapping(str(local), str(remote)),
+        ),
+    )
+    with pytest.raises(ValueError, match="outside mapped root"):
+        executor.fetch_result_files(
+            run, (canonical,), destinations={str(canonical): str(staged)},
+        )
+    assert not staged.exists()
+    assert not (outside / "output.dat").exists()
+
+
+
+def test_historical_restore_preflights_all_requested_sources(tmp_path):
+    """A later invalid entry must not leave an earlier file downloaded."""
+    local = tmp_path / "local"
+    remote = tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    first = local / "first.dat"
+    second = local / "second.dat"
+    (remote / "first.dat").write_text("first")
+    (remote / "second.dat").write_text("second")
+
+    executor = RemoteExecutor(LocalTransport())
+    run = RunRecord(
+        id="preflight-restore", state=RunState.FINISHED,
+        created_at="2026-10-13T08:00:00+00:00",
+        updated_at="2026-10-13T08:00:00+00:00",
+        task="DOS",
+        execution=Execution(
+            endpoint_for_executor(executor),
+            WorkingDirectory(str(local), str(remote)), "backend-id",
+        ),
+        files=FileManifest(
+            mapping=FileMapping(str(local), str(remote)),
+            outputs=(
+                FileEntry(str(first), str(remote / "first.dat")),
+                FileEntry(str(second), str(remote / "wrong.dat")),
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="differs from mapped path"):
+        executor.fetch_result_files(run, (first, second))
+    assert not first.exists()
+    assert not second.exists()
+
+
+def test_historical_restore_preflights_staging_collisions(tmp_path):
+    local = tmp_path / "local"
+    remote = tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    first = local / "first.dat"
+    second = local / "second.dat"
+    staged = tmp_path / "staged.dat"
+    (remote / "first.dat").write_text("first")
+    (remote / "second.dat").write_text("second")
+
+    executor = RemoteExecutor(LocalTransport())
+    run = RunRecord(
+        id="colliding-restore", state=RunState.FINISHED,
+        created_at="2026-10-13T08:00:00+00:00",
+        updated_at="2026-10-13T08:00:00+00:00",
+        task="DOS",
+        execution=Execution(
+            endpoint_for_executor(executor),
+            WorkingDirectory(str(local), str(remote)), "backend-id",
+        ),
+        files=FileManifest(
+            mapping=FileMapping(str(local), str(remote)),
+            outputs=(
+                FileEntry(str(first), str(remote / "first.dat")),
+                FileEntry(str(second), str(remote / "second.dat")),
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="Conflicting restore sources"):
+        executor.fetch_result_files(
+            run, (first, second),
+            destinations={str(first): str(staged), str(second): str(staged)},
+        )
+    assert not staged.exists()
+
+
+def test_restore_existing_staging_file_is_rejected_before_any_download(tmp_path):
+    local = tmp_path / "local"
+    remote = tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    first, second = local / "first.dat", local / "second.dat"
+    (remote / "first.dat").write_text("first")
+    (remote / "second.dat").write_text("second")
+    second_stage = local / ".second.stage"
+    second_stage.write_text("unrelated")
+    executor = RemoteExecutor(LocalTransport())
+    record = RunRecord(
+        id="stage-preflight", state=RunState.FINISHED,
+        created_at="2026-10-22T00:00:00+00:00",
+        updated_at="2026-10-22T00:00:00+00:00", task="DOS",
+        execution=Execution(
+            endpoint_for_executor(executor),
+            WorkingDirectory(str(local), str(remote)), "backend-id",
+        ),
+        files=FileManifest(
+            mapping=FileMapping(str(local), str(remote)),
+            outputs=(
+                FileEntry(str(first), str(remote / "first.dat")),
+                FileEntry(str(second), str(remote / "second.dat")),
+            ),
+        ),
+    )
+    with pytest.raises(FileExistsError, match="staging destination already exists"):
+        executor.fetch_result_files(record, (first, second), destinations={
+            str(first): str(local / ".first.stage"),
+            str(second): str(second_stage),
+        })
+    assert not (local / ".first.stage").exists()
+    assert second_stage.read_text() == "unrelated"
+    assert not first.exists() and not second.exists()
+
+def test_job_files_preflights_all_remote_sources_before_first_download(tmp_path):
+    """Historical fetch must validate the entire batch before downloading."""
+
+    local = tmp_path / "local"
+    remote = tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    first, second = local / "first.dat", local / "second.dat"
+    (remote / "first.dat").write_text("first")
+    (remote / "second.dat").write_text("second")
+
+    class TrackedTransport(LocalTransport):
+        def __init__(self):
+            self.downloads = []
+
+        async def get_file(self, source, destination):
+            self.downloads.append((source, destination))
+            return await super().get_file(source, destination)
+
+    transport = TrackedTransport()
+    executor = RemoteExecutor(transport)
+    record = RunRecord(
+        id="job-files-preflight", state=RunState.FINISHED,
+        created_at="2026-10-22T00:00:00+00:00",
+        updated_at="2026-10-22T00:00:00+00:00", task="DOS",
+        execution=Execution(
+            endpoint_for_executor(executor),
+            WorkingDirectory(str(local), str(remote)), "backend-id",
+        ),
+        files=FileManifest(
+            mapping=FileMapping(str(local), str(remote)),
+            outputs=(
+                FileEntry(str(first), str(remote / "first.dat")),
+                FileEntry(str(second), str(remote / "wrong.dat")),
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="differs from mapped path"):
+        executor.fetch_result_files(record, (first, second))
+
+    assert transport.downloads == []
+    assert not first.exists()
+    assert not second.exists()
+    assert list(local.glob(".*.tmp")) == []
