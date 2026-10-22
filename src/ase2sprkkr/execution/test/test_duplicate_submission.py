@@ -9,15 +9,15 @@ from ase2sprkkr.execution import (
     Executor,
     FileEntry,
     FileManifest,
-    JobFiles,
     RunState,
     RunStore,
 )
 
 from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.job_files import JobFilesOwner
 
 
-class _Runner:
+class _Runner(JobFilesOwner):
     def __init__(self, spec, executor, callback=None):
         self.spec = spec
         self.executor = executor
@@ -29,10 +29,7 @@ class _Runner:
         self.exception = None
         self.failure_phase = None
         self.failure_message = None
-        self.job_files = JobFiles(FileManifest.from_spec(spec))
-
-    def replace_file_manifest(self, manifest):
-        return self.job_files.replace(manifest)
+        self._initialize_job_files(FileManifest.from_spec(spec))
 
     @property
     def return_code(self):
