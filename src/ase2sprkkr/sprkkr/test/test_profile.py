@@ -17,6 +17,21 @@ from ase2sprkkr.sprkkr.profile import (
 )
 
 
+def test_cleanup_policy_profile_round_trip(tmp_path):
+    from ase2sprkkr.execution import LaunchSpec
+    conf = definition.create_object()
+    conf.profiles.add("cluster").cleanup_outputs.set("remote")
+    path = tmp_path / "profile.yaml"
+    save_configuration_yaml(conf, path)
+    read = definition.create_object()
+    load_configuration_yaml(read, path)
+    profile = resolve_sprkkr_profile("cluster", configuration=read)
+    assert profile.cleanup_outputs == "remote"
+    assert profile.launch_parameters.cleanup_outputs == "remote"
+    assert LaunchSpec(cleanup_outputs=False).cleanup_outputs == "none"
+    assert LaunchSpec(cleanup_outputs=True).cleanup_outputs == "both"
+
+
 def test_profile_shell_strings_round_trip_to_runtime_argv(tmp_path):
     path = tmp_path / "config.yaml"
     config = definition.create_object()

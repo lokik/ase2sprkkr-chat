@@ -212,6 +212,14 @@ SYNC_POLICY = Keyword(
     },
     transform=None,
 )
+OUTPUT_CLEANUP = CustomMixed(
+    (Bool.I, Keyword({
+        "both": "Clear local and remote outputs.",
+        "local": "Clear local outputs only.",
+        "remote": "Clear remote outputs only.",
+        "none": "Do not clear outputs.",
+    }, transform=None)),
+)
 EXECUTOR = Keyword(
     {
         "local": "Run directly on this machine.",
@@ -310,6 +318,10 @@ definition = ConfigFileDefinition(
                     SYNC_POLICY,
                     is_optional=True,
                     info="Output-file synchronization policy for an ssh executor.",
+                ),
+                V(
+                    "cleanup_outputs", OUTPUT_CLEANUP, is_optional=True,
+                    info="Clear declared outputs at new submission: both/True (default), local, remote, none/False.",
                 ),
                 V(
                     "psij_backend",

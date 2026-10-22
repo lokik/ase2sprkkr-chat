@@ -19,6 +19,7 @@ from ..execution import (
     LaunchSpec,
 )
 from ..profiles import ase_command_profile_values
+from ..execution.file_availability import normalize_output_cleanup
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,7 @@ class LaunchParameters:
     remote_root: Any = None
     input_sync: str = "changed"
     output_sync: str = "changed"
+    cleanup_outputs: str = "both"
     mpi_warning: bool = True
 
 
@@ -55,6 +57,7 @@ class SPRKKRProfile:
     remote_command: Any = ()
     input_sync: str = "changed"
     output_sync: str = "changed"
+    cleanup_outputs: str = "both"
     psij_backend: Any = None
     psij_url: Any = None
     psij_poll_interval: Any = None
@@ -84,6 +87,7 @@ class SPRKKRProfile:
             remote_root=self.remote_root,
             input_sync=self.input_sync,
             output_sync=self.output_sync,
+            cleanup_outputs=normalize_output_cleanup(self.cleanup_outputs),
             mpi_warning=self.mpi_warning,
         )
 
@@ -130,6 +134,7 @@ class SPRKKRProfile:
             remote_root=self.remote_root,
             input_sync=self.input_sync,
             output_sync=self.output_sync,
+            cleanup_outputs=self.cleanup_outputs,
         )
         argv = [executable]
         mpi_argv = None
@@ -233,6 +238,9 @@ def _configured_profile(profile, configuration):
             changes["input_sync"] = "changed"
         if not profile.output_sync:
             changes["output_sync"] = "changed"
+        policy = normalize_output_cleanup(profile.cleanup_outputs)
+        if policy != profile.cleanup_outputs:
+            changes["cleanup_outputs"] = policy
         return replace(profile, **changes) if changes else profile
 
     if getattr(profile, "source", None) == "ase":
@@ -266,6 +274,7 @@ def _configured_profile(profile, configuration):
         remote_command=_shell_argv(_profile_value(profile, "remote_command")),
         input_sync=_profile_value(profile, "input_sync") or "changed",
         output_sync=_profile_value(profile, "output_sync") or "changed",
+        cleanup_outputs=normalize_output_cleanup(_profile_value(profile, "cleanup_outputs")),
         psij_backend=_profile_value(profile, "psij_backend"),
         psij_url=_profile_value(profile, "psij_url"),
         psij_poll_interval=_profile_value(profile, "psij_poll_interval"),
