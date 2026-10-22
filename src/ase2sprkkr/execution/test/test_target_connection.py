@@ -2,7 +2,6 @@
 import asyncio
 import json
 from dataclasses import asdict
-import json
 
 from ase2sprkkr.execution import FileManifest
 from ase2sprkkr.execution.target_connection import LocalConnection, SSHConnection
