@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import replace
 from datetime import datetime, timezone
 from threading import Event, Lock
-from typing import Protocol
+from typing import Callable, Protocol
 
 from ..common.file_versions import FileState
 from .base import (ExecutionOutcome, FailurePhase, RunState,
@@ -29,14 +29,16 @@ class CalculationRun:
     task-agnostic callable after successful raw execution.
     """
 
-    def __init__(self, runner, process_result, callback=None, *, resources=None,
+    def __init__(
+        self, runner, process_result: Callable[[ExecutionOutcome], ProcessedResult],
+        callback=None, *, resources=None,
                  persistence: RunPersistenceHooks | None = None):
         self._runner = runner
         self._process_result = process_result
         self.callback = callback
         self.persistence = persistence
         self.persistence_error = None
-        self.result = None
+        self.result: ProcessedResult | None = None
         self._resources = resources
         self._cancel_requested = Event()
         self._cancel_dispatched = False
