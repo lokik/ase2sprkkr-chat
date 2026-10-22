@@ -4,7 +4,7 @@ from threading import Event, Thread
 from types import SimpleNamespace
 
 from ..base import RunState
-from ..job_files import JobFiles, JobFilesOwner
+from ..job_files import JobFiles
 from ..run_model import FileManifest
 from ..endpoint import ExecutorEndpoint
 from ..run_model import Execution, WorkingDirectory
@@ -35,7 +35,7 @@ class _Manager:
         return SimpleNamespace(**{**vars(record), **changes})
 
 
-class _Runner(JobFilesOwner):
+class _Runner:
     state = RunState.RUNNING
     backend_id = "backend-id"
     result = SimpleNamespace(return_code=0)
@@ -311,10 +311,10 @@ def test_persistent_reservation_rejects_duplicate_before_submitting(tmp_path):
     record = manager.store.save(manager.new_record(task="DOS", directory=tmp_path))
     persistence = RunPersistence(manager, _Executor(), record)
     published = []
-    runner = SimpleNamespace(replace_file_manifest=published.append, job_files=JobFiles(record.files))
+    runner = SimpleNamespace(job_files=JobFiles(record.files))
     persistence.before_submit(runner)
     assert persistence.record.state is RunState.SUBMITTING
     with pytest.raises(RuntimeError, match="already"):
         persistence.before_submit(runner)
-    assert published == [record.files]
+    assert runner.job_files.manifest == record.files
     assert manager.store.get(record.id).state is RunState.SUBMITTING
