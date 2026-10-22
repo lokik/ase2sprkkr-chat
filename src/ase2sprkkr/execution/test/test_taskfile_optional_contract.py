@@ -41,12 +41,27 @@ def test_optional_task_files_survive_manifest_roundtrip(tmp_path):
     assert FileManifest(**asdict(files)) == files
 
 
-def test_identical_auxiliary_inputs_share_one_declared_file(tmp_path):
+def test_identical_auxiliary_inputs_are_rejected(tmp_path):
     path = tmp_path / "extra.inp"
-    files = FileManifest.from_spec(spec(tmp_path, input_files=(path, path)))
-    assert [entry.local_path for entry in files.inputs] == [
-        str(tmp_path / "input.inp"), str(path),
-    ]
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest.from_spec(spec(tmp_path, input_files=(path, path)))
+
+
+@pytest.mark.parametrize("first_optional, second_optional", [
+    (True, False), (False, True), (True, True), (False, False),
+])
+def test_repeated_auxiliary_input_never_merges_optionality(
+    tmp_path, first_optional, second_optional,
+):
+    path = str(tmp_path / "extra.inp")
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest.from_spec(spec(
+            tmp_path,
+            input_files=(
+                DeclaredPath(path, optional=first_optional),
+                DeclaredPath(path, optional=second_optional),
+            ),
+        ))
 
 
 def test_repeated_output_is_not_silently_coalesced(tmp_path):
