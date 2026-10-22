@@ -90,7 +90,7 @@ class SSHConnection:
         self._home = None
 
     async def _json_request(self, action, *args, payload=None):
-        data = None if payload is None else json.dumps(payload).encode("utf8")
+        data = None if payload is None else json.dumps(payload, default=os.fspath).encode("utf8")
         result = await self.transport.run((*self.command, action, *args), input=data)
         return json.loads(result.stdout.decode("utf8"))
 

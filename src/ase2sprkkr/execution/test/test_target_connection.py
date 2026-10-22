@@ -60,6 +60,49 @@ def test_ssh_connection_preserves_status_manifest_and_acknowledgements():
     ]
 
 
+
+def test_ssh_status_serializes_captured_file_versions(tmp_path):
+    from ase2sprkkr.common.file_versions import FileVersion
+    from ase2sprkkr.execution.run_model import FileEntry
+
+    output = tmp_path / "result.out"
+    output.write_bytes(b"historical result")
+    version = FileVersion.capture(output, require_digest=True)
+    files = FileManifest(
+        outputs=(FileEntry(local_path=str(output), remote_path="/remote/result.out"),),
+        output_versions=(version,),
+        captured_at="2026-10-22T00:00:00+00:00",
+    )
+    calls = []
+
+    class Transport:
+        async def run(self, command, input=None):
+            calls.append((command, json.loads(input)))
+            return type("Reply", (), {"stdout": b'{"state":"finished"}'})()
+
+    conn = SSHConnection(Transport(), command=("ase2sprkkr", "remote"),
+                         backend="local", backend_options={})
+    assert asyncio.run(conn.status("job", files)) == {"state": "finished"}
+    command, payload = calls.pop()
+    assert command == ("ase2sprkkr", "remote", "status", "job")
+    assert payload["files"]["output_versions"][0]["path"] == str(output)
+    assert payload["files"]["output_versions"][0]["digest"] == version.digest
+    assert FileManifest(**payload["files"]).output_versions[0] == version
+
+
+def test_ssh_json_payload_rejects_unsupported_objects():
+    import pytest
+
+    class Transport:
+        async def run(self, *args, **kwargs):
+            pytest.fail("Invalid JSON must not reach SSH")
+
+    conn = SSHConnection(Transport(), command=("ase2sprkkr", "remote"),
+                         backend="local", backend_options={})
+    with pytest.raises(TypeError):
+        asyncio.run(conn._json_request("submit", payload={"invalid": object()}))
+
+
 def test_ssh_follow_delivers_decoded_chunks_without_exposing_transport(monkeypatch):
     from ase2sprkkr.execution.target_connection import SSHConnection
     from ase2sprkkr.execution import target_connection

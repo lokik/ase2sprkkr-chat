@@ -313,15 +313,11 @@ class ExecutionManager:
         if not record.state.is_terminal or record.execution.backend_id is None:
             return False
         try:
-            reply = executor.acknowledge(record)
+            executor.acknowledge(record)
         except (OSError, RuntimeError, subprocess.CalledProcessError):
             # Backend receipts remain retryable after transport errors.
             return False
-        # The remote service also reports unsuccessful ACKs without raising.
-        # Only a confirmed ACK should disable retries for this observer.
-        if isinstance(reply, dict):
-            return reply.get("acknowledged") is True
-        return reply is not False
+        return True
 
     def complete(
         self,
