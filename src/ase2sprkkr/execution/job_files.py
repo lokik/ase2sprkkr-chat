@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
+from uuid import uuid4
 from dataclasses import replace
+from datetime import datetime, timezone
+
+from ..common.file_versions import file_digest
+from .run_model import FileAvailabilityState
 
 from .file_history import (
     capture_result_files, file_is_current, missing_result_files, sync_result_files,
@@ -79,3 +85,75 @@ class JobFiles:
                 item, availability_state="pending", availability_message=None,
             ) if item.availability_state == "failed" else item
         )
+
+    def update_availability(self, store, path, state, message=None):
+        """Update one file's availability using the latest durable record."""
+        state = FileAvailabilityState(state)
+
+        def update(latest):
+            return replace(
+                latest,
+                updated_at=datetime.now(timezone.utc).isoformat(),
+                files=latest.files.with_file_availability(path, state.value, message),
+            )
+
+        return store.update(self.record, update)
+
+    def retrieve(self, store, executor=None, *, mismatch_error=OSError):
+        """Restore historical files without modifying the terminal run outcome."""
+        record = self.record
+        if not record.state.is_terminal:
+            raise RuntimeError(f"Run {record.id} is not finished")
+        missing = self.missing_files()
+        if not missing or record.execution.backend_id is None:
+            return record
+        if executor is None or not executor.supports_result_file_retrieval:
+            return record
+
+        versions = {
+            os.path.abspath(os.fspath(version.path)): version
+            for version in record.files.all_versions
+        }
+        for path in missing:
+            path = os.path.abspath(os.fspath(path))
+            version = versions.get(path)
+            staged = (
+                Path(path).with_name(f".{Path(path).name}.{uuid4().hex}.tmp")
+                if version is not None and version.digest is not None else None
+            )
+            try:
+                if staged is None:
+                    executor.fetch_result_files(record, (path,))
+                else:
+                    executor.fetch_result_files(
+                        record, (path,), destinations={path: os.fspath(staged)},
+                    )
+                    if not staged.is_file():
+                        raise FileNotFoundError(
+                            f"Historical file was not retrieved: {path}"
+                        )
+                    if file_digest(staged) != version.digest:
+                        raise mismatch_error(
+                            f"Historical result files have been overwritten: {path}"
+                        )
+                    os.replace(staged, path)
+            except OSError as exc:
+                self.update_availability(
+                    store, path, FileAvailabilityState.FAILED, str(exc),
+                )
+                raise
+            finally:
+                if staged is not None:
+                    staged.unlink(missing_ok=True)
+            refreshed = store.get(record.id)
+            availability = (
+                FileAvailabilityState.FAILED
+                if path in missing_result_files(refreshed.files)
+                else FileAvailabilityState.AVAILABLE
+            )
+            record = JobFiles(refreshed).update_availability(
+                store, path, availability,
+                "Historical file is still missing"
+                if availability == FileAvailabilityState.FAILED else None,
+            )
+        return record
