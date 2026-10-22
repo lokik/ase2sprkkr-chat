@@ -205,3 +205,25 @@ def test_recovered_active_backend_still_blocks_reservation(tmp_path, monkeypatch
         manager.reserve(second)
     assert manager.store.get(first.id).state == RunState.RUNNING
     assert calls == [1]
+
+
+def test_unsupported_recovery_preserves_reservation(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from ase2sprkkr.execution.manager import DuplicateSubmissionError
+
+    manager = ExecutionManager(RunStore(tmp_path / "runs"), submitting_grace=0)
+    first = manager.reserve(manager.new_record(task="SCF", directory=tmp_path))
+    second = manager.new_record(task="SCF", directory=tmp_path)
+    calls = []
+
+    def unsupported(*args, **kwargs):
+        calls.append(1)
+        raise NotImplementedError
+
+    monkeypatch.setattr(manager.executors, "for_endpoint",
+                        lambda endpoint: SimpleNamespace(recover_submission=unsupported))
+    with pytest.raises(DuplicateSubmissionError):
+        manager.reserve(second)
+    assert manager.store.get(first.id).state == RunState.SUBMITTING
+    assert second.state == RunState.NEW
+    assert calls == [1]
