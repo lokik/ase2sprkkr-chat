@@ -250,13 +250,15 @@ class RunStore:
             )
             if conflicts:
                 return None, conflicts
-            record.job_files.sync_inputs()
 
             def claim(latest):
                 if latest.state != RunState.NEW:
                     raise RuntimeError("Only new runs can reserve files")
                 if latest != record:
                     raise RuntimeError("Run changed during file reservation")
+                # Do not sync inputs from a stale claim. Persist the claim
+                # only after the current manifest's inputs are durable.
+                record.job_files.sync_inputs()
                 return replace(
                     latest, state=RunState.SUBMITTING,
                     updated_at=_now(),
