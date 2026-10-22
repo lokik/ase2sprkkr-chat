@@ -23,6 +23,9 @@ class _AttachedRunner:
         self.failure_phase = None
         self.failure_message = None
 
+    def file_snapshot(self):
+        return self.files
+
     def add_output_listener(self, callback):
         pass
 
