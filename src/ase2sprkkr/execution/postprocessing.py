@@ -4,6 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from threading import Event, Lock
+from dataclasses import replace
+from datetime import datetime, timezone
+
+from ..common.file_versions import FileState
+from .file_history import file_is_current
+from .base import ExecutionOutcome
 
 from .base import (FailurePhase, RunState, SubmissionNotStarted,
                    finish_monitor)
@@ -539,12 +545,6 @@ PostprocessingRunner = CalculationRun
 
 def claim_historical_postprocessing(latest):
     """Atomically claim a retriable historical parse, validating its snapshot."""
-    from dataclasses import replace
-    from datetime import datetime, timezone
-    from .base import FailurePhase, RunState
-    from ..common.file_versions import FileState
-    from .file_history import file_is_current
-
     files = latest.files
     if (latest.state != RunState.FAILED
             or latest.failure_phase != FailurePhase.POSTPROCESSING
@@ -567,10 +567,6 @@ def claim_historical_postprocessing(latest):
 
 def parse_historical_result(reopened, process_result):
     """Parse captured output without a backend, checking for concurrent rewrites."""
-    from .base import ExecutionOutcome
-    from ..common.file_versions import FileState
-    from .file_history import file_is_current
-
     files = reopened.files
     outcome = ExecutionOutcome(
         input_file=(files.input_file if file_is_current(
