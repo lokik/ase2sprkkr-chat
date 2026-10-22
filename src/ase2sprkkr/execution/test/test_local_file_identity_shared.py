@@ -46,7 +46,8 @@ def test_cleanup_disabled_does_not_disable_collision_validation(tmp_path):
         argv=("program",), directory=str(tmp_path), input_file=str(inp),
         output_file=str(inp), launch=LaunchSpec(cleanup_outputs="none"),
     )
-    with pytest.raises(ValueError, match="overlaps protected"):
+    # FileManifest rejects the duplicate declaration before cleanup begins.
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
         prepare_local_files(spec)
     assert inp.read_text() == "input"
 

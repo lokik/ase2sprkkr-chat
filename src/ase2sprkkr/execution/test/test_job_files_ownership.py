@@ -18,12 +18,15 @@ def test_job_files_public_identity():
 
 def test_terminal_manifest_merge_preserves_only_verified_local_delivery(tmp_path):
     from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+    from ase2sprkkr.common.file_versions import FileVersion
 
     good = tmp_path / "good.dat"
     good.write_text("complete")
+    verified = FileVersion.capture(good, require_digest=True)
     vanished = tmp_path / "gone.dat"
     previous = FileManifest(outputs=(
-        FileEntry(str(good), "/remote/good", availability_state="available"),
+        FileEntry(str(good), "/remote/good", availability_state="available",
+                  verified_local_version=verified),
         FileEntry(str(vanished), "/remote/gone", availability_state="available"),
     ))
     frozen = FileManifest(outputs=(
@@ -471,7 +474,7 @@ def test_runner_owns_job_files_and_preserves_immutable_snapshots(tmp_path):
 
     spec = ExecutionSpec(
         argv=(), directory=str(tmp_path), input_file=None,
-        output_file=None, error_file=None, stdin=None, cache_files=(),
+        output_file=None, error_file=None, stdin=False, cache_files=(),
     )
     runner = LocalRunner(spec)
     assert isinstance(runner.job_files, JobFiles)

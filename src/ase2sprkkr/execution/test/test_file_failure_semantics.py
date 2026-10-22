@@ -4,10 +4,11 @@ import pytest
 
 from ase2sprkkr.execution import (
     FileAvailabilityState, FailurePhase, FileEntry,
-    FileManifest, RunState, RunStore, JobFiles,
+    FileManifest, RunState, RunStore,
 )
 
 from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.file_history import file_is_current
 
 
 def _record(tmp_path, *, initial_state=RunState.POSTPROCESSING):
@@ -139,7 +140,9 @@ def test_retry_failed_download_preserves_backend_then_captures_clean_snapshot(
     assert complete.files.failed_files == ()
     assert complete.files.captured_at is not None
     assert len(complete.files.output_versions) == 1
-    assert JobFiles.output_file_is_current(complete)
+    assert file_is_current(
+        complete.files, complete.files.output_file, complete.files.output_versions,
+    )
 
 
 def test_resume_download_retains_previously_available_files(tmp_path):

@@ -605,7 +605,9 @@ def test_job_files_reconciles_terminal_delivery(tmp_path):
     assert updated.outputs[0].availability_state == "available"
     assert old.outputs == (available,)
     assert frozen.outputs == (pending,)
-    assert updated.outputs == (available,)
+    # An availability claim without a captured version is not verified delivery.
+    assert updated.outputs[0].verified_local_version is None
+    assert updated.outputs != (available,)
 
     path.unlink()
     assert merge_terminal_files(old, frozen).outputs == (pending,)
