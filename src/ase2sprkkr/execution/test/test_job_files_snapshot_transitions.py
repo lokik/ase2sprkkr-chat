@@ -35,3 +35,26 @@ def test_stale_observation_is_filtered_before_manifest_conflict(tmp_path):
     )
     assert updated == record
     assert manager.store.get(record.id) == record
+
+
+def test_stale_pending_observation_preserves_concurrent_file_availability(tmp_path):
+    from ase2sprkkr.execution.job_files import JobFiles
+    from ase2sprkkr.execution.run_model import FileEntry
+
+    path = str(tmp_path / "result.out")
+    pending = FileManifest(outputs=(FileEntry(path, availability_state="pending"),))
+    recorded = pending.with_file_availability(path, "failed", "download error")
+    merged = JobFiles.merge_snapshot(recorded, pending)
+    assert merged.outputs[0].availability_state == "failed"
+    assert merged.outputs[0].availability_message == "download error"
+
+
+def test_explicit_file_status_update_is_not_discarded(tmp_path):
+    from ase2sprkkr.execution.job_files import JobFiles
+    from ase2sprkkr.execution.run_model import FileEntry
+
+    path = str(tmp_path / "result.out")
+    pending = FileManifest(outputs=(FileEntry(path, availability_state="pending"),))
+    failed = pending.with_file_availability(path, "failed", "download error")
+    merged = JobFiles.merge_snapshot(pending, failed)
+    assert merged.outputs[0].availability_state == "failed"
