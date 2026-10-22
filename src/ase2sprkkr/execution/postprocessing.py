@@ -34,6 +34,7 @@ class CalculationRun:
         callback=None, *, resources=None,
                  persistence: RunPersistenceHooks | None = None):
         self._runner = runner
+        self.job_files = runner.job_files
         self._process_result = process_result
         self.callback = callback
         self.persistence = persistence
@@ -100,10 +101,6 @@ class CalculationRun:
     @property
     def backend_id(self):
         return self._runner.backend_id
-
-    @property
-    def job_files(self):
-        return self._runner.job_files
 
     @property
     def exception(self):
