@@ -98,3 +98,14 @@ def test_job_files_does_not_verify_after_failed_transfer():
     ))
     assert error is cause
     assert updated.outputs[0].availability_state == "failed"
+
+
+def test_merge_snapshot_never_overwrites_captured_history():
+    from dataclasses import replace
+    from ase2sprkkr.execution.run_model import FileManifest
+
+    captured = FileManifest(captured_at="2026-10-22T00:00:00+00:00")
+    fresh = FileManifest()
+    assert JobFiles.merge_snapshot(captured, fresh) is captured
+    assert JobFiles.merge_snapshot(fresh, captured) is captured
+    assert JobFiles.merge_snapshot(None, fresh) is fresh
