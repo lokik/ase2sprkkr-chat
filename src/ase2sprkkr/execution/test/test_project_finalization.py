@@ -29,6 +29,16 @@ class _RawRunner:
         self.exception = None
         self.failure_phase = None
         self.failure_message = None
+        self.files = None
+
+    def set_manifest(self, manifest):
+        self.files = manifest
+
+    def file_snapshot(self):
+        return self.files
+
+    def prepare_submission(self):
+        return None
 
     @property
     def return_code(self):
@@ -61,12 +71,17 @@ class _Executor(Executor):
         return self.runner
 
 
+def _create_project_run(manager, executor, spec, **kwargs):
+    endpoint = manager.executors.register(executor)
+    return manager.create_run(spec, endpoint=endpoint, **kwargs)
+
+
 def test_finished_run_is_persisted_before_callback_without_wait(tmp_path):
     store = RunStore(tmp_path / "runs")
     manager = ExecutionManager(store)
     finished = Event()
-    run = manager.create_run(
-        _Executor(),
+    run = _create_project_run(
+        manager, _Executor(),
         ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
         process_result=lambda outcome: outcome,
         task="DOS",
@@ -87,8 +102,8 @@ def test_result_processor_failure_is_postprocessing_failure(tmp_path):
     def fail(_outcome):
         raise ValueError("result parsing failed")
 
-    run = manager.create_run(
-        executor,
+    run = _create_project_run(
+        manager, executor,
         ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
         process_result=fail,
         task="DOS",
@@ -128,8 +143,8 @@ def test_synchronous_completion_persists_backend_before_terminal_record(
             raise ValueError("synchronous parse failure")
         return outcome
 
-    run = manager.create_run(
-        _Executor(),
+    run = _create_project_run(
+        manager, _Executor(),
         ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
         process_result=processor, task="DOS",
     )
@@ -708,8 +723,8 @@ def test_concurrent_wait_and_completion_callback_persist_only_once(
         if callback_fails:
             raise ValueError("user callback error")
 
-    run = manager.create_run(
-        _Executor(), ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
+    run = _create_project_run(
+        manager, _Executor(), ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
         process_result=lambda outcome: outcome,
         task="DOS", callback=callback, resources=resources,
     )
@@ -820,8 +835,8 @@ def test_unknown_observation_closes_owned_streams_but_attach_can_recover(tmp_pat
             return self.attached_runner
 
     executor = ExecutorWithAttach()
-    first = manager.create_run(
-        executor, ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
+    first = _create_project_run(
+        manager, executor, ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
         task="DOS", process_result=lambda outcome: outcome,
         callback=lambda _: callbacks.append("unknown"), resources=resources,
     )
@@ -833,7 +848,7 @@ def test_unknown_observation_closes_owned_streams_but_attach_can_recover(tmp_pat
     assert callbacks == ["unknown"]
 
     recovered = manager.attach(
-        first.id, executor=executor,
+        first.id,
         process_result=lambda outcome: outcome.output_file.read(),
         callback=lambda _: callbacks.append("finished"),
     )
@@ -863,8 +878,8 @@ def test_project_persistence_failure_can_be_retried_without_resubmitting(
         return original_complete(*args, **kwargs)
 
     monkeypatch.setattr(manager, "complete", fail_once)
-    run = manager.create_run(
-        _Executor(), ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
+    run = _create_project_run(
+        manager, _Executor(), ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
         process_result=lambda result: result, task="DOS",
     )
     run.submit()
