@@ -75,3 +75,18 @@ def test_unsubmitted_record_does_not_reserve_files(tmp_path):
     next_run = manager.new_record(task="SCF", directory=tmp_path)
     assert manager.reserve(next_run).state == RunState.SUBMITTING
     assert store.get(draft.id).state == RunState.NEW
+
+
+def test_stale_claim_does_not_sync_files(tmp_path, monkeypatch):
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    original = manager.new_record(task="DOS", directory=tmp_path)
+    store.save(replace(original, dataset="newer"))
+
+    def unexpected_sync(self):
+        raise AssertionError("Stale run must not sync inputs")
+
+    from ase2sprkkr.execution.job_files import JobFiles
+    monkeypatch.setattr(JobFiles, "sync_inputs", unexpected_sync)
+    with pytest.raises(RuntimeError, match="changed during file reservation"):
+        store.reserve_files(original)
