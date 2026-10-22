@@ -434,4 +434,4 @@ def test_local_project_rejects_output_cache_collision_before_submission(tmp_path
         LocalExecutor().create_project_run(spec, run_id=RUN_ID)
     assert existing.read_text() == "restart cache"
     assert extra.read_text() == "old output"
-    assert _recover_submission(RUN_ID) is None
+    assert read_submission(RUN_ID) is None
