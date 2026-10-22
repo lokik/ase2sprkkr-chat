@@ -154,7 +154,8 @@ def test_remote_file_preparation_deduplicates_paths_before_mapping(tmp_path):
     assert runner._cache_patterns == (
         str(remote / "work" / "checkpoint-*.dat"),
     )
-    assert used == {str(remote / "work" / "restart.dat"): str(directory / "restart.dat")}
+    # An absent cache is a possible future output, not a staged input.
+    assert used == {}
 
 
 @pytest.mark.parametrize("method", ("submit", "start"))
