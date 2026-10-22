@@ -207,9 +207,13 @@ class JobFiles:
             return manifest, error
         # A failed output/cache transfer does not imply failed FOLLOW streams.
         # Verify them independently, retaining the first transfer error.
-        manifest, stream_error = await handler.verify_stream_availability(
-            manifest, spec,
-        )
+        try:
+            manifest, stream_error = await handler.verify_stream_availability(
+                manifest, spec,
+            )
+        except Exception as exc:
+            # Keep the output/cache manifest if stream verification itself fails.
+            stream_error = exc
         return manifest, error if error is not None else stream_error
 
     def update_availability(self, store, path, state, message=None):
