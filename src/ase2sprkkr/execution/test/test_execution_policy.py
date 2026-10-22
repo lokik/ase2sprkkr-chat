@@ -13,11 +13,9 @@ from ase2sprkkr.execution.base import (
 )
 from ase2sprkkr.execution.endpoint import endpoint_for_executor
 from ase2sprkkr.execution.local import LocalExecutor, LocalRunner
-from ase2sprkkr.execution.manager import (
-    ExecutionManager,
-    RunPersistence,
-    RunStore,
-)
+from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.run_persistence import RunPersistence
+from ase2sprkkr.execution.run_store import RunStore
 from ase2sprkkr.execution.postprocessing import CalculationRun
 from ase2sprkkr.execution.run_model import (
     FileAvailabilityState, FileManifest, FileEntry,

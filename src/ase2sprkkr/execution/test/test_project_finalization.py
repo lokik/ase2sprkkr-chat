@@ -779,7 +779,7 @@ def test_concurrent_wait_and_completion_callback_persist_only_once(
 def test_cancel_after_persisted_completion_does_not_touch_backend_or_store(
     tmp_path, monkeypatch, terminal,
 ):
-    from ase2sprkkr.execution.manager import RunPersistence
+    from ase2sprkkr.execution.run_persistence import RunPersistence
     from ase2sprkkr.execution.postprocessing import CalculationRun
     store = RunStore(tmp_path / "runs")
     manager = ExecutionManager(store)

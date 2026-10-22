@@ -51,7 +51,7 @@ def test_different_run_staging_policies_share_one_endpoint(tmp_path):
 def test_attach_restores_typed_manifest_without_sync_dictionary(tmp_path, monkeypatch):
     from ase2sprkkr.execution import RunState
     from ase2sprkkr.execution.endpoint import endpoint_for_executor
-    from ase2sprkkr.execution.manager import RunRecord
+    from ase2sprkkr.execution.run_record import RunRecord
     from ase2sprkkr.execution.run_model import (
         FileEntry, FileManifest, Execution, WorkingDirectory,
     )
@@ -163,7 +163,7 @@ def test_attach_closes_stdout_if_opening_stderr_fails(tmp_path, monkeypatch):
     import builtins
     from ase2sprkkr.execution import RunState
     from ase2sprkkr.execution.endpoint import endpoint_for_executor
-    from ase2sprkkr.execution.manager import RunRecord
+    from ase2sprkkr.execution.run_record import RunRecord
     from ase2sprkkr.execution.run_model import (
         Execution, FileEntry, FileManifest, WorkingDirectory,
     )

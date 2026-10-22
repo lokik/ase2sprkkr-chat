@@ -2,7 +2,7 @@
 
 from ase2sprkkr.execution import JobFiles
 from ase2sprkkr.execution.job_files import JobFiles as ModuleJobFiles
-from ase2sprkkr.execution.manager import RunRecord
+from ase2sprkkr.execution.run_record import RunRecord
 
 
 def test_job_files_public_identity():

@@ -173,7 +173,7 @@ def test_terminal_refresh_cannot_replace_manifest_or_execution(tmp_path):
 
 
 def test_terminal_persistent_run_state_does_not_query_backend(tmp_path):
-    from ase2sprkkr.execution.manager import RunPersistence
+    from ase2sprkkr.execution.run_persistence import RunPersistence
     from ase2sprkkr.execution.postprocessing import CalculationRun
 
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
@@ -270,7 +270,6 @@ def test_concurrent_completers_reuse_one_durable_terminal_snapshot(tmp_path):
 
 
 def test_terminal_retry_after_lost_fsync_confirmation(tmp_path, monkeypatch):
-    import ase2sprkkr.execution.manager as manager_module
 
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
     record = _record(manager, tmp_path)

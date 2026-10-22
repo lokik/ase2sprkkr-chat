@@ -9,7 +9,7 @@ from ase2sprkkr.execution import FileManifest
 from ase2sprkkr.execution.job_files import JobFilesOwner
 from ase2sprkkr.execution.base import ExecutionResources, RunState
 from ase2sprkkr.execution.postprocessing import CalculationRun
-from ase2sprkkr.execution.manager import RunPersistence
+from ase2sprkkr.execution.run_persistence import RunPersistence
 
 
 def _tracked(manager, executor, processed, record):
