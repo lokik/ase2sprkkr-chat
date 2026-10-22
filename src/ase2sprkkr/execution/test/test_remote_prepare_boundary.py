@@ -131,12 +131,16 @@ def test_postprocessing_rejected_submit_preserves_error_and_does_not_monitor(
 ):
     from ase2sprkkr.execution.base import FailurePhase, SubmissionNotStarted
     from ase2sprkkr.execution.postprocessing import CalculationRun
+    from ase2sprkkr.execution.job_files import JobFiles
 
     failure = SubmissionNotStarted("preflight refused")
 
     class RejectedRunner:
         state = RunState.NEW
         callback = None
+
+        def __init__(self):
+            self.job_files = JobFiles(FileManifest())
 
         def prepare_submission(self):
             if rejection_phase == "prepare":
