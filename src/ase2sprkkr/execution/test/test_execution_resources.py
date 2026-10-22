@@ -280,7 +280,7 @@ def test_failed_project_reservation_releases_prepared_resources():
     )
 
     class FailedReservation:
-        def reserve(self, record):
+        def reserve(self, record, *, spec=None, executor=None):
             raise ValueError("reservation rejected")
 
     project = _tracked(
@@ -411,7 +411,7 @@ def test_project_cancel_during_reservation_does_not_close_in_use_inputs():
     failures = []
 
     class SlowRejectedReservation:
-        def reserve(self, record):
+        def reserve(self, record, *, spec=None, executor=None):
             entered.set()
             if not release.wait(5):
                 raise TimeoutError("reservation not released")
@@ -492,7 +492,7 @@ def test_manifest_persistence_failure_does_not_submit_backend():
             super().submit()
 
     class FailingStore:
-        def reserve(self, record):
+        def reserve(self, record, *, spec=None, executor=None):
             return SimpleNamespace(state=RunState.SUBMITTING, id="reserved",
                                    updated_at="reserved", files=FileManifest())
 
@@ -584,7 +584,7 @@ def test_project_cancel_during_manifest_staging_never_submits_backend():
             super().submit()
 
     class Store:
-        def reserve(self, record):
+        def reserve(self, record, *, spec=None, executor=None):
             return SimpleNamespace(state=RunState.SUBMITTING, id="run",
                                    updated_at="reserved", files=FileManifest())
 
