@@ -141,6 +141,28 @@ def test_history_listing_is_lazy_but_loading_restores_missing_output(
         pytest.param("retrieve", HistoricalFileMismatchError, id="retrieve-files"),
     ],
 )
+def test_retrieve_rejects_existing_modified_historical_output(tmp_path):
+    manager, executor, record = _terminal_run(tmp_path)
+    output = tmp_path / "run.out"
+    output.write_text("modified after completion")
+
+    with pytest.raises(HistoricalFileMismatchError, match="modified"):
+        manager.retrieve_result_files(record.id)
+
+    assert output.read_text() == "modified after completion"
+    assert executor.fetch_calls == []
+    assert manager.store.get(record.id).files.state is FileState.OVERWRITTEN
+
+
+def test_retrieve_allows_modified_historical_input_with_intact_output(tmp_path):
+    manager, executor, record = _terminal_run(tmp_path)
+    (tmp_path / "run.inp").write_text("new input")
+    restored = manager.retrieve_result_files(record.id)
+    assert restored.id == record.id
+    assert executor.fetch_calls == []
+    assert restored.files.state is FileState.CURRENT
+
+
 def test_restored_changed_content_is_rejected_as_overwritten(
     tmp_path, monkeypatch, entrypoint, expected_error,
 ):

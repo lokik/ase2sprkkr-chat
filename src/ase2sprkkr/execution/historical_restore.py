@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from ..common.file_locks import FileLock
-from ..common.file_versions import file_digest
+from ..common.file_versions import FileState, file_digest
 from ._durability import durable_publish_new, sync_file
 from .file_history import missing_result_files
 from .run_model import FileAvailabilityState
@@ -158,11 +158,18 @@ def retrieve_historical_files(record: RunRecord, store, executor=None):
         and record.execution.backend_id is not None
     )
     missing = missing_result_files(record.files) if can_fetch else ()
+    # Reject historical output whose captured contents have been overwritten.
+    # Missing results are retrievable, but present altered results are not.
+    changed = tuple(
+        os.path.abspath(os.fspath(version.path))
+        for version in record.files.output_versions
+        if version.state() in (FileState.OVERWRITTEN, FileState.UNAVAILABLE)
+    )
     # A symlink can point at unchanged historical contents while having
     # replaced the recorded regular file. Inspect it explicitly because
     # FileVersion.state() follows the link and may call it CURRENT.
     linked = tuple(path for path in versions if os.path.islink(path))
-    paths = tuple(dict.fromkeys((*missing, *recoverable, *linked)))
+    paths = tuple(dict.fromkeys((*missing, *recoverable, *changed, *linked)))
     if not paths:
         return record
 
