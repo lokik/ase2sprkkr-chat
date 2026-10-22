@@ -899,7 +899,7 @@ def test_cancel_handles_supervisor_exit_during_ack(
     def receipt(_id):
         receipts.append(True)
         if terminal and len(receipts) >= 2:
-            return (RunState.FINISHED, 0, None, None)
+            return (RunState.FINISHED, 0, None, None, None, None)
         return None
 
     monkeypatch.setattr(remote_service, "_process_outcome", receipt)
@@ -1032,7 +1032,7 @@ def test_cancel_rechecks_status_when_supervisor_exits_before_connect(
 
     def racing_outcome(_id):
         calls.append(True)
-        return None if len(calls) == 1 else (RunState.FINISHED, 0, None, None)
+        return None if len(calls) == 1 else (RunState.FINISHED, 0, None, None, None, None)
 
     monkeypatch.setattr(remote_service, "_process_outcome", racing_outcome)
     monkeypatch.setattr(remote_service, "_process_running", lambda _: True)
@@ -1055,7 +1055,7 @@ def test_cancel_missing_supervisor_socket_never_claims_delivery(
     def receipt(_id):
         reads.append(True)
         if terminal and len(reads) == 2:
-            return (RunState.FINISHED, 0, None, None)
+            return (RunState.FINISHED, 0, None, None, None, None)
         return None
 
     monkeypatch.setattr(remote_service, "_process_outcome", receipt)
