@@ -636,7 +636,7 @@ async def _follow_scheduler_async(remote_id, streams, paths, offsets, poll_inter
         detach()
 
 
-def follow_remote(
+async def follow_remote_async(
     remote_id,
     stdout,
     stderr,
@@ -657,9 +657,7 @@ def follow_remote(
     }
 
     if handle["kind"] == "psij":
-        return asyncio.run(
-            _follow_scheduler_async(remote_id, streams, paths, offsets, poll_interval)
-        )
+        return await _follow_scheduler_async(remote_id, streams, paths, offsets, poll_interval)
     if handle["kind"] != "process":
         raise ValueError("Unknown execution backend")
     from .remote_supervisor_stream import follow_socket
@@ -684,11 +682,11 @@ def follow_remote(
         return await follow_socket(path, requested, on_chunk)
 
     try:
-        return asyncio.run(drain_from_socket())
+        return await drain_from_socket()
     except (FileNotFoundError, ConnectionRefusedError):
         # A completed supervisor has removed its transient socket. Replay
         # declared spools once, without the historical polling lifecycle.
-        status = status_remote(remote_id)
+        status = await asyncio.to_thread(status_remote, remote_id)
         if not RunState(status["state"]).is_terminal:
             raise
         if not any(path is not None for path in paths.values()):
@@ -708,3 +706,12 @@ def follow_remote(
                     streams[kind].write(data)
                     streams[kind].flush()
         return status
+
+
+def follow_remote(remote_id, stdout, stderr, *, stdout_offset=0, stderr_offset=0,
+                  poll_interval=0.1, stdout_path=None, stderr_path=None):
+    """Synchronous CLI adapter for the cancellable FOLLOW coroutine."""
+    return asyncio.run(follow_remote_async(
+        remote_id, stdout, stderr, stdout_offset=stdout_offset,
+        stderr_offset=stderr_offset, poll_interval=poll_interval,
+        stdout_path=stdout_path, stderr_path=stderr_path))
