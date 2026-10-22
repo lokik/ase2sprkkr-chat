@@ -331,3 +331,20 @@ def test_stream_verification_exception_preserves_partial_download(tmp_path):
     assert isinstance(error, OSError)
     assert str(error) == "stream verification unavailable"
     assert saved.outputs[0].availability_state == "available"
+
+
+def test_snapshot_merge_preserves_concurrent_failure_over_captured_skip(tmp_path):
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+
+    path = str(tmp_path / "result.dat")
+    previous = FileManifest(outputs=(
+        FileEntry(path, "/remote/result", availability_state="failed",
+                  availability_message="transfer failed"),
+    ))
+    captured = FileManifest(
+        outputs=(FileEntry(path, "/remote/result", availability_state="skipped"),),
+        captured_at="2026-10-22T00:00:00+00:00",
+    )
+    merged = JobFiles.merge_snapshot(previous, captured)
+    assert merged.outputs[0].availability_state == "failed"
+    assert merged.outputs[0].availability_message == "transfer failed"

@@ -149,7 +149,7 @@ class JobFiles:
             # A concurrent failed transfer invalidates speculative capture.
             return (
                 requested.captured_at is not None
-                and entry.availability_state == "available"
+                and entry.availability_state in ("available", "skipped")
                 and prior.availability_state == "failed"
             )
 
