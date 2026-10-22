@@ -636,7 +636,7 @@ def test_failed_published_history_reconciles_without_executor(tmp_path):
 
     manager, executor, record = _terminal_run(tmp_path)
     output = tmp_path / "run.out"
-    failed = record.job_files.update_availability(
+    failed = JobFiles(record.files).update_availability(record,
         manager.store, str(output), "failed", "directory fsync failed",
     )
 
@@ -644,7 +644,7 @@ def test_failed_published_history_reconciles_without_executor(tmp_path):
         raise AssertionError("Verified published bytes must not download")
 
     executor.fetch_result_files = unexpected_fetch
-    recovered = JobFiles(failed).retrieve(manager.store, executor=None)
+    recovered = JobFiles(failed.files).retrieve(failed, manager.store, executor=None)
     assert recovered.files.availability_state == FileAvailabilityState.AVAILABLE
     assert recovered.state is RunState.FINISHED
     assert output.read_text() == "original output"
@@ -655,11 +655,11 @@ def test_failed_published_history_remains_failed_without_backend_if_missing(tmp_
 
     manager, _, record = _terminal_run(tmp_path)
     output = tmp_path / "run.out"
-    failed = record.job_files.update_availability(
+    failed = JobFiles(record.files).update_availability(record,
         manager.store, str(output), "failed", "download failed",
     )
     output.unlink()
-    unchanged = JobFiles(failed).retrieve(manager.store, executor=None)
+    unchanged = JobFiles(failed.files).retrieve(failed, manager.store, executor=None)
     assert unchanged.files.availability_state == FileAvailabilityState.FAILED
     assert not output.exists()
 

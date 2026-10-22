@@ -8,7 +8,7 @@ from ase2sprkkr.execution.manager import RunRecord
 def test_job_files_public_identity():
     assert JobFiles is ModuleJobFiles
     assert JobFiles.__module__ == "ase2sprkkr.execution.job_files"
-    assert isinstance(RunRecord.job_files, property)
+    assert not hasattr(RunRecord, "job_files")
 
 
 def test_terminal_manifest_merge_preserves_only_verified_local_delivery(tmp_path):
