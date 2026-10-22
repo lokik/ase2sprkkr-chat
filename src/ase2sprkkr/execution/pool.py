@@ -20,12 +20,6 @@ class _ExecutorPool:
                 self._executors[key] = executor
             return executor
 
-    def for_endpoint(self, endpoint):
-        """Return the shared backend reconstructed from *endpoint*."""
-        from .endpoint import create_executor_from_endpoint
-
-        return self.get(endpoint, lambda: create_executor_from_endpoint(endpoint))
-
 
 class Executors:
     """Own executor registration and endpoint-scoped lookup for a manager."""
@@ -51,7 +45,10 @@ class Executors:
         return endpoint
 
     def for_endpoint(self, endpoint):
-        return self._pool.for_endpoint(self._endpoint(endpoint))
+        from .endpoint import create_executor_from_endpoint
+
+        endpoint = self._endpoint(endpoint)
+        return self._pool.get(endpoint, lambda: create_executor_from_endpoint(endpoint))
 
     def for_record(self, record):
         return self.for_endpoint(record.execution.endpoint)
