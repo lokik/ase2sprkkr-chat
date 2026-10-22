@@ -339,7 +339,7 @@ def test_uncaptured_missing_output_after_fetch_raises_and_marks_failed(tmp_path)
         record, state=RunState.FINISHED,
         execution=record.execution.submitted("job-1"),
     )
-    with pytest.raises(FileNotFoundError, match="still missing after retrieval"):
+    with pytest.raises(FileNotFoundError, match="Historical file was not retrieved"):
         manager.retrieve_result_files(record.id)
     saved = manager.store.get(record.id)
     assert saved.state is RunState.FINISHED
