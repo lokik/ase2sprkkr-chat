@@ -22,7 +22,6 @@ def test_later_primary_output_is_not_mistaken_for_uncaptured_history(tmp_path):
         error_file=None,
         stdin=None,
         input_files=(str(input_file),),
-        output_files=(str(output_file),),
         cache_files=(),
     )
     record = manager.new_record(
