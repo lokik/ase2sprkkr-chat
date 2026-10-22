@@ -207,13 +207,15 @@ class RemoteEndpointExecutor(Executor):
                     output_sync=run.files.mapping.output_sync,
                 ),
             )
+            frozen = status.get("files")
+            files = run.files if frozen is None else FileManifest(**frozen)
             runner = RemoteRunner(
                 self, spec, callback=callback, output_listener=output_listener,
                 backend_id=execution.backend_id,
                 remote_directory=execution.directory.remote,
-                files=run.files,
+                files=files,
                 state=backend_status_from_facts(
-                    status, execution.backend_id, needs_delivery=True,
+                    status, execution.backend_id, needs_delivery=True, files=files,
                 ).state,
             )
             runner._return_code = status.get("return_code")
