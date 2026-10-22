@@ -439,3 +439,40 @@ def test_discard_capture_removes_real_version_records(tmp_path):
     assert cleared.outputs == original.outputs
     assert original.input_versions == (version,)
     assert original.output_versions == (version,)
+
+
+def test_job_files_working_updates_do_not_modify_old_snapshots(tmp_path):
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+
+    path = str(tmp_path / "output.dat")
+    initial = FileManifest(outputs=(FileEntry(path, availability_state="pending"),))
+    files = JobFiles(initial)
+    first = files.snapshot()
+    files.mark_availability(path, "available")
+    second = files.snapshot()
+
+    assert first is initial
+    assert second is not first
+    assert first.outputs[0].availability_state == "pending"
+    assert second.outputs[0].availability_state == "available"
+    assert files.snapshot() is second
+
+
+def test_job_files_reconciles_stale_observation_with_working_changes(tmp_path):
+    from ase2sprkkr.execution.run_model import FileEntry, FileManifest
+
+    first, second = (str(tmp_path / name) for name in ("one.dat", "two.dat"))
+    original = FileManifest(outputs=(
+        FileEntry(first, availability_state="pending"),
+        FileEntry(second, availability_state="pending"),
+    ))
+    files = JobFiles(original)
+    observed = original.with_file_availability(first, "available")
+
+    files.mark_availability(second, "failed", "download failed")
+    combined = files.merge(observed)
+
+    assert combined.outputs[0].availability_state == "available"
+    assert combined.outputs[1].availability_state == "failed"
+    assert combined.outputs[1].availability_message == "download failed"
+    assert original.outputs[1].availability_state == "pending"
