@@ -25,7 +25,7 @@ def test_terminal_manifest_merge_preserves_only_verified_local_delivery(tmp_path
         FileEntry(str(good), "/remote/good", availability_state="pending"),
         FileEntry(str(vanished), "/remote/gone", availability_state="pending"),
     ))
-    merged = JobFiles.merge_terminal_files(previous, frozen)
+    merged = previous.merge_terminal(frozen)
     assert [file.availability_state for file in merged.outputs] == [
         "available", "pending",
     ]
@@ -43,7 +43,7 @@ def test_terminal_manifest_merge_never_overwrites_frozen_failure(tmp_path):
     frozen = FileManifest(outputs=(
         FileEntry(str(path), "/remote/output", availability_state="failed"),
     ))
-    assert JobFiles.merge_terminal_files(previous, frozen) == frozen
+    assert previous.merge_terminal(frozen) == frozen
 
 
 def test_job_files_coordinates_remote_collection_and_verification():
@@ -173,10 +173,10 @@ def test_captured_snapshot_rejects_conflicting_update():
 
     captured = FileManifest(captured_at="2026-10-22T00:00:00+00:00")
     fresh = FileManifest()
-    assert JobFiles.merge_snapshot(captured, captured) is captured
+    assert captured.merge(captured) is captured
     with pytest.raises(ValueError, match="Cannot replace a captured"):
-        JobFiles.merge_snapshot(captured, fresh)
-    assert JobFiles.merge_snapshot(fresh, captured) == captured
+        captured.merge(fresh)
+    assert fresh.merge(captured) == captured
 
 def test_capture_failure_does_not_falsely_mark_unprocessed_files_failed(monkeypatch):
     import pytest
@@ -219,7 +219,7 @@ def test_terminal_merge_does_not_restore_vanished_available_file(tmp_path):
     received = FileManifest(outputs=(
         FileEntry(missing, "/remote/vanished.dat", availability_state="pending"),
     ))
-    assert JobFiles.merge_terminal_files(previous, received) == received
+    assert previous.merge_terminal(received) == received
 
 
 def test_snapshot_merge_preserves_failed_transfer_over_stale_captured_success(tmp_path):
@@ -233,7 +233,7 @@ def test_snapshot_merge_preserves_failed_transfer_over_stale_captured_success(tm
     stale = FileManifest(outputs=(
         FileEntry(path, "/remote/result.dat", availability_state="available"),
     ), captured_at="2026-10-22T00:00:00+00:00")
-    merged = JobFiles.merge_snapshot(current, stale)
+    merged = current.merge(stale)
     assert merged.captured_at == stale.captured_at
     assert merged.outputs[0].availability_state == "failed"
     assert merged.outputs[0].availability_message == "download failed"
@@ -264,7 +264,7 @@ def test_merge_snapshot_preserves_remote_only_cache_baseline_status():
         FileEntry(remote_path="/remote/cache.dat", availability_state="pending"),
     ))
     assert previous.files == ()
-    merged = JobFiles.merge_snapshot(previous, pending)
+    merged = previous.merge(pending)
     assert merged.caches[0].availability_state == "failed"
     assert merged.caches[0].availability_message == "remote scan failed"
 
@@ -305,7 +305,7 @@ def test_snapshot_merge_preserves_concurrent_failure_over_captured_skip(tmp_path
         outputs=(FileEntry(path, "/remote/result", availability_state="skipped"),),
         captured_at="2026-10-22T00:00:00+00:00",
     )
-    merged = JobFiles.merge_snapshot(previous, captured)
+    merged = previous.merge(captured)
     assert merged.outputs[0].availability_state == "failed"
     assert merged.outputs[0].availability_message == "transfer failed"
 
@@ -351,7 +351,7 @@ def test_discard_capture_keeps_file_delivery_facts(tmp_path):
                       availability_state="failed")
     original = FileManifest(outputs=(entry,),
                             captured_at="2026-10-22T00:00:00+00:00")
-    updated = JobFiles.discard_capture(original)
+    updated = original.discard_capture()
     assert updated.captured_at is None
     assert updated.input_versions == updated.output_versions == ()
     assert updated.outputs == original.outputs
@@ -413,7 +413,7 @@ def test_discard_capture_removes_real_version_records(tmp_path):
         input_versions=(version,), output_versions=(version,),
         captured_at="2026-10-22T00:00:00+00:00",
     )
-    cleared = JobFiles.discard_capture(original)
+    cleared = original.discard_capture()
     assert cleared.captured_at is None
     assert cleared.input_versions == ()
     assert cleared.output_versions == ()

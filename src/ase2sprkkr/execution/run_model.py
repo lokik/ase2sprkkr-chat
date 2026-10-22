@@ -6,6 +6,7 @@ references.  This module contains only serializable value objects.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Optional
@@ -359,6 +360,83 @@ class FileManifest:
             *(("output", entry) for entry in self.outputs),
             *(("cache", entry) for entry in self.caches),
         ), primary_input=self.primary_input)
+
+    def _merge_availability(self, received, preserve):
+        """Reconcile matching files without altering the received membership.
+
+        FileManifest already rejects output/cache identity collisions.
+        """
+        # Remote-only caches are included even though FileManifest.files
+        # deliberately omits them. Merged streams share one physical identity.
+        recorded = {}
+        priority = {"failed": 3, "available": 2, "skipped": 1, "pending": 0, None: 0}
+        for entry in (self.stdout, self.stderr,
+                      *self.outputs, *self.caches):
+            if entry is None:
+                continue
+            identity = (entry.local_path, entry.remote_path)
+            prior = recorded.get(identity)
+            if (prior is None or
+                    priority[entry.availability_state] > priority[prior.availability_state]):
+                recorded[identity] = entry
+
+        def merged(entry):
+            if entry is None:
+                return None
+            prior = recorded.get((entry.local_path, entry.remote_path))
+            if prior is None or not preserve(prior, entry):
+                return entry
+            if (entry.availability_state == prior.availability_state
+                    and entry.availability_message == prior.availability_message):
+                return entry
+            return replace(
+                entry, availability_state=prior.availability_state,
+                availability_message=prior.availability_message,
+            )
+
+        return received._map_files(merged)
+
+    def discard_capture(self):
+        """Invalidate speculative captured versions, preserving file statuses."""
+        return replace(self, captured_at=None, input_versions=(), output_versions=())
+
+    def merge(self, requested):
+        """Do not let stale observations erase independently persisted delivery."""
+        if isinstance(requested, dict):
+            requested = FileManifest(**requested)
+        if self.captured_at is not None:
+            if requested != self:
+                raise ValueError("Cannot replace a captured file manifest")
+            return self
+
+        def preserve(prior, entry):
+            if prior.availability_state not in ("available", "failed", "skipped"):
+                return False
+            if entry.availability_state == "pending":
+                return True
+            # A concurrent failed transfer invalidates speculative capture.
+            return (
+                requested.captured_at is not None
+                and entry.availability_state in ("available", "skipped")
+                and prior.availability_state == "failed"
+            )
+
+        return self._merge_availability(requested, preserve)
+
+    def merge_terminal(self, received):
+        """Retain only still-present local deliveries in terminal facts."""
+        def preserve(prior, entry):
+            if entry.availability_state in ("failed", "skipped"):
+                return False
+            if prior.availability_state == "skipped":
+                return True
+            return (
+                prior.availability_state == "available"
+                and entry.local_path is not None
+                and os.path.isfile(entry.local_path)
+            )
+
+        return self._merge_availability(received, preserve)
 
     @property
     def files(self):

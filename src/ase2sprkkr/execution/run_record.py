@@ -8,7 +8,6 @@ import re
 from typing import Optional
 
 from .base import FailurePhase, RunState
-from .job_files import JobFiles
 from .run_model import Execution, FileManifest
 
 _RUN_RECORD_SCHEMA_VERSION = 3
@@ -140,7 +139,7 @@ class RunRecord:
         if not self.state.is_terminal and merged_state.is_terminal:
             changes["finished_at"] = now
         if not final_locked and files is not _UNCHANGED and files is not None:
-            merged_files = JobFiles.merge_snapshot(self.files, files)
+            merged_files = self.files.merge(files)
             if merged_files is not self.files:
                 changes["files"] = merged_files
         if execution is not _UNCHANGED and execution is not None:
@@ -181,5 +180,5 @@ class RunRecord:
                 changes["message"] = completed_files.availability_message or message
                 if (completed_files.captured_at is not None
                         and self.files.captured_at is None):
-                    changes["files"] = JobFiles.discard_capture(completed_files)
+                    changes["files"] = completed_files.discard_capture()
         return replace(self, **changes)
