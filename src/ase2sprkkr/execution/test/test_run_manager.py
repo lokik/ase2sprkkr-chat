@@ -457,3 +457,29 @@ def test_refresh_does_not_apply_stale_status_after_terminal_commit(tmp_path):
     assert manager.refresh((queued,)) == (finished[0],)
     assert manager.store.get(queued.id) == finished[0]
     assert finished[0].message is None
+
+
+def test_refresh_ignores_stale_scheduler_observation(tmp_path):
+    from ase2sprkkr.execution import ExecutorEndpoint
+
+    manager = _manager(tmp_path)
+    endpoint = ExecutorEndpoint(executor="custom:stale-refresh")
+    record = manager.new_record(task="DOS", directory=tmp_path, endpoint=endpoint)
+    record = manager.transition(
+        record, state=RunState.QUEUED,
+        execution=record.execution.submitted("native-1"),
+    )
+
+    class RacingExecutor:
+        def status(self, *records):
+            manager.transition(record, state=RunState.RUNNING, message="fresh")
+            return (RunStatus(state=RunState.UNKNOWN, message="stale"),)
+
+        def acknowledge_submission(self, record):
+            pass
+
+    manager.executors.register(RacingExecutor(), endpoint)
+    refreshed = manager.refresh((record,))[0]
+    assert refreshed.state is RunState.RUNNING
+    assert refreshed.message == "fresh"
+    assert manager.store.get(record.id) == refreshed
