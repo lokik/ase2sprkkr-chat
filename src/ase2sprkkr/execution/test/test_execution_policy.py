@@ -22,7 +22,7 @@ from ase2sprkkr.execution.postprocessing import CalculationRun
 from ase2sprkkr.execution.run_model import (
     FileAvailabilityState, FileManifest, FileEntry,
 )
-from ase2sprkkr.execution.job_files import JobFiles
+from ase2sprkkr.execution.job_files import JobFiles, JobFilesOwner
 from ase2sprkkr.execution.transport import LocalTransport
 
 
@@ -127,10 +127,10 @@ def test_unknown_raw_state_is_preserved_and_not_postprocessed():
     assert runner.failure_phase is None
 
 
-class _NotStartedRunner:
+class _NotStartedRunner(JobFilesOwner):
     callback = None
     def __init__(self):
-        self.job_files = JobFiles(FileManifest())
+        self._initialize_job_files(FileManifest())
 
     backend_id = None
     result = None
