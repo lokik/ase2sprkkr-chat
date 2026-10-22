@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from threading import Event
+from threading import Event, Lock
 
 from ase2sprkkr.execution import RunState
 from ase2sprkkr.execution.base import OutputObservers
@@ -18,6 +18,8 @@ def test_psij_finalization_failure_overrides_completed_backend():
     runner._return_code = None
     runner._output_observers = OutputObservers()
     runner._done = Event()
+    runner._lock = Lock()
+    runner._observation_stopped = Event()
     runner.callback = None
     runner.result = object()
 
@@ -45,6 +47,8 @@ def test_psij_observation_cleanup_failure_is_reported_before_callback():
     runner._observed_state = None
     runner._output_observers = OutputObservers()
     runner._done = Event()
+    runner._lock = Lock()
+    runner._observation_stopped = Event()
     seen = []
     runner.callback = lambda result: seen.append(result)
     runner.result = object()

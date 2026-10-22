@@ -34,7 +34,7 @@ def test_local_runners_close_unique_output_handles(monkeypatch, tmp_path, backen
 
     if backend == "local":
         async def fail_to_launch(_spec, *, stdin):
-            assert stdin is None
+            assert stdin is None or stdin is False
             raise RuntimeError("launch failed")
 
         monkeypatch.setattr("ase2sprkkr.execution.local.start_local_process", fail_to_launch)
