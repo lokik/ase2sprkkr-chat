@@ -79,6 +79,20 @@ class JobFiles:
         return received._map_files(preserve)
 
 
+    @staticmethod
+    async def collect_remote(manifest, handler, outcome, spec, *, required):
+        """Coordinate per-file download and stream verification for a run.
+
+        The handler owns I/O. The returned manifest is the sole file state;
+        successfully delivered files survive a later transfer failure.
+        """
+        manifest, error = await handler.collect(
+            manifest.mapping, manifest, outcome, required=required,
+        )
+        if error is not None or not required or manifest is None:
+            return manifest, error
+        return await handler.verify_stream_availability(manifest, spec)
+
     def retry_failed_downloads(self):
         return self.manifest._map_files(
             lambda item: replace(

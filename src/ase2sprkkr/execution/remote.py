@@ -156,8 +156,8 @@ class RemoteRunner(ManagedRunner):
                 RuntimeError(status["materialization_error"])
                 if status.get("materialization_error") else None
             )
-            self._files, transfer_error = await self.file_handler.collect(
-                self._files.mapping, self._files, self.result,
+            self._files, transfer_error = await JobFiles.collect_remote(
+                self._files, self.file_handler, self.result, self.spec,
                 required=backend_state == RunState.FINISHED,
             )
             if freeze_error is not None:
@@ -178,15 +178,6 @@ class RemoteRunner(ManagedRunner):
         self._state = backend_state
         if self._state == RunState.FAILED and self._failure_phase is None:
             self._failure_phase = FailurePhase.EXECUTION
-        if self._state == RunState.FINISHED and self._files is not None:
-            self._files, verification_error = (
-                await self.file_handler.verify_stream_availability(self._files, self.spec)
-            )
-            if verification_error is not None:
-                self._state = RunState.FAILED
-                self._failure_phase = FailurePhase.DOWNLOAD
-                self._failure_message = str(verification_error)
-                raise verification_error
 
     def set_manifest(self, files):
         """Use the exact manifest already reserved by the project layer."""
