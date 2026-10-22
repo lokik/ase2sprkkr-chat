@@ -1,12 +1,14 @@
-"""PersistentRun transaction hooks: idempotent durable finalization."""
+"""RunPersistence transaction hooks: idempotent durable finalization."""
 
 from threading import Event, Thread
 from types import SimpleNamespace
 
 from ..base import RunState
+from ..job_files import JobFiles
+from ..run_model import FileManifest
 from ..endpoint import ExecutorEndpoint
 from ..run_model import Execution, WorkingDirectory
-from ..manager import PersistentRun
+from ..manager import RunPersistence
 
 
 def _execution():
@@ -44,9 +46,8 @@ class _Runner:
     files = None
     execution = None
 
-    def file_snapshot(self):
-        from ..run_model import FileManifest
-        return FileManifest()
+    def __init__(self):
+        self.job_files = JobFiles(FileManifest())
 
     def wait(self):
         self.state = RunState.FINISHED
@@ -66,7 +67,7 @@ def test_reading_state_does_not_write_to_store():
     record = SimpleNamespace(id="run", state=RunState.RUNNING,
                              updated_at="2026-10-20T10:00:00+00:00",
                              execution=_execution())
-    run = PersistentRun(manager, executor, record)
+    run = RunPersistence(manager, executor, record)
     assert run.record.state == RunState.RUNNING
     assert manager.transitions == 0
 
@@ -76,7 +77,7 @@ def test_finalization_is_once_even_if_wait_and_callback_both_request_it():
     record = SimpleNamespace(id="run", state=RunState.RUNNING,
                              updated_at="2026-10-20T10:00:00+00:00",
                              execution=_execution())
-    run = PersistentRun(manager, executor, record)
+    run = RunPersistence(manager, executor, record)
     raw.state = RunState.FINISHED
     run.completed(raw)
     run.completed(raw)
@@ -89,7 +90,7 @@ def test_unknown_observation_is_written_once_but_not_finalized():
     record = SimpleNamespace(id="run", state=RunState.RUNNING,
                              updated_at="2026-10-20T10:00:00+00:00",
                              execution=_execution())
-    run = PersistentRun(manager, executor, record)
+    run = RunPersistence(manager, executor, record)
     raw.state = RunState.UNKNOWN
     raw.failure_message = "scheduler disconnected"
 
@@ -106,7 +107,7 @@ def test_unknown_observation_does_not_fire_completion_callback():
     record = SimpleNamespace(id="run", state=RunState.RUNNING,
                              updated_at="2026-10-20T10:00:00+00:00",
                              execution=_execution())
-    run = PersistentRun(manager, executor, record)
+    run = RunPersistence(manager, executor, record)
     delivered = []
     raw.state = RunState.UNKNOWN
     run.completed(raw)
@@ -114,7 +115,7 @@ def test_unknown_observation_does_not_fire_completion_callback():
     assert delivered == [raw.result]
 
     raw.state = RunState.FINISHED
-    new_run = PersistentRun(manager, executor, record)
+    new_run = RunPersistence(manager, executor, record)
     new_run.completed(raw)
     delivered.append(raw.result)
     assert delivered == [raw.result, raw.result]
@@ -140,7 +141,7 @@ def test_concurrent_wait_and_completion_callback_persist_and_ack_once():
         updated_at="2026-10-20T10:00:00+00:00",
         execution=_execution(),
     )
-    run = PersistentRun(manager, executor, record)
+    run = RunPersistence(manager, executor, record)
     raw.state = RunState.FINISHED
 
     def invoke(action):
@@ -187,11 +188,11 @@ def test_terminal_record_deduplicates_after_recreating_persistence():
         execution=_execution(),
     )
     raw.state = RunState.FINISHED
-    first = PersistentRun(manager, executor, record)
+    first = RunPersistence(manager, executor, record)
     first.completed(raw)
     assert manager.completions == 1
 
-    restarted = PersistentRun(manager, executor, first.record)
+    restarted = RunPersistence(manager, executor, first.record)
     assert restarted.completed(raw) is RunState.FINISHED
     assert manager.completions == 1
     # Terminal persistence is deduplicated; ACK deliberately retries after
@@ -207,13 +208,13 @@ def test_unknown_is_observation_not_terminal_state():
         execution=_execution(),
     )
     raw.state = RunState.UNKNOWN
-    first = PersistentRun(manager, executor, record)
+    first = RunPersistence(manager, executor, record)
     first.completed(raw)
     first.completed(raw)
     assert manager.transitions == 1
 
     raw.state = RunState.FINISHED
-    recovered = PersistentRun(manager, executor, first.record)
+    recovered = RunPersistence(manager, executor, first.record)
     recovered.completed(raw)
     assert manager.completions == 1
     assert executor.acknowledgements == 1
@@ -226,7 +227,7 @@ def test_restart_retries_ack_without_repeating_terminal_commit():
         updated_at="2026-10-20T10:00:00+00:00",
         execution=_execution(),
     )
-    recovered = PersistentRun(manager, executor, record)
+    recovered = RunPersistence(manager, executor, record)
     raw.state = RunState.FINISHED
     assert recovered.completed(raw) is RunState.FINISHED
     assert recovered.completed(raw) is RunState.FINISHED
@@ -252,7 +253,7 @@ def test_failed_ack_is_retryable_without_rewriting_completion():
                 raise OSError("lost reply")
 
     executor = FlakyExecutor()
-    recovered = PersistentRun(manager, executor, record)
+    recovered = RunPersistence(manager, executor, record)
     recovered.completed(raw)
     recovered.completed(raw)
     recovered.completed(raw)
@@ -288,7 +289,7 @@ def test_lost_ack_reply_after_receipt_deletion_is_safe_on_retry(tmp_path, monkey
         execution=_execution(),
     )
     raw.state = RunState.FINISHED
-    persistence = PersistentRun(manager, executor, record)
+    persistence = RunPersistence(manager, executor, record)
     assert persistence.completed(raw) is RunState.FINISHED
     assert remote_mailbox.read_outcome(receipt_id) is None
     assert manager.completions == 1
@@ -308,7 +309,7 @@ def test_persistent_reservation_rejects_duplicate_before_submitting(tmp_path):
 
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
     record = manager.store.save(manager.new_record(task="DOS", directory=tmp_path))
-    persistence = PersistentRun(manager, _Executor(), record)
+    persistence = RunPersistence(manager, _Executor(), record)
     published = []
     runner = SimpleNamespace(set_manifest=published.append)
     persistence.before_submit(runner)

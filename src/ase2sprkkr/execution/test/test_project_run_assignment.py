@@ -6,6 +6,7 @@ import pytest
 
 from ase2sprkkr.execution import (
     ExecutionManager, ExecutionSpec, Executor, ProjectRepository, RunState,
+    JobFiles, FileManifest,
 )
 
 
@@ -14,7 +15,7 @@ class _Runner:
         self.spec = spec
         self.executor = executor
         self.callback = None
-        self.files = None
+        self.job_files = JobFiles(FileManifest.from_spec(spec))
         self.state = RunState.NEW
         self.backend_id = None
         self.result = SimpleNamespace(return_code=0)
@@ -34,12 +35,6 @@ class _Runner:
     @property
     def return_code(self):
         return self.result.return_code
-
-    def set_manifest(self, manifest):
-        self.files = manifest
-
-    def file_snapshot(self):
-        return self.files
 
     def prepare_submission(self):
         pass

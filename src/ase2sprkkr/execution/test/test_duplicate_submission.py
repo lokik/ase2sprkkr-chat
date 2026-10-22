@@ -9,6 +9,7 @@ from ase2sprkkr.execution import (
     Executor,
     FileEntry,
     FileManifest,
+    JobFiles,
     RunState,
     RunStore,
 )
@@ -28,17 +29,11 @@ class _Runner:
         self.exception = None
         self.failure_phase = None
         self.failure_message = None
-        self.files = None
-
-    def set_manifest(self, manifest):
-        self.files = manifest
+        self.job_files = JobFiles(FileManifest.from_spec(spec))
 
     @property
     def return_code(self):
         return self.result.return_code
-
-    def file_snapshot(self):
-        return self.files
 
     def prepare_submission(self):
         return None

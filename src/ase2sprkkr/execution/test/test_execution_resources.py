@@ -11,12 +11,13 @@ from ase2sprkkr.execution.base import (
     RunState,
     SubmissionNotStarted,
 )
+from ase2sprkkr.execution import JobFiles, FileManifest
 from ase2sprkkr.execution.postprocessing import CalculationRun
-from ase2sprkkr.execution.manager import PersistentRun
+from ase2sprkkr.execution.manager import RunPersistence
 
 
 def _tracked(manager, executor, processed, record):
-    processed.hooks = PersistentRun(manager, executor, record)
+    processed.persistence = RunPersistence(manager, executor, record)
     return processed
 from ase2sprkkr.sprkkr.calculation import PreparedCalculation
 from ase2sprkkr.sprkkr.profile import SPRKKRProfile
@@ -83,7 +84,7 @@ class _Runner:
         self.backend_id = None
         self.failure_phase = None
         self.failure_message = None
-        self.files = None
+        self.job_files = JobFiles(FileManifest())
         self.result = ExecutionOutcome(
             input_file=None if spec is None else spec.input_file,
             output_file=None if spec is None else spec.output_file,
@@ -94,12 +95,6 @@ class _Runner:
     @property
     def state(self):
         return self._state
-
-    def set_manifest(self, files):
-        self.files = files
-
-    def file_snapshot(self):
-        return self.files
 
     def prepare_submission(self):
         return None

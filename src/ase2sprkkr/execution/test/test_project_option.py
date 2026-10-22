@@ -6,6 +6,7 @@ from ase2sprkkr.execution import (
     ExecutionOutcome,
     ProjectRepository,
     RunState,
+    JobFiles, FileManifest,
 )
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from ase2sprkkr.input_parameters.task_definition import TaskDefinition
@@ -21,7 +22,7 @@ class _Runner:
         self.state = RunState.NEW
         self.backend_id = None
         self.spec = spec
-        self.files = None
+        self.job_files = JobFiles(FileManifest())
         self.failure_phase = None
         self.failure_message = None
         self.result = ExecutionOutcome(
@@ -31,12 +32,6 @@ class _Runner:
             return_code=0,
         )
         self.exception = None
-
-    def set_manifest(self, files):
-        self.files = files
-
-    def file_snapshot(self):
-        return self.files
 
     def prepare_submission(self):
         return None

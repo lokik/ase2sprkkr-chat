@@ -8,6 +8,7 @@ from ase2sprkkr.execution import (
     RunState,
     RunStore,
     SshTransport,
+    JobFiles,
 )
 
 from ase2sprkkr.execution.manager import ExecutionManager
@@ -79,7 +80,7 @@ def test_attach_reconstructs_persisted_endpoint_without_task_reader(tmp_path):
     class AttachedRunner:
         def __init__(self, run, executor):
             self.callback = None
-            self.files = run.files
+            self.job_files = JobFiles(run.files)
             self.executor = executor
             self.backend_id = run.execution.backend_id
             self.state = RunState.RUNNING
@@ -88,9 +89,6 @@ def test_attach_reconstructs_persisted_endpoint_without_task_reader(tmp_path):
             self.failure_phase = None
             self.failure_message = None
             self._done = Event()
-
-        def file_snapshot(self):
-            return self.files
 
         def start(self):
             pass

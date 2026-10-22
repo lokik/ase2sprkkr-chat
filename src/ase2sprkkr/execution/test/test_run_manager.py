@@ -12,6 +12,7 @@ from ase2sprkkr.execution import (
     RunState,
     RunStatus,
     RunStore,
+    JobFiles, FileManifest,
 )
 
 from ase2sprkkr.execution.manager import ExecutionManager
@@ -22,7 +23,7 @@ class _RawRunner:
     def __init__(self, spec, executor, on_submit=None):
         self.spec = spec
         self.executor = executor
-        self.files = None
+        self.job_files = JobFiles(FileManifest.from_spec(spec))
         self.callback = None
         self.on_submit = on_submit
         self.state = RunState.NEW
@@ -36,12 +37,6 @@ class _RawRunner:
     @property
     def return_code(self):
         return self.result.return_code
-
-    def set_manifest(self, manifest):
-        self.files = manifest
-
-    def file_snapshot(self):
-        return self.files
 
     def prepare_submission(self):
         pass

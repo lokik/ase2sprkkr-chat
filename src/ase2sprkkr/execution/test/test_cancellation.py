@@ -5,13 +5,14 @@ from threading import Event, Thread
 
 import pytest
 
+from ase2sprkkr.execution import JobFiles, FileManifest
 from ase2sprkkr.execution.base import ExecutionResources, RunState
 from ase2sprkkr.execution.postprocessing import CalculationRun
-from ase2sprkkr.execution.manager import PersistentRun
+from ase2sprkkr.execution.manager import RunPersistence
 
 
 def _tracked(manager, executor, processed, record):
-    processed.hooks = PersistentRun(manager, executor, record)
+    processed.persistence = RunPersistence(manager, executor, record)
     return processed
 
 
@@ -32,7 +33,7 @@ class _BackendRunner:
         self.backend_id = None
         self.failure_phase = None
         self.failure_message = None
-        self.files = None
+        self.job_files = JobFiles(FileManifest())
         self.exception = None
         self.result = object()
         self.submitted = 0
@@ -40,12 +41,6 @@ class _BackendRunner:
         self.submit_entered = Event()
         self.release_submit = Event()
         self.completed = Event()
-
-    def set_manifest(self, files):
-        self.files = files
-
-    def file_snapshot(self):
-        return self.files
 
     @property
     def return_code(self):

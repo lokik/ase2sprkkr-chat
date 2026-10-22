@@ -1,6 +1,7 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
+from ase2sprkkr.execution import JobFiles
 from ase2sprkkr.execution.base import RunState
 from ase2sprkkr.execution.manager import RunRecord
 from ase2sprkkr.execution.run_model import Execution, WorkingDirectory, FileManifest, FileEntry, FileMapping
@@ -15,16 +16,13 @@ from ase2sprkkr.execution.remote_endpoint import RemoteEndpointExecutor
 class _AttachedRunner:
     def __init__(self, run):
         self.callback = None
-        self.files = run.files
+        self.job_files = JobFiles(run.files)
         self.backend_id = run.execution.backend_id
         self.result = SimpleNamespace(return_code=0)
         self.state = RunState.RUNNING
         self.exception = None
         self.failure_phase = None
         self.failure_message = None
-
-    def file_snapshot(self):
-        return self.files
 
     def add_output_listener(self, callback):
         pass

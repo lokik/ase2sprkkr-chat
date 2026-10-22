@@ -12,6 +12,7 @@ from ase2sprkkr.execution import (
     FailurePhase,
     RunState,
     RunStore,
+    JobFiles, FileManifest,
 )
 from ase2sprkkr.execution.base import ExecutionResources
 from ase2sprkkr.execution.manager import ExecutionManager
@@ -30,13 +31,7 @@ class _RawRunner:
         self.exception = None
         self.failure_phase = None
         self.failure_message = None
-        self.files = None
-
-    def set_manifest(self, manifest):
-        self.files = manifest
-
-    def file_snapshot(self):
-        return self.files
+        self.job_files = JobFiles(FileManifest())
 
     def prepare_submission(self):
         return None

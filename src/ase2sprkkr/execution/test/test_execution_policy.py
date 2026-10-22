@@ -15,13 +15,14 @@ from ase2sprkkr.execution.endpoint import endpoint_for_executor
 from ase2sprkkr.execution.local import LocalExecutor, LocalRunner
 from ase2sprkkr.execution.manager import (
     ExecutionManager,
-    PersistentRun,
+    RunPersistence,
     RunStore,
 )
 from ase2sprkkr.execution.postprocessing import CalculationRun
 from ase2sprkkr.execution.run_model import (
     FileAvailabilityState, FileManifest, FileEntry,
 )
+from ase2sprkkr.execution.job_files import JobFiles
 from ase2sprkkr.execution.transport import LocalTransport
 
 
@@ -128,19 +129,15 @@ def test_unknown_raw_state_is_preserved_and_not_postprocessed():
 
 class _NotStartedRunner:
     callback = None
-    files = None
+    def __init__(self):
+        self.job_files = JobFiles(FileManifest())
+
     backend_id = None
     result = None
     state = RunState.NEW
     exception = None
     failure_phase = None
     failure_message = None
-
-    def set_manifest(self, files):
-        self.files = files
-
-    def file_snapshot(self):
-        return self.files
 
     def prepare_submission(self):
         return None
@@ -178,7 +175,7 @@ def _project_wrapper(tmp_path, runner):
         endpoint=endpoint,
     )
     processed = CalculationRun(runner, lambda outcome: outcome)
-    processed.hooks = PersistentRun(manager, executor, record)
+    processed.persistence = RunPersistence(manager, executor, record)
     return manager, processed
 
 
@@ -217,8 +214,8 @@ def test_file_availability_failure_does_not_change_finished_state(tmp_path):
     record = manager.store.save(record)
     record = manager.transition(record, state=RunState.FINISHED)
 
-    record = record.job_files.update_availability(
-        manager.store, str(tmp_path / "out"), FileAvailabilityState.FAILED, "ssh disconnected"
+    record = JobFiles(record.files).update_availability(
+        record, manager.store, str(tmp_path / "out"), FileAvailabilityState.FAILED, "ssh disconnected"
     )
 
     assert record.state == RunState.FINISHED
