@@ -1,5 +1,17 @@
 # Port of `tasks` onto `workflow`
 
+> **Modernized on 2026-10-22:** This branch has been rebuilt from the
+> current `workflow` tip (`dfd21d18bac1`).
+> A three-way comparison with the previous `tasks-workflow` tip
+> (`b15e2cef84dd`) found 208 files with identical task-related changes,
+> 53 with independent newer changes on `workflow`, and one task-only
+> regression file (`test_persistent_option.py`). The newer `workflow`
+> implementations are retained for all 53 divergent files to avoid rolling
+> back runner, registry, validation, or SPC/NeXus fixes.
+> This updates the **base**, not the completion status of the original
+> `tasks` parity audit; outstanding checks below remain outstanding.
+> Validate the new test and full CI before integrating.
+
 This file tracks **all** functional changes to migrate. Completion requires
 comparison against the original `tasks` branch, not only a passing CI job.
 
