@@ -66,7 +66,7 @@ def test_remote_handler_is_shared_without_run_state(tmp_path):
     )
     a, b = endpoint.create_run(spec_a), endpoint.create_run(spec_b)
     assert a.file_handler is endpoint.file_handler is b.file_handler
-    assert a.files is None and b.files is None
+    assert a.file_snapshot() is None and b.file_snapshot() is None
 
     async def prepare():
         first = await a.file_handler.prepare(await endpoint.resolve_mapping(a.spec.launch), a.spec)
