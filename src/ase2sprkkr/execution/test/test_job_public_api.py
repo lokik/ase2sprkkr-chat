@@ -57,3 +57,67 @@ def test_untracked_calculation_has_no_job(tmp_path):
     )
     run = CalculationRun(LocalRunner(spec), lambda outcome: outcome)
     assert run.job is None
+
+
+def test_job_delegates_public_actions_to_existing_services(tmp_path, monkeypatch):
+    repository = ProjectRepository(tmp_path / "projects")
+    project = repository.create("Actions")
+    manager = repository.manager
+    record = manager.store.save(manager.new_record(
+        task="DOS", directory=tmp_path, project_id=project.id,
+    ))
+    job = repository.job(record.id)
+    observed = []
+
+    def retrieve(value):
+        observed.append(("restore", value))
+        return record
+
+    monkeypatch.setattr(manager, "retrieve_result_files", retrieve)
+    assert job.restore_files() == record
+    assert observed == [("restore", record.id)]
+
+    from ase2sprkkr.outputs import project_results
+    monkeypatch.setattr(
+        project_results, "load_project_result",
+        lambda owner, run_id: (owner, run_id),
+    )
+    assert job.load_result() == (manager, record.id)
+    monkeypatch.setattr(
+        project_results, "retry_project_postprocessing",
+        lambda owner, run_id: ("retried", owner, run_id),
+    )
+    assert job.retry_postprocessing() == ("retried", manager, record.id)
+    monkeypatch.setattr(
+        project_results, "attach_project_run",
+        lambda owner, run_id, **kwargs: (owner, run_id, kwargs),
+    )
+    assert job.attach(output_listener="listener") == (
+        manager, record.id, {
+            "executor": None,
+            "callback": None,
+            "output_listener": "listener",
+        },
+    )
+
+
+def test_calculation_run_job_reuses_its_persistence_manager(tmp_path):
+    from ase2sprkkr.execution.local import LocalRunner
+    from ase2sprkkr.execution.base import ExecutionSpec
+    from types import SimpleNamespace
+
+    repository = ProjectRepository(tmp_path / "projects")
+    project = repository.create("Tracked")
+    manager = repository.manager
+    record = manager.store.save(manager.new_record(
+        task="DOS", directory=tmp_path, project_id=project.id,
+    ))
+    spec = ExecutionSpec(
+        argv=(), directory=str(tmp_path), input_file=None, output_file=None,
+    )
+    persistence = SimpleNamespace(manager=manager, id=record.id)
+    run = CalculationRun(
+        LocalRunner(spec), lambda outcome: outcome, persistence=persistence,
+    )
+    assert isinstance(run.job, Job)
+    assert run.job.record == record
