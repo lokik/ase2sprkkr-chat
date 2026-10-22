@@ -331,22 +331,13 @@ def test_materialization_keeps_failed_wildcard_declaration(tmp_path, monkeypatch
     assert frozen.has_wildcards()
 
 
-def test_collect_rejects_two_remote_cache_sources_with_one_destination(tmp_path):
-    from ase2sprkkr.execution.base import ExecutionOutcome
-
+def test_manifest_rejects_two_remote_cache_sources_with_one_destination(tmp_path):
     local = tmp_path / "restart.pot"
     local.write_text("preserve")
-    manifest = FileManifest(caches=(
-        FileEntry(str(local), "/remote/cache-a.pot"),
-        FileEntry(str(local), "/remote/cache-b.pot"),
-    ))
-    endpoint = RemoteEndpointExecutor(LocalTransport())
-    context = asyncio.run(endpoint.resolve_mapping(LaunchSpec(
-        local_root=str(tmp_path), remote_root="/remote",
-    )))
-    with pytest.raises(ValueError, match="Conflicting cache sources"):
-        asyncio.run(endpoint.file_handler.collect(
-            context, manifest, ExecutionOutcome(),
+    with pytest.raises(ValueError, match="Duplicate file declaration"):
+        FileManifest(caches=(
+            FileEntry(str(local), "/remote/cache-a.pot"),
+            FileEntry(str(local), "/remote/cache-b.pot"),
         ))
     assert local.read_text() == "preserve"
 
