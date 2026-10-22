@@ -236,41 +236,56 @@ class JobFiles:
         return store.update(self.record, update)
 
     def retrieve(self, store, executor=None):
-        """Restore historical files without modifying the terminal run outcome."""
+        """Restore missing history and reconcile already-published failed files.
+
+        A captured file may be present and hash-correct after a failed
+        directory fsync. It still needs a durability retry and an atomic
+        availability update, even when no backend retrieval is available.
+        """
         record = self.record
         if not record.state.is_terminal:
             raise RuntimeError(f"Run {record.id} is not finished")
-        missing = self.missing_files()
-        if not missing or record.execution.backend_id is None:
-            return record
-        if executor is None or not executor.supports_result_file_retrieval:
-            return record
 
         versions = {
             os.path.abspath(os.fspath(version.path)): version
             for version in record.files.all_versions
         }
-        # Captured input versions are recoverable too, but inputs have no
-        # availability field: only output/cache entries may be updated through
-        # FileManifest.with_file_availability().
         tracked = {
             os.path.abspath(os.fspath(item.local_path))
             for item in record.files.files if item.local_path is not None
         }
-        for path in missing:
+        recoverable = tuple(
+            os.path.abspath(os.fspath(entry.local_path))
+            for entry in record.files.failed_files
+            if entry.local_path is not None
+            and (version := versions.get(os.path.abspath(entry.local_path))) is not None
+            and version.is_current()
+        )
+        can_fetch = (
+            executor is not None
+            and executor.supports_result_file_retrieval
+            and record.execution.backend_id is not None
+        )
+        missing = self.missing_files() if can_fetch else ()
+        paths = tuple(dict.fromkeys((*missing, *recoverable)))
+        if not paths:
+            return record
+
+        for path in paths:
             path = os.path.abspath(os.fspath(path))
-            # A historical restore must have a concrete, frozen file identity.
-            # Expanding a wildcard now would invent members absent at capture.
             if has_file_magic(path):
                 raise ValueError(
                     f"Cannot restore unresolved historical wildcard: {path}"
                 )
-            # Serialize restorers of the same concrete path, without holding
-            # a RunStore lock during network transfer.
             lock_path = Path(path).with_name(f".{Path(path).name}.restore.lock")
             with FileLock(lock_path):
+                version = versions.get(path)
+                # The file may disappear while waiting for the lock. Without
+                # an executor, leave the recorded failed state untouched.
+                if not can_fetch and (version is None or not version.is_current()):
+                    continue
                 try:
-                    restore_historical_file(record, path, versions.get(path), executor)
+                    restore_historical_file(record, path, version, executor)
                 except OSError as exc:
                     if path in tracked:
                         record = self.update_availability(
@@ -281,8 +296,6 @@ class JobFiles:
                     record = self.update_availability(
                         store, path, FileAvailabilityState.AVAILABLE,
                     )
-        # Inputs have no availability field; only their frozen versions are
-        # checked. Return the latest run without a redundant per-input read.
         return store.get(record.id)
 
 
