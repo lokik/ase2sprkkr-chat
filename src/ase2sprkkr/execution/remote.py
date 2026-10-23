@@ -128,7 +128,7 @@ class RemoteRunner(ManagedRunner):
                              ("err", self.spec.error_file)):
             if target is None:
                 offsets[kind] = None
-            elif kind == "err" and target is self.spec.output_file:
+            elif kind == "err" and self.spec.output_file is not None and os.path.samefile(self._local_path(target), self._local_path(self.spec.output_file)):
                 offsets[kind] = offsets["out"]
             else:
                 path = self._local_path(target)
