@@ -5,14 +5,13 @@ from pathlib import Path
 import pytest
 
 import ase2sprkkr.execution._durability as durability
-import ase2sprkkr.execution.manager as manager_module
+import ase2sprkkr.execution.run_store as store_module
+import ase2sprkkr.execution.file_history as file_history
 from ase2sprkkr.execution.base import RunState
 from ase2sprkkr.execution.endpoint import ExecutorEndpoint
 from ase2sprkkr.execution.run_model import FileManifest, FileEntry
-from ase2sprkkr.execution.manager import (
-    ExecutionManager,
-    RunStore,
-)
+from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.run_store import RunStore
 
 
 pytestmark = pytest.mark.skipif(
@@ -93,13 +92,13 @@ def test_durable_mkdir_syncs_parent_directory_entries(
 
 def test_run_store_uses_durable_json_writer(tmp_path, monkeypatch):
     calls = []
-    real_write = manager_module.durable_write_json
+    real_write = store_module.durable_write_json
 
     def tracked_write(path, data, **options):
         calls.append((Path(path), options))
         return real_write(path, data, **options)
 
-    monkeypatch.setattr(manager_module, "durable_write_json", tracked_write)
+    monkeypatch.setattr(store_module, "durable_write_json", tracked_write)
     store = RunStore(tmp_path / "runs")
     manager = ExecutionManager(store)
     record = manager.new_record(task="SCF", directory=tmp_path)
@@ -125,18 +124,18 @@ def test_reserve_syncs_inputs_before_submitting_record(tmp_path, monkeypatch):
     events = []
 
     monkeypatch.setattr(
-        manager_module,
+        file_history,
         "sync_file",
         lambda path: events.append(("sync", Path(path).name)),
     )
-    real_transition = manager.transition
+    real_write = store_module.durable_write_json
 
-    def tracked_transition(current, **changes):
-        if changes.get("state") == RunState.SUBMITTING:
+    def tracked_write(path, data, **options):
+        if data["state"] == RunState.SUBMITTING.value:
             events.append(("state", "submitting"))
-        return real_transition(current, **changes)
+        return real_write(path, data, **options)
 
-    monkeypatch.setattr(manager, "transition", tracked_transition)
+    monkeypatch.setattr(store_module, "durable_write_json", tracked_write)
 
     reserved = manager.reserve(record)
 
@@ -144,7 +143,29 @@ def test_reserve_syncs_inputs_before_submitting_record(tmp_path, monkeypatch):
     assert events[:2] == [("sync", "input.inp"), ("state", "submitting")]
 
 
-def test_artifact_publication_syncs_outputs_before_terminal_record(tmp_path, monkeypatch):
+
+def test_input_sync_failure_never_commits_submission(tmp_path, monkeypatch):
+    input_file = tmp_path / "input.inp"
+    input_file.write_text("input")
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    record = manager.new_record(
+        task="SCF", directory=tmp_path,
+        files=FileManifest(inputs=(FileEntry(local_path=str(input_file)),)),
+    )
+
+    def fail_sync(path):
+        raise OSError("input fsync failed")
+
+    monkeypatch.setattr(file_history, "sync_file", fail_sync)
+    with pytest.raises(OSError, match="input fsync failed"):
+        manager.reserve(record)
+    with pytest.raises(FileNotFoundError):
+        store.get(record.id)
+
+
+
+def test_file_publication_syncs_outputs_before_terminal_record(tmp_path, monkeypatch):
     output_file = tmp_path / "output.out"
     output_file.write_text("result")
     store = RunStore(tmp_path / "runs")
@@ -159,7 +180,7 @@ def test_artifact_publication_syncs_outputs_before_terminal_record(tmp_path, mon
     events = []
 
     monkeypatch.setattr(
-        manager_module,
+        file_history,
         "sync_file",
         lambda path: events.append(("sync", Path(path).name)),
     )
@@ -172,10 +193,30 @@ def test_artifact_publication_syncs_outputs_before_terminal_record(tmp_path, mon
 
     monkeypatch.setattr(manager, "transition", tracked_transition)
 
-    finalized = manager.complete(record, state=RunState.FINISHED, return_code=0, artifacts_available=True)
+    finalized = manager.complete(record, state=RunState.FINISHED, return_code=0, files_available=True)
 
     assert finalized.state == RunState.FINISHED
     assert events[:2] == [("sync", "output.out"), ("state", "finished")]
     assert len(finalized.files.output_versions) == 1
 
 
+
+
+def test_durable_write_preserves_write_error_over_temp_cleanup_error(
+    tmp_path, monkeypatch,
+):
+    original_unlink = Path.unlink
+
+    def fail_write(*args, **kwargs):
+        raise OSError("original write failure")
+
+    def fail_unlink(self, *args, **kwargs):
+        if self.name.endswith(".tmp"):
+            raise OSError("secondary cleanup failure")
+        return original_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(durability.os, "fsync", fail_write)
+    monkeypatch.setattr(Path, "unlink", fail_unlink)
+
+    with pytest.raises(OSError, match="original write failure"):
+        durability.durable_write_text(tmp_path / "state.json", "new")

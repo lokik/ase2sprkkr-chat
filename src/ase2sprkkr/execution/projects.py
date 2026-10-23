@@ -159,6 +159,8 @@ class ProjectRepository:
         self._state_lock = RLock()
         self._listeners: set[ProjectChangedListener] = set()
         self._known: dict[str, Project] = {}
+        self._run_store = None
+        self._manager = None
 
     def subscribe(self, listener: ProjectChangedListener) -> Callable[[], None]:
         """Subscribe to local or refreshed project changes."""
@@ -292,10 +294,63 @@ class ProjectRepository:
         self._notify(saved.id)
         return saved
 
+    @property
+    def runs_directory(self) -> Path:
+        return self.directory.parent / "projects_runs"
+
+    @property
+    def run_store(self):
+        """Canonical project run store, guarded across repository instances."""
+        with self._state_lock:
+            if self._run_store is None:
+                from .run_store import RunStore
+                self._run_store = RunStore(
+                    self.runs_directory, projects_directory=self.directory,
+                )
+            return self._run_store
+
+    @property
+    def manager(self):
+        """Lazily reuse one execution manager and its executor registry."""
+        with self._state_lock:
+            if self._manager is None:
+                from .manager import ExecutionManager
+                self._manager = ExecutionManager(project_repository=self)
+            return self._manager
+
+    def job(self, run_id):
+        """Open a persistent job by ID."""
+        from .job import Job
+        record = self.run_store.get(run_id)
+        if record.project_id is None:
+            raise ValueError("Run does not belong to a project")
+        self.project(record.project_id)
+        return Job(self.manager, record.id)
+
+    def jobs(self, project_id, *, newest=True):
+        """List persisted jobs belonging to one project."""
+        from .job import Job
+        canonical = self.project(project_id).id
+        records = self.run_store.runs(newest=newest)
+        return tuple(
+            Job(self.manager, record.id)
+            for record in records if record.project_id == canonical
+        )
+
+    def last_job(self, project_id):
+        """Return the most recent persisted job of a project, or None."""
+        return next(iter(self.jobs(project_id)), None)
+
     def delete(self, project_id: str, *, expected_generation: int) -> None:
         """Delete an inactive leaf project and its globally stored run history."""
         canonical = _project_id(project_id)
-        with self._hierarchy_lock(), self._project_lock(canonical):
+        run_store = self.run_store
+        # A writer holds the project-run guard before its per-record lock.
+        # Deletion takes submission -> project-run -> project-document locks,
+        # excluding both late writes and concurrent new submissions.
+        with (self._hierarchy_lock(), run_store.submission_lock(),
+              self._file_lock(self.directory / f".runs-{canonical}.lock"),
+              self._project_lock(canonical)):
             current = self._read_path(self._json_path(canonical))
             self._check_generation(
                 current,
@@ -307,26 +362,20 @@ class ProjectRepository:
             projects = self._read_projects()
             if any(item.parent_id == canonical for item in projects):
                 raise ProjectDeleteError("Projects with child projects cannot be deleted")
-            from .manager import RunStore
-            run_store = RunStore(self.directory.parent / "projects_runs")
-            with run_store.submission_lock():
-                histories = tuple(
-                    record for record in run_store.runs()
-                    if record.project_id == canonical
-                )
-                if any(not record.state.is_terminal for record in histories):
-                    raise ProjectDeleteError("Cannot delete a project with active runs")
-                try:
-                    self._json_path(canonical).unlink()
-                    fsync_directory(self.directory)
-                    for record in histories:
-                        record_path = run_store._path(record)
-                        record_path.unlink(missing_ok=True)
-                        fsync_directory(record_path.parent)
-                except OSError as exc:
-                    raise ProjectRepositoryError(
-                        f"Cannot delete project {canonical!r}: {exc}"
-                    ) from exc
+            histories = tuple(
+                record for record in run_store.runs()
+                if record.project_id == canonical
+            )
+            if any(not record.state.is_terminal for record in histories):
+                raise ProjectDeleteError("Cannot delete a project with active runs")
+            try:
+                self._json_path(canonical).unlink()
+                fsync_directory(self.directory)
+                run_store.delete_records(histories)
+            except OSError as exc:
+                raise ProjectRepositoryError(
+                    f"Cannot delete project {canonical!r}: {exc}"
+                ) from exc
 
         with self._state_lock:
             self._known.pop(canonical, None)

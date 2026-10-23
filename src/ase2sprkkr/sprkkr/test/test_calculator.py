@@ -195,7 +195,8 @@ class TestCalculator:
         reread = SPRKKR.InputParameters.create("scf").read_output_from_file(output.output_file)
         assert output.output_file == reread.output_file
         assert len(reread.iterations) == 2
-        output.plot(filename=str(tmp_path / "output_test_calc.png"))
+        # The test checks that a plot is created, not its print resolution.
+        output.plot(filename=str(tmp_path / "output_test_calc.png"), dpi=72)
 
         atoms.calc = calculator
         assert isinstance(atoms.get_potential_energy(), float)

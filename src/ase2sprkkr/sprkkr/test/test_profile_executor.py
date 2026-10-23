@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from ase2sprkkr.configuration import definition
-from ase2sprkkr.execution import ExecutorPool, LocalExecutor, RunState, SshTransport
+from ase2sprkkr.execution import ExecutionManager, LocalExecutor, RunState, SshTransport
 from ase2sprkkr.execution.remote_endpoint import RemoteEndpointExecutor
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from ase2sprkkr.input_parameters.task_definition import TaskDefinition
@@ -12,7 +12,6 @@ from ase2sprkkr.sprkkr import calculation as calculation_module
 from ase2sprkkr.sprkkr.calculation import PreparedCalculation
 from ase2sprkkr.sprkkr.profile import (
     SPRKKRProfile,
-    executor_from_profile,
     resolve_sprkkr_profile,
 )
 
@@ -63,7 +62,7 @@ def test_named_ssh_profile_resolves_executor_settings(monkeypatch):
 
 
 def test_local_profile_creates_local_executor():
-    executor = executor_from_profile(SPRKKRProfile())
+    executor = ExecutionManager().executors.for_endpoint(SPRKKRProfile().endpoint)
 
     assert isinstance(executor, LocalExecutor)
 
@@ -81,7 +80,7 @@ def test_ssh_profile_creates_endpoint_only_executor():
         output_sync="always",
     )
 
-    executor = executor_from_profile(profile)
+    executor = ExecutionManager().executors.for_endpoint(profile.endpoint)
 
     assert isinstance(executor, RemoteEndpointExecutor)
     assert isinstance(executor.transport, SshTransport)
@@ -105,68 +104,74 @@ def test_ssh_profile_creates_endpoint_only_executor():
 
 def test_ssh_profile_requires_host():
     with pytest.raises(ValueError, match="requires 'host'"):
-        executor_from_profile(SPRKKRProfile(executor="ssh"))
+        ExecutionManager().executors.for_endpoint(SPRKKRProfile(executor="ssh").endpoint)
 
 
 def test_psij_profile_creates_configured_executor(monkeypatch):
     created = []
 
     class FakePsijExecutor:
-        def __init__(self, backend, *, url=None):
+        def __init__(self, backend, *, url=None, poll_interval=None):
             self.backend = backend
             self.url = url
-            created.append((backend, url))
+            self.poll_interval = poll_interval
+            created.append((backend, url, poll_interval))
 
     monkeypatch.setattr("ase2sprkkr.execution.psij.PsijExecutor", FakePsijExecutor)
-    monkeypatch.setattr(
-        "ase2sprkkr.execution.pool.default_executor_pool",
-        lambda: ExecutorPool(),
-    )
 
-    executor = executor_from_profile(
+    executor = ExecutionManager().executors.for_endpoint(
         SPRKKRProfile(
             executor="psij",
             psij_backend="slurm",
             psij_url="local://scheduler",
-        )
+        ).endpoint
     )
 
     assert isinstance(executor, FakePsijExecutor)
-    assert created == [("slurm", "local://scheduler")]
+    assert created == [("slurm", "local://scheduler", None)]
 
 
 def test_unknown_runtime_executor_is_rejected():
     with pytest.raises(ValueError, match="unsupported execution endpoint"):
-        executor_from_profile(SPRKKRProfile(executor="custom"))
+        ExecutionManager().executors.for_endpoint(SPRKKRProfile(executor="custom").endpoint)
 
 
 def test_profile_executor_is_selected_before_mpi_resolution(monkeypatch, tmp_path):
     parameters = InputParameters.create("DOS")
     parameters.CONTROL.DATASET = "test"
     parameters.CONTROL.POTFIL = "test.pot"
+    from ase2sprkkr.execution import JobFiles, FileManifest, LaunchSpec
     backend_runner = SimpleNamespace(
         state=RunState.NEW,
         result=object(),
         reference=None,
         exception=None,
+        callback=None,
+        job_files=JobFiles(FileManifest()),
         add_output_listener=lambda callback: None,
     )
     calls = []
 
     class FakeExecutor:
-        def resolve_mpi(self, value):
-            calls.append(("resolve_mpi", value))
-            return False
+        def resolve_spec(self, spec):
+            calls.append(("resolve_spec", spec.launch.mpi))
+            return spec
 
         def create_run(self, spec, callback=None):
+            # Resolution belongs to the executor factory, not CalculationRun.
+            spec = self.resolve_spec(spec)
             calls.append(("create_run", spec.argv))
             return backend_runner
 
     fake_executor = FakeExecutor()
+    class FakeExecutors:
+        def for_endpoint(self, endpoint):
+            calls.append(("factory", endpoint.executor))
+            return fake_executor
+
     monkeypatch.setattr(
-        calculation_module,
-        "executor_from_profile",
-        lambda profile: calls.append(("factory", profile.executor)) or fake_executor,
+        "ase2sprkkr.execution.persistence.default_executors",
+        lambda: FakeExecutors(),
     )
     monkeypatch.setattr(
         TaskDefinition,
@@ -202,7 +207,7 @@ def test_profile_executor_is_selected_before_mpi_resolution(monkeypatch, tmp_pat
     try:
         assert result.result is None  # Postprocessing starts only after submit
         assert calls[0] == ("factory", "ssh")
-        assert calls[1] == ("resolve_mpi", 8)
+        assert calls[1] == ("resolve_spec", LaunchSpec.from_mpi(8).mpi)
         assert calls[2][0] == "create_run"
     finally:
         result.close()

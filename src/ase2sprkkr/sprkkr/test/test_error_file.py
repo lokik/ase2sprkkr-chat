@@ -8,6 +8,7 @@ from ...input_parameters.input_parameters import InputParameters
 from ...potentials.potentials import Potential
 
 from ...execution.base import RunState
+from ...execution import Executor, JobFiles, FileManifest
 from ..calculator import SPRKKR
 from ..profile import SPRKKRProfile
 
@@ -15,18 +16,18 @@ from ..profile import SPRKKRProfile
 class _UnstartedRunner:
     def __init__(self, spec):
         self.spec = spec
+        self.job_files = JobFiles(FileManifest.from_spec(spec))
         self.state = RunState.NEW
         self.result = None
         self.reference = None
         self.exception = None
+        self.callback = None
 
     def add_output_listener(self, callback):
         pass
 
 
-class _Executor:
-    def resolve_mpi(self, mpi):
-        return mpi
+class _Executor(Executor):
 
     def create_run(self, spec, callback=None):
         return _UnstartedRunner(spec)
@@ -60,7 +61,7 @@ def test_default_error_file_is_output_file_plus_err(tmp_path, lightweight_input_
         output_name = runner.spec.output_file.name
         assert runner.spec.error_file.name == output_name + ".err"
         assert runner.spec.error_file is not runner.spec.output_file
-        assert runner.spec.error_file in runner.spec.output_files
+        assert runner.spec.error_file not in runner.spec.output_files
     finally:
         runner.close()
 
@@ -72,9 +73,7 @@ def test_error_file_true_explicitly_merges_with_output(tmp_path, lightweight_inp
     )
     try:
         assert runner.spec.error_file is runner.spec.output_file
-        assert sum(
-            item is runner.spec.output_file for item in runner.spec.output_files
-        ) == 1
+        assert runner.spec.output_file not in runner.spec.output_files
     finally:
         runner.close()
 

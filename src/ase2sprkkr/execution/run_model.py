@@ -13,6 +13,7 @@ from typing import Optional
 from ..common.file_versions import FileState, FileVersion
 
 from .endpoint import ExecutorEndpoint
+from .file_identity import same_local_file
 
 
 @dataclass(frozen=True)
@@ -63,8 +64,8 @@ class Execution:
 
 
 
-class ArtifactAvailabilityState(str, Enum):
-    """Availability of a declared local artifact."""
+class FileAvailabilityState(str, Enum):
+    """Availability of a declared local file."""
 
     PENDING = "pending"
     AVAILABLE = "available"
@@ -80,48 +81,61 @@ class FileEntry:
     remote_path: Optional[str] = None
     availability_state: Optional[str] = None
     availability_message: Optional[str] = None
-    source_pattern: Optional[str] = None
+    source: Optional[str] = None
+    pre_run_signature: Optional[tuple] = None
+    verified_local_version: Optional[FileVersion] = None
     optional: bool = False
 
     def __post_init__(self):
         import os
-        if self.source_pattern is not None:
-            object.__setattr__(self, "source_pattern", os.fspath(self.source_pattern))
+        if self.source is not None:
+            object.__setattr__(self, "source", os.fspath(self.source))
 
-        for name in ("local_path", "remote_path"):
-            value = getattr(self, name)
-            if value is not None:
-                object.__setattr__(self, name, os.fspath(value))
+        if self.local_path is not None:
+            object.__setattr__(self, "local_path", os.fspath(self.local_path))
+        if self.remote_path is not None:
+            object.__setattr__(self, "remote_path", os.fspath(self.remote_path))
+        if self.pre_run_signature is not None:
+            object.__setattr__(self, "pre_run_signature", tuple(self.pre_run_signature))
+        if isinstance(self.verified_local_version, dict):
+            object.__setattr__(
+                self, "verified_local_version",
+                FileVersion(**self.verified_local_version),
+            )
+        if (self.verified_local_version is not None
+                and not isinstance(self.verified_local_version, FileVersion)):
+            raise TypeError("verified_local_version must be a FileVersion")
+        if self.availability_state != FileAvailabilityState.AVAILABLE:
+            object.__setattr__(self, "verified_local_version", None)
         if type(self.optional) is not bool:
             raise TypeError("FileEntry.optional must be a bool")
         if self.local_path is None and self.remote_path is None:
             raise ValueError("A file entry must have at least one location")
         if self.availability_state is not None:
             try:
-                availability = ArtifactAvailabilityState(self.availability_state)
+                availability = FileAvailabilityState(self.availability_state)
             except ValueError as exc:
                 raise ValueError("Invalid per-file availability state") from exc
             # Persist JSON-compatible strings, not implementation-specific enums.
             object.__setattr__(self, "availability_state", availability.value)
         if (
             self.availability_message is not None
-            and self.availability_state != ArtifactAvailabilityState.FAILED
+            and self.availability_state != FileAvailabilityState.FAILED
         ):
             raise ValueError("An availability error belongs to a failed file")
 
-
-@dataclass(frozen=True)
-class CacheEntry:
-    """Cache identity and its pre-execution remote signature."""
-
-    file: FileEntry
-    before: Optional[tuple] = None
-
-    def __post_init__(self):
-        if isinstance(self.file, dict):
-            object.__setattr__(self, "file", FileEntry(**self.file))
-        if self.before is not None:
-            object.__setattr__(self, "before", tuple(self.before))
+    def verified_delivery_is_current(self):
+        """Whether a recorded successful delivery still has its original contents."""
+        version = self.verified_local_version
+        if (self.availability_state != FileAvailabilityState.AVAILABLE
+                or self.local_path is None or version is None
+                or not version.available):
+            return False
+        import os
+        return (
+            os.path.abspath(os.fspath(version.path)) == os.path.abspath(self.local_path)
+            and version.is_current()
+        )
 
 
 class FileSyncPolicy(str, Enum):
@@ -169,6 +183,115 @@ class FileMapping:
         object.__setattr__(self, "input_sync", input_sync.value)
         object.__setattr__(self, "output_sync", output_sync.value)
 
+    def map_path(self, path):
+        """Map an existing local path without querying the target service."""
+        import os
+        import posixpath
+        from pathlib import Path
+        root = Path(self.local_root).expanduser().resolve()
+        local = Path(path).expanduser().resolve()
+        try:
+            relative = local.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"Local path {local} is outside mapped root {root}") from exc
+        return posixpath.join(self.remote_root, *relative.parts)
+
+    def unmap_path(self, path):
+        """Map target path back, rejecting lexical and symlink escapes."""
+        import os
+        import posixpath
+        from pathlib import Path, PurePosixPath
+        remote = posixpath.normpath(os.fspath(path))
+        if not posixpath.isabs(remote):
+            raise ValueError(f"Remote path must be absolute: {remote}")
+        try:
+            inside = posixpath.commonpath((self.remote_root, remote)) == self.remote_root
+        except ValueError:
+            inside = False
+        if not inside:
+            raise ValueError(f"Remote path {remote} is outside mapped root {self.remote_root}")
+        relative = posixpath.relpath(remote, self.remote_root)
+        root = Path(self.local_root).expanduser().resolve()
+        local = root if relative == "." else root.joinpath(*PurePosixPath(relative).parts)
+        try:
+            local.resolve().relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"Local path {local} is outside mapped root {root}") from exc
+        return local
+
+
+def _validate_file_declarations(entries):
+    """Reject duplicate file identities, except intentionally merged streams.
+
+    Remote-only cache baselines are metadata, not file declarations.
+    """
+    import os
+    import posixpath
+    import fnmatch
+    from .transport import has_file_magic
+
+    declared = []
+    for role, entry in entries:
+        if entry is None:
+            continue
+        if role == "cache" and entry.local_path is None:
+            continue
+        for previous_role, previous in declared:
+            same_local = same_local_file(entry.local_path, previous.local_path)
+            same_remote = (
+                entry.remote_path is not None and previous.remote_path is not None
+                and posixpath.normpath(entry.remote_path)
+                == posixpath.normpath(previous.remote_path)
+            )
+            roles = {role, previous_role}
+            if roles in ({"stdout", "output"}, {"stderr", "output"}):
+                for literal, pattern in ((entry.local_path, previous.local_path),
+                                         (previous.local_path, entry.local_path)):
+                    if (literal is not None and pattern is not None
+                            and not has_file_magic(literal)
+                            and has_file_magic(pattern)
+                            and fnmatch.fnmatchcase(os.path.normpath(literal),
+                                                   os.path.normpath(pattern))):
+                        same_local = True
+            if roles in ({"stdout", "output"}, {"stderr", "output"}):
+                for literal, pattern in ((entry.remote_path, previous.remote_path),
+                                         (previous.remote_path, entry.remote_path)):
+                    if (literal is not None and pattern is not None
+                            and not has_file_magic(literal)
+                            and has_file_magic(pattern)
+                            and fnmatch.fnmatchcase(posixpath.normpath(literal),
+                                                   posixpath.normpath(pattern))):
+                        same_remote = True
+            if not same_local and not same_remote:
+                continue
+            # An expanded wildcard may repeat an exact output/cache member,
+            # but the same local destination must not have different sources.
+            # Cross-role output/cache collisions are never permitted.
+            if (same_local
+                    and (entry.source is not None or previous.source is not None)
+                    and role == previous_role and role in ("output", "cache")
+                    and (entry.remote_path is None or previous.remote_path is None
+                         or same_remote)):
+                continue
+            # Multiple local destinations may deliberately retrieve the same
+            # remote result. Only a shared *destination* is a collision.
+            if (same_remote and not same_local
+                    and role == previous_role and role in ("output", "cache")):
+                continue
+            if {role, previous_role} == {"stdout", "stderr"}:
+                if (entry.local_path is None or previous.local_path is None
+                        or not same_local
+                        or (entry.remote_path is not None
+                            and previous.remote_path is not None
+                            and not same_remote)):
+                    raise ValueError("Merged stdout/stderr must share one file")
+                continue
+            raise ValueError(
+                f"Duplicate file declaration: {previous_role} and {role} "
+                f"refer to the same file"
+            )
+        declared.append((role, entry))
+
 
 @dataclass(frozen=True)
 class FileManifest:
@@ -176,87 +299,84 @@ class FileManifest:
 
     inputs: tuple[FileEntry, ...] = ()
     outputs: tuple[FileEntry, ...] = ()
-    caches: tuple[CacheEntry, ...] = ()
+    caches: tuple[FileEntry, ...] = ()
     stdout: Optional[FileEntry] = None
     stderr: Optional[FileEntry] = None
     mapping: Optional[FileMapping] = None
     input_versions: tuple[FileVersion, ...] = ()
     output_versions: tuple[FileVersion, ...] = ()
     captured_at: Optional[str] = None
+    stdin: bool = False
 
     @classmethod
     def from_spec(cls, spec):
         """Build the local file manifest for an execution specification."""
         import os
 
-        from .base import declared_file_paths, file_path
+        from .base import file_path
 
         directory = os.path.abspath(os.fspath(spec.directory))
 
-        primary_value = getattr(spec, "input_file", None)
-        primary_input = file_path(primary_value, directory)
-        if primary_input is not None and getattr(primary_value, "optional", False):
-            raise ValueError(
-                f"Primary input {primary_input} cannot be declared optional"
+        def entries(*values):
+            return tuple(
+                FileEntry(local_path=path, optional=getattr(value, "optional", False))
+                for value in values
+                if (path := file_path(value, directory)) is not None
             )
-        inputs = declared_file_paths(
-            (primary_value, *getattr(spec, "input_files", ())),
-            directory,
-        )
-        stdout = file_path(getattr(spec, "output_file", None), directory)
-        stderr = file_path(getattr(spec, "error_file", None), directory)
-        # Output duplicates are ambiguous: the later execution manifest
-        # rejects them instead of silently weakening file ownership.
-        output_values = getattr(spec, "output_files", ())
-        outputs = []
-        output_paths = set()
-        for value in output_values:
-            path = file_path(value, directory)
-            if path is None or path in {stdout, stderr}:
-                continue
-            if path in output_paths:
-                raise ValueError(f"Duplicate file declaration: output {path}")
-            output_paths.add(path)
-            outputs.append((path, not getattr(value, "optional", False)))
-        # Input declarations may refer to the same physical input (including
-        # the primary file), and stdout/stderr may share a destination. Other
-        # declaration collisions are errors, not silent deduplication.
-        input_paths = {path for path, _required in inputs}
-        stdin = file_path(getattr(spec, "stdin", None), directory)
-        read_paths = input_paths | ({stdin} if stdin is not None else set())
-        write_paths = output_paths | ({p for p in (stdout, stderr) if p is not None})
-        if read_paths & write_paths:
-            raise ValueError("Duplicate file declaration: input/output collision")
-        caches = []
-        seen_caches = set()
-        for value in getattr(spec, "cache_files", ()):
-            path = file_path(value, directory)
-            if path is None:
-                continue
-            if path in seen_caches:
-                raise ValueError(f"Duplicate file declaration: cache {path}")
-            seen_caches.add(path)
-            if path in read_paths or path in write_paths:
-                raise ValueError(f"Duplicate file declaration: cache collision {path}")
-            caches.append(CacheEntry(FileEntry(
-                local_path=path, optional=getattr(value, "optional", False),
-            )))
+
+        # stdin names the first input, not a second file declaration.
+        # Keep distinct regular inputs in their original order, moving stdin
+        # to the front when the caller supplied a separate stream.
+        primary = spec.input_file
+        if primary is not None and getattr(primary, "optional", False):
+            raise ValueError("Primary calculation input cannot be declared optional")
+        values = [value for value in (primary, *spec.input_files)
+                  if value is not None]
+        if spec.stdin is None:
+            raise ValueError("ExecutionSpec.stdin=None is ambiguous; use False to disable stdin")
+        stdin = spec.stdin is not False
+        if stdin:
+            if getattr(spec.stdin, "optional", False):
+                raise ValueError("Standard input cannot be optional")
+            stdin_path = file_path(spec.stdin, directory, required=True)
+            from .file_identity import same_local_file
+            position = next(
+                (i for i, value in enumerate(values)
+                 if same_local_file(file_path(value, directory), stdin_path)),
+                None,
+            )
+            if position is None:
+                values.insert(0, spec.stdin)
+            elif position:
+                values.insert(0, values.pop(position))
+        # stdin references one existing declaration (or is inserted above).
+        # Independently declared inputs must remain distinct: coalescing them
+        # hides accidental repeated declarations and optionality mistakes.
+        inputs = entries(*values)
+        if stdin and inputs[0].optional:
+            raise ValueError("Standard input cannot be optional")
+        stdout = file_path(spec.output_file, directory)
+        stderr = file_path(spec.error_file, directory)
+        outputs = entries(*spec.output_files)
+        caches = entries(*spec.cache_files)
+
         return cls(
-            inputs=tuple(FileEntry(local_path=path, optional=not required)
-                         for path, required in inputs),
-            outputs=tuple(FileEntry(local_path=path, optional=not required)
-                          for path, required in outputs),
-            caches=tuple(caches),
+            inputs=inputs,
+            stdin=stdin,
+            outputs=outputs,
+            caches=caches,
             stdout=None if stdout is None else FileEntry(local_path=stdout),
             stderr=None if stderr is None else FileEntry(local_path=stderr),
         ).initialize_availability()
 
     def __post_init__(self):
-        for name, cls in (("inputs", FileEntry), ("outputs", FileEntry), ("caches", CacheEntry)):
-            items = getattr(self, name)
+        for name in ("inputs", "outputs", "caches"):
             object.__setattr__(
                 self, name,
-                tuple(item if isinstance(item, cls) else cls(**item) for item in items),
+                tuple(
+                    item if isinstance(item, FileEntry) else FileEntry(**item)
+                    for item in getattr(self, name)
+                ),
             )
         for name in ("stdout", "stderr"):
             item = getattr(self, name)
@@ -272,101 +392,239 @@ class FileManifest:
                     for version in getattr(self, name)
                 ),
             )
+        if type(self.stdin) is not bool:
+            raise TypeError("FileManifest.stdin must be a bool")
+        if self.stdin:
+            from .transport import has_file_magic
+            if not self.inputs:
+                raise ValueError("stdin=True requires at least one input")
+            first = self.inputs[0]
+            if any(has_file_magic(path) for path in
+                   (first.local_path, first.remote_path) if path is not None):
+                raise ValueError("The first input used as stdin cannot be a wildcard")
+        _validate_file_declarations((
+            *(("input", entry) for entry in self.inputs),
+            ("stdout", self.stdout),
+            ("stderr", self.stderr),
+            *(("output", entry) for entry in self.outputs),
+            *(("cache", entry) for entry in self.caches),
+        ))
+
     @property
-    def artifacts(self):
-        """Output streams, declared outputs and caches (one status per local file)."""
-        entries = (self.stdout, self.stderr, *self.outputs, *(x.file for x in self.caches))
+    def files(self):
+        """Distinct downloadable file states; shared streams count only once.
+
+        Output/cache destination collisions are rejected at declaration time.
+        Differing availability states must still remain separately visible.
+        """
         unique = {}
-        for entry in entries:
-            if entry is not None and entry.local_path is not None:
-                unique[entry.local_path] = entry
+        for entry in (self.stdout, self.stderr, *self.outputs, *self.caches):
+            if entry is None or entry.local_path is None:
+                continue
+            key = (
+                entry.local_path, entry.remote_path,
+                entry.availability_state, entry.availability_message,
+            )
+            unique.setdefault(key, entry)
         return tuple(unique.values())
 
     @property
-    def failed_artifacts(self):
-        return tuple(x for x in self.artifacts if x.availability_state == "failed")
+    def download_files(self):
+        """Concrete remote files and their individual delivery states.
+
+        Before wildcard materialization, unresolved declarations do not count
+        as downloadable files. Each returned FileEntry has local_path,
+        remote_path, availability_state and (when verified) its file version.
+        """
+        from .transport import has_file_magic
+
+        return tuple(
+            entry for entry in self.files
+            if entry.remote_path is not None
+            and not has_file_magic(entry.remote_path)
+            and not has_file_magic(entry.local_path)
+        )
+
+    @property
+    def failed_files(self):
+        return tuple(x for x in self.files if x.availability_state == "failed")
 
     @property
     def availability_state(self):
         """Derived summary for callers; never stored independently."""
-        statuses = tuple(x.availability_state for x in self.artifacts)
+        statuses = tuple(x.availability_state for x in self.files)
         if "failed" in statuses:
             return "failed"
-        if not statuses or None in statuses or "pending" in statuses:
+        if None in statuses or "pending" in statuses:
             return "pending"
-        if all(x == "skipped" for x in statuses):
-            return "skipped"
+        if "skipped" in statuses:
+            return "partial" if "available" in statuses else "skipped"
+        # Empty membership is a successfully resolved absence of downloads.
         return "available"
 
     @property
     def availability_message(self):
-        failures = self.failed_artifacts
-        return None if not failures else failures[0].availability_message
+        failures = self.failed_files
+        if failures:
+            return failures[0].availability_message
+        return None
+
+    def with_mapping(self, mapping: FileMapping):
+        """Resolve all roles once and reject any change to a reserved target.
+
+        FileManifest owns placement. Reservation and staging must use this
+        identical validation before any file transfer takes place.
+        """
+        if self.mapping is not None and self.mapping != mapping:
+            raise ValueError("Submission mapping differs from reserved mapping")
+
+        def mapped(entry):
+            if entry is None or entry.local_path is None:
+                return entry
+            remote = mapping.map_path(entry.local_path)
+            if entry.remote_path is not None and entry.remote_path != remote:
+                raise ValueError("Submission path differs from reserved path")
+            return entry if entry.remote_path == remote else replace(
+                entry, remote_path=remote,
+            )
+
+        return replace(
+            self,
+            inputs=tuple(mapped(entry) for entry in self.inputs),
+            outputs=tuple(mapped(entry) for entry in self.outputs),
+            caches=tuple(mapped(entry) for entry in self.caches),
+            stdout=mapped(self.stdout),
+            stderr=mapped(self.stderr),
+            mapping=mapping,
+        )
 
     def with_remote_stream_paths(self, *, stdout=None, stderr=None):
-        """Update recovered stream locations without changing artifact identity.
+        """Update recovered stream locations without changing file identity.
 
         Missing or empty recovered paths do not replace persisted locations.
         A stream that was not recorded remains absent.
         """
         changes = {}
-        for name, remote in (("stdout", stdout), ("stderr", stderr)):
-            current = getattr(self, name)
-            if remote and current is not None:
-                changes[name] = replace(current, remote_path=remote)
+        for name, path in (("stdout", stdout), ("stderr", stderr)):
+            entry = getattr(self, name)
+            if not path or entry is None or path == entry.remote_path:
+                continue
+            if self.mapping is not None and entry.local_path is not None:
+                expected = self.mapping.map_path(entry.local_path)
+                if path != expected:
+                    raise ValueError(
+                        f"Recovered {name} path {path} does not match "
+                        f"the file mapping: {expected}"
+                    )
+            changes[name] = replace(entry, remote_path=path)
         return replace(self, **changes) if changes else self
 
     def initialize_availability(self):
         """Mark declared downloadable files pending without marking inputs."""
-        return self._map_artifacts(
+        return self._map_files(
             lambda item: replace(item, availability_state="pending")
             if item.availability_state is None else item
         )
 
-    def _map_artifacts(self, transform):
+    def _map_files(self, transform, *, kind=None):
+        """Transform delivery state for selected file roles without copying unchanged facts."""
+        if kind not in (None, "output", "cache"):
+            raise ValueError(f"Unknown file kind: {kind!r}")
+        output_files = kind in (None, "output")
+        cache_files = kind in (None, "cache")
+        stdout = (
+            None if self.stdout is None else transform(self.stdout)
+        ) if output_files else self.stdout
+        stderr = (
+            None if self.stderr is None else transform(self.stderr)
+        ) if output_files else self.stderr
+        outputs = tuple(transform(entry) for entry in self.outputs) if output_files else self.outputs
+        caches = tuple(transform(entry) for entry in self.caches) if cache_files else self.caches
+        if (stdout == self.stdout and stderr == self.stderr
+                and outputs == self.outputs and caches == self.caches):
+            return self
         return replace(
-            self,
-            stdout=None if self.stdout is None else transform(self.stdout),
-            stderr=None if self.stderr is None else transform(self.stderr),
-            outputs=tuple(transform(x) for x in self.outputs),
-            caches=tuple(replace(x, file=transform(x.file)) for x in self.caches),
+            self, stdout=stdout, stderr=stderr,
+            outputs=outputs, caches=caches,
+        )
+
+    def retry_failed_downloads(self):
+        """Reopen only failed deliveries, never input declarations.
+
+        A successful earlier download stays available across retry. The
+        original backend identity and all file membership remain unchanged.
+        """
+        return self._map_files(
+            lambda item: replace(
+                item, availability_state="pending", availability_message=None,
+            ) if item.availability_state == "failed" else item
         )
 
     def with_file_availability(
         self, local_path, state, message=None, *,
-        remote_path=None, kind="output", source_pattern=None,
+        remote_path=None, kind=None, verified_local_version=None,
     ):
-        """Update one artifact, adding each wildcard match as it is discovered.
+        """Update one declared file identity; never register new members.
 
-        The pattern declaration retains its own independent status. A child's
-        source_pattern identifies the declaration, including after restart.
-        Duplicate stream/output declarations of one path are updated together.
+        A shared stdout/stderr destination is one output identity when both
+        entries name the same remote file. Ambiguous output/cache destinations
+        or distinct remote sources require an explicit kind or remote path.
         """
         import os
+
+        if kind not in (None, "output", "cache"):
+            raise ValueError(f"Unknown file kind: {kind!r}")
         path = os.fspath(local_path)
-        matches = any(x.local_path == path for x in self.artifacts)
-        if matches:
-            return self._map_artifacts(
-                lambda item: replace(
-                    item,
-                    availability_state=state,
-                    availability_message=message,
-                ) if item.local_path == path else item
-            )
-        file = FileEntry(
-            local_path=path, remote_path=remote_path,
-            availability_state=state, availability_message=message,
-            source_pattern=source_pattern,
+        groups = (
+            ("output", (self.stdout, self.stderr, *self.outputs)),
+            ("cache", self.caches),
         )
-        if kind == "output":
-            return replace(self, outputs=(*self.outputs, file))
-        if kind == "cache":
-            return replace(self, caches=(*self.caches, CacheEntry(file)))
-        raise ValueError(f"Unknown artifact kind: {kind!r}")
+        identities = {
+            (category, entry.remote_path)
+            for category, entries in groups if kind is None or kind == category
+            for entry in entries
+            if entry is not None and entry.local_path == path
+            and (remote_path is None or entry.remote_path == remote_path)
+        }
+        if len(identities) > 1:
+            raise ValueError(
+                f"Ambiguous file destination {path}: specify kind or remote_path"
+            )
+        if identities:
+            selected_kind, selected_remote = next(iter(identities))
+
+            def update(entry):
+                if (entry is not None and entry.local_path == path
+                        and entry.remote_path == selected_remote):
+                    return replace(
+                        entry, availability_state=state,
+                        availability_message=message,
+                        verified_local_version=verified_local_version,
+                    )
+                return entry
+
+            return self._map_files(update, kind=selected_kind)
+
+        raise KeyError(f"File is not declared in manifest: {path}")
+
+    def has_wildcards(self):
+        """Whether any declared output/cache path still needs materializing."""
+        from .transport import has_file_magic
+        return any(
+            entry is not None and
+            has_file_magic(entry.remote_path or entry.local_path)
+            for entry in (*self.outputs, *self.caches)
+            if entry.local_path is not None
+        )
 
     @property
     def input_file(self):
         return self.inputs[0].local_path if self.inputs else None
+
+    @property
+    def input_entries(self):
+        """Declared inputs; stdin is a reference to the first entry."""
+        return self.inputs
 
     @property
     def output_file(self):
@@ -374,7 +632,8 @@ class FileManifest:
 
     @property
     def input_files(self):
-        return tuple(entry.local_path for entry in self.inputs if entry.local_path is not None)
+        return tuple(dict.fromkeys(entry.local_path for entry in self.input_entries
+                                   if entry.local_path is not None))
 
     @property
     def output_files(self):

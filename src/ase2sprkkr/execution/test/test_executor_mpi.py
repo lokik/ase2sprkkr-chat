@@ -10,13 +10,13 @@ from ...execution import (
     LocalExecutor,
     MpiNotFoundWarning,
     MpiSpec,
-    RemoteEndpointExecutor,
     RunState,
 )
+from ...execution import JobFiles, FileManifest
 from ...execution.local import materialize_local_spec
+from ...execution.target_connection import SSHConnection
 from ...input_parameters.input_parameters import InputParameters
 from ...input_parameters.task_definition import TaskDefinition
-from ...sprkkr import calculation as calculation_module
 from ...sprkkr.calculation import PreparedCalculation
 from ...sprkkr.profile import SPRKKRProfile
 
@@ -53,17 +53,19 @@ def test_input_parameters_preserve_mpi_launch_intent(tmp_path, monkeypatch):
     runner = SimpleNamespace(
         state=RunState.NEW,
         result=object(),
+        callback=None,
+        job_files=JobFiles(FileManifest()),
         reference=None,
         exception=None,
     )
 
     class Executor:
-        def resolve_mpi(self, mpi):
-            seen["executor_mpi"] = mpi
-            return LaunchSpec.from_mpi(mpi)
+        def resolve_spec(self, spec):
+            seen["executor_mpi"] = spec.launch.mpi
+            return spec
 
         def create_run(self, spec, callback=None):
-            seen["spec"] = spec
+            seen["spec"] = self.resolve_spec(spec)
             return runner
 
     profile = SPRKKRProfile(mpi="auto")
@@ -79,17 +81,17 @@ def test_input_parameters_preserve_mpi_launch_intent(tmp_path, monkeypatch):
         )
 
         assert created.result is None  # Unsubmitted postprocessing has no result
-        assert seen["executor_mpi"] == "auto"
+        assert seen["executor_mpi"] == LaunchSpec.from_mpi("auto").mpi
         assert seen["spec"].argv == ("kkrscf",)
         assert seen["spec"].mpi_argv == ("kkrscfMPI", input_file.name)
         assert seen["spec"].launch == LaunchSpec.from_mpi("auto")
         assert seen["spec"].stdin is input_file
-        assert seen["spec"].mpi_uses_stdin is False
+        assert seen["spec"].mpi_stdin is False
         created.close()
 
 
 def test_mpi_process_count_is_portable_launch_intent():
-    assert LocalExecutor().resolve_mpi(16) == LaunchSpec(
+    assert LaunchSpec.from_mpi(16) == LaunchSpec(
         mpi=MpiSpec(required=True, autodetect=True, process_count=16)
     )
 
@@ -114,6 +116,7 @@ def test_local_executor_materializes_mpi_on_execution_host(monkeypatch, tmp_path
 
     assert resolved.argv == ("srun", "-n", "16", "kkrscfMPI", input_file.name)
     assert resolved.stdin is input_file
+    assert resolved.mpi_argv is None
     input_file.close()
 
 
@@ -170,38 +173,23 @@ def test_local_auto_mpi_fallback_respects_warning_option(monkeypatch, tmp_path, 
 
 
 @pytest.mark.parametrize("warn", (True, False), ids=("warn", "silent"))
-def test_remote_endpoint_mpi_warning_probe_respects_option(monkeypatch, warn):
-    endpoint = object.__new__(RemoteEndpointExecutor)
-    endpoint.backend = "local"
+def test_remote_ssh_connection_mpi_preflight_before_submit(monkeypatch, warn):
+    connection = SSHConnection(
+        SimpleNamespace(), command=("ase2sprkkr", "remote"),
+        backend="local", backend_options={},
+    )
     calls = []
 
     async def request(action, *args, payload=None):
-        calls.append((action, args, payload))
-        if action == "resolve-mpi":
-            return {"mpi": None}
-        return {"state": "queued", "directory": "/remote/run"}
+        calls.append(action)
+        return {"mpi": None} if action == "resolve-mpi" else {"state": "queued"}
 
-    monkeypatch.setattr(endpoint, "_json_request", request)
-    payload = {
-        "directory": "/remote/run",
-        "launch": {
-            "mpi": {
-                "required": False,
-                "autodetect": True,
-                "launcher": [],
-                "process_count": None,
-                "warning": warn,
-            }
-        },
-    }
-
+    monkeypatch.setattr(connection, "_json_request", request)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        asyncio.run(endpoint._submit(payload))
-
-    assert [call[0] for call in calls] == (
-        ["resolve-mpi", "submit"] if warn else ["submit"]
-    )
+        assert asyncio.run(connection.resolve_mpi(MpiSpec(autodetect=True, warning=warn))) is None
+        assert asyncio.run(connection.submit({"directory": "/remote/run"}))["state"] == "queued"
+    assert calls == ["resolve-mpi", "submit"]
     assert len(caught) == int(warn)
     if warn:
         assert issubclass(caught[0].category, MpiNotFoundWarning)
@@ -220,24 +208,31 @@ def test_explicit_local_executor_overrides_remote_profile(tmp_path, monkeypatch)
     runner = SimpleNamespace(
         state=RunState.NEW,
         result=object(),
+        callback=None,
+        job_files=JobFiles(FileManifest()),
         reference=None,
         exception=None,
     )
     seen = {}
 
     class ExplicitLocalExecutor(LocalExecutor):
-        def resolve_mpi(self, mpi):
-            seen["mpi"] = mpi
-            return LaunchSpec()
+        def resolve_spec(self, spec):
+            seen["mpi"] = spec.launch.mpi
+            return __import__("dataclasses").replace(
+                spec, mpi_argv=None, launch=LaunchSpec(),
+            )
 
         def create_run(self, spec, callback=None):
-            seen["spec"] = spec
+            seen["spec"] = self.resolve_spec(spec)
             return runner
 
-    def must_not_resolve_profile(profile):
+    def must_not_resolve_default_manager():
         raise AssertionError("explicit executor was replaced by the profile backend")
 
-    monkeypatch.setattr(calculation_module, "executor_from_profile", must_not_resolve_profile)
+    monkeypatch.setattr(
+        "ase2sprkkr.execution.persistence.default_executors",
+        must_not_resolve_default_manager,
+    )
 
     profile = SPRKKRProfile(executor="ssh", host="cluster", mpi="auto")
     executor = ExplicitLocalExecutor()
@@ -253,7 +248,7 @@ def test_explicit_local_executor_overrides_remote_profile(tmp_path, monkeypatch)
         )
 
         assert created.result is None  # Unsubmitted postprocessing has no result
-        assert seen["mpi"] == "auto"
+        assert seen["mpi"] == LaunchSpec.from_mpi("auto").mpi
         assert seen["spec"].argv == ("kkrscf",)
         assert seen["spec"].mpi_argv is None
         assert seen["spec"].launch == LaunchSpec()
@@ -271,7 +266,7 @@ def test_mpi_stdin_is_explicit_and_serial_fallback_is_unchanged(monkeypatch, tmp
         stdin=str(tmp_path / "separate-stdin.dat"),
     )
     assert materialize_local_spec(spec).stdin == spec.stdin
-    disabled = materialize_local_spec(
-        __import__("dataclasses").replace(spec, mpi_uses_stdin=False)
+    selected = materialize_local_spec(
+        __import__("dataclasses").replace(spec, mpi_stdin="mpi-only.dat")
     )
-    assert disabled.stdin is None
+    assert selected.stdin == "mpi-only.dat"

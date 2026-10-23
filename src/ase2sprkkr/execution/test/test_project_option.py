@@ -1,12 +1,16 @@
 from types import SimpleNamespace
 
+import pytest
+
 from ase2sprkkr.execution import (
     ExecutionManager,
     Executor,
     ExecutionOutcome,
     ProjectRepository,
     RunState,
+    FileManifest,
 )
+from ase2sprkkr.execution.job_files import JobFiles
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from ase2sprkkr.input_parameters.task_definition import TaskDefinition
 from ase2sprkkr.sprkkr import calculation as calculation_module
@@ -17,9 +21,13 @@ from ase2sprkkr.sprkkr.profile import SPRKKRProfile
 
 class _Runner:
     def __init__(self, callback=None, *, spec=None):
-        self._callback = callback
+        self.callback = callback
         self.state = RunState.NEW
         self.backend_id = None
+        self.spec = spec
+        self.job_files = JobFiles(FileManifest())
+        self.failure_phase = None
+        self.failure_message = None
         self.result = ExecutionOutcome(
             input_file=None if spec is None else spec.input_file,
             output_file=None if spec is None else spec.output_file,
@@ -28,14 +36,21 @@ class _Runner:
         )
         self.exception = None
 
+    def prepare_submission(self):
+        return None
+
+    @property
+    def return_code(self):
+        return self.result.return_code
+
     def submit(self):
         self.backend_id = "job-1"
         self.state = RunState.QUEUED
 
     def wait(self):
         self.state = RunState.FINISHED
-        if self._callback:
-            self._callback(self.result)
+        if self.callback:
+            self.callback(self.result)
         return self.result
 
     def run(self):
@@ -48,15 +63,15 @@ class _Runner:
     def add_output_listener(self, callback):
         pass
 
+    def add_output_error_listener(self, callback):
+        pass
+
 
 class _Executor(Executor):
     name = "fake"
 
     def __init__(self):
         self.runners = []
-
-    def resolve_mpi(self, mpi=None):
-        return False
 
     def create_run(self, spec, callback=None):
         runner = _Runner(callback, spec=spec)
@@ -103,7 +118,7 @@ def _parameters(monkeypatch, task="DOS"):
 def _manager(tmp_path):
     projects = ProjectRepository(tmp_path / "projects")
     project = projects.create("Calculation project")
-    return ExecutionManager(project_repository=projects).for_project(project)
+    return ExecutionManager(project_repository=projects), project.id
 
 
 def _runner(parameters, tmp_path, manager, executor=None):
@@ -124,7 +139,7 @@ def _project_record(parameters, tmp_path):
     runner = _runner(parameters, tmp_path, manager)
     assert runner.id
     runner.run()
-    return manager.store.get(runner.id)
+    return manager[0].store.get(runner.id)
 
 
 def test_explicit_manager_persists_task_and_dataset(tmp_path, monkeypatch):
@@ -139,18 +154,13 @@ def test_explicit_manager_persists_task_and_dataset(tmp_path, monkeypatch):
     assert record.state == RunState.FINISHED
 
 
-def test_persistence_uses_task_selected_by_shared_schema_values(tmp_path, monkeypatch):
+def test_persistence_rejects_task_with_incompatible_input_schema(tmp_path, monkeypatch):
     parameters = _parameters(monkeypatch, "ARPES")
-    # ARPES and SPLEED now have distinct parameter schemas: change_task()
-    # must perform the switch rather than changing TASK.TASK directly.
-    parameters.change_task("SPLEED")
+    parameters.TASK.TASK = "SPLEED"
 
-    record = _project_record(parameters, tmp_path)
-
-    assert parameters.task_name == "SPLEED"
-    assert record.task == "SPLEED"
-    assert record.input_definition == parameters.definition_name.upper()
-    assert not hasattr(record, "requested_task")
+    assert parameters.requested_task_name == "ARPES"
+    with pytest.raises(RuntimeError, match="different input schema"):
+        _project_record(parameters, tmp_path)
 
 
 def test_persistence_keeps_ase2sprkkr_task_distinct_from_sprkkr_task_value(
@@ -166,15 +176,16 @@ def test_persistence_keeps_ase2sprkkr_task_distinct_from_sprkkr_task_value(
     assert record.input_definition == "BSF"
 
 
-def test_project_bound_manager_is_preserved_by_execution_adapter(tmp_path, monkeypatch):
+def test_explicit_project_identity_is_preserved_by_execution_adapter(tmp_path, monkeypatch):
     parameters = _parameters(monkeypatch)
     manager = _manager(tmp_path)
-    project = manager.projects.project(manager.project_id)
+    executor_manager, project_id = manager
+    project = executor_manager.projects.project(project_id)
     runner = _runner(parameters, tmp_path, manager)
 
     runner.submit()
 
-    assert manager.store.get(runner.id).id == runner.id
+    assert executor_manager.store.get(runner.id).id == runner.id
     runner.cancel()
 
 
@@ -211,15 +222,21 @@ def test_run_level_profile_selects_executor_instead_of_calculator_executor(
     prepared = _Prepared(parameters, input_file, output_file, tmp_path)
 
     monkeypatch.setattr(calculator, "prepare", lambda **kwargs: prepared)
+    selected_endpoints = []
+
+    def select_profile_endpoint(endpoint):
+        selected_endpoints.append(endpoint)
+        return profile_executor
+
     monkeypatch.setattr(
-        calculation_module,
-        "executor_from_profile",
-        lambda selected: profile_executor,
+        "ase2sprkkr.execution.persistence.default_executors",
+        lambda: SimpleNamespace(for_endpoint=select_profile_endpoint),
     )
 
     runner = calculator.create_run(profile=profile)
     try:
         assert len(profile_executor.runners) == 1
         assert calculator_executor.runners == []
+        assert selected_endpoints == [profile.endpoint]
     finally:
         runner.close()

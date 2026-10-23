@@ -1,16 +1,22 @@
-from threading import Event
+import io
+from threading import Event, Thread
 from types import SimpleNamespace
 
 import pytest
 
 import ase2sprkkr.outputs.project_results as project_output
+from ase2sprkkr.execution.job_files import JobFiles
+
 from ase2sprkkr.execution import (
     ExecutionOutcome,
+    ExecutionSpec,
     Executor,
     FailurePhase,
     RunState,
     RunStore,
+    JobFiles, FileManifest,
 )
+from ase2sprkkr.execution.base import ExecutionResources
 from ase2sprkkr.execution.manager import ExecutionManager
 from ase2sprkkr.outputs.project_results import (
     UnrecoverableProjectResultError,
@@ -20,12 +26,17 @@ from ase2sprkkr.outputs.project_results import (
 
 class _RawRunner:
     def __init__(self):
+        self.callback = None
         self.state = RunState.NEW
         self.backend_id = None
         self.result = ExecutionOutcome(return_code=0)
         self.exception = None
         self.failure_phase = None
         self.failure_message = None
+        self.job_files = JobFiles(FileManifest())
+
+    def prepare_submission(self):
+        return None
 
     @property
     def return_code(self):
@@ -34,6 +45,8 @@ class _RawRunner:
     def submit(self):
         self.backend_id = "job-1"
         self.state = RunState.FINISHED
+        if self.callback is not None:
+            self.callback(self.result)
 
     def wait(self):
         return self.result
@@ -53,16 +66,22 @@ class _Executor(Executor):
 
     def create_project_run(self, spec, *, run_id, callback=None):
         self.runner = _RawRunner()
+        self.runner.spec = spec  # The factory exposes the concrete execution spec.
         return self.runner
+
+
+def _create_project_run(manager, executor, spec, **kwargs):
+    endpoint = manager.executors.register(executor)
+    return manager.create_run(spec, endpoint=endpoint, **kwargs)
 
 
 def test_finished_run_is_persisted_before_callback_without_wait(tmp_path):
     store = RunStore(tmp_path / "runs")
     manager = ExecutionManager(store)
     finished = Event()
-    run = manager.create_run(
-        _Executor(),
-        SimpleNamespace(directory=str(tmp_path)),
+    run = _create_project_run(
+        manager, _Executor(),
+        ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
         process_result=lambda outcome: outcome,
         task="DOS",
         callback=lambda result: finished.set(),
@@ -82,9 +101,9 @@ def test_result_processor_failure_is_postprocessing_failure(tmp_path):
     def fail(_outcome):
         raise ValueError("result parsing failed")
 
-    run = manager.create_run(
-        executor,
-        SimpleNamespace(directory=str(tmp_path)),
+    run = _create_project_run(
+        manager, executor,
+        ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
         process_result=fail,
         task="DOS",
     )
@@ -98,6 +117,53 @@ def test_result_processor_failure_is_postprocessing_failure(tmp_path):
     assert record.failure_phase == FailurePhase.POSTPROCESSING
     assert record.message == "result parsing failed"
     assert record.finished_at is not None
+
+
+@pytest.mark.parametrize("processor_fails", (False, True))
+def test_synchronous_completion_persists_backend_before_terminal_record(
+    tmp_path, monkeypatch, processor_fails,
+):
+    """Submission ACK must never see an incomplete terminal record."""
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    acknowledged = []
+
+    def acknowledge(_executor, record):
+        persisted = store.get(record.id)
+        acknowledged.append(persisted)
+        assert persisted.execution.backend_id == "job-1"
+        assert not persisted.state.is_terminal
+        assert persisted.finished_at is None
+
+    monkeypatch.setattr(manager, "_acknowledge_submission", acknowledge)
+
+    def processor(outcome):
+        if processor_fails:
+            raise ValueError("synchronous parse failure")
+        return outcome
+
+    run = _create_project_run(
+        manager, _Executor(),
+        ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
+        process_result=processor, task="DOS",
+    )
+    run.submit()
+    assert len(acknowledged) == 1
+    if processor_fails:
+        with pytest.raises(ValueError, match="synchronous parse failure"):
+            run.wait()
+    else:
+        assert run.wait().return_code == 0
+
+    persisted = store.get(run.id)
+    assert persisted.state == (RunState.FAILED if processor_fails else RunState.FINISHED)
+    assert persisted.failure_phase == (
+        FailurePhase.POSTPROCESSING if processor_fails else None
+    )
+    assert persisted.message == (
+        "synchronous parse failure" if processor_fails else None
+    )
+    assert persisted.finished_at is not None
 
 
 def test_unrecoverable_processor_reconstruction_fails_postprocessing(tmp_path):
@@ -197,7 +263,7 @@ def test_attaching_failed_download_reopens_transfer_without_resubmitting(
     manager.complete(
         record, state=RunState.FAILED, return_code=0,
         failure_phase=FailurePhase.DOWNLOAD,
-        message="connection dropped", artifacts_available=False,
+        message="connection dropped", files_available=False,
     )
     import ase2sprkkr.outputs.project_results as project_results
 
@@ -236,7 +302,7 @@ def test_failed_download_reader_construction_does_not_reopen_run(tmp_path, monke
     )
     failed = manager.complete(
         record, state=RunState.FAILED, return_code=0,
-        failure_phase=FailurePhase.DOWNLOAD, artifacts_available=False,
+        failure_phase=FailurePhase.DOWNLOAD, files_available=False,
     )
 
     def broken_reader(*args):
@@ -270,7 +336,7 @@ def test_postprocessing_retry_uses_saved_files_without_backend(tmp_path):
     failed = manager.complete(
         record, state=RunState.FAILED, return_code=0,
         failure_phase=FailurePhase.POSTPROCESSING,
-        message="transient parse error", artifacts_available=True,
+        message="transient parse error", files_available=True,
     )
     assert failed.files.captured_at is not None
     calls = []
@@ -306,7 +372,7 @@ def test_postprocessing_retry_failure_is_retryable_and_does_not_resubmit(tmp_pat
     )
     failed = manager.complete(
         record, state=RunState.FAILED, return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING, artifacts_available=True,
+        failure_phase=FailurePhase.POSTPROCESSING, files_available=True,
     )
     def broken(_outcome):
         raise ValueError("parse failed again")
@@ -320,7 +386,7 @@ def test_postprocessing_retry_failure_is_retryable_and_does_not_resubmit(tmp_pat
     assert manager.store.get(failed.id).state == RunState.FINISHED
 
 
-def test_postprocessing_retry_refuses_modified_or_uncaptured_artifacts(tmp_path):
+def test_postprocessing_retry_refuses_modified_or_uncaptured_files(tmp_path):
     from ase2sprkkr.execution import FileEntry, FileManifest
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
     output = tmp_path / "run.out"
@@ -335,10 +401,10 @@ def test_postprocessing_retry_refuses_modified_or_uncaptured_artifacts(tmp_path)
     )
     failed = manager.complete(
         record, state=RunState.FAILED, return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING, artifacts_available=True,
+        failure_phase=FailurePhase.POSTPROCESSING, files_available=True,
     )
     output.write_text("overwritten")
-    with pytest.raises(ValueError, match="unchanged historical artifacts"):
+    with pytest.raises(ValueError, match="unchanged historical files"):
         manager.retry_postprocessing(failed.id, lambda outcome: outcome)
     assert manager.store.get(failed.id).state == RunState.FAILED
 
@@ -359,7 +425,7 @@ def test_postprocessing_retry_reader_constructor_error_does_not_reopen(tmp_path,
     )
     failed = manager.complete(
         record, state=RunState.FAILED, return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING, artifacts_available=True,
+        failure_phase=FailurePhase.POSTPROCESSING, files_available=True,
     )
     monkeypatch.setattr(
         project_output, "_result_processor_for_record",
@@ -387,7 +453,7 @@ def test_project_retry_attaches_run_provenance(tmp_path, monkeypatch):
     )
     failed = manager.complete(
         record, state=RunState.FAILED, return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING, artifacts_available=True,
+        failure_phase=FailurePhase.POSTPROCESSING, files_available=True,
     )
     from ase2sprkkr.outputs.task_result import TaskResult
     monkeypatch.setattr(
@@ -417,7 +483,7 @@ def test_postprocessing_retry_only_one_caller_can_claim_run(tmp_path):
     )
     failed = manager.complete(
         record, state=RunState.FAILED, return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING, artifacts_available=True,
+        failure_phase=FailurePhase.POSTPROCESSING, files_available=True,
     )
 
     processing = Event()
@@ -466,7 +532,7 @@ def test_retry_accepts_plain_processing_result(tmp_path):
     )
     failed = manager.complete(
         record, state=RunState.FAILED, return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING, artifacts_available=True,
+        failure_phase=FailurePhase.POSTPROCESSING, files_available=True,
     )
     assert manager.retry_postprocessing(failed.id, lambda _: 42) == 42
     assert manager.store.get(failed.id).state == RunState.FINISHED
@@ -490,7 +556,7 @@ def test_project_retry_accepts_immutable_results(tmp_path, monkeypatch, parsed):
     )
     failed = manager.complete(
         record, state=RunState.FAILED, return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING, artifacts_available=True,
+        failure_phase=FailurePhase.POSTPROCESSING, files_available=True,
     )
     monkeypatch.setattr(
         project_output, "_result_processor_for_record",
@@ -517,7 +583,7 @@ def test_retry_does_not_overwrite_concurrent_record_update(tmp_path, during_retr
     )
     failed = manager.complete(
         record, state=RunState.FAILED, return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING, artifacts_available=True,
+        failure_phase=FailurePhase.POSTPROCESSING, files_available=True,
     )
 
     def concurrent_change(outcome):
@@ -562,7 +628,7 @@ def test_retry_exception_does_not_overwrite_concurrent_completion(tmp_path):
     )
     failed = manager.complete(
         record, state=RunState.FAILED, return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING, artifacts_available=True,
+        failure_phase=FailurePhase.POSTPROCESSING, files_available=True,
     )
 
     def interrupted(outcome):
@@ -604,7 +670,7 @@ def test_postprocessing_retry_accepts_unchanged_output_with_stale_input(
     failed = manager.complete(
         prepared, state=RunState.FAILED, return_code=0,
         failure_phase=FailurePhase.POSTPROCESSING,
-        artifacts_available=True,
+        files_available=True,
     )
     assert failed.files.output_versions
     assert failed.files.input_versions
@@ -629,3 +695,228 @@ def test_postprocessing_retry_accepts_unchanged_output_with_stale_input(
     assert current.state is RunState.FINISHED
     assert current.files == failed.files
 
+
+@pytest.mark.parametrize("callback_fails", [False, True])
+def test_concurrent_wait_and_completion_callback_persist_only_once(
+    tmp_path, monkeypatch, callback_fails,
+):
+    """Waiters cannot repeat persistence or close inputs before the callback."""
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    input_stream = io.BytesIO(b"input")
+    resources = ExecutionResources(input_stream)
+    persisting, release = Event(), Event()
+    completions, callbacks, errors = [], [], []
+    complete = manager.complete
+
+    def gated_complete(*args, **kwargs):
+        completions.append(kwargs["state"])
+        persisting.set()
+        assert release.wait(5), "persistence remained blocked"
+        return complete(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "complete", gated_complete)
+
+    def callback(_result):
+        callbacks.append((store.get(run.id).state, input_stream.closed))
+        if callback_fails:
+            raise ValueError("user callback error")
+
+    run = _create_project_run(
+        manager, _Executor(), ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
+        process_result=lambda outcome: outcome,
+        task="DOS", callback=callback, resources=resources,
+    )
+    submission_errors = []
+
+    def submit():
+        try:
+            run.submit()
+        except BaseException as exc:
+            submission_errors.append(exc)
+
+    # The fake backend invokes its completion callback synchronously from
+    # submit(). Keep submission on a thread while persistence is gated.
+    submitting = Thread(target=submit)
+    submitting.start()
+    waiting = None
+
+    def wait():
+        try:
+            run.wait()
+        except BaseException as exc:
+            errors.append(exc)
+
+    try:
+        assert persisting.wait(5)
+        waiting = Thread(target=wait)
+        waiting.start()
+        assert not resources.closed
+        assert not input_stream.closed
+        # The fake backend can report FINISHED during submit(), before
+        # completion persistence starts. That state observation is valid;
+        # the assertions below verify single durable completion and cleanup.
+    finally:
+        release.set()
+        submitting.join(5)
+        if waiting is not None:
+            waiting.join(5)
+
+    assert not submitting.is_alive()
+    assert submission_errors == []
+    assert waiting is not None and not waiting.is_alive()
+    assert completions == [RunState.FINISHED]
+    assert callbacks == [(RunState.FINISHED, False)]
+    assert input_stream.closed
+    assert store.get(run.id).state == RunState.FINISHED
+    if callback_fails:
+        assert len(errors) == 1
+        assert isinstance(errors[0], ValueError)
+        assert str(errors[0]) == "user callback error"
+    else:
+        assert errors == []
+
+@pytest.mark.parametrize("terminal", [RunState.FINISHED, RunState.FAILED, RunState.CANCELLED])
+def test_cancel_after_persisted_completion_does_not_touch_backend_or_store(
+    tmp_path, monkeypatch, terminal,
+):
+    from ase2sprkkr.execution.run_persistence import RunPersistence
+    from ase2sprkkr.execution.postprocessing import CalculationRun
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    record = manager.new_record(task="DOS", directory=tmp_path)
+    record = manager.transition(record, state=terminal)
+    calls = []
+
+    class Raw:
+        callback = None
+        state = RunState.RUNNING
+        job_files = JobFiles(record.files)
+
+        def cancel(self):
+            calls.append("backend")
+            raise AssertionError("terminal backend cancellation")
+
+    run = CalculationRun(Raw(), lambda result: result)
+    run.persistence = RunPersistence(manager, None, record)
+    monkeypatch.setattr(manager, "transition", lambda *a, **k: calls.append("store"))
+    assert run.cancel() is None
+    assert run.cancel() is None
+    assert calls == []
+    assert store.get(record.id).state == terminal
+
+def test_unknown_observation_closes_owned_streams_but_attach_can_recover(tmp_path):
+    """UNKNOWN ends an observer, not the backend; recovery opens fresh handles."""
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    original = (tmp_path / "output.txt").open("w+b")
+    original.write(b"recoverable result")
+    original.flush()
+    resources = ExecutionResources(original)
+    callbacks = []
+    submissions = []
+
+    class ObservedRunner(_RawRunner):
+        def __init__(self, *, recovered=False):
+            super().__init__()
+            self.spec = ExecutionSpec(
+                argv=(), directory=str(tmp_path), input_file=None,
+                output_file=None,
+            )
+            self.recovered = recovered
+            self.state = RunState.FINISHED if recovered else RunState.NEW
+            self.backend_id = "existing-job" if recovered else None
+            self.result = ExecutionOutcome(
+                output_file=None, return_code=0 if recovered else None,
+            )
+            self.output_stream = None
+
+        def submit(self):
+            submissions.append("submit")
+            self.backend_id = "existing-job"
+            self.state = RunState.UNKNOWN
+
+        def start(self):
+            self.output_stream = (tmp_path / "output.txt").open("rb")
+            self.result.output_file = self.output_stream
+
+        def wait(self):
+            return self.result
+
+    class ExecutorWithAttach(_Executor):
+        def create_project_run(self, spec, *, run_id, callback=None):
+            runner = ObservedRunner()
+            runner.spec = spec
+            return runner
+
+        def attach(self, record, *, output_listener=None, start=False):
+            assert record.state == RunState.SUBMITTING
+            assert record.confirmed is False
+            assert record.execution.backend_id == "existing-job"
+            assert original.closed
+            self.attached_runner = ObservedRunner(recovered=True)
+            return self.attached_runner
+
+    executor = ExecutorWithAttach()
+    first = _create_project_run(
+        manager, executor, ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
+        task="DOS", process_result=lambda outcome: outcome,
+        callback=lambda _: callbacks.append("unknown"), resources=resources,
+    )
+    first.submit()
+    assert first.wait().return_code is None
+    assert original.closed
+    observed = store.get(first.id)
+    # UNKNOWN is an inconclusive observation: the last known lifecycle
+    # state remains durable, with confirmed=False and no terminal timestamp.
+    assert observed.state == RunState.SUBMITTING
+    assert observed.confirmed is False
+    assert observed.execution.backend_id == "existing-job"
+    assert observed.finished_at is None
+    assert callbacks == ["unknown"]
+
+    recovered = manager.attach(
+        first.id,
+        process_result=lambda outcome: outcome.output_file.read(),
+        callback=lambda _: callbacks.append("finished"),
+    )
+    try:
+        assert recovered.wait() == b"recoverable result"
+        assert store.get(first.id).state == RunState.FINISHED
+        assert callbacks == ["unknown", "finished"]
+        assert submissions == ["submit"]
+    finally:
+        executor.attached_runner.output_stream.close()
+
+def test_project_persistence_failure_can_be_retried_without_resubmitting(
+    tmp_path, monkeypatch,
+):
+    """A failed durable commit does not invalidate a completed calculation."""
+    from ase2sprkkr.execution.run_hooks import PersistenceError
+
+    store = RunStore(tmp_path / "runs")
+    manager = ExecutionManager(store)
+    calls = []
+    original_complete = manager.complete
+
+    def fail_once(*args, **kwargs):
+        calls.append(kwargs["state"])
+        if len(calls) == 1:
+            raise OSError("disk write failed")
+        return original_complete(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "complete", fail_once)
+    run = _create_project_run(
+        manager, _Executor(), ExecutionSpec(argv=(), directory=str(tmp_path), input_file=None, output_file=None),
+        process_result=lambda result: result, task="DOS",
+    )
+    run.submit()
+
+    with pytest.raises(PersistenceError, match="persist calculation"):
+        run.wait()
+    assert run.state is RunState.FINISHED
+    assert run.persistence_error is not None
+    assert store.get(run.id).state != RunState.FINISHED
+    run.retry_persistence()
+    assert store.get(run.id).state is RunState.FINISHED
+    assert len(calls) == 2

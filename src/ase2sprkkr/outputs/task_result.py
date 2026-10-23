@@ -86,23 +86,20 @@ class TaskResult:
             return None
         if self._detected_input_parameters is not None:
             return self._detected_input_parameters
-        # An explicitly registered input is authoritative: parsing errors
-        # here must remain visible to the caller.
+        # Explicit input files remain authoritative: parsing failures surface.
         return input_parameters.InputParameters.from_file(source)
 
     def _candidate_input_files(self):
-        """Use an unambiguous native input file; never guess between runs."""
+        """Infer only a unique or explicitly paired native input file."""
         import glob
 
         directory = self.directory
         if not os.path.isdir(directory):
             return ()
-        candidates = sorted(
-            {path for suffix in (".inp", ".in")
-             for path in glob.glob(os.path.join(directory, "*" + suffix))}
-        )
-        # A paired input name is authoritative even if the directory contains
-        # unrelated calculations.
+        candidates = sorted({
+            path for suffix in (".inp", ".in")
+            for path in glob.glob(os.path.join(directory, "*" + suffix))
+        })
         if self.output_file is not None:
             stem = os.path.splitext(os.path.basename(os.fspath(self.output_file)))[0]
             for suffix in (".inp", ".in"):
@@ -115,9 +112,7 @@ class TaskResult:
     def input_parameters_file(self):
         if "input" in self.files:
             filename = self.path_to("input")
-            if os.path.isfile(filename):
-                return filename
-            return None
+            return filename if os.path.isfile(filename) else None
         for filename in self._candidate_input_files():
             try:
                 parameters = input_parameters.InputParameters.from_file(filename)
@@ -291,28 +286,25 @@ class KkrOutputReader:
         )
 
     def complete_result(self, result, output, error, return_code):
-        """Finalize a result after the execution backend completes."""
+        """Finalize once, prioritizing process failures over parser failures."""
         if return_code == 0:
             if isinstance(output, BaseException):
                 raise output
             if isinstance(error, BaseException):
                 raise error
 
-        # A nonzero exit takes precedence over parser/stream errors. Ask the
-        # parser to classify the exit once, then rethrow an earlier stream
-        # failure only if it accepted the exit status.
-        _output, parsed_error, parsed_return_code = self.parser.result(
-            None if isinstance(output, BaseException) else output,
-            None if isinstance(error, BaseException) else error,
-            return_code,
+        # Nonzero process exit must be reported even if parsing its truncated
+        # streams failed. Never hand a parser exception to parser.result().
+        parsed_output = None if isinstance(output, BaseException) else output
+        parsed_error = None if isinstance(error, BaseException) else error
+        _output, parsed_error, parsed_code = self.parser.result(
+            parsed_output, parsed_error, return_code,
         )
         if isinstance(output, BaseException):
             raise output
         if isinstance(error, BaseException):
             raise error
-
-        error, return_code = parsed_error, parsed_return_code
-        result.complete(error, return_code)
+        result.complete(parsed_error, parsed_code)
         return result
 
     @maybeclassmethod
@@ -321,7 +313,10 @@ class KkrOutputReader:
         if self is None:
             self = cls(None, None, directory)
         result = self.create_result(output, input_file)
-        output_source = output if hasattr(output, "read") else result.path_to("output")
+        output_source = (
+            result.path_to("output")
+            if isinstance(output, (str, bytes, os.PathLike)) else output
+        )
 
         _parsed_output, parsed_error, parsed_return_code = self.parser.read_from_file(
             output_source, error, [result], return_code

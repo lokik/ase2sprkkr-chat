@@ -10,10 +10,13 @@ from concurrent.futures import Future
 from dataclasses import asdict, dataclass
 from enum import Enum
 from threading import Event, Lock, Thread
-from typing import Any, Optional, Protocol, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Optional, Protocol, Sequence, Tuple
 
 from ..common.decorators import class_property
 from .run_model import Execution, FileManifest, FileSyncPolicy
+
+if TYPE_CHECKING:
+    from .job_files import JobFiles
 
 
 def file_path(value, directory=None, *, flush=False, required=False):
@@ -37,29 +40,6 @@ def file_path(value, directory=None, *, flush=False, required=False):
     if directory is not None and not os.path.isabs(path):
         path = os.path.join(directory, path)
     return os.path.abspath(path)
-
-
-def declared_file_paths(values, directory, *, excluded=(), flush=False):
-    """Combine identical input declarations; reject contradictory optionality.
-
-    The execution layer accepts ordinary filenames, file objects and TaskFile
-    metadata without depending on the task-schema implementation.
-    """
-    merged = {}
-    excluded = set(excluded)
-    for value in values:
-        path = file_path(value, directory, flush=flush)
-        if path is None or path in excluded:
-            continue
-        required = not getattr(value, "optional", False)
-        previous = merged.get(path)
-        if previous is not None and previous != required:
-            raise ValueError(
-                f"Conflicting optionality for file {path}: "
-                "the same input cannot be both required and optional"
-            )
-        merged[path] = required
-    return tuple(merged.items())
 
 
 def _close_distinct(resources, *, suppress_errors=False):
@@ -113,6 +93,8 @@ def dispatch_cancellation(action):
 def start_monitor(runner, *, missing_backend=None):
     """Start a runner's monitor once, under its lifecycle lock."""
     with runner._lock:
+        if runner.detached:
+            raise ObservationDetached('Cannot restart detached observer')
         if runner._thread is not None:
             return
         if missing_backend is not None and runner._backend_id is None:
@@ -129,15 +111,19 @@ def request_cancellation(runner, action):
         return runner._cancel_future
 
 
-def finish_monitor(runner):
-    """Deliver the callback and unblock waiters after backend-specific cleanup."""
+def finish_monitor(runner, *, cleanup=None):
+    """Persist callback state and release owned resources before unblocking waiters."""
     try:
         if runner.callback is not None:
             runner.callback(runner.result)
     except BaseException as exc:
         runner._callback_exception = exc
     finally:
-        runner._done.set()
+        try:
+            if cleanup is not None:
+                cleanup()
+        finally:
+            runner._done.set()
 
 
 def wait_for_monitor(runner):
@@ -160,6 +146,10 @@ class MpiNotFoundWarning(UserWarning):
 
 class OutputObserverWarning(RuntimeWarning):
     """An output observer failed while the calculation itself keeps running."""
+
+
+class ObservationDetached(RuntimeError):
+    """This client's monitor stopped without cancelling its calculation."""
 
 
 class SubmissionNotStarted(RuntimeError):
@@ -259,13 +249,18 @@ class RunState(str, Enum):
         return self in (RunState.FINISHED, RunState.FAILED, RunState.CANCELLED)
 
 
+class SubmissionRecovery(str, Enum):
+    """Conclusive absence of backend submission (None is uncertain)."""
+    ABSENT = "absent"
+
+
 class FailurePhase(str, Enum):
     """Phase in which a run entered :attr:`RunState.FAILED`."""
 
     SUBMISSION = "submission"
     LAUNCH = "launch"
     EXECUTION = "execution"
-    ARTIFACTS = "artifacts"
+    FILES = "files"
     DOWNLOAD = "download"
     POSTPROCESSING = "postprocessing"
 
@@ -278,6 +273,26 @@ class ExecutionOutcome:
     input_file: Any = None
     error_file: Any = None
     return_code: Optional[int] = None
+
+    @classmethod
+    def from_spec(cls, spec: "ExecutionSpec", *, flush=False, strict_paths=False):
+        """Snapshot named local paths before the specification's streams close.
+
+        The specification may contain open file objects needed by the executor.
+        The outcome holds their normalized paths for readers and persistence,
+        not another mutable copy of the original stream objects.
+        """
+        def normalized(value):
+            return file_path(
+                value, spec.directory, flush=flush,
+                required=strict_paths and value is not None,
+            )
+
+        return cls(
+            output_file=normalized(spec.output_file),
+            input_file=normalized(spec.input_file),
+            error_file=normalized(spec.error_file),
+        )
 
 
 class ExecutionResources:
@@ -302,127 +317,6 @@ class ExecutionResources:
             self._resources = ()
 
         _close_distinct(resources, suppress_errors=suppress_errors)
-
-class ResourceOwnedRunner:
-    """Runner proxy owning resources and the public submit/cancel boundary."""
-
-    def __init__(self, runner, resources: ExecutionResources):
-        self._runner = runner
-        self._resources = resources
-        self._submission_lock = Lock()
-        self._cancel_requested = Event()
-        self._submitted = runner.state != RunState.NEW
-        self._cancel_dispatched = False
-
-    def __getattr__(self, name):
-        return getattr(self._runner, name)
-
-    @property
-    def result(self):
-        return self._runner.result
-
-    @property
-    def state(self):
-        if self._cancel_requested.is_set():
-            with self._submission_lock:
-                if not self._submitted:
-                    return RunState.CANCELLED
-        return self._runner.state
-
-    @property
-    def backend_id(self):
-        return self._runner.backend_id
-
-    @property
-    def exception(self):
-        return self._runner.exception
-
-    def _release_after_failure(self):
-        self._resources.close(suppress_errors=True)
-
-    def _raise_if_cancelled_before_submit(self):
-        if not self._cancel_requested.is_set():
-            return
-        with self._submission_lock:
-            if not self._submitted:
-                raise asyncio.CancelledError("Run was cancelled before submission")
-
-    def submit(self):
-        with self._submission_lock:
-            if self._cancel_requested.is_set():
-                self._resources.close()
-                raise asyncio.CancelledError("Run was cancelled before submission")
-            try:
-                result = self._runner.submit()
-            except BaseException:
-                self._release_after_failure()
-                raise
-            self._submitted = True
-            cancel_after_submit = self._cancel_requested.is_set()
-        if cancel_after_submit:
-            self.cancel()
-        return result
-
-    def wait(self):
-        self._raise_if_cancelled_before_submit()
-        try:
-            result = self._runner.wait()
-        except BaseException:
-            self._release_after_failure()
-            raise
-        self._resources.close()
-        return result
-
-    def run(self):
-        self._raise_if_cancelled_before_submit()
-        if self.state == RunState.NEW:
-            self.submit()
-        return self.wait()
-
-    async def run_async(self):
-        self._raise_if_cancelled_before_submit()
-        if self.state == RunState.NEW:
-            self.submit()
-        try:
-            run_async = getattr(self._runner, "run_async", None)
-            if run_async is not None:
-                result = await run_async()
-            else:
-                result = await asyncio.to_thread(self._runner.wait)
-        except BaseException:
-            self._release_after_failure()
-            raise
-        self._resources.close()
-        return result
-
-    def cancel(self):
-        self._cancel_requested.set()
-        with self._submission_lock:
-            if not self._submitted:
-                self._resources.close()
-                return None
-            if self._cancel_dispatched:
-                return None
-            result = self._runner.cancel()
-            self._cancel_dispatched = True
-            return result
-
-    def close(self):
-        if self._resources.closed:
-            return
-        state = self.state
-        if state != RunState.NEW:
-            raise RuntimeError(
-                f"Cannot close execution resources while run is {state.value}"
-            )
-        self._resources.close()
-
-    def add_output_listener(self, callback):
-        return self._runner.add_output_listener(callback)
-
-    def add_output_error_listener(self, callback):
-        return self._runner.add_output_error_listener(callback)
-
 
 @dataclass(frozen=True)
 class RunStatus:
@@ -530,6 +424,7 @@ class LaunchSpec:
     remote_root: Optional[str] = None
     input_sync: str = FileSyncPolicy.CHANGED.value
     output_sync: str = FileSyncPolicy.CHANGED.value
+    cleanup_outputs: str = "both"
 
     def __post_init__(self):
         mpi = self.mpi
@@ -538,16 +433,22 @@ class LaunchSpec:
         elif not isinstance(mpi, MpiSpec):
             raise TypeError("LaunchSpec.mpi must be an MpiSpec")
         object.__setattr__(self, "mpi", mpi)
-        for name in ("local_root", "remote_root"):
-            value = getattr(self, name)
-            if value is not None:
-                object.__setattr__(self, name, os.fspath(value))
-        for name in ("input_sync", "output_sync"):
-            try:
-                value = FileSyncPolicy(getattr(self, name))
-            except ValueError as exc:
-                raise ValueError(f"Invalid {name} file synchronization policy") from exc
-            object.__setattr__(self, name, value.value)
+        if self.local_root is not None:
+            object.__setattr__(self, "local_root", os.fspath(self.local_root))
+        if self.remote_root is not None:
+            object.__setattr__(self, "remote_root", os.fspath(self.remote_root))
+        try:
+            input_sync = FileSyncPolicy(self.input_sync)
+        except ValueError as exc:
+            raise ValueError("Invalid input_sync file synchronization policy") from exc
+        try:
+            output_sync = FileSyncPolicy(self.output_sync)
+        except ValueError as exc:
+            raise ValueError("Invalid output_sync file synchronization policy") from exc
+        object.__setattr__(self, "input_sync", input_sync.value)
+        object.__setattr__(self, "output_sync", output_sync.value)
+        from .file_availability import normalize_output_cleanup
+        object.__setattr__(self, "cleanup_outputs", normalize_output_cleanup(self.cleanup_outputs))
 
     def __bool__(self):
         return self.mpi.requested
@@ -560,10 +461,11 @@ class LaunchSpec:
 
 
 def _pathlike(value):
-    from ..input_parameters.task_definition import TaskFile
-    if isinstance(value, TaskFile):
-        return value
+    # Keep a TaskFile-like declaration's optional policy until FileManifest
+    # has converted it to a file entry. Ordinary PathLike values stay strings.
     if isinstance(value, os.PathLike):
+        if hasattr(value, "optional"):
+            return value
         return os.fspath(value)
     return value
 
@@ -576,27 +478,34 @@ class ExecutionSpec:
     input_file: Any
     output_file: Any
     directory: str
-    stdin: Any = None
+    stdin: Any = False
     error_file: Any = None
     input_files: Sequence[Any] = ()
     output_files: Sequence[Any] = ()
     cache_files: Sequence[Any] = ()
     mpi_argv: Optional[Sequence[str]] = None
     launch: LaunchSpec = LaunchSpec()
-    # The MPI command may have a different stdin contract from serial argv.
-    # Generic executors preserve stdin unless the caller explicitly opts out.
-    mpi_uses_stdin: bool = True
+    # None inherits the serial stream; False explicitly disables stdin.
+    mpi_stdin: Any = None
 
     def __post_init__(self):
+        if self.stdin is None:
+            raise ValueError("ExecutionSpec.stdin=None is ambiguous; use False to disable stdin")
         object.__setattr__(self, "directory", os.fspath(self.directory))
-        for name in ("input_file", "output_file", "stdin", "error_file"):
-            object.__setattr__(self, name, _pathlike(getattr(self, name)))
-        for name in ("input_files", "output_files", "cache_files"):
-            object.__setattr__(
-                self,
-                name,
-                tuple(_pathlike(value) for value in getattr(self, name)),
-            )
+        object.__setattr__(self, "input_file", _pathlike(self.input_file))
+        object.__setattr__(self, "output_file", _pathlike(self.output_file))
+        object.__setattr__(self, "stdin", _pathlike(self.stdin))
+        object.__setattr__(self, "mpi_stdin", _pathlike(self.mpi_stdin))
+        object.__setattr__(self, "error_file", _pathlike(self.error_file))
+        object.__setattr__(
+            self, "input_files", tuple(_pathlike(value) for value in self.input_files),
+        )
+        object.__setattr__(
+            self, "output_files", tuple(_pathlike(value) for value in self.output_files),
+        )
+        object.__setattr__(
+            self, "cache_files", tuple(_pathlike(value) for value in self.cache_files),
+        )
         object.__setattr__(self, "argv", tuple(os.fspath(value) for value in self.argv))
         if self.mpi_argv is not None:
             object.__setattr__(
@@ -614,7 +523,6 @@ class ExecutionSpec:
         return {
             "argv": transform(self.argv),
             "mpi_argv": None if self.mpi_argv is None else transform(self.mpi_argv),
-            "mpi_uses_stdin": self.mpi_uses_stdin,
             "launch": asdict(self.launch),
         }
 
@@ -623,6 +531,8 @@ class Runner(Protocol):
     """One concrete calculation run."""
 
     result: Any
+
+    job_files: "JobFiles"
 
     @property
     def state(self) -> RunState: ...
@@ -650,6 +560,17 @@ class Executor:
     def supports_result_file_retrieval(cls):
         return cls.fetch_result_files is not Executor.fetch_result_files
 
+    def preflight_result_files(self, run, files):
+        """Validate the entire historical fetch request without transferring.
+
+        Executors with a remote file mapping override this hook. Restoration
+        still validates each destination immediately before publication.
+        """
+
+    def abandoned_preparation_is_safe(self):
+        """Return true only when abandoned preparation cannot keep writing files."""
+        return False
+
     def fetch_result_files(self, run, files, *, destinations=None):
         """Retrieve *files*, optionally staging each canonical local path.
 
@@ -661,11 +582,25 @@ class Executor:
             f"{type(self).__name__} cannot retrieve persistent result files"
         )
 
+    def acknowledge_submission(self, run):
+        """No temporary submission receipt for this executor."""
+        return True
+
+    def acknowledge(self, run):
+        """No terminal receipt for this executor."""
+        return True
+
+    def reservation_context(self, spec: ExecutionSpec, files):
+        """Prepare canonical run paths before atomic submission reservation."""
+        return files, None
+
     def submission_directory(self, spec: ExecutionSpec) -> str:
         return os.path.abspath(os.fspath(spec.directory))
 
-    def resolve_mpi(self, mpi=None):
-        return LaunchSpec.from_mpi(mpi)
+    def resolve_spec(self, spec: ExecutionSpec) -> ExecutionSpec:
+        """Choose a concrete command before reserving/staging its files."""
+        from .local_process import materialize_local_spec
+        return materialize_local_spec(spec)
 
     def status(self, *runs) -> Tuple[RunStatus, ...]:
         if not runs:

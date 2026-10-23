@@ -1,20 +1,26 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
-from ase2sprkkr.execution.base import LaunchSpec, RunState
-from ase2sprkkr.execution.manager import RunRecord
+from ase2sprkkr.execution.job_files import JobFiles
+from ase2sprkkr.execution.base import RunState
+from ase2sprkkr.execution.run_record import RunRecord
 from ase2sprkkr.execution.run_model import Execution, WorkingDirectory, FileManifest, FileEntry, FileMapping
-from ase2sprkkr.execution.endpoint import ExecutorEndpoint
+from ase2sprkkr.execution.endpoint import ExecutorEndpoint, endpoint_for_executor
 from ase2sprkkr.execution.local import LocalExecutor
-from ase2sprkkr.execution.manager import ExecutionManager, RunStore
+from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.run_store import RunStore
 from ase2sprkkr.execution.psij import PsijExecutor, PsijRunner
-from ase2sprkkr.execution.remote_endpoint import _RemoteRun, _RemoteRunContext
+from ase2sprkkr.execution.remote import RemoteRunner
+from ase2sprkkr.execution.remote_endpoint import RemoteEndpointExecutor
 
 
 class _AttachedRunner:
     def __init__(self, run):
+        self.callback = None
+        self.job_files = JobFiles(run.files)
         self.backend_id = run.execution.backend_id
         self.result = SimpleNamespace(return_code=0)
+        self.return_code = 0
         self.state = RunState.RUNNING
         self.exception = None
         self.failure_phase = None
@@ -53,6 +59,7 @@ class _AttachExecutor(LocalExecutor):
 
 def test_manager_attach_forwards_initial_output_listener(tmp_path):
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
+    manager.executors.register(_AttachExecutor())
     record = manager.new_record(task="SCF", directory=tmp_path)
     record = replace(
         record, state=RunState.RUNNING,
@@ -63,7 +70,6 @@ def test_manager_attach_forwards_initial_output_listener(tmp_path):
     output = []
     runner = manager.attach(
         record,
-        executor=_AttachExecutor(),
         process_result=lambda result: result,
         output_listener=lambda text, kind: output.append((text, kind)),
     )
@@ -72,34 +78,24 @@ def test_manager_attach_forwards_initial_output_listener(tmp_path):
     assert output == [("manager replay\n", "out")]
 
 
-def _remote_context(tmp_path):
-    class Endpoint:
-        backend = "local"
-        backend_options = {}
-        command = ("ase2sprkkr", "remote")
-        computer = "host"
-        transport = SimpleNamespace()
+def _remote_endpoint_and_run(tmp_path):
+    transport = SimpleNamespace(host="host")
+    endpoint = RemoteEndpointExecutor(transport)
 
-        async def _remote_home(self):
-            return "/remote"
+    async def status(backend_id, files=None):
+        return {
+            "state": "running",
+            "input_file": "/remote/work/input.inp",
+            "output_file": "/remote/work/output.out",
+        }
 
-        async def _status(self, directory, run_id, files=None):
-            return {
-                "state": "running",
-                "input_file": "/remote/work/input.inp",
-                "output_file": "/remote/work/output.out",
-            }
-
-    context = _RemoteRunContext(
-        Endpoint(),
-        LaunchSpec(local_root=str(tmp_path), remote_root="/remote"),
-    )
+    endpoint.connection.status = status
     run = RunRecord(
         id="run", task="SCF", state=RunState.RUNNING,
         created_at="2026-10-13T08:00:00+00:00",
         updated_at="2026-10-13T08:00:00+00:00",
         execution=Execution(
-            ExecutorEndpoint(executor="ssh", host="host"),
+            endpoint_for_executor(endpoint),
             WorkingDirectory(str(tmp_path / "work"), "/remote/work"), "run",
         ),
         files=FileManifest(
@@ -110,7 +106,7 @@ def _remote_context(tmp_path):
             mapping=FileMapping(str(tmp_path), "/remote"),
         ),
     )
-    return context, run
+    return endpoint, run
 
 
 def test_remote_attach_installs_listener_before_monitor(monkeypatch, tmp_path):
@@ -122,13 +118,13 @@ def test_remote_attach_installs_listener_before_monitor(monkeypatch, tmp_path):
             self.callback(self.result)
         self._done.set()
 
-    monkeypatch.setattr(_RemoteRun, "_thread_main", immediate_monitor)
-    context, run = _remote_context(tmp_path)
+    monkeypatch.setattr(RemoteRunner, "_thread_main", immediate_monitor)
+    endpoint, run = _remote_endpoint_and_run(tmp_path)
 
     import asyncio
 
     runner = asyncio.run(
-        context.attach(
+        endpoint._attach(
             run,
             callback=lambda result: events.append(("finished", None)),
             output_listener=lambda text, kind: events.append((text, kind)),
@@ -146,13 +142,13 @@ def test_remote_attach_can_defer_monitor_start(monkeypatch, tmp_path):
         self._output_observers.emit_bytes(b"remote replay\n", "out")
         self._done.set()
 
-    monkeypatch.setattr(_RemoteRun, "_thread_main", immediate_monitor)
-    context, run = _remote_context(tmp_path)
+    monkeypatch.setattr(RemoteRunner, "_thread_main", immediate_monitor)
+    endpoint, run = _remote_endpoint_and_run(tmp_path)
 
     import asyncio
 
     runner = asyncio.run(
-        context.attach(
+        endpoint._attach(
             run,
             output_listener=lambda text, kind: events.append((text, kind)),
             start=False,
@@ -199,7 +195,7 @@ def _psij_run(tmp_path):
         created_at="2026-10-13T08:00:00+00:00",
         updated_at="2026-10-13T08:00:00+00:00",
         execution=Execution(
-            ExecutorEndpoint(executor="psij", psij_backend="slurm"),
+            ExecutorEndpoint(executor="psij", psij_backend="slurm", psij_poll_interval=0.01),
             WorkingDirectory(str(tmp_path)), "42",
         ),
         files=FileManifest(

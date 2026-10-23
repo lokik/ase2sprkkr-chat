@@ -1,7 +1,7 @@
 """Transient single-socket streaming owned by the direct process supervisor.
 
 Files are spooled only when explicitly requested. A missing stream file means
-LIVE-only observation, not an implicit stdout/stderr artifact. The target owns
+LIVE-only observation, not an implicit stdout/stderr file. The target owns
 no run history; terminal facts are sent on this socket and via a short-lived
 acknowledgeable receipt.
 """
@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ._durability import fsync_directory
+from .stream_protocol import decode_terminal_payload
 
 MAGIC = b"A2SFOLL1"
 _HEADER = struct.Struct("!cQQ")
@@ -42,7 +43,7 @@ async def receive(reader):
             raise ValueError("Oversized supervisor frame")
         payload = await reader.readexactly(length)
         if code == b"T":
-            yield "terminal", 0, json.loads(payload)
+            yield "terminal", 0, decode_terminal_payload(payload)
             return
         if code not in _BACK:
             raise ValueError("Invalid supervisor channel")
@@ -119,7 +120,7 @@ class SupervisorStreams:
             spool.write(data)
             spool.flush()
         self._sizes[kind] += len(data)
-        wire = frame(kind, offset, data)
+        wire = None
         for follower in tuple(self._followers):
             # A spooled channel can catch up from disk. A live-only channel
             # cannot: forward it even while another channel is replaying.
@@ -129,6 +130,8 @@ class SupervisorStreams:
             # A full buffer skips the write; a write that fills the buffer
             # triggers exactly the same backpressure handling below.
             if follower.writer.transport.get_write_buffer_size() < _HIGH:
+                if wire is None:
+                    wire = frame(kind, offset, data)
                 follower.writer.write(wire)
                 follower.offsets[kind] += len(data)
             if follower.writer.transport.get_write_buffer_size() >= _HIGH:

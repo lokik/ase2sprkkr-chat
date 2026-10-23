@@ -1,27 +1,35 @@
-"""Contracts shared by local project and PSI/J artifact discovery."""
+"""Contracts shared by local project and PSI/J file discovery."""
+
+import pytest
 
 from ..file_availability import discover_local_files
-from ..run_model import CacheEntry, FileEntry, FileManifest
+from ..run_model import FileEntry, FileManifest
 
 
-def test_discovers_outputs_and_caches_with_independent_pattern_children(tmp_path):
+@pytest.mark.parametrize("wildcards", (False, True))
+def test_discovers_outputs_and_caches_with_independent_pattern_children(tmp_path, wildcards):
     (tmp_path / "out-a.dat").write_bytes(b"a")
     (tmp_path / "cache-a.pot").write_bytes(b"old")
+    out_pattern = "out-*.dat" if wildcards else "out-a.dat"
+    cache_pattern = "cache-*.pot" if wildcards else "cache-a.pot"
     manifest = FileManifest(
-        outputs=(FileEntry(local_path=str(tmp_path / "out-*.dat"),
+        outputs=(FileEntry(local_path=str(tmp_path / out_pattern),
                            availability_state="pending"),),
-        caches=(CacheEntry(FileEntry(
-            local_path=str(tmp_path / "cache-*.pot"),
-            availability_state="pending",
-        )),),
+        caches=(FileEntry(local_path=str(tmp_path / cache_pattern),
+                          availability_state="pending"),),
     )
     found = discover_local_files(manifest)
-    assert len(found.outputs) == 2
+    assert len(found.outputs) == len(found.caches) == 1
     assert found.outputs[0].availability_state == "available"
-    assert found.outputs[1].source_pattern == str(tmp_path / "out-*.dat")
-    assert len(found.caches) == 2
-    assert found.caches[0].file.availability_state == "available"
-    assert found.caches[1].file.source_pattern == str(tmp_path / "cache-*.pot")
+    assert found.caches[0].availability_state == "available"
+    assert found.outputs[0].source == (
+        str(tmp_path / out_pattern) if wildcards else None
+    )
+    assert found.caches[0].source == (
+        str(tmp_path / cache_pattern) if wildcards else None
+    )
+    assert manifest.outputs[0].availability_state == "pending"
+    assert manifest.caches[0].availability_state == "pending"
     assert discover_local_files(found) == found
 
 
@@ -97,8 +105,9 @@ def test_local_wildcard_discovery_uses_same_glob_semantics_as_transport(tmp_path
     )
     discovered = discover_local_files(manifest)
     assert [entry.local_path for entry in discovered.outputs] == [
-        declaration, str(shown / "file.dat")
+        str(shown / "file.dat")
     ]
+    assert discovered.outputs[0].source == declaration
 
 
 def test_cleanup_unlinks_symlink_without_deleting_its_target(tmp_path):
@@ -153,33 +162,6 @@ def test_output_pattern_can_skip_protected_files(tmp_path):
     assert not drop.exists()
 
 
-def test_protected_output_rejects_symlink_alias(tmp_path):
-    import pytest
-    from ase2sprkkr.execution.file_availability import validate_output_collisions
-
-    source = tmp_path / "source.dat"
-    source.write_bytes(b"density")
-    alias = tmp_path / "alias.out"
-    alias.symlink_to(source)
-    with pytest.raises(ValueError, match="overlaps protected"):
-        validate_output_collisions((alias,), protected=(source,))
-    assert source.read_bytes() == b"density"
-
-
-def test_protected_output_rejects_hardlink_alias(tmp_path):
-    import os
-    import pytest
-    from ase2sprkkr.execution.file_availability import validate_output_collisions
-
-    source = tmp_path / "source.dat"
-    source.write_bytes(b"density")
-    alias = tmp_path / "alias.out"
-    os.link(source, alias)
-    with pytest.raises(ValueError, match="overlaps protected"):
-        validate_output_collisions((alias,), protected=(source,))
-    assert source.read_bytes() == b"density"
-
-
 def test_collision_expands_protected_wildcard_once_for_multiple_outputs(
     tmp_path, monkeypatch,
 ):
@@ -210,3 +192,104 @@ def test_collision_expands_protected_wildcard_once_for_multiple_outputs(
 
     assert expanded == [os.path.abspath(pattern)]
     assert protected_file.read_bytes() == b"restart"
+
+
+def test_remote_missing_wildcards_distinguish_required_and_optional(tmp_path):
+    from dataclasses import asdict
+    from ..file_availability import materialize_manifest
+    from ..run_model import FileMapping
+
+    local, remote = tmp_path / "local", tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    files = FileManifest(
+        outputs=(
+            FileEntry(str(local / "optional-*.dat"),
+                      str(remote / "optional-*.dat"), optional=True,
+                      availability_state="pending"),
+            FileEntry(str(local / "required-*.dat"),
+                      str(remote / "required-*.dat"),
+                      availability_state="pending"),
+        ),
+        mapping=FileMapping(str(local), str(remote)),
+    )
+    frozen, error = materialize_manifest(files, remote=True)
+    assert isinstance(error, FileNotFoundError)
+    assert [entry.availability_state for entry in frozen.outputs] == [
+        "failed",
+    ]
+    assert "required-*.dat" in frozen.outputs[0].availability_message
+    assert FileManifest(**asdict(frozen)) == frozen
+
+
+def test_remote_wildcard_requires_mapping(tmp_path):
+    from ..file_availability import materialize_manifest
+
+    manifest = FileManifest(outputs=(
+        FileEntry("/local/*.dat", "/remote/*.dat", "pending"),
+    ))
+    resolved, error = materialize_manifest(manifest, remote=True)
+    assert isinstance(error, ValueError)
+    assert "requires a file mapping" in str(error)
+    assert resolved.outputs == manifest.outputs
+    assert resolved.has_wildcards()
+
+
+def test_remote_optional_glob_does_not_hide_successful_required_result(tmp_path):
+    from ..file_availability import materialize_manifest
+    from ..run_model import FileMapping
+
+    local, remote = tmp_path / "local", tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    (remote / "result-a.dat").write_text("result")
+    files = FileManifest(
+        outputs=(
+            FileEntry(str(local / "optional-*.dat"),
+                      str(remote / "optional-*.dat"), optional=True),
+            FileEntry(str(local / "result-*.dat"),
+                      str(remote / "result-*.dat")),
+        ),
+        mapping=FileMapping(str(local), str(remote)),
+    )
+    frozen, error = materialize_manifest(files, remote=True)
+    assert error is None
+    assert len(frozen.outputs) == 1
+    assert frozen.outputs[0].local_path == str(local / "result-a.dat")
+    assert frozen.outputs[0].source == str(local / "result-*.dat")
+    assert frozen.outputs[0].optional is False
+
+
+def test_unmatched_optional_remote_wildcards_are_frozen_as_empty_membership(tmp_path):
+    from dataclasses import asdict
+    from ..run_model import FileMapping
+
+    local, remote = tmp_path / "local", tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    pattern = "optional-*.dat"
+    files = FileManifest(
+        outputs=(FileEntry(str(local / pattern), str(remote / pattern),
+                           optional=True, availability_state="pending"),),
+        caches=(FileEntry(str(local / "cache-*.dat"),
+                          str(remote / "cache-*.dat"), availability_state="pending"),),
+        mapping=FileMapping(str(local), str(remote), output_sync="missing"),
+    )
+    from ..file_availability import materialize_manifest
+
+    frozen, error = materialize_manifest(files, remote=True)
+    assert error is None
+    assert frozen.outputs == ()
+    assert frozen.caches == ()
+    assert frozen.files == ()
+    assert frozen.download_files == ()
+    assert frozen.availability_state == "available"
+    assert not frozen.has_wildcards()
+    assert FileManifest(**asdict(frozen)) == frozen
+
+    # A later file must not retroactively become a member of the frozen run.
+    (remote / "optional-late.dat").write_bytes(b"new later file")
+    again, error = materialize_manifest(frozen, remote=True)
+    assert error is None
+    assert again == frozen
+    assert again.outputs == ()

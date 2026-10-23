@@ -212,6 +212,19 @@ SYNC_POLICY = Keyword(
     },
     transform=None,
 )
+OUTPUT_CLEANUP_KEYWORDS = Keyword(
+    {
+        "both": "Clear local and remote outputs.",
+        "local": "Clear local outputs only.",
+        "remote": "Clear remote outputs only.",
+        "none": "Do not clear outputs.",
+    },
+    transform=None,
+)
+OUTPUT_CLEANUP = CustomMixed(
+    (Bool.I, OUTPUT_CLEANUP_KEYWORDS),
+    string_type=OUTPUT_CLEANUP_KEYWORDS,
+)
 EXECUTOR = Keyword(
     {
         "local": "Run directly on this machine.",
@@ -312,6 +325,10 @@ definition = ConfigFileDefinition(
                     info="Output-file synchronization policy for an ssh executor.",
                 ),
                 V(
+                    "cleanup_outputs", OUTPUT_CLEANUP, is_optional=True,
+                    info="Clear declared outputs at new submission: both/True (default), local, remote, none/False.",
+                ),
+                V(
                     "psij_backend",
                     AlwaysQString.I,
                     is_optional=True,
@@ -322,6 +339,12 @@ definition = ConfigFileDefinition(
                     AlwaysQString.I,
                     is_optional=True,
                     info="Optional PSI/J executor URL.",
+                ),
+                V(
+                    "psij_poll_interval",
+                    Integer.I,
+                    is_optional=True,
+                    info="Optional PSI/J stdout/stderr polling interval in seconds. Unset disables polling.",
                 ),
             ],
             is_repeated="DICT_SECTION",

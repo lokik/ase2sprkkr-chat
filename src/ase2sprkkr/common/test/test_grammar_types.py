@@ -526,6 +526,27 @@ def test_bracketed_string_sets_in_input_mixed():
             assert not (isinstance(parsed, np.ndarray) and len(parsed) == 0)
 
 
+def test_generated_variant_classes_have_unique_pickle_identity():
+    import pickle
+
+    assert gt.PotMixed is not gt.Variant
+    assert gt.PotMixed.__name__ == "PotMixed"
+    assert gt.Variant.__name__ == "Variant"
+    assert pickle.loads(pickle.dumps(gt.Variant())).__class__ is gt.Variant
+    assert pickle.loads(pickle.dumps(gt.pot_mixed)).__class__ is gt.PotMixed
+
+
+def test_variant_and_potential_mixed_are_distinct_pickleable_types():
+    import pickle
+
+    assert gt.Variant is not gt.PotMixed
+    assert gt.Variant.__name__ == "Variant"
+    assert gt.PotMixed.__name__ == "PotMixed"
+    for kind in (gt.Variant, gt.PotMixed):
+        assert pickle.loads(pickle.dumps(kind)) is kind
+        assert isinstance(pickle.loads(pickle.dumps(kind())), kind)
+
+
 def test_mixed_string_sets_can_be_assigned_and_pickled():
     import pickle
 
@@ -536,6 +557,18 @@ def test_mixed_string_sets_can_be_assigned_and_pickled():
         assert pickle.loads(pickle.dumps(grammar_type)).validate(value)
         reparsed = grammar_type.grammar().parse_string(grammar_type.string(value), parse_all=True)[0]
         _assert_equal(reparsed, value)
+
+
+def test_generated_mixed_string_formatter_round_trips_bracketed_sets():
+    import pickle
+
+    for instance in (gt.mixed, gt.Variant()):
+        text = instance.string(np.asarray(["Fe", "Co"]))
+        assert text == "{Fe,Co}"
+        parsed = instance.grammar().parse_string(text, parse_all=True)[0]
+        _assert_equal(parsed, np.asarray(["Fe", "Co"]))
+        restored = pickle.loads(pickle.dumps(instance))
+        assert restored.string(np.asarray(["Fe", "Co"])) == text
 
 
 def test_mixed_other_types_and_potential_line_strings_are_unchanged():

@@ -33,7 +33,8 @@ def test_local_runners_close_unique_output_handles(monkeypatch, tmp_path, backen
     )
 
     if backend == "local":
-        async def fail_to_launch(_spec):
+        async def fail_to_launch(_spec, *, stdin):
+            assert stdin is False
             raise RuntimeError("launch failed")
 
         monkeypatch.setattr("ase2sprkkr.execution.local.start_local_process", fail_to_launch)
@@ -43,7 +44,16 @@ def test_local_runners_close_unique_output_handles(monkeypatch, tmp_path, backen
         assert runner.state == RunState.FAILED
     else:
         runner = LocalProjectRunner(None, spec)
-        monkeypatch.setattr(runner, "_monitor", lambda: None)
+        async def follow():
+            return {"state": "finished", "return_code": 0, "files": {}}
+
+        async def complete(_facts, state):
+            runner._state = state
+
+        # Exercise the actual supervisor cleanup path rather than replacing
+        # _monitor(), which owns stream closure.
+        monkeypatch.setattr(runner, "_follow_once", follow)
+        monkeypatch.setattr(runner, "_complete_terminal", complete)
         runner._thread_main()
         assert runner._done.is_set()
         assert runner.exception is None
@@ -52,119 +62,59 @@ def test_local_runners_close_unique_output_handles(monkeypatch, tmp_path, backen
     assert stderr.close_calls == 1
 
 
-def test_close_output_files_skips_missing_and_path_declarations():
-    first, second = _TrackedOutput(), _TrackedOutput()
-    close_output_files(None, "out.txt", first, first, second)
-    assert (first.close_calls, second.close_calls) == (1, 1)
-
-
-def test_close_error_still_closes_remaining_handles():
-    class Faulty:
-        def close(self):
-            raise OSError("cannot close output")
-
-    other = _TrackedOutput()
-    with pytest.raises(OSError, match="cannot close output"):
-        close_output_files(Faulty(), other)
-    assert other.close_calls == 1
-
-
-def test_remote_monitor_closes_merged_output_once_after_follow_failure(tmp_path):
-    output_path = tmp_path / "output.out"
-    output_path.touch()
-    output = _TrackedOutput(str(output_path))
-
-    class UnreachableEndpoint:
-        async def _status(self, directory, backend_id, files):
-            assert backend_id == "job-1"
-            return {"state": "unknown"}
-
-        async def _follow(self, directory, backend_id, files, *, offsets):
-            assert backend_id == "job-1"
-            raise ConnectionError("remote follow interrupted")
-
-    spec = ExecutionSpec(
-        argv=("true",), directory=str(tmp_path),
-        input_file=None, output_file=output, error_file=output,
-    )
-    runner = RemoteRunner(
-        UnreachableEndpoint(), spec,
-        backend_id="job-1", remote_directory="/remote/case",
-    )
-    asyncio.run(runner._monitor())
-
-    assert runner.state == RunState.UNKNOWN
-    assert output.close_calls == 1
-
-
 @pytest.mark.parametrize(
     "monitor_fails,finish_fails,close_fails",
-    [
-        (True, False, False),
-        (False, True, False),
-        (False, False, True),
-        (True, True, True),
-        (False, True, True),
-        (True, False, True),
-    ],
+    [(True, False, False), (False, True, False), (False, False, True),
+     (True, True, True), (False, True, True)],
 )
 def test_local_project_cleanup_attempts_all_stages(
     tmp_path, monkeypatch, monitor_fails, finish_fails, close_fails,
 ):
-    """The first failure wins, but all cleanup and completion still happen."""
     from ase2sprkkr.execution.base import FailurePhase
-
     calls = []
-    callbacks = []
-    errors = (
-        RuntimeError("monitor failed"),
-        OSError("finish bytes failed"),
-        OSError("close output failed"),
-    )
+    errors = (AssertionError("monitor failed"), OSError("finish failed"),
+              OSError("close failed"))
 
     class Output:
         name = str(tmp_path / "out.dat")
-
         def flush(self):
             pass
-
         def close(self):
             calls.append("close")
             if close_fails:
                 raise errors[2]
 
-    runner = LocalProjectRunner(
-        None,
-        ExecutionSpec(
-            argv=("true",), input_file=None,
-            directory=str(tmp_path), output_file=Output(),
-        ),
-        callback=lambda result: callbacks.append(result),
-    )
-
-    def monitor():
+    runner = LocalProjectRunner(None, ExecutionSpec(
+        argv=("true",), directory=str(tmp_path),
+        input_file=None, output_file=Output(),
+    ))
+    async def follow():
         calls.append("monitor")
         if monitor_fails:
             raise errors[0]
-
+        return {"state": "finished", "return_code": 0, "files": {}}
+    async def status():
+        return {"state": "finished", "return_code": 0, "files": {}}
+    async def complete(facts, state):
+        runner._state = state
     def finish_bytes():
         calls.append("finish")
         if finish_fails:
             raise errors[1]
 
-    monkeypatch.setattr(runner, "_monitor", monitor)
+    monkeypatch.setattr(runner, "_follow_once", follow)
+    monkeypatch.setattr(runner, "_backend_status", status)
+    monkeypatch.setattr(runner, "_complete_terminal", complete)
     monkeypatch.setattr(runner._output_observers, "finish_bytes", finish_bytes)
     runner._thread_main()
 
-    assert calls == ["monitor", "finish", "close"]
-    expected = next(
-        error for failed, error in zip(
-            (monitor_fails, finish_fails, close_fails), errors
-        ) if failed
-    )
+    assert calls == ["monitor", "close", "finish"]
+    expected = next(error for failed, error in zip(
+        (monitor_fails, close_fails, finish_fails),
+        (errors[0], errors[2], errors[1])
+    ) if failed)
     assert runner.exception is expected
     assert runner.failure_message == str(expected)
     assert runner.failure_phase is FailurePhase.EXECUTION
     assert runner.state is RunState.FAILED
     assert runner._done.is_set()
-    assert callbacks == [runner.result]

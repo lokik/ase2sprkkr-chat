@@ -991,5 +991,8 @@ set_of_integers = SetOf(Integer.I)
 set_of_reals = SetOf(Real.I)
 """ A standard grammar type instance for array of reals (of any length, used by variant types) """
 
+set_of_strings = SetOf(QString.I, min_length=1, require_brackets=True)
+"""Bracketed string arrays in mixed input values; scalar strings remain scalars."""
+
 complex_number = Complex.I = Complex()  # NOQA E741
 """ A standard grammar type instance for complex numbers """

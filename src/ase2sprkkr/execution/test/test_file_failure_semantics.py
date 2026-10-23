@@ -3,14 +3,15 @@
 import pytest
 
 from ase2sprkkr.execution import (
-    ArtifactAvailabilityState, FailurePhase, FileEntry,
+    FileAvailabilityState, FailurePhase, FileEntry,
     FileManifest, RunState, RunStore,
 )
 
 from ase2sprkkr.execution.manager import ExecutionManager
+from ase2sprkkr.execution.file_history import file_is_current
 
 
-def _record(tmp_path):
+def _record(tmp_path, *, initial_state=RunState.POSTPROCESSING):
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
     record = manager.new_record(
         task="DOS",
@@ -19,13 +20,13 @@ def _record(tmp_path):
             stdout=FileEntry(local_path=str(tmp_path / "run.out"), availability_state="pending"),
         ),
     )
-    record = manager.transition(record, state=RunState.POSTPROCESSING)
+    record = manager.transition(record, state=initial_state)
     return manager, record
 
 
 @pytest.mark.parametrize(
     "requested_state, return_code, phase, backend_error, transfer_error, "
-    "artifacts_available, expected_state, expected_phase",
+    "files_available, expected_state, expected_phase",
     [
         pytest.param(
             RunState.FINISHED, 0, None, None, "SFTP connection lost",
@@ -47,7 +48,7 @@ def _record(tmp_path):
 )
 def test_backend_outcome_and_transfer_availability_are_independent(
     tmp_path, requested_state, return_code, phase, backend_error,
-    transfer_error, artifacts_available, expected_state, expected_phase,
+    transfer_error, files_available, expected_state, expected_phase,
 ):
     manager, record = _record(tmp_path)
     failed_files = record.files.with_file_availability(
@@ -56,7 +57,7 @@ def test_backend_outcome_and_transfer_availability_are_independent(
     saved = manager.complete(
         record, state=requested_state, return_code=return_code,
         failure_phase=phase, message=backend_error,
-        artifacts_available=artifacts_available, files=failed_files,
+        files_available=files_available, files=failed_files,
     )
 
     assert manager.store.get(record.id) == saved
@@ -67,7 +68,7 @@ def test_backend_outcome_and_transfer_availability_are_independent(
         transfer_error if expected_phase is FailurePhase.DOWNLOAD
         else backend_error
     )
-    assert saved.files.availability_state == ArtifactAvailabilityState.FAILED
+    assert saved.files.availability_state == FileAvailabilityState.FAILED
     assert saved.files.availability_message == transfer_error
     assert saved.files.captured_at is None
 
@@ -78,11 +79,11 @@ def test_successful_run_captures_available_files(tmp_path):
     available = record.files.with_file_availability(str(tmp_path / "run.out"), "available")
     saved = manager.complete(
         record, state=RunState.FINISHED, return_code=0,
-        artifacts_available=True, files=available,
+        files_available=True, files=available,
     )
     assert saved.state is RunState.FINISHED
     assert saved.return_code == 0
-    assert saved.files.availability_state == ArtifactAvailabilityState.AVAILABLE.value
+    assert saved.files.availability_state == FileAvailabilityState.AVAILABLE.value
     assert saved.files.captured_at is not None
     assert len(saved.files.output_versions) == 1
 
@@ -91,7 +92,7 @@ def test_resume_download_rejects_execution_failure_and_nonzero_code(tmp_path):
     manager, record = _record(tmp_path)
     bad = manager.complete(
         record, state=RunState.FAILED, return_code=17,
-        failure_phase=FailurePhase.EXECUTION, artifacts_available=False,
+        failure_phase=FailurePhase.EXECUTION, files_available=False,
     )
     with pytest.raises(ValueError, match="Only failed downloads"):
         manager.resume_download(bad.id)
@@ -100,7 +101,7 @@ def test_resume_download_rejects_execution_failure_and_nonzero_code(tmp_path):
 def test_retry_failed_download_preserves_backend_then_captures_clean_snapshot(
     tmp_path,
 ):
-    manager, initial = _record(tmp_path)
+    manager, initial = _record(tmp_path, initial_state=RunState.DOWNLOADING)
     output = tmp_path / "run.out"
     output.write_bytes(b"partial")
     initial = manager.transition(
@@ -114,7 +115,7 @@ def test_retry_failed_download_preserves_backend_then_captures_clean_snapshot(
         initial, state=RunState.FAILED, return_code=0,
         failure_phase=FailurePhase.DOWNLOAD,
         message="interrupted transfer",
-        files=failed_files, artifacts_available=False,
+        files=failed_files, files_available=False,
     )
 
     resumed = manager.resume_download(initial.id)
@@ -133,16 +134,18 @@ def test_retry_failed_download_preserves_backend_then_captures_clean_snapshot(
     available = resumed.files.with_file_availability(str(output), "available")
     complete = manager.complete(
         resumed, state=RunState.FINISHED, return_code=0,
-        files=available, artifacts_available=True,
+        files=available, files_available=True,
     )
     assert complete.state is RunState.FINISHED
-    assert complete.files.failed_artifacts == ()
+    assert complete.files.failed_files == ()
     assert complete.files.captured_at is not None
     assert len(complete.files.output_versions) == 1
-    assert manager.output_file_is_current(complete)
+    assert file_is_current(
+        complete.files, complete.files.output_file, complete.files.output_versions,
+    )
 
 
-def test_resume_download_retains_previously_available_artifacts(tmp_path):
+def test_resume_download_retains_previously_available_files(tmp_path):
     manager = ExecutionManager(RunStore(tmp_path / "runs"))
     output = tmp_path / "stdout"
     other = tmp_path / "other"
@@ -157,7 +160,7 @@ def test_resume_download_retains_previously_available_artifacts(tmp_path):
     record = manager.transition(record, state=RunState.DOWNLOADING,
                                 execution=record.execution.submitted("existing-backend"))
     manager.complete(record, state=RunState.FAILED, return_code=0,
-                     failure_phase=FailurePhase.DOWNLOAD, artifacts_available=False)
+                     failure_phase=FailurePhase.DOWNLOAD, files_available=False)
     retried = manager.resume_download(record.id)
     assert retried.files.stdout.availability_state == "available"
     assert retried.files.outputs[0].availability_state == "pending"

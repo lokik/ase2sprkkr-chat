@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from ..base import ExecutionSpec, FailurePhase, LaunchSpec, RunState, SubmissionNotStarted
-from ..postprocessing import PostprocessingRunner
+from ..postprocessing import CalculationRun
 from ..remote import FileSyncPolicy
 from ..remote_endpoint import RemoteEndpointExecutor
 from ..transport import LocalTransport
@@ -46,7 +46,7 @@ def _processed_run(executor, spec):
             error=error,
         )
 
-    return PostprocessingRunner(executor.create_run(spec), process)
+    return CalculationRun(executor.create_run(spec), process)
 
 
 def _executor(transport=None, **kwargs):
@@ -99,8 +99,8 @@ def _text_run(
         output_file=output_file,
         directory=str(workdir),
         stdin=input_file,
-        input_files=(input_file, *declared_input_files),
-        output_files=(output_file, *declared_output_files),
+        input_files=declared_input_files,
+        output_files=declared_output_files,
         cache_files=declared_cache_files,
         launch=_launch(
             local_root,
@@ -121,6 +121,62 @@ def _expose_shared_input(remote_root, name, data):
     else:
         remote.write_bytes(data)
     return remote
+
+
+def test_remote_follow_creates_missing_named_output_without_losing_bytes(
+    tmp_path, monkeypatch,
+):
+    """A fresh named output must support live SSH FOLLOW before it exists."""
+    output = tmp_path / "run.out"
+    spec = ExecutionSpec(
+        argv=("unused",), input_file=None, output_file=str(output),
+        directory=str(tmp_path), stdin=False,
+    )
+    executor = _executor()
+    runner = executor.create_project_run(spec, run_id="follow-missing-output")
+    runner._backend_id = "test-backend"
+    observed = []
+
+    async def follow(backend_id, manifest, *, offsets, on_chunk):
+        assert backend_id == "test-backend"
+        assert offsets == {"out": 0, "err": None}
+        assert output.read_bytes() == b""
+        on_chunk("out", b"ready\n")
+        on_chunk("out", b"finished\n")
+        return {"state": "finished", "return_code": 0}
+
+    monkeypatch.setattr(executor.connection, "follow", follow)
+    runner.add_output_listener(lambda chunk, kind: observed.append((kind, chunk)))
+
+    asyncio.run(runner._follow_once())
+
+    assert output.read_bytes() == b"ready\nfinished\n"
+    assert observed == [("out", "ready\n"), ("out", "finished\n")]
+
+
+def test_remote_follow_preserves_existing_bytes_on_reconnect(tmp_path, monkeypatch):
+    """An attached observer starts at EOF and cannot truncate existing output."""
+    output = tmp_path / "run.out"
+    output.write_bytes(b"already written\n")
+    executor = _executor()
+    runner = executor.create_project_run(
+        ExecutionSpec(
+            argv=("unused",), input_file=None, output_file=str(output),
+            directory=str(tmp_path), stdin=False,
+        ),
+        run_id="reconnect-existing-output",
+    )
+    runner._backend_id = "backend-id"
+
+    async def follow(backend_id, manifest, *, offsets, on_chunk):
+        assert offsets == {"out": len(b"already written\n"), "err": None}
+        assert output.read_bytes() == b"already written\n"
+        on_chunk("out", b"next chunk\n")
+        return {"state": "finished", "return_code": 0}
+
+    monkeypatch.setattr(executor.connection, "follow", follow)
+    asyncio.run(runner._follow_once())
+    assert output.read_bytes() == b"already written\nnext chunk\n"
 
 
 def test_remote_executor_local_transport_streams_output(tmp_path):
@@ -155,8 +211,8 @@ def test_remote_executor_local_transport_streams_output(tmp_path):
     assert result.error == b""
     assert seen == [("HELLO\n", "out")]
     assert runner.backend_id is not None
-    assert runner.execution.endpoint is not None
-    assert Path(runner.execution.directory.remote) == remote_root
+    assert runner.executor is executor
+    assert Path(runner.job_files.manifest.mapping.map_path(str(tmp_path))) == remote_root
 
 
 def test_remote_input_file_and_stdin_staged_only_once(tmp_path):
@@ -164,19 +220,16 @@ def test_remote_input_file_and_stdin_staged_only_once(tmp_path):
     executor, spec, _, remote_root = _text_run(tmp_path, transport)
     runner = executor.create_run(spec)
 
-    async def prepare():
-        directory = await runner.executor.map_directory(spec.directory)
-        from ..run_model import FileManifest
-        return await runner._prepare_request(
-            "one-run", directory, FileManifest.from_spec(spec),
-        )
-
     try:
-        request = asyncio.run(prepare())
+        request, _files = asyncio.run(runner._prepare_async())
         target = remote_root / "calculation" / "input.txt"
         assert request["input_file"] == str(target)
         assert request["stdin"] == str(target)
-        assert request["input_files"] == [str(target)]
+        assert "input_files" not in request
+        assert [entry["remote_path"] for entry in request["files"]["inputs"]] == [
+            str(target),
+        ]
+        assert request["files"]["stdin"] is True
         assert [destination for _, destination in transport.put_files] == [target]
     finally:
         spec.input_file.close()
@@ -209,7 +262,7 @@ def test_remote_executor_stages_declared_input_files(tmp_path):
         output_file=output_file,
         directory=str(workdir),
         stdin=input_file,
-        input_files=(input_file, potential_file),
+        input_files=(potential_file,),
         launch=_launch(tmp_path, remote_root),
     )
 
@@ -259,50 +312,54 @@ def test_remote_input_file_policies(
     transport = _SpyTransport()
     workdir = tmp_path / "local" / "calculation"
     workdir.mkdir(parents=True)
-    artifact = workdir / "artifact.dat"
-    artifact.write_text(local_value)
-    remote_artifact = tmp_path / "remote" / "calculation" / "artifact.dat"
-    remote_artifact.parent.mkdir(parents=True)
-    remote_artifact.write_text(remote_value)
+    file = workdir / "file.dat"
+    file.write_text(local_value)
+    remote_file = tmp_path / "remote" / "calculation" / "file.dat"
+    remote_file.parent.mkdir(parents=True)
+    remote_file.write_text(remote_value)
 
     executor, spec, _, remote_root = _text_run(
         tmp_path,
         transport,
-        declared_input_files=(artifact,),
+        declared_input_files=(file,),
         input_files=policy,
-        code="import pathlib; print(pathlib.Path('artifact.dat').read_text())",
+        code="import pathlib; print(pathlib.Path('file.dat').read_text())",
     )
     if policy == "never":
         _expose_shared_input(remote_root, "input.txt", b"hello")
     result = _processed_run(executor, spec).run()
 
     assert result.output == (expected + "\n").encode()
-    assert sum(dst == remote_artifact for _, dst in transport.put_files) == uploads
+    assert sum(dst == remote_file for _, dst in transport.put_files) == uploads
 
 
-@pytest.mark.parametrize("direction", ("input", "output"))
-def test_remote_never_policy_ignores_missing_declared_file(tmp_path, direction):
+def test_remote_never_output_policy_ignores_missing_declared_file(tmp_path):
     transport = _SpyTransport()
     missing = tmp_path / "local" / "calculation" / "missing.dat"
-    kwargs = (
-        {"declared_input_files": (missing,), "input_files": "never"}
-        if direction == "input" else
-        {"declared_output_files": (missing,), "output_files": "never"}
+    executor, spec, _, _ = _text_run(
+        tmp_path, transport, code="print('done')",
+        declared_output_files=(missing,), output_files="never",
     )
-    executor, spec, _, remote_root = _text_run(
-        tmp_path, transport, code="print('done')", **kwargs,
-    )
-    if direction == "input":
-        _expose_shared_input(remote_root, "input.txt", b"hello")
-
     result = _processed_run(executor, spec).run()
-
     assert result.return_code == 0
     assert not missing.exists()
-    if direction == "input":
-        assert all(src != missing for src, _ in transport.put_files)
-    else:
-        assert all(dst != missing for _, dst in transport.get_files)
+    assert all(dst != missing for _, dst in transport.get_files)
+
+
+@pytest.mark.parametrize("local_exists", (True, False))
+def test_remote_never_required_input_must_exist_on_target(tmp_path, local_exists):
+    transport = _SpyTransport()
+    missing = tmp_path / "local" / "calculation" / "missing.dat"
+    executor, spec, _, remote_root = _text_run(
+        tmp_path, transport, declared_input_files=(missing,),
+        input_files="never", code="print('must not execute')",
+    )
+    if local_exists:
+        missing.write_text("local")
+    _expose_shared_input(remote_root, "input.txt", b"hello")
+    with pytest.raises(SubmissionNotStarted, match="Required remote input file"):
+        _processed_run(executor, spec).run()
+    assert all(src != missing for src, _ in transport.put_files)
 
 
 def test_remote_input_policy_always_requires_local_file(tmp_path):
@@ -322,36 +379,100 @@ def test_remote_input_policy_always_requires_local_file(tmp_path):
     "policy, local_value, generated_value, expected, downloads",
     [
         (FileSyncPolicy.CHANGED, "old", "new", "new", 1),
-        (FileSyncPolicy.CHANGED, "same", "same", "same", 0),
+        (FileSyncPolicy.CHANGED, "same", "same", "same", 1),
         (FileSyncPolicy.ALWAYS, "local", "remote", "remote", 1),
-        (FileSyncPolicy.MISSING, "local", "remote", "local", 0),
-        (FileSyncPolicy.NEVER, "local", "remote", "local", 0),
+        (FileSyncPolicy.MISSING, "local", "remote", "remote", 1),
+        (FileSyncPolicy.NEVER, "local", "remote", None, 0),
     ],
     ids=("changed", "unchanged", "always", "missing", "never"),
 )
 def test_remote_output_file_policies(
     tmp_path, policy, local_value, generated_value, expected, downloads,
 ):
+    """A new submission invalidates old declared outputs before syncing."""
     transport = _SpyTransport()
     workdir = tmp_path / "local" / "calculation"
     workdir.mkdir(parents=True)
-    artifact = workdir / "artifact.dat"
-    artifact.write_text(local_value)
+    file = workdir / "file.dat"
+    file.write_text(local_value)
 
     executor, spec, _, remote_root = _text_run(
         tmp_path,
         transport,
-        declared_output_files=(artifact,),
+        declared_output_files=(file,),
         output_files=policy,
-        code=f"import pathlib; pathlib.Path('artifact.dat').write_text({generated_value!r}); print('done')",
+        code=f"import pathlib; pathlib.Path('file.dat').write_text({generated_value!r}); print('done')",
     )
     result = _processed_run(executor, spec).run()
 
-    remote_artifact = remote_root / "calculation" / "artifact.dat"
+    remote_file = remote_root / "calculation" / "file.dat"
     assert result.return_code == 0
-    assert artifact.read_text() == expected
+    if expected is None:
+        assert not file.exists()
+    else:
+        assert file.read_text() == expected
     assert transport.get_files == (
-        [(remote_artifact, artifact)] if downloads else []
+        [(remote_file, file)] if downloads else []
+    )
+
+
+@pytest.mark.parametrize("policy", (FileSyncPolicy.MISSING, FileSyncPolicy.NEVER))
+def test_remote_output_policy_preserves_local_file_when_cleanup_is_remote_only(
+    tmp_path, policy,
+):
+    """Skipping local cleanup is an explicit choice, not a policy side effect."""
+    from dataclasses import replace
+
+    transport = _SpyTransport()
+    file = tmp_path / "local" / "calculation" / "file.dat"
+    file.parent.mkdir(parents=True)
+    file.write_text("previous result")
+
+    executor, spec, _, remote_root = _text_run(
+        tmp_path,
+        transport,
+        declared_output_files=(file,),
+        output_files=policy,
+        code="from pathlib import Path; Path('file.dat').write_text('new result')",
+    )
+    spec = replace(spec, launch=replace(spec.launch, cleanup_outputs="remote"))
+    result = _processed_run(executor, spec).run()
+
+    assert result.return_code == 0
+    assert file.read_text() == "previous result"
+    assert (remote_root / "calculation" / "file.dat").read_text() == "new result"
+    assert transport.get_files == []
+
+
+@pytest.mark.parametrize("generated,expected_downloads", (
+    ("same", 0), ("changed", 1),
+))
+def test_changed_sync_without_local_cleanup_compares_existing_output(
+    tmp_path, generated, expected_downloads,
+):
+    """CHANGED preserves identical output, but replaces genuinely new bytes."""
+    from dataclasses import replace
+
+    transport = _SpyTransport()
+    path = tmp_path / "local" / "calculation" / "file.dat"
+    path.parent.mkdir(parents=True)
+    path.write_text("same")
+
+    executor, spec, _, remote_root = _text_run(
+        tmp_path, transport,
+        declared_output_files=(path,),
+        output_files=FileSyncPolicy.CHANGED,
+        code=f"from pathlib import Path; Path('file.dat').write_text({generated!r})",
+    )
+    spec = replace(spec, launch=replace(spec.launch, cleanup_outputs="remote"))
+    result = _processed_run(executor, spec).run()
+
+    assert result.return_code == 0
+    assert path.read_text() == generated
+    remote_path = remote_root / "calculation" / "file.dat"
+    assert remote_path.read_text() == generated
+    assert transport.get_files == (
+        [(remote_path, path)] if expected_downloads else []
     )
 
 
@@ -359,23 +480,23 @@ def test_remote_executor_does_not_reuse_stale_output(tmp_path):
     transport = _SpyTransport()
     workdir = tmp_path / "local" / "calculation"
     workdir.mkdir(parents=True)
-    artifact = workdir / "artifact.dat"
-    remote_artifact = tmp_path / "remote" / "calculation" / "artifact.dat"
-    remote_artifact.parent.mkdir(parents=True)
-    remote_artifact.write_text("stale")
+    file = workdir / "file.dat"
+    remote_file = tmp_path / "remote" / "calculation" / "file.dat"
+    remote_file.parent.mkdir(parents=True)
+    remote_file.write_text("stale")
 
     executor, spec, _, _ = _text_run(
         tmp_path,
         transport,
-        declared_output_files=(artifact,),
+        declared_output_files=(file,),
         code="print('done')",
     )
 
     with pytest.raises(FileNotFoundError, match="was not created"):
         _processed_run(executor, spec).run()
 
-    assert not remote_artifact.exists()
-    assert not artifact.exists()
+    assert not remote_file.exists()
+    assert not file.exists()
 
 
 def test_remote_cache_creation_content_and_mtime_changes_in_one_run(tmp_path):
@@ -444,7 +565,6 @@ def test_remote_cache_never_policy_skips_only_requested_direction(tmp_path, dire
     cache = tmp_path / "local" / "calculation" / "cache.dat"
     cache.parent.mkdir(parents=True)
     cache.write_text("local")
-
     kwargs = {"input_files": "never"} if direction == "input" else {"output_files": "never"}
     executor, spec, _, remote_root = _text_run(
         tmp_path, transport, declared_cache_files=(cache,),
@@ -455,9 +575,7 @@ def test_remote_cache_never_policy_skips_only_requested_direction(tmp_path, dire
         _expose_shared_input(remote_root, "input.txt", b"hello")
         _expose_shared_input(remote_root, "cache.dat", "local")
     remote_cache = remote_root / "calculation" / "cache.dat"
-
     result = _processed_run(executor, spec).run()
-
     assert result.return_code == 0
     if direction == "input":
         assert all(dst != remote_cache for _, dst in transport.put_files)
@@ -471,10 +589,9 @@ def test_remote_cache_never_policy_skips_only_requested_direction(tmp_path, dire
 def test_remote_sync_policy_rejects_unknown_value(tmp_path):
     endpoint = _executor()
     with pytest.raises(ValueError):
-        endpoint._context(
-            endpoint,
+        asyncio.run(endpoint.resolve_mapping(
             _launch(tmp_path, tmp_path / "remote", input_files="sometimes"),
-        )
+        ))
 
 
 @pytest.mark.parametrize(
@@ -494,23 +611,19 @@ def test_remote_directory_mapping(tmp_path, root_mode, remote_root, expected):
     else:
         local = Path.home() / "calculations" / "Fe"
         launch = LaunchSpec() if remote_root is None else LaunchSpec(remote_root=remote_root)
-    context = endpoint._context(endpoint, launch)
-
-    mapped = asyncio.run(context.map_directory(local))
-
-    assert mapped == expected
+    context = asyncio.run(endpoint.resolve_mapping(launch))
+    assert context.map_path(local) == expected
 
 
 def test_remote_directory_mapping_rejects_path_outside_local_root(tmp_path):
     local_root = tmp_path / "local"
     endpoint = _executor()
-    context = endpoint._context(
-        endpoint,
+    context = asyncio.run(endpoint.resolve_mapping(
         LaunchSpec(local_root=local_root, remote_root="/scratch/tester"),
-    )
+    ))
 
     with pytest.raises(ValueError, match="outside mapped root"):
-        asyncio.run(context.map_directory(tmp_path / "elsewhere"))
+        context.map_path(tmp_path / "elsewhere")
 
 
 def test_remote_none_stream_files_are_live_only(tmp_path):
@@ -564,20 +677,25 @@ def test_file_sync_transfer_decision_is_direction_independent(
 
 
 def test_remote_argv_reuses_staged_path_identity(tmp_path):
-    """Relative, absolute and Path arguments share the staging resolver."""
-    from ..remote import RemoteRunner
-
-    work = tmp_path / "work"
+    """Path arguments must share the same staged input identity."""
+    local_root = tmp_path / "local"
+    work = local_root / "work"
+    work.mkdir(parents=True)
     source = work / "input.dat"
-    runner = object.__new__(RemoteRunner)
-    runner.spec = SimpleNamespace(directory=str(work))
-    arguments = ("program", "input.dat", source, "--verbose", "./missing.dat")
-    staged = {str(source): "/remote/work/input.dat"}
-
-    assert runner._remote_argv(arguments, staged) == [
-        "program", "/remote/work/input.dat", "/remote/work/input.dat",
-        "--verbose", "./missing.dat",
+    source.write_text("input")
+    remote_root = tmp_path / "remote"
+    spec = ExecutionSpec(
+        argv=("program", "input.dat", source, "--verbose", "./missing.dat"),
+        directory=str(work), input_file=str(source), output_file=None,
+        launch=LaunchSpec(local_root=local_root, remote_root=remote_root),
+    )
+    runner = _executor().create_run(spec)
+    request, manifest = asyncio.run(runner._prepare_async())
+    target = str(remote_root / "work" / "input.dat")
+    assert request["argv"] == [
+        "program", target, target, "--verbose", "./missing.dat",
     ]
+    assert manifest.inputs[0].remote_path == target
 
 
 @pytest.mark.parametrize("preflight", (False, True))
@@ -626,7 +744,7 @@ def test_remote_submit_failure_is_not_misclassified_as_failed_preparation(
     async def fail_after_preparation(_request):
         raise OSError("backend submission uncertain")
 
-    monkeypatch.setattr(executor, "_submit", fail_after_preparation)
+    monkeypatch.setattr(executor.connection, "submit", fail_after_preparation)
     if preflight:
         runner.prepare_submission()
 
@@ -635,3 +753,32 @@ def test_remote_submit_failure_is_not_misclassified_as_failed_preparation(
 
     assert runner.failure_phase is None
     assert runner.backend_id is None
+
+
+@pytest.mark.parametrize("source_kind", ("input", "cache", "stdin"))
+def test_remote_staging_flushes_buffered_source_handles(tmp_path, source_kind):
+    """The reserved manifest stores paths, but staging uploads flushed bytes."""
+    from ..remote_file_handler import RemoteFileHandler
+    from ..run_model import FileManifest, FileMapping
+
+    local = tmp_path / "local"
+    remote = tmp_path / "remote"
+    local.mkdir()
+    remote.mkdir()
+    path = local / "buffered.dat"
+    with path.open("w+b") as handle:
+        handle.write(b"buffered content")
+        kwargs = {
+            "input_files": (handle,) if source_kind == "input" else (),
+            "cache_files": (handle,) if source_kind == "cache" else (),
+            "stdin": handle if source_kind == "stdin" else False,
+        }
+        spec = ExecutionSpec(
+            argv=("true",), directory=str(local),
+            input_file=None, output_file=None, **kwargs,
+        )
+        mapping = FileMapping(str(local), str(remote))
+        asyncio.run(RemoteFileHandler(LocalTransport()).prepare(
+            mapping, spec, FileManifest.from_spec(spec),
+        ))
+        assert (remote / "buffered.dat").read_bytes() == b"buffered content"
