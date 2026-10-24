@@ -68,6 +68,100 @@ class SPRKKR(BaseCalculator):
         project=None,
         **kwargs,
     ):
+        """Configure persistent defaults for SPR-KKR calculations.
+
+        Initialization does not run SPR-KKR. Individual calculations can override
+        these defaults using :meth:`calculate`, :meth:`create_run` or
+        :meth:`save_input`. Physical structure and potential objects are retained
+        rather than copied; run-specific input parameters are copied on preparation.
+
+        Parameters
+        ----------
+        label : str or None, optional
+            Prefix used by the `%l` placeholder in generated filenames. By
+            default no prefix is added.
+        directory : str, os.PathLike or False, default "."
+            Working directory for calculation files and process execution.
+            `False` requests a managed temporary directory for executing runs.
+            Unlike execution, `save_input` requires a persistent directory.
+        atoms : ase.Atoms, SPRKKRAtoms or None, optional
+            Default structure. ASE atoms are promoted to `SPRKKRAtoms`; preparation
+            may update this object (for example, by adding empty spheres). Do not
+            supply `atoms` together with a `Potential` object.
+        potential : Potential, str, bool or None, optional
+            Default physical potential. A `Potential` object supplies its own atoms;
+            a string names a potential file, resolved during preparation. `True`
+            requests generation from atoms; `False` uses `CONTROL.POTFIL` from
+            the input parameters. `None` uses the available physical state, normally
+            generating a potential from atoms when necessary.
+        input_file : str, os.PathLike, named file or bool, default True
+            Input filename or filename template. `True` selects the default
+            `%l%_%a_%T.inp` template; `False` creates a named temporary file when
+            temporary artifacts are allowed. Templates recognize `%l` (label),
+            `%a` (chemical symbols), `%t`/`%T` (task name, original/uppercase),
+            `%d` (date and time), `%c` (incrementing counter), and `%_`
+            (optional underscore separator).
+        output_file : str, os.PathLike, named file or bool, default True
+            Process-output destination. `True` chooses an output name derived
+            from the input filename when reused, or the default `%a_%T.out`
+            template. `False` disables the separate output file. Other
+            filenames and templates follow the rules of `input_file`.
+        potential_file : str, os.PathLike, named file or bool, default True
+            Where a generated or updated potential is written. `True` uses an
+            input-derived name when applicable or `%a.pot` otherwise;
+            `False` requests a managed temporary file. This does not select
+            which physical potential is used (see `potential`).
+        input_parameters : InputParameters, str, file object or None, optional
+            Persistent defaults for the SPR-KKR input file. A string may identify a
+            task (such as `"SCF"` or `"DOS"`), a named input-parameter schema,
+            or a file to read. `None` lazily selects the default SCF parameters.
+            Each run operates on a copy, leaving these defaults unchanged.
+        options : dict or None, optional
+            Initial values applied to `input_parameters`, possibly specified as
+            `SECTION.OPTION` keys. Additional keyword arguments are applied
+            as input-parameter values by the same mechanism.
+        print_output : bool, str or None, optional
+            Whether to display executable output in addition to writing output
+            files. `"info"` selects concise iteration information. `None` uses
+            `config.running.print_output`.
+        mpi : bool, int, str, sequence or None, optional
+            Override the resolved execution profile's MPI launch policy. `False`
+            disables MPI; `True`/`"auto"` request autodetection; an integer
+            specifies the number of processes and a command or argument sequence
+            can specify a launcher. `None` keeps the profile setting.
+        empty_spheres : bool, str, tuple, mapping or None, optional
+            Whether to insert empty spheres when preparing the structure. `"auto"`
+            adds them for applicable initial SCF structures lacking vacuum sites.
+            A pair `(min_radius, max_radius)` sets the radius bounds; a mapping
+            supplies keyword arguments to `add_empty_spheres`. `None` uses
+            `config.running.empty_spheres`.
+        executable_suffix : str, False or None, optional
+            Suffix appended to SPR-KKR executable names. An empty string or
+            `False` disables the suffix; `None` retains the profile setting.
+        executable_dir : str, os.PathLike, False or None, optional
+            Directory containing SPR-KKR executables. `False` searches `PATH`;
+            `None` retains the profile setting.
+        profile : SPRKKRProfile, str or None, optional
+            Machine/execution profile or the name of a configured profile. `None`
+            resolves the configured default profile. Explicit `mpi`,
+            `executable_dir` and `executable_suffix` override its launch settings.
+        executor : object or None, optional
+            Explicit execution backend, taking precedence over the profile's
+            backend for runs that do not specify a different profile or executor.
+        project : object or None, optional
+            Default project context forwarded to execution runners, allowing
+            project-managed runs and their associated artifacts.
+        **kwargs : object
+            Additional input-parameter values, passed to
+            `input_parameters.set(..., unknown="find")` together with `options`.
+            These are not arbitrary calculator options.
+
+        See Also
+        --------
+        prepare : Materialize one calculation's inputs and resources.
+        create_run : Create an unstarted runner for one task.
+        calculate : Execute a task synchronously.
+        """
         if potential is not None and not isinstance(potential, (bool, str)):
             if atoms is not None:
                 raise ValueError(
@@ -217,16 +311,48 @@ class SPRKKR(BaseCalculator):
         allow_temporary_files: bool = True,
         restart_scf: bool = False,
     ):
-        """Materialize current calculation state into one prepared calculation.
+        """Materialize one task's inputs and return an owning preparation object.
 
-        ``InputParameters`` are copied before one-shot task/options and generated
-        file values are applied. Selected ``Atoms`` and ``Potential`` objects are
-        not deep-copied and may be normalized or synchronized during preparation.
-        The returned :class:`PreparedCalculation` owns all concrete files and
-        temporary directory resources, so subsequent physical-state changes do
-        not alter the already materialized run. Call
-        :meth:`PreparedCalculation.close` when the object is not transferred to
-        a runner.
+        Input parameters are copied before task and option overrides are applied.
+        Atoms and potentials are *not* deep-copied: the selected physical state may
+        be normalized or modified during preparation. The returned object owns its
+        files and directory resources and must be closed unless ownership is
+        transferred to a runner.
+
+        Parameters
+        ----------
+        atoms : ase.Atoms, SPRKKRAtoms or None, optional
+            Structure for this preparation; `None` uses the calculator default.
+        input_parameters : InputParameters, str or None, optional
+            Task parameters or task/file name; `None` uses calculator defaults.
+        potential : Potential, str, bool or None, optional
+            Potential or input filename, using the constructor's sentinel rules.
+        input_file, potential_file, output_file : str, os.PathLike, named file, bool or None
+            File destinations or templates. `None` inherits each calculator
+            default; `False` requests a temporary file where supported (for
+            `output_file`, `False` disables its creation).
+        directory : str, os.PathLike, Directory, False or None, optional
+            Working directory. `None` inherits the calculator's directory;
+            `False` requests a managed temporary directory.
+        create_subdirs : bool, default False
+            Create missing parent directories for generated files.
+        options : dict or None, optional
+            Input-parameter values applied only to this preparation.
+        task : str or None, optional
+            Change the task of the copied input parameters before writing.
+        empty_spheres : bool, str, tuple, mapping or None, optional
+            Per-run empty-sphere policy; `None` uses the calculator default.
+        allow_temporary_files : bool, default True
+            Allow managed temporary input and potential file paths.
+        restart_scf : bool, default False
+            Write a potential suitable for restarting an SCF run. Requires an
+            SCF task and a writable or generatable potential.
+
+        Returns
+        -------
+        PreparedCalculation
+            Materialized task parameters, files and owned resources. Call
+            `close()` if no runner takes ownership.
         """
         prepared = PreparedCalculation.prepare(
             default_atoms=self._atoms,
@@ -278,22 +404,53 @@ class SPRKKR(BaseCalculator):
         return_files=False,
         restart_scf: bool = False,
     ):
-        """Materialize SPR-KKR input files without starting an executable.
+        """Write the input and potential files without executing SPR-KKR.
 
-        Preparation always works on an independent snapshot of
-        ``InputParameters``; generated POTFIL/DATASET values therefore never
-        mutate calculator defaults or caller-owned parameter objects.
+        Preparation copies `InputParameters`, so generated `POTFIL`/`DATASET`
+        values do not change the calculator's persistent defaults. Unlike
+        :meth:`calculate`, this method cannot use a temporary directory: the
+        returned filenames must remain meaningful after the call.
 
-        ``False`` as ``input_file`` or ``potential_file`` requests a managed
-        named temporary artifact. Temporary artifacts are useful for an
-        executing runner, but ``save_input`` cannot return ownership of a
-        temporary POTFIL because its public tuple exposes only the pathname.
-        Supply a persistent POTFIL name when ``return_files=True``.
+        Parameters
+        ----------
+        atoms : ase.Atoms, SPRKKRAtoms or None, optional
+            Structure for the input; `None` uses the calculator default.
+        input_parameters : InputParameters, str or None, optional
+            Input-parameter object, task name or input filename; `None`
+            uses the calculator defaults.
+        potential : Potential, str, bool or None, optional
+            Selected potential, with the same rules as in the constructor.
+        input_file, potential_file, output_file : str, os.PathLike, named file, bool or None
+            Filenames or templates; `None` inherits calculator defaults.
+            `output_file=False` (the default here) suppresses the output file.
+            `input_file=False` and `potential_file=False` require temporary
+            files to be allowed.
+        directory : str, os.PathLike, Directory or None, optional
+            Persistent directory for files. `None` uses the calculator default;
+            `False` is not supported here.
+        create_subdirs : bool, default False
+            Create missing parent directories for generated files.
+        options : dict or None, optional
+            One-shot input-parameter overrides.
+        task : str or None, optional
+            Task to select on the copied input parameters.
+        empty_spheres : bool, str, tuple, mapping or None, optional
+            Empty-sphere policy; `None` inherits calculator defaults.
+        return_files : bool, default False
+            Return open input/output file objects instead of their paths, leaving
+            their ownership with the caller. Temporary potential files cannot
+            be returned in this mode: specify a persistent `potential_file`.
+        restart_scf : bool, default False
+            Write a restartable SCF potential; requires an SCF task.
 
-        ``directory=False`` is intentionally rejected here: a temporary
-        directory is owned naturally by a runner, whereas returning filenames
-        from ``save_input`` after deleting their directory would be invalid.
-        Use :meth:`create_run`/``calculate`` for temporary run directories.
+        Returns
+        -------
+        tuple
+            `(input_parameters, input_file, potential_file, output_file)`.
+            The first entry is the copied `InputParameters`; input/output entries
+            are pathnames by default, or open files if `return_files=True`.
+            `potential_file` is a pathname (or `None`); `output_file` may
+            be `None` when suppressed.
         """
         selected_directory = self._directory if directory is None else directory
         if self._is_temporary_directory(selected_directory):
@@ -364,21 +521,60 @@ class SPRKKR(BaseCalculator):
         restart_scf: bool = False,
         error_file=None,
     ):
-        """Prepare a calculation and return an unstarted owning runner.
+        """Prepare one task and return an unstarted runner owning its resources.
 
-        An explicit per-run executor has highest precedence. Otherwise an
-        explicit per-run profile selects its backend; if neither is supplied,
-        the calculator-level executor (when present) overrides the calculator
-        profile backend.
+        A per-run `executor` takes precedence; if a per-run `profile` is given,
+        its backend takes precedence over the calculator-level executor.
+        Unlike the success-only callback in :meth:`calculate`, this method's
+        `callback` is a terminal callback and may receive partial results.
 
-        ``error_file=None`` stores stderr next to stdout as ``<output>.err``.
-        ``error_file=True`` deliberately merges stderr into ``output_file``;
-        ``False`` requests a managed temporary stderr file, and an explicit path
-        or file object stores stderr there instead.
+        Parameters
+        ----------
+        atoms : ase.Atoms, SPRKKRAtoms or None, optional
+            Structure to use instead of the calculator default.
+        input_parameters : InputParameters, str or None, optional
+            Task parameters or task/input filename for this run.
+        potential : Potential, str, bool or None, optional
+            Potential selection; see the constructor's sentinel rules.
+        input_file, potential_file, output_file : str, os.PathLike, named file, bool or None
+            File destinations; `None` inherits calculator defaults.
+        directory : str, os.PathLike, Directory, False or None, optional
+            Working directory; `False` selects a temporary directory.
+        create_subdirs : bool, default False
+            Create parent directories as needed.
+        options : dict or None, optional
+            One-run input-parameter overrides.
+        task : str or None, optional
+            Override the task of the copied parameters.
+        empty_spheres : bool, str, tuple, mapping or None, optional
+            Policy for adding empty spheres, or `None` for the calculator default.
+        print_output : bool, str or None, optional
+            Whether to display output, or `"info"` for concise progress.
+            `None` uses the calculator's setting.
+        read_callback : callable or None, optional
+            Callback observing streamed stdout/stderr.
+        callback : callable or None, optional
+            Terminal runner callback; may receive an incomplete result on failure.
+        gdb : bool, default False
+            Launch the executable under GDB for debugging.
+        profile : SPRKKRProfile, str or None, optional
+            Profile used by this run; `None` uses the calculator profile.
+        executor : object or None, optional
+            Explicit runner backend, overriding the selected profile's backend.
+        project : object or None, optional
+            Project context; `None` inherits the calculator project.
+        restart_scf : bool, default False
+            Prepare for restarting an SCF calculation.
+        error_file : str, named file, bool or None, optional
+            Stderr destination. `None` uses `<output>.err`; `True` merges
+            stderr with stdout, `False` uses a managed temporary file, and a
+            path or named file selects an explicit destination.
 
-        ``callback`` is a terminal runner callback. It can therefore be invoked
-        with a partially populated result when backend execution or parsing
-        fails. ``read_callback`` observes streamed stdout/stderr.
+        Returns
+        -------
+        CalculationRun
+            An unstarted runner. Starting or closing it transfers or releases
+            ownership of the prepared resources.
         """
         explicit_profile = profile is not None
         run_profile = resolve_sprkkr_profile(
@@ -465,19 +661,77 @@ class SPRKKR(BaseCalculator):
         restart_scf: bool = False,
         error_file=None,
     ):
-        """Run one SPR-KKR task synchronously and return its parsed result.
+        """Execute one SPR-KKR task synchronously and return its parsed result.
 
-        ``properties`` and ``system_changes`` are accepted for ASE compatibility.
-        SPR-KKR execution is task-oriented, so ``properties`` does not select a
-        different backend task and ``system_changes`` is not used for incremental
-        updates; each run materializes the complete supplied calculation state.
-        Per-call ``mpi``, ``executable_dir`` and ``executable_suffix`` values are
-        immutable overrides of the selected execution profile.
+        The ASE `properties` and `system_changes` arguments are accepted but
+        do not choose a task or enable incremental updates. A full input state
+        is materialized for each run. A completed SCF run may update the
+        calculator's default potential; other tasks leave it unchanged.
 
-        The callback of this synchronous convenience method is intentionally a
-        success callback: it runs only after the result has updated calculator
-        state. This differs from the lower-level terminal callback accepted by
-        :meth:`create_run`.
+        Parameters
+        ----------
+        atoms : ase.Atoms, SPRKKRAtoms or None, optional
+            Structure for the run; `None` uses the calculator's physical state.
+        properties : sequence of str, default ("energy",)
+            Requested ASE properties. Currently only `"energy"` is exposed as
+            an ASE property; this argument does not select the SPR-KKR task.
+        system_changes : sequence of str, optional
+            ASE change indicators, accepted for compatibility but not used
+            to perform incremental updates.
+        input_parameters : InputParameters, str or None, optional
+            Parameters, task name or input filename, overriding calculator defaults.
+        potential : Potential, str, bool or None, optional
+            Potential selection using the constructor's rules.
+        input_file, potential_file, output_file : str, os.PathLike, named file, bool or None
+            Filenames or templates, inheriting calculator defaults when `None`.
+        directory : str, os.PathLike, Directory, False or None, optional
+            Directory for execution; `False` selects a managed temporary directory.
+        create_subdirs : bool, default False
+            Create missing parent directories for generated files.
+        empty_spheres : bool, str, tuple, mapping or None, optional
+            Empty-sphere policy; `None` uses the calculator default.
+        mpi : bool, int, str, sequence or None, optional
+            Override MPI launch settings for this run.
+        options : dict or None, optional
+            Input-parameter changes applied to this run's copy only.
+        task : str or None, optional
+            Task selected on the copied input parameters.
+        print_output : bool, str or None, optional
+            Display process output (or concise `"info"`); `None` uses
+            the calculator default.
+        read_callback : callable or None, optional
+            Callback observing stdout/stderr as the process produces them.
+        executable_suffix : str, False or None, optional
+            One-run executable-name suffix override.
+        callback : callable or None, optional
+            Success callback receiving the parsed result after calculator state
+            is updated; not invoked when the run raises an exception.
+        executable_dir : str, os.PathLike, False or None, optional
+            Override the executable search directory for this run.
+        gdb : bool, default False
+            Run the executable with GDB for debugging.
+        profile : SPRKKRProfile, str or None, optional
+            Per-run execution profile; `None` uses the calculator profile.
+        executor : object or None, optional
+            Per-run backend; when specified takes precedence over the profile.
+        project : object or None, optional
+            Project context; `None` uses the calculator default.
+        restart_scf : bool, default False
+            Restart a prior SCF calculation from a suitable writable potential.
+        error_file : str, named file, bool or None, optional
+            Stderr target: `None` uses `<output>.err`, `True` merges it
+            with stdout, and `False` requests a managed temporary file.
+
+        Returns
+        -------
+        TaskResult
+            Parsed result for the executed SPR-KKR task. If an energy is available,
+            it is also stored in the calculator's ASE `results` dictionary.
+
+        See Also
+        --------
+        create_run : Construct a runner without executing it immediately.
+        save_input : Generate input files without running a task.
         """
         if executor is None and profile is None:
             executor = self.executor
