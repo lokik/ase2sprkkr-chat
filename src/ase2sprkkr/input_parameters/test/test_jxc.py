@@ -1,4 +1,7 @@
 import pickle
+from pathlib import Path
+
+import pyparsing as pp
 import pytest
 from ase2sprkkr.common.warnings import DataValidityError
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
@@ -96,3 +99,37 @@ def test_nonmagnetic_modes_rejected(section, name, value):
     p[section][name].set(value)
     with pytest.raises(DataValidityError, match="magnetic|magnetic calculation"):
         p.validate("save")
+
+
+def test_jxc_and_dmi_selector_presence_is_required_on_read():
+    """Defaults do not substitute for native JXC/DMI flags in an input file."""
+    definition = InputParameters.definition("JXC")
+    source = (Path(__file__).parent.parent / "examples" / "jxc.in").read_text()
+    selector = "TASK     DMI  JXC   CLURAD=4.0"
+    assert selector in source
+
+    for new_task_line in ("TASK     CLURAD=4.0", "TASK     HFF  CLURAD=4.0"):
+        with pytest.raises(pp.ParseBaseException, match="explicitly contain JXC or DMI"):
+            definition.read_from_string(source.replace(selector, new_task_line))
+
+    # A TASK section that is entirely absent is rejected by the common parser.
+    with pytest.raises(pp.ParseBaseException, match="TASK"):
+        definition.read_from_string(source.replace(selector, ""))
+
+
+@pytest.mark.parametrize(
+    ("selector", "jxc", "dmi"),
+    [("JXC", True, False), ("DMI", False, True), ("DMI  JXC", True, True)],
+)
+def test_jxc_dmi_explicit_native_flags_are_readable(selector, jxc, dmi):
+    definition = InputParameters.definition("JXC")
+    source = (Path(__file__).parent.parent / "examples" / "jxc.in").read_text()
+    original = "TASK     DMI  JXC   CLURAD=4.0"
+    assert original in source
+    parsed = definition.read_from_string(
+        source.replace(original, f"TASK     {selector}   CLURAD=4.0")
+    )
+    assert parsed.TASK.JXC.is_set() is jxc
+    assert parsed.TASK.DMI.is_set() is dmi
+    assert parsed.TASK.JXC() is jxc
+    assert parsed.TASK.DMI() is dmi

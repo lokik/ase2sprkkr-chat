@@ -1,5 +1,7 @@
 """JXC task definition."""
 
+import pyparsing as pp
+
 from ._file_manifests import resolve_file
 from .sections import CONTROL, TAU, ENERGY, SITES, STRCONST, MODE
 from ..input_parameters_definitions import (
@@ -95,6 +97,10 @@ def _validate_jxc(parameters, _values, why):
     dmi = parameters.TASK.DMI()
     mode = parameters.MODE.MODE()
 
+    if why == "parse" and not (parameters.TASK.JXC.is_set() or parameters.TASK.DMI.is_set()):
+        # Parsing must verify the native selector, not a computed default.
+        # Parse-time DataValidityError results are warnings by default.
+        raise pp.ParseException("TASK must explicitly contain JXC or DMI.")
     if not jxc and not dmi:
         issues.append(DataValidityError("At least one of TASK.JXC or TASK.DMI must be enabled."))
     if parameters.CONTROL.NONMAG():
@@ -150,6 +156,7 @@ def input_parameters_definition():
         constants will be calculated""",
                     ),
                 ],
+                is_optional=False,
             ),
             SITES,
         ],
