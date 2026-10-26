@@ -573,6 +573,21 @@ def test_user_preset_ipd_reuses_canonical_task_without_autodetection_ambiguity(t
         "def input_parameters_definition():\n"
         "    return InputParameters.definition('SCF').copy()\n"
     )
+    (config_dir / "myindependent.py").write_text(
+        "from ase2sprkkr.input_parameters.input_parameters_definitions import "
+        "InputParametersDefinition\n"
+        "def input_parameters_definition():\n"
+        "    return InputParametersDefinition('myindependent', [])\n"
+    )
+    (config_dir / "mytask.py").write_text(
+        "from ase2sprkkr.input_parameters.input_parameters import InputParameters\n"
+        "from ase2sprkkr.input_parameters.task_definition import TaskDefinition\n"
+        "def input_parameters_definition():\n"
+        "    schema = InputParameters.definition('SCF').copy()\n"
+        "    schema._task_definition = TaskDefinition('MYTASK')\n"
+        "    schema.task_selectors = ('MYTASK',)\n"
+        "    return schema\n"
+    )
     env = os.environ.copy()
     env["XDG_CONFIG_HOME"] = str(tmp_path)
     env.pop("ASE2SPRKKR_NO_USER_PROFILE", None)
@@ -589,6 +604,15 @@ def test_user_preset_ipd_reuses_canonical_task_without_autodetection_ambiguity(t
         "assert scf.task_definition_required() is IP.task_registry['SCF']\n"
         "assert 'MYARPES' not in IP.task_registry.names()\n"
         "assert 'MYSCF' not in IP.task_registry.names()\n"
+        "assert 'MYSCF' not in IP.task_registry\n"
+        "from ase2sprkkr.input_parameters.input_parameters_definitions import _task_selector_map\n"
+        "mapping = _task_selector_map()\n"
+        "assert mapping['ARPES'] == (IP.definition('ARPES'),)\n"
+        "assert mapping['SCF'] == (IP.definition('SCF'),)\n"
+        "assert 'MYARPES' not in mapping and 'MYSCF' not in mapping\n"
+        "assert mapping['MYINDEPENDENT'] == (IP.definition('MYINDEPENDENT'),)\n"
+        "assert mapping['MYTASK'] == (IP.definition('MYTASK'),)\n"
+        "assert IP.task_registry['MYTASK'].name == 'MYTASK'\n"
         f"file = {arpes_example!r}\n"
         "assert IP.from_file(file)._definition is IP.definition('ARPES')\n"
         "parsed = IP.input_parameters_registry.read_for_task(\n"

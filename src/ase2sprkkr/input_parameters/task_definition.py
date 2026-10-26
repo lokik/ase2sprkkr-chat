@@ -303,11 +303,22 @@ class InputParametersRegistry(ModuleRegistry):
         return value
 
     def iter_canonical_values(self):
-        """Yield canonical IPDs, excluding named copies used as presets."""
+        """Yield canonical IPDs, excluding user-defined copies used as presets."""
         for name in self.names(include_aliases=False):
             for definition in self.iter_valid_values(names=(name,)):
-                if self.normalize_name(definition.name) == name:
-                    yield definition
+                if self.normalize_name(definition.name) != name:
+                    continue
+                # User presets are renamed on registration, so their names
+                # match registry keys even though they derive from another IPD.
+                # Built-in derivatives and explicit new user tasks are canonical.
+                task = definition._task_definition
+                if (
+                    self.is_user_defined(self._load_module(name))
+                    and self.normalize_name(definition.derived_from_name) != name
+                    and (task is None or task.name != name)
+                ):
+                    continue
+                yield definition
 
     def definition_for_task(self, task):
         """Return the schema identified by declarative task metadata."""
@@ -493,7 +504,9 @@ class TaskRegistry:
             return None
         if self.input_parameters_registry.normalize_name(definition.name) != name:
             return None
-        return definition._task_definition
+        task = definition._task_definition
+        # A preset can inherit the declaration of a different canonical task.
+        return task if task is not None and task.name == name else None
 
     def _extra_task(self, name):
         try:
