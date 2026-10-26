@@ -418,7 +418,7 @@ class ContainerDefinition(RealItemDefinition):
             parsed = dict_from_parsed(tokens.asList())
             if not self.force_order:
                 for member in self._members.values():
-                    if not member.is_optional and member.name not in parsed:
+                    if not member.is_optional and not member.is_generated and member.name not in parsed:
                         raise pp.ParseException(
                             f"Missing non-optional input item {member.get_path()}"
                         )
