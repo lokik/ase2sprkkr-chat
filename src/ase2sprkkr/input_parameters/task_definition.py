@@ -324,13 +324,7 @@ class InputParametersRegistry(ModuleRegistry):
         definition = self[task.input_parameters_definition_name]
         return definition
 
-    def create_for_task(
-        self,
-        task,
-        *,
-        inputfile=None,
-        outputfile=False,
-    ):
+    def create_for_task(self, task):
         """Create InputParameters for a resolved TaskDefinition."""
         from .input_parameters import InputParameters
 
@@ -338,8 +332,6 @@ class InputParametersRegistry(ModuleRegistry):
         return InputParameters(
             definition=definition,
             requested_task_name=task.name,
-            inputfile=inputfile,
-            outputfile=outputfile,
         )
 
     def read_for_task(
@@ -383,7 +375,6 @@ class InputParametersRegistry(ModuleRegistry):
             file,
             allow_dangerous=allow_dangerous,
             allow_incomplete=allow_incomplete,
-            inputfile=file,
             **({"requested_task_name": task.name} if allow_incomplete else {}),
             **({"report_invalid": report_invalid} if report_invalid is not None else {}),
         )
