@@ -140,6 +140,30 @@ def test_input_parameters_registry_owns_input_parameter_operations():
     assert not hasattr(registry, "task_definitions")
 
 
+
+def test_input_parameters_do_not_store_input_or_output_file_references():
+    registry = InputParameters.input_parameters_registry
+    task = InputParameters.task_registry["SCF"]
+    parameters = registry.create_for_task(task)
+
+    assert parameters.task_name == "SCF"
+    assert parameters.requested_task_name == "SCF"
+    assert not hasattr(parameters, "_inputfile")
+    assert not hasattr(parameters, "_outputfile")
+
+    filename = os.path.join(os.path.dirname(__file__), "..", "examples", "scf.in")
+    with open(filename) as source:
+        parsed = registry.read_for_task(task, source)
+
+    assert parsed.task_name == "SCF"
+    assert not hasattr(parsed, "_inputfile")
+    assert not hasattr(parsed, "_outputfile")
+    autodetected = InputParameters.from_file(filename)
+    assert autodetected.task_name == "SCF"
+    assert not hasattr(autodetected, "_inputfile")
+    assert not hasattr(autodetected, "_outputfile")
+
+
 def test_task_registry_is_identity_resolution_only():
     registry = InputParameters.task_registry
 

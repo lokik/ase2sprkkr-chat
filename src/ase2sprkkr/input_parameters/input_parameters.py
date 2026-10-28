@@ -76,22 +76,13 @@ class InputParameters(ConfigurationFile):
     input_parameters_registry = InputParametersRegistry(definitions)
     task_registry = TaskRegistry(input_parameters_registry, tasks)
 
-    def __init__(
-        self,
-        definition,
-        inputfile=None,
-        outputfile=False,
-        *,
-        requested_task_name=None,
-    ):
+    def __init__(self, definition, *, requested_task_name=None):
         super().__init__(definition)
         self._requested_task_name = (
             None
             if requested_task_name is None
             else str(requested_task_name).upper()
         )
-        self._inputfile = inputfile
-        self._outputfile = inputfile if outputfile is False else outputfile
 
     @property
     def task_name(self):
