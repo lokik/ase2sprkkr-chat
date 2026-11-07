@@ -3,24 +3,28 @@
 from __future__ import annotations
 
 import pytest
+from types import SimpleNamespace
 
 from ase2sprkkr.execution import (
     ExecutionManager, FileEntry, FileManifest, ProjectRepository, RunState, RunStore,
 )
 from ase2sprkkr.outputs.reader_registry import reader_registry
 from ase2sprkkr.outputs.task_result import TaskResult
+from ase2sprkkr.outputs.result_processing import SPRKKR_RESULT_PROCESSOR
 
 
 def _stored_run(tmp_path):
     projects = ProjectRepository(tmp_path / "projects")
     project = projects.create("Test")
     manager = ExecutionManager(
-        store=RunStore(tmp_path / "runs"), project_repository=projects, project=project
+        store=RunStore(tmp_path / "runs"), project_repository=projects, project=project,
+        result_processors={"sprkkr": SPRKKR_RESULT_PROCESSOR}
     )
     output = tmp_path / "saved.out"
     output.write_text("test output")
     record = manager.new_record(
         task="DOS",
+        result_processor="sprkkr",
         directory=tmp_path,
         files=FileManifest(stdout=FileEntry(local_path=str(output))),
     )
@@ -97,13 +101,16 @@ def test_from_run_uses_default_project_store(monkeypatch, tmp_path):
 
     projects = ProjectRepository(tmp_path / "projects")
     project = projects.create("Test")
-    manager = ExecutionManager(project_repository=projects, project=project)
+    manager = ExecutionManager(
+        project_repository=projects, project=project,
+        result_processors={"sprkkr": SPRKKR_RESULT_PROCESSOR},
+    )
     assert manager.store.directory == tmp_path / "projects_runs"
 
     output = tmp_path / "saved.out"
     output.write_text("saved result")
     record = manager.new_record(
-        task="DOS", directory=tmp_path,
+        task="DOS", result_processor="sprkkr", directory=tmp_path,
         files=FileManifest(stdout=FileEntry(local_path=str(output))),
     )
     manager.store.save(record)
@@ -114,9 +121,9 @@ def test_from_run_uses_default_project_store(monkeypatch, tmp_path):
     monkeypatch.setattr(project_manager, "ProjectRepository", lambda: projects)
     seen = []
 
-    def parse(cls, persisted):
+    def parse(cls, persisted, **kwargs):
         seen.append(persisted.id)
-        return persisted
+        return SimpleNamespace(id=persisted.id)
 
     monkeypatch.setattr(TaskResult, "from_run_record", classmethod(parse))
     restored = TaskResult.from_run(record.id)
@@ -125,34 +132,38 @@ def test_from_run_uses_default_project_store(monkeypatch, tmp_path):
 
 
 def test_attach_uses_task_result_reconstruction(monkeypatch, tmp_path):
+    from ase2sprkkr.execution import project_manager
+    from ase2sprkkr.execution.base import ExecutionOutcome
+
     manager, record, output = _stored_run(tmp_path)
     captured = {}
     runner = object()
 
-    def attach(run, *, process_result, callback=None, output_listener=None):
-        captured["run"] = run
-        captured["process_result"] = process_result
+    def raw_attach(self, run, *, process_result, executor=None,
+                   callback=None, output_listener=None):
+        captured.update(run=run, process_result=process_result, callback=callback)
         return runner
 
-    monkeypatch.setattr(manager, "attach", attach)
+    monkeypatch.setattr(project_manager._ExecutionManager, "attach", raw_attach)
     seen = []
+    expected_result = SimpleNamespace()
 
     def parse(cls, persisted, **kwargs):
         seen.append((persisted, kwargs))
-        return type("Result", (), {})()
+        return expected_result
 
     monkeypatch.setattr(TaskResult, "from_run_record", classmethod(parse))
-    assert manager.attach_sprkkr(record.id) is runner
-
-    from ase2sprkkr.execution.base import ExecutionOutcome
+    assert manager.attach(record.id) is runner
 
     outcome = ExecutionOutcome(
         input_file=None, output_file=str(output), error_file=None, return_code=0
     )
     result = captured["process_result"](outcome)
-    assert result.run_record.id == record.id
+    assert result is expected_result
     assert len(seen) == 1
     assert seen[0][0].id == record.id
     assert seen[0][1] == {
         "output_file": str(output), "error_file": None, "return_code": 0
     }
+    captured["callback"](result)
+    assert result.run_record.id == record.id

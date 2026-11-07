@@ -16,6 +16,7 @@ from ..execution.base import ExecutionResources, ResourceOwnedRunner
 from ..execution.persistence import resolve_project_manager
 from ..execution.postprocessing import PostprocessingRunner
 from ..input_parameters.input_parameters import InputParameters
+from ..outputs.result_processing import SPRKKR_RESULT_PROCESSOR
 from . import _preparation as preparation
 from ._preparation import FilenameTemplator as FilenameTemplator
 from .profile import SPRKKRProfile, executor_from_profile
@@ -378,7 +379,9 @@ def _create_sprkkr_run(
         )
         if executor is None:
             executor = executor_from_profile(profile)
-        manager = resolve_project_manager(project)
+        manager = resolve_project_manager(
+            project, result_processors={"sprkkr": SPRKKR_RESULT_PROCESSOR}
+        )
 
         execution_profile = profile
         if task.mpi:
@@ -452,6 +455,7 @@ def _create_sprkkr_run(
                 process_result=process_result,
                 task=task.name,
                 input_definition=input_parameters.definition_name,
+                result_processor="sprkkr",
                 dataset=input_parameters.CONTROL.DATASET.result,
                 callback=finalized,
             )

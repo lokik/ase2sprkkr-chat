@@ -236,7 +236,11 @@ class TaskResult:
         if manager is None:
             from ..execution.project_manager import ExecutionManager
 
-            manager = ExecutionManager()
+            from .result_processing import SPRKKR_RESULT_PROCESSOR
+
+            manager = ExecutionManager(
+                result_processors={"sprkkr": SPRKKR_RESULT_PROCESSOR}
+            )
         return manager.load_result(run)
 
     @classmethod
