@@ -6,7 +6,7 @@ import pytest
 from ase2sprkkr.execution import CorruptRunRecord, RunRecord, RunState, RunStore, Execution, WorkingDirectory, ExecutorEndpoint, FileManifest
 
 
-@pytest.mark.parametrize("schema_version", [0, 1, 2, 4, 5])
+@pytest.mark.parametrize("schema_version", [0, 1, 2, 3, 5])
 def test_only_current_run_record_schema_is_supported(tmp_path, schema_version):
     store = RunStore(tmp_path / "runs")
     created_at = "2026-10-17T12:34:56+00:00"
@@ -51,7 +51,7 @@ def test_current_schema_round_trips_with_one_execution_identity(tmp_path, backen
     loaded = store.get(record.id)
 
     assert loaded == record
-    assert loaded.schema_version == 3
+    assert loaded.schema_version == 4
     assert loaded.execution.backend_id == backend_id
     for obsolete in (
         "backend_state", "requested_task", "reference", "submission",

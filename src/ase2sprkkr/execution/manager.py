@@ -39,7 +39,7 @@ class HistoricalFileMismatchError(OSError):
     """Restored contents differ from a run's captured SHA-256 digest."""
 
 
-_RUN_RECORD_SCHEMA_VERSION = 3
+_RUN_RECORD_SCHEMA_VERSION = 4
 _STATE_RANK = {
     RunState.NEW: 0,
     RunState.SUBMITTING: 1,
@@ -118,6 +118,7 @@ class RunRecord:
     return_code: Optional[int] = None
     message: Optional[str] = None
     input_definition: Optional[str] = None
+    result_processor: Optional[str] = None
     failure_phase: Optional[FailurePhase] = None
     schema_version: int = _RUN_RECORD_SCHEMA_VERSION
     project_id: Optional[str] = None
@@ -130,6 +131,11 @@ class RunRecord:
             object.__setattr__(self, "project_id", str(self.project_id))
         if self.input_definition is not None:
             object.__setattr__(self, "input_definition", str(self.input_definition).upper())
+        if self.result_processor is not None:
+            name = str(self.result_processor).strip().lower()
+            if not name:
+                raise ValueError("result_processor must be a nonempty identifier")
+            object.__setattr__(self, "result_processor", name)
         if isinstance(self.execution, dict):
             object.__setattr__(self, "execution", Execution(**self.execution))
         if isinstance(self.files, dict):
@@ -458,8 +464,8 @@ class ExecutionManager:
 
     def new_record(
         self, *, task, directory, dataset=None, endpoint=None,
-        remote_directory=None, files=None, input_definition=None, run_id=None,
-        project_id=None,
+        remote_directory=None, files=None, input_definition=None,
+        result_processor=None, run_id=None, project_id=None,
     ):
         now = _now()
         local = os.path.abspath(os.fspath(directory))
@@ -469,6 +475,7 @@ class ExecutionManager:
             execution=Execution(endpoint or ExecutorEndpoint(), WorkingDirectory(local, remote_directory)),
             files=files if files is not None else FileManifest(),
             input_definition=input_definition,
+            result_processor=result_processor,
             project_id=project_id,
         )
 
@@ -906,6 +913,7 @@ class ExecutionManager:
         process_result,
         task,
         input_definition=None,
+        result_processor=None,
         dataset=None,
         callback=None,
         run_id=None,
@@ -915,6 +923,7 @@ class ExecutionManager:
         record = self.new_record(
             task=task,
             input_definition=input_definition,
+            result_processor=result_processor,
             dataset=dataset,
             directory=spec.directory,
             endpoint=endpoint,
