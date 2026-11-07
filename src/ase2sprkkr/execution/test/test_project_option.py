@@ -134,6 +134,7 @@ def test_explicit_manager_persists_task_and_dataset(tmp_path, monkeypatch):
 
     assert record.task == parameters.task_name
     assert record.input_definition == parameters.definition_name.upper()
+    assert record.result_processor == "sprkkr"
     assert not hasattr(record, "requested_task")
     assert record.dataset == "sample"
     assert record.state == RunState.FINISHED
@@ -150,6 +151,7 @@ def test_persistence_uses_task_selected_by_shared_schema_values(tmp_path, monkey
     assert parameters.task_name == "SPLEED"
     assert record.task == "SPLEED"
     assert record.input_definition == parameters.definition_name.upper()
+    assert record.result_processor == "sprkkr"
     assert not hasattr(record, "requested_task")
 
 

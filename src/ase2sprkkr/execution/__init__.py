@@ -31,6 +31,7 @@ from .manager import (
 )
 from .pool import ExecutorPool, default_executor_pool
 from .postprocessing import PostprocessingRunner
+from .result_processing import ResultProcessor
 from .projects import (
     Project,
     ProjectConflictError,
@@ -65,6 +66,7 @@ __all__ = [
     "MpiSpec",
     "MpiNotFoundWarning",
     "PostprocessingRunner",
+    "ResultProcessor",
     "ResourceOwnedRunner",
     "Runner",
     "RunState",
