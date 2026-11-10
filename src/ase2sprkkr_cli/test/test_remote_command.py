@@ -26,6 +26,10 @@ def test_command_grammar_is_separate_from_kkrunner():
     assert _parse("follow", "run-123", "--info", "--from-start").info
     assert _parse("follow", "run-123", "--regex", "WARN", "--regex", "ERR").regex == ["WARN", "ERR"]
     assert _parse("cancel", "--remote-id", "opaque").remote_id == "opaque"
+    snapshot = _parse("snapshot", "run-123", "subdir/result.dat", "--destination", "copy.dat")
+    assert snapshot.run_id == "run-123"
+    assert snapshot.file == "subdir/result.dat"
+    assert snapshot.destination.name == "copy.dat"
     for action in ("submit", "recover", "ack", "ack-submit", "resolve-mpi"):
         with pytest.raises(SystemExit):
             _parse(action)
@@ -211,3 +215,74 @@ assert "kkrunner.remote.service" not in sys.modules
 assert "kkrunner.runs.manager" not in sys.modules
 """
     subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+
+def test_snapshot_requires_persisted_run_and_destination():
+    with pytest.raises(SystemExit):
+        _parse("snapshot", "run-123", "result.dat")
+    with pytest.raises(SystemExit):
+        _parse("snapshot", "--remote-id", "opaque", "result.dat", "--destination", "copy.dat")
+
+
+def test_snapshot_uses_manager_and_prints_destination(monkeypatch, tmp_path, capsys):
+    record = _record(filename=str(tmp_path / "local" / "result.dat"))
+    destination = tmp_path / "partial-copy.dat"
+    calls = []
+
+    def snapshot_file(run_id, file, *, destination):
+        calls.append((run_id, file, destination))
+        destination.write_bytes(b"partially written")
+        return destination
+
+    manager = SimpleNamespace(snapshot_file=snapshot_file)
+    monkeypatch.setattr(remote, "_manager_and_record", lambda run_id: (manager, record))
+    remote.run(_parse(
+        "snapshot", "run-123", "result.dat", "--destination", str(destination),
+    ), None)
+
+    assert calls == [("run-123", "result.dat", destination)]
+    assert destination.read_bytes() == b"partially written"
+    assert capsys.readouterr().out.strip() == str(destination)
+
+
+def test_running_scf_status_reads_an_observational_snapshot(tmp_path):
+    output = tmp_path / "local" / "scf.out"
+    record = _record(filename=str(output))
+    seen = []
+
+    def snapshot_file(run_id, file, *, destination):
+        assert run_id == record.id
+        assert file == str(output)
+        assert not output.exists()
+        seen.append(destination)
+        destination.write_text(
+            "  8 ERR 0.123E-04 0.456E-06 EF 0.6 0.01 D 12 M 1.2 0.3\n"
+            " ETOT -42.5 SCF - cycle not converged - continue\n"
+            "  9 ERR 0.100E-04\n"
+        )
+        return destination
+
+    manager = SimpleNamespace(snapshot_file=snapshot_file)
+    progress = remote._snapshot_progress(manager, record)
+    assert progress["iteration"] == 8
+    assert len(seen) == 1
+    assert not seen[0].exists()  # the observational copy is temporary
+    assert not output.exists()  # no ordinary result synchronization
+
+
+def test_missing_live_output_has_no_scf_progress(tmp_path):
+    record = _record(filename=str(tmp_path / "scf.out"))
+
+    def missing(*args, **kwargs):
+        raise FileNotFoundError("not yet produced")
+
+    manager = SimpleNamespace(snapshot_file=missing)
+    assert remote._snapshot_progress(manager, record) is None
+
+
+def test_terminal_status_never_uses_unverified_output(tmp_path):
+    record = _record(state="finished", filename=str(tmp_path / "scf.out"))
+    manager = SimpleNamespace(
+        output_file_is_current=lambda record: False,
+        snapshot_file=lambda *args, **kwargs: pytest.fail("terminal output cannot be snapshotted"),
+    )
+    assert remote._snapshot_progress(manager, record) is None

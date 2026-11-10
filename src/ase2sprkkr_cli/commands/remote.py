@@ -12,7 +12,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-help = "Inspect, follow, or cancel persisted runs or explicit backend handles."
+help = "Inspect, follow, snapshot, or cancel persisted runs or explicit backend handles."
 description = "Show run status and live output, with SPR-KKR-specific progress reporting."
 lazy_parser = True
 
@@ -78,6 +78,18 @@ def parser(argument_parser):
 
     cancel = actions.add_parser("cancel", help="cancel an execution")
     identity(cancel)
+
+    snapshot = actions.add_parser(
+        "snapshot", help="copy a declared output or cache without changing run history"
+    )
+    snapshot.add_argument("run_id", help="persistent run ID (not a backend handle)")
+    snapshot.add_argument(
+        "file", help="one concrete declared output, saved stream, or cache file"
+    )
+    snapshot.add_argument(
+        "--destination", type=Path, required=True, metavar="PATH",
+        help="local copy, atomically published; must not overlap a declared run file",
+    )
 
 
 def _identity(args):
@@ -302,6 +314,13 @@ def _cancel(args):
     print(json.dumps(facts), flush=True)
 
 
+def _snapshot(args):
+    """Copy a declared file without modifying the canonical result."""
+    manager, record = _manager_and_record(args.run_id)
+    copy = manager.snapshot_file(record.id, args.file, destination=args.destination)
+    print(os.fspath(copy), flush=True)
+
+
 def run(args, global_args):
     if args.remote_action == "status":
         return _status(args)
@@ -309,4 +328,6 @@ def run(args, global_args):
         return _follow(args)
     if args.remote_action == "cancel":
         return _cancel(args)
+    if args.remote_action == "snapshot":
+        return _snapshot(args)
     raise ValueError(f"Unknown remote action: {args.remote_action}")
