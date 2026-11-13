@@ -466,6 +466,7 @@ def _create_sprkkr_run(
                     "task": task.name,
                     "input_definition": input_parameters.definition_name,
                     "dataset": input_parameters.CONTROL.DATASET.result,
+                    "profile": profile.name,
                 },
             }
         runner = Run.create(
