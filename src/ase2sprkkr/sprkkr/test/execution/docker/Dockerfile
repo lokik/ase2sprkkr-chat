@@ -24,7 +24,7 @@ RUN apt-get update \
 RUN python3 -m venv "$VIRTUAL_ENV" \
     && pip install --upgrade pip \
     && pip install \
-        "kkrunner[psij]>=0.1.0b2,<0.2" \
+        "kkrunner[psij]>=0.2.0b1,<0.3" \
         "psij-python==0.9.11" \
         "ase>=3.22.0" \
         colorama \
