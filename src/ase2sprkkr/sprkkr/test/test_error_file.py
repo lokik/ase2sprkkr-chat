@@ -13,8 +13,9 @@ from ..profile import SPRKKRProfile
 
 
 class _UnstartedRunner:
-    def __init__(self, spec):
+    def __init__(self, spec, owned_resources):
         self.spec = spec
+        self._owned_resources = owned_resources
         self.state = RunState.NEW
         self.result = None
         self.reference = None
@@ -23,13 +24,17 @@ class _UnstartedRunner:
     def add_output_listener(self, callback):
         pass
 
+    def close(self):
+        # A real Run owns these resources after Run.create succeeds.
+        self._owned_resources.close()
+
 
 class _Executor:
     def resolve_mpi(self, mpi):
         return mpi
 
-    def create_run(self, spec, callback=None):
-        return _UnstartedRunner(spec)
+    def create_run(self, spec, callback=None, owned_resources=None):
+        return _UnstartedRunner(spec, owned_resources)
 
 
 def _calculator(tmp_path):
@@ -57,7 +62,9 @@ def lightweight_input_writes(monkeypatch):
 
     def create(client, spec, **kwargs):
         if isinstance(client, _Executor):
-            return client.create_run(spec, callback=kwargs.get("callback"))
+            return client.create_run(
+                spec, callback=kwargs.get("callback"), owned_resources=kwargs["owned_resources"],
+            )
         return original_create(client, spec, **kwargs)
 
     monkeypatch.setattr(calculation_module.Run, "create", staticmethod(create))
