@@ -1,6 +1,7 @@
 """Project-scoped SPR-KKR runs using the KKRunner EndpointClient/Run lifecycle."""
 
 from dataclasses import replace
+import pytest
 from types import SimpleNamespace
 import sys
 
@@ -70,7 +71,7 @@ def _use_python_as_test_executable(monkeypatch):
     monkeypatch.setattr(SPRKKRProfile, "create_execution", create_execution)
 
 
-def _runner(parameters, tmp_path, manager):
+def _runner(parameters, tmp_path, manager, *, metadata=None):
     input_file = (tmp_path / "test.inp").open("w+")
     input_file.write("input")
     input_file.flush()
@@ -78,7 +79,7 @@ def _runner(parameters, tmp_path, manager):
     prepared = _Prepared(parameters, input_file, output_file, tmp_path)
     return prepared.create_run(
         result_context=SimpleNamespace(directory=str(tmp_path)),
-        profile=SPRKKRProfile(mpi=False), project=manager,
+        profile=SPRKKRProfile(mpi=False), project=manager, metadata=metadata,
     )
 
 
@@ -161,3 +162,25 @@ def test_explicit_run_profile_selects_client_over_calculator_client(tmp_path, mo
 
     monkeypatch.setattr(calculation_module, "executor_from_profile", lambda selected: selected_client)
     assert calculation_module.executor_from_profile(profile) is selected_client
+
+
+def test_project_persists_application_run_metadata(tmp_path, monkeypatch):
+    parameters = _parameters(monkeypatch)
+    _use_python_as_test_executable(monkeypatch)
+    manager = _manager(tmp_path)
+    data = {"guy4ase": {"profile_name": "cluster"}}
+    runner = _runner(parameters, tmp_path, manager, metadata=data)
+    runner.run()
+
+    record = manager.store.get(runner.id)
+    assert record.metadata["guy4ase"] == {"profile_name": "cluster"}
+    assert record.metadata["ase2sprkkr"]["task"] == "DOS"
+    assert data == {"guy4ase": {"profile_name": "cluster"}}
+
+
+def test_project_rejects_overriding_core_run_metadata(tmp_path, monkeypatch):
+    parameters = _parameters(monkeypatch)
+    _use_python_as_test_executable(monkeypatch)
+    manager = _manager(tmp_path)
+    with pytest.raises(ValueError, match="reserved"):
+        _runner(parameters, tmp_path, manager, metadata={"ase2sprkkr": {}})

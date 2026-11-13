@@ -366,6 +366,7 @@ class SPRKKR(BaseCalculator):
         project=None,
         restart_scf: bool = False,
         error_file=None,
+        metadata=None,
     ):
         """Prepare a calculation and return an unstarted owning runner.
 
@@ -419,6 +420,7 @@ class SPRKKR(BaseCalculator):
             gdb=gdb,
             error_file=error_file,
             create_subdirs=create_subdirs,
+            metadata=metadata,
         )
 
     def value_or_default(self, name, value):
@@ -467,6 +469,7 @@ class SPRKKR(BaseCalculator):
         project=None,
         restart_scf: bool = False,
         error_file=None,
+        metadata=None,
     ):
         """Run one SPR-KKR task synchronously and return its parsed result.
 
@@ -512,6 +515,7 @@ class SPRKKR(BaseCalculator):
             project=project,
             restart_scf=restart_scf,
             error_file=error_file,
+            metadata=metadata,
         )
         result = runner.run()
         if runner.state != RunState.FINISHED:

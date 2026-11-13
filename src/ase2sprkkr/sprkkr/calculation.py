@@ -216,6 +216,7 @@ class PreparedCalculation:
         gdb=False,
         error_file=None,
         create_subdirs=False,
+        metadata=None,
     ):
         """Create an unstarted runner and transfer this calculation's resources.
 
@@ -243,6 +244,7 @@ class PreparedCalculation:
             gdb=gdb,
             error_file=error_file,
             create_subdirs=create_subdirs,
+            metadata=metadata,
         )
 
     @property
@@ -347,6 +349,7 @@ def _create_sprkkr_run(
     gdb=False,
     error_file=None,
     create_subdirs=False,
+    metadata=None,
 ):
     """Adapt a prepared SPR-KKR calculation to the execution subsystem.
 
@@ -385,6 +388,10 @@ def _create_sprkkr_run(
         if executor is None:
             executor = executor_from_profile(profile)
         manager = resolve_project_manager(project)
+        if metadata is not None and manager is None:
+            raise ValueError("Run metadata requires a persistent project")
+        if metadata is not None and "ase2sprkkr" in metadata:
+            raise ValueError("The 'ase2sprkkr' run metadata namespace is reserved")
         if manager is not None:
             if getattr(prepared, "_temporary_directory", False):
                 raise ValueError("Tracked runs require a persistent calculation directory; pass directory=path")
@@ -453,11 +460,14 @@ def _create_sprkkr_run(
 
         record_options = {}
         if manager is not None:
-            record_options["metadata"] = {"ase2sprkkr": {
-                "task": task.name,
-                "input_definition": input_parameters.definition_name,
-                "dataset": input_parameters.CONTROL.DATASET.result,
-            }}
+            record_options["metadata"] = {
+                **(dict(metadata) if metadata is not None else {}),
+                "ase2sprkkr": {
+                    "task": task.name,
+                    "input_definition": input_parameters.definition_name,
+                    "dataset": input_parameters.CONTROL.DATASET.result,
+                },
+            }
         runner = Run.create(
             executor, spec,
             persistent=manager if manager is not None else False,
