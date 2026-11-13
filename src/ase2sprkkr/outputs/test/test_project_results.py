@@ -118,3 +118,48 @@ def test_project_attach_passes_executor_to_manager(tmp_path):
     attached = attach_project_run(_Manager(record), record.id, executor=executor)
     assert attached.executor is executor
     assert callable(attached.process_result)
+
+
+def test_load_historical_scf_with_missing_auxiliary_output(tmp_path, monkeypatch):
+    """Only the authoritative output is required to reconstruct an SCF result."""
+    from types import SimpleNamespace
+    from ase2sprkkr.outputs import project_results
+    from kkrunner.files import FileVersion
+    from kkrunner.files.manifest import FileEntry
+
+    output = tmp_path / "scf.out"
+    output.write_text("SCF output")
+    missing_dos = tmp_path / "scf_SCFSTART.dos"
+    files = FileManifest(
+        stdout=FileEntry(str(output), availability_state="available"),
+        outputs=(FileEntry(str(missing_dos), optional=True, availability_state="failed",
+                           availability_message="Historical artifact was not retrieved"),),
+        output_versions=(FileVersion.capture(output, require_digest=True),),
+        captured_at="2026-11-13T00:00:00+00:00",
+    )
+    record = _record(tmp_path, "SCF")
+    record = __import__("dataclasses").replace(record, state=RunState.FINISHED, files=files, return_code=0)
+    result = SimpleNamespace()
+    calls = []
+
+    class Manager(_Manager):
+        def retrieve_result_files(self, rec):
+            calls.append("retrieve")
+            return rec
+
+        def output_file_is_current(self, rec):
+            return True
+
+    class Reader:
+        input_parameters = None
+
+        def read_from_file(self, output_file, **kwargs):
+            calls.append(("parse", output_file))
+            return result
+
+    manager = Manager(record)
+    monkeypatch.setattr(project_results, "_reader_for_record", lambda _manager, _record: Reader())
+    loaded = project_results.load_project_result(manager, record.id)
+    assert loaded is result
+    assert loaded.run_record is record
+    assert calls == ["retrieve", ("parse", str(output))]

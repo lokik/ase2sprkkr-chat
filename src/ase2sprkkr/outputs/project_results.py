@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from ..common.module_registry import RegistryEntryNotFound
-from kkrunner.runs import FailurePhase, HistoricalFileMismatchError
-from kkrunner.files import FileState
+from kkrunner.runs import FailurePhase
 from kkrunner import RunState
 from ..input_parameters.input_parameters import InputParameters
 from ..input_parameters.task_definition import TaskMismatchError
@@ -178,16 +177,9 @@ def load_project_result(manager, run):
             record, f"run is still active ({record.state.value})"
         )
 
-    try:
-        record = manager.retrieve_result_files(record)
-    except HistoricalFileMismatchError as exc:
-        # Retrieval records a failed artifact before raising. Use its newly
-        # persisted state in the error; a successful retrieval already returns
-        # the latest record and requires no second read.
-        raise ProjectResultUnavailableError(
-            manager.store.get(record.id),
-            "result files have been overwritten on the execution backend",
-        ) from exc
+    # Restore every available file independently. Missing auxiliary files do
+    # not invalidate a historical result whose primary output is intact.
+    record = manager.retrieve_result_files(record)
     result_files = record.files
     if result_files is not None and result_files.captured_at is None:
         raise ProjectResultUnavailableError(
@@ -197,16 +189,6 @@ def load_project_result(manager, run):
         raise ProjectResultUnavailableError(
             record, "no persisted output result file"
         )
-
-    file_state = result_files.state
-    if file_state is not FileState.CURRENT:
-        if file_state is FileState.OVERWRITTEN:
-            message = "result files have been overwritten"
-        elif file_state is FileState.MISSING:
-            message = "result files are missing"
-        else:
-            message = "result files are unavailable"
-        raise ProjectResultUnavailableError(record, message)
 
     output_file = result_files.output_file
     output_available = manager.output_file_is_current(record)
