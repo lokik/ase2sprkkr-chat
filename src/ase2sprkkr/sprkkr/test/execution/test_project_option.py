@@ -70,7 +70,7 @@ def _use_python_as_test_executable(monkeypatch):
     monkeypatch.setattr(SPRKKRProfile, "create_execution", create_execution)
 
 
-def _runner(parameters, tmp_path, manager):
+def _runner(parameters, tmp_path, manager, *, profile=None):
     input_file = (tmp_path / "test.inp").open("w+")
     input_file.write("input")
     input_file.flush()
@@ -78,7 +78,8 @@ def _runner(parameters, tmp_path, manager):
     prepared = _Prepared(parameters, input_file, output_file, tmp_path)
     return prepared.create_run(
         result_context=SimpleNamespace(directory=str(tmp_path)),
-        profile=SPRKKRProfile(mpi=False), project=manager,
+        profile=SPRKKRProfile(mpi=False) if profile is None else profile,
+        project=manager,
     )
 
 
@@ -97,6 +98,7 @@ def test_project_persists_task_and_dataset(tmp_path, monkeypatch):
     assert record.metadata["ase2sprkkr"]["task"] == parameters.task_name
     assert record.metadata["ase2sprkkr"]["input_definition"] == parameters.definition_name.upper()
     assert record.metadata["ase2sprkkr"]["dataset"] == "sample"
+    assert record.metadata["ase2sprkkr"]["profile"] is None
     assert record.state == RunState.FINISHED
     assert record.project_id is not None
 
@@ -161,3 +163,18 @@ def test_explicit_run_profile_selects_client_over_calculator_client(tmp_path, mo
 
     monkeypatch.setattr(calculation_module, "executor_from_profile", lambda selected: selected_client)
     assert calculation_module.executor_from_profile(profile) is selected_client
+
+
+def test_project_persists_selected_profile_provenance(tmp_path, monkeypatch):
+    parameters = _parameters(monkeypatch)
+    _use_python_as_test_executable(monkeypatch)
+    manager = _manager(tmp_path)
+    runner = _runner(
+        parameters, tmp_path, manager,
+        profile=SPRKKRProfile(name="cluster", mpi=False),
+    )
+    runner.run()
+
+    record = manager.store.get(runner.id)
+    assert record.metadata["ase2sprkkr"]["profile"] == "cluster"
+    assert record.metadata["ase2sprkkr"]["task"] == "DOS"

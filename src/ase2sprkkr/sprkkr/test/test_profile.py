@@ -34,6 +34,7 @@ def test_profile_shell_strings_round_trip_to_runtime_argv(tmp_path):
     load_configuration_yaml(loaded, path)
     profile = resolve_sprkkr_profile("cluster", configuration=loaded)
 
+    assert profile.name == "cluster"
     assert profile.mpi == ("srun", "-n", "8")
     assert profile.ssh_options == ("-p", "2222", "-i", "/tmp/key file")
 
@@ -151,3 +152,28 @@ def test_profiles_with_same_backend_share_endpoint_identity():
 def test_ase_command_requires_direct_kkrscf(command):
     with pytest.raises(ValueError, match="kkrscf|prefixes|wrappers"):
         profile_from_ase_command(command)
+
+
+def test_profile_identity_survives_default_resolution_and_overrides():
+    config = definition.create_object()
+    config.profiles.set({
+        "local": {"executable_dir": "/opt/local"},
+        "cluster": {"executable_dir": "/opt/remote", "mpi": 8},
+    })
+    config.default_profile.set("local")
+
+    default = resolve_sprkkr_profile(configuration=config)
+    explicit = resolve_sprkkr_profile("cluster", configuration=config)
+    assert default.name == "local"
+    assert explicit.name == "cluster"
+    assert default.with_overrides(mpi=2).name == "local"
+    assert explicit.with_overrides(mpi=4).name == "cluster"
+    assert default.executable_dir == "/opt/local"
+    assert explicit.executable_dir == "/opt/remote"
+
+
+def test_runtime_profile_preserves_optional_provenance_name():
+    assert resolve_sprkkr_profile(SPRKKRProfile()).name is None
+    profile = SPRKKRProfile(name="created-by-caller", mpi=2)
+    assert resolve_sprkkr_profile(profile).name == "created-by-caller"
+    assert profile.with_overrides(mpi=8).name == "created-by-caller"

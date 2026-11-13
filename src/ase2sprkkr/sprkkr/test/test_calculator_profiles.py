@@ -42,6 +42,7 @@ def test_calculator_uses_configured_default_profile(monkeypatch):
         executable_suffix=".x",
         mpi=8,
         mpi_warning=False,
+        name="cluster",
     )
 
 
@@ -57,6 +58,7 @@ def test_calculator_accepts_named_profile(monkeypatch):
 
     calculator = SPRKKR(profile="cluster")
 
+    assert calculator.profile.name == "cluster"
     assert calculator.profile.executable_dir == "/cluster"
     assert calculator.profile.mpi == 4
     assert calculator.profile.mpi_warning is True
@@ -68,6 +70,7 @@ def test_named_profile_without_mpi_uses_auto(monkeypatch):
 
     calculator = SPRKKR(profile="local")
 
+    assert calculator.profile.name == "local"
     assert calculator.profile.mpi == "auto"
     assert calculator.profile.mpi_warning is True
 

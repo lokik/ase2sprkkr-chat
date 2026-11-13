@@ -64,6 +64,8 @@ class SPRKKRProfile:
     mpi_warning: bool = True
     ssh_zstd: bool = False
     filesystem_id: str | None = None
+    # Provenance of the selected named configuration; not part of backend identity.
+    name: str | None = None
 
     @property
     def transport(self):
@@ -233,8 +235,15 @@ def profile_from_ase_command(command):
 
 
 def _configured_profile(profile, configuration):
+    resolved_name = None
     if profile is None or isinstance(profile, str):
-        profile = configuration.profiles.resolve(profile)
+        # Resolve the name before converting the configuration to an immutable
+        # runtime snapshot. Otherwise the selected profile identity is lost.
+        resolved_name = configuration.profiles.resolve_name(profile)
+        profile = (
+            None if resolved_name is None
+            else configuration.profiles[resolved_name]
+        )
 
     if profile is None:
         return SPRKKRProfile(
@@ -288,6 +297,7 @@ def _configured_profile(profile, configuration):
         mpi_warning = True
 
     return SPRKKRProfile(
+        name=resolved_name,
         executable_dir=executable_dir,
         executable_suffix=suffix,
         mpi=mpi,
