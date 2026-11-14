@@ -60,6 +60,14 @@ def task_file_declarations(result, *, kinds=("input", "cache", "output")):
 
     if not isinstance(parameters, InputParameters):
         return None, ()
+    # Historical results may retain an original input schema even when the
+    # effective TASK value selects another task. That input is useful for
+    # inspection, but its values cannot safely resolve the new task's file
+    # declarations. Keep observed output files available independently.
+    try:
+        parameters.task_definition_required()
+    except RuntimeError:
+        return parameters, ()
     directory = str(result.directory)
     declarations = tuple(
         (kind, value)
