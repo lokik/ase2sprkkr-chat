@@ -13,6 +13,7 @@ on:
       - 'v*'
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -56,6 +57,52 @@ jobs:
           if os.environ['RELEASE_TAG'] != expected:
               raise SystemExit(f'Release tag must be {expected}, not {os.environ["RELEASE_TAG"]}')
           PY
+
+      # Reuse the tests.yml push run from develop; do not run tests again for a tag.
+      - name: Require successful tests on the tagged commit
+        timeout-minutes: 75
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit="$(git rev-parse HEAD)"
+
+          # Query only this repository's tests.yml push runs on develop
+          # at the exact source commit, never a PR run or a newer commit.
+          for attempt in {1..120}; do
+            run="$(gh api -X GET \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/tests.yml/runs" \
+              -f branch=develop -f event=push -f "head_sha=$commit" -f per_page=100 \
+              --jq '.workflow_runs | sort_by(.run_number) | .[-1]')"
+
+            if [[ "$run" != "null" ]]; then
+              status="$(jq -r '.status' <<< "$run")"
+              conclusion="$(jq -r '.conclusion // empty' <<< "$run")"
+              url="$(jq -r '.html_url' <<< "$run")"
+
+              if [[ "$status" == "completed" ]]; then
+                if [[ "$conclusion" == "success" ]]; then
+                  echo "Verified successful develop tests: $url"
+                  exit 0
+                fi
+                echo "::error::Develop tests concluded $conclusion: $url"
+                exit 1
+              fi
+              echo "Develop tests are $status: $url"
+            else
+              # A just-pushed commit can take a short time to appear in the API.
+              if (( attempt >= 6 )); then
+                echo "::error::No develop push test run found for $commit."
+                exit 1
+              fi
+              echo "Waiting for develop tests to appear for $commit"
+            fi
+            sleep 30
+          done
+
+          echo "::error::Timed out waiting for develop tests on $commit"
+          exit 1
 
       - name: Install packaging tools
         run: python -m pip install --upgrade build twine
