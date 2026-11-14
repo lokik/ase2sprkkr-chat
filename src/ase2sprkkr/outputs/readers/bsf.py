@@ -28,7 +28,9 @@ class BsfResult(TaskResult):
 
     @property
     def output_values(self):
-        self._bsf_file
+        # Missing BSF outputs should not suppress the other parsed results.
+        if "Bloch-SF" in self.files:
+            self._bsf_file
         return super().output_values
 
 

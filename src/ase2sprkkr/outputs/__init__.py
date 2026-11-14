@@ -1,6 +1,9 @@
 """SPR-KKR output readers and project-result reconstruction helpers."""
 
-from .file_provenance import capture_result_file_versions
+from .file_provenance import (
+    capture_result_file_manifest,
+    capture_result_file_versions,
+)
 from .project_results import (
     ProjectResultUnavailableError,
     UnrecoverableProjectResultError,
@@ -15,6 +18,7 @@ __all__ = [
     "UnrecoverableProjectResultError",
     "TaskResult",
     "attach_project_run",
+    "capture_result_file_manifest",
     "capture_result_file_versions",
     "load_project_result",
     "retry_project_postprocessing",

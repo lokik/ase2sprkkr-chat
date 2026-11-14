@@ -192,6 +192,16 @@ class TaskResult:
     def complete(self, error, return_code):
         self.error = error
         self.return_code = return_code
+        # Completed results are parsed from locally available output files.
+        # Absent declared outputs are not results; diagnose required ones only
+        # for calculations that report successful completion.
+        self.enrich_declared_output_files(warn_missing=return_code == 0)
+
+    def enrich_declared_output_files(self, *, warn_missing=True):
+        """Expose existing task-declared outputs, preserving parsed FILES entries."""
+        from .file_provenance import register_declared_result_files
+
+        return register_declared_result_files(self, warn_missing=warn_missing)
 
     @property
     def atoms(self):
@@ -203,12 +213,49 @@ class TaskResult:
         return self._ordered_output_files()
 
     def _ordered_output_files(self):
-        """Put task result files before common input/output bookkeeping files."""
+        """Put actual result files first; omit internal, untyped task caches."""
+        from fnmatch import fnmatchcase
+
+        from .file_provenance import task_file_declarations
+
+        _parameters, declarations = task_file_declarations(self, kinds=("cache",))
+        cache_patterns = tuple(
+            os.fspath(value) for kind, value in declarations if kind == "cache"
+        )
         files = self.files.items()
-        task_files = {name: value for name, value in files.items() if value.file_type}
-        common_files = {name: value for name, value in files.items() if not value.file_type}
-        task_files.update(common_files)
+        visible = {}
+        for name, value in files.items():
+            if value.file_type:
+                visible[name] = value
+                continue
+            if name.casefold() in {"taudir", "tau_dir"}:
+                # Native TAUDIR is a calculation cache, not a result file.
+                continue
+            if any(fnmatchcase(value.path(), pattern) for pattern in cache_patterns):
+                continue
+            visible[name] = value
+        task_files = {name: value for name, value in visible.items() if value.file_type}
+        task_files.update({name: value for name, value in visible.items() if not value.file_type})
         return task_files
+
+    def to_file_manifest(
+        self,
+        *,
+        output_path=None,
+        potential_path=None,
+        result_files=None,
+        output_version=None,
+    ):
+        """Capture the files used or produced by this result as a KKRunner manifest."""
+        from .file_provenance import capture_result_file_manifest
+
+        return capture_result_file_manifest(
+            self,
+            output_path=output_path,
+            potential_path=potential_path,
+            result_files=result_files,
+            output_version=output_version,
+        )
 
     @classmethod
     def from_file(cls, file):

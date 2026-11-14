@@ -73,6 +73,7 @@ def test_arpes_result_uses_native_spec_file_manifest(tmp_path):
             parameters = InputParameters.create(task)
             parameters.CONTROL.DATASET = "sample"
             parameters.SPEC_PH.POL_P = polarization
+            (tmp_path / expected).write_text("# SPC", encoding="utf-8")
             result = ArpesResult(parameters, None, tmp_path)
 
             assert result.spc_filename == str(tmp_path / expected)
@@ -83,6 +84,10 @@ def test_arpes_result_uses_native_spec_file_manifest(tmp_path):
             # photoemission tasks that allow NPOL=0/3.
             if task == "ARPES":
                 parameters.SPEC_PH.NPOL = 3
+                for channel in ("pol1", "pol2"):
+                    (tmp_path / f"sample_ARPES_data_{channel}.spc").write_text(
+                        "# SPC", encoding="utf-8"
+                    )
                 dichroic = ArpesResult(parameters, None, tmp_path)
                 assert dichroic.spc_filenames == (
                     str(tmp_path / "sample_ARPES_data_pol1.spc"),

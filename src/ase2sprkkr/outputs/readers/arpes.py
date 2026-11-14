@@ -19,8 +19,7 @@ class ArpesResult(TaskResult):
         if parameters is not None:
             return tuple(
                 os.fspath(path) for path in parameters.output_files(self.directory)
-                if os.fspath(path).endswith(".spc")
-                and (not getattr(path, "optional", False) or os.path.isfile(path))
+                if os.fspath(path).endswith(".spc") and os.path.isfile(path)
             )
         if self.output_file is None:
             return ()

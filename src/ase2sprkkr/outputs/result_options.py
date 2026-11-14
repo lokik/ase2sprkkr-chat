@@ -115,6 +115,10 @@ class OutputFileOption(OutputOption):
         return f"<{self.file_type} file>" if self.file_type else str(self())
 
     def actions(self):
+        # Parsed paths can describe missing optional or mandatory outputs.
+        # Do not offer file operations before the actual file is accessible.
+        if not os.path.isfile(self.path()):
+            return ()
         out = ["open", "open_directory", "save"]
         if self.file_type:
             result_class = self.definition().result_class

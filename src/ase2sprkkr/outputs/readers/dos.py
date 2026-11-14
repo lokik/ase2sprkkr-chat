@@ -34,7 +34,10 @@ class DosResult(TaskResult):
 
     @property
     def output_values(self):
-        self._dos_file
+        # The file may be absent in an incomplete or imported calculation.
+        # Do not hide the whole result summary when the DOS file is missing.
+        if "DOS" in self.files:
+            self._dos_file
         return super().output_values
 
 

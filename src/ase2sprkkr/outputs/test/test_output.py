@@ -252,8 +252,10 @@ dipole moment   1      0.0000000000000000      0.0000000000000000      0.0000000
         assert result.sfn_filename == os.path.join(tmp_path, "Fe2Al_SCF.sfn")
         assert result.sfn_generated is False
 
-    def test_result_file_types_are_inferred_without_duplicate_aliases(self):
-        dos = DosResult(None, None, None)
+    def test_result_file_types_are_inferred_without_duplicate_aliases(self, tmp_path):
+        (tmp_path / "result.dos").write_bytes(b"result")
+        (tmp_path / "result.bsf").write_bytes(b"result")
+        dos = DosResult(None, None, tmp_path)
         dos_file = dos.files.add_file("DOS", "result.dos")
         assert dos.output_values["DOS"] is dos_file
         assert dos_file.name == "DOS"
@@ -265,10 +267,11 @@ dipole moment   1      0.0000000000000000      0.0000000000000000      0.0000000
         assert next(iter(dos.output_values)) == "DOS"
 
         missing_dos = DosResult(None, None, None)
+        assert "DOS" not in missing_dos.output_values
         with pytest.raises(FileNotFoundError, match="DOS result file is not listed"):
-            missing_dos.output_values
+            missing_dos._dos_file
 
-        bsf = BsfResult(None, None, None)
+        bsf = BsfResult(None, None, tmp_path)
         bsf_file = bsf.files.add_file("Bloch-SF", "result.bsf")
         assert bsf.output_values["Bloch-SF"] is bsf_file
         assert bsf_file.file_type == "bsf"
@@ -277,8 +280,9 @@ dipole moment   1      0.0000000000000000      0.0000000000000000      0.0000000
         assert next(iter(bsf.output_values)) == "Bloch-SF"
 
         missing_bsf = BsfResult(None, None, None)
+        assert "Bloch-SF" not in missing_bsf.output_values
         with pytest.raises(FileNotFoundError, match="BSF result file is not listed"):
-            missing_bsf.output_values
+            missing_bsf._bsf_file
 
     def test_jxc(self):
         directory = os.path.realpath(EXAMPLES)
