@@ -209,3 +209,30 @@ def test_only_existing_files_are_exposed_even_with_wildcard_declarations(tmp_pat
         os.path.isfile(option.path()) for key, option in result.output_values.items()
         if key != "output"
     )
+
+
+def test_historical_mismatched_schema_skips_declarations_but_keeps_result(tmp_path):
+    parameters = _parameters("ARPES")
+    parameters.TASK.TASK = "SPLEED"
+    output = tmp_path / "run.out"
+    output.write_text("historical output")
+
+    # Execution validation stays strict: this is a historical, not runnable,
+    # combination of effective task and input schema.
+    with pytest.raises(RuntimeError, match="different input schema"):
+        parameters.output_files(str(tmp_path))
+
+    result = TaskResult(
+        parameters, None, str(tmp_path), output_file="run.out", task_name="SPLEED",
+    )
+    result.complete(None, 0)
+    assert result.task_name == "spleed"
+    assert result.input_parameters.definition_name == "ARPES"
+    assert tuple(result.output_values) == ("output",)
+
+    # Do not infer SPLEED outputs using the incompatible ARPES schema.
+    manifest = result.to_file_manifest()
+    assert manifest.stdout.local_path == str(output)
+    assert not manifest.outputs
+    assert any(item.local_path.endswith("Fe.pot") for item in manifest.inputs)
+
