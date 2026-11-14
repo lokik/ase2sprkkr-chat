@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import os
+
 from ..common.module_registry import RegistryEntryNotFound
-from kkrunner.runs import FailurePhase
+from kkrunner.files import ArtifactAvailabilityState, FileState
+from kkrunner.runs import FailurePhase, HistoricalFileMismatchError
 from kkrunner import RunState
 from ..input_parameters.input_parameters import InputParameters
 from ..input_parameters.task_definition import TaskMismatchError
@@ -179,7 +182,18 @@ def load_project_result(manager, run):
 
     # Restore every available file independently. Missing auxiliary files do
     # not invalidate a historical result whose primary output is intact.
-    record = manager.retrieve_result_files(record)
+    try:
+        record = manager.retrieve_result_files(record)
+    except HistoricalFileMismatchError as exc:
+        # Older KKRunner versions raise the digest mismatch directly, rather
+        # than returning a per-file failure. Preserve the same public error
+        # and store the primary result's unavailability in either case.
+        output_file = None if record.files is None else record.files.output_file
+        if output_file is not None:
+            record = manager.update_artifact_availability(
+                record, output_file, ArtifactAvailabilityState.FAILED, str(exc),
+            )
+        raise ProjectResultUnavailableError(record, str(exc)) from exc
     result_files = record.files
     if result_files is not None and result_files.captured_at is None:
         raise ProjectResultUnavailableError(
@@ -193,8 +207,20 @@ def load_project_result(manager, run):
     output_file = result_files.output_file
     output_available = manager.output_file_is_current(record)
     if not output_available:
+        # Distinguish a changed historical file from a missing file: both must
+        # prevent parsing, but the user needs the actual reason for recovery.
+        output_error = (
+            result_files.stdout.availability_message
+            if result_files.stdout is not None else None
+        )
+        version = next((
+            item for item in result_files.output_versions
+            if os.path.abspath(os.fspath(item.path)) == os.path.abspath(os.fspath(output_file))
+        ), None)
+        if version is not None and version.state() == FileState.OVERWRITTEN:
+            output_error = f"historical output was overwritten: {output_file}"
         raise ProjectResultUnavailableError(
-            record, "output result file is unavailable"
+            record, output_error or "output result file is unavailable"
         )
 
     reader = _reader_for_record(manager, record)
