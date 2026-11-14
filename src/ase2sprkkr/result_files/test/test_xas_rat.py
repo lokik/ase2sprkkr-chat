@@ -3,10 +3,11 @@ XAS output for the Cu L2,3 example.
 """
 
 import os
-import re
 
 import numpy as np
 import pytest
+
+from ..grace import read_agr
 from scipy.interpolate import interp1d
 
 # ---------------------------------------------------------------------------
@@ -45,35 +46,6 @@ def test_generated_cache_tracks_fermi_and_can_be_cleared_explicitly(monkeypatch)
 # ---------------------------------------------------------------------------
 
 
-def parse_agr(path):
-    """Return dict {target_label: np.array shape (N,2)} for a Grace .agr file."""
-    data = {}
-    current = None
-    buf = []
-    with open(path) as f:
-        for line in f:
-            m = re.match(r"@target\s+(G\d+\.S\d+)", line)
-            if m:
-                if current and buf:
-                    data[current] = np.array(buf)
-                current = m.group(1)
-                buf = []
-                continue
-            if current:
-                if line.strip() == "&":
-                    data[current] = np.array(buf)
-                    current = None
-                    buf = []
-                elif not line.startswith("@") and not line.startswith("#"):
-                    parts = line.split()
-                    if len(parts) == 2:
-                        buf.append([float(parts[0]), float(parts[1])])
-    # Save last block if file did not terminate with '&'
-    if current and buf:
-        data[current] = np.array(buf)
-    return data
-
-
 @pytest.fixture(scope="module")
 def rat_result():
     from ase2sprkkr.result_files.definitions.rat import RATResultFile
@@ -92,7 +64,7 @@ def generated_data(rat_result):
 
 @pytest.fixture(scope="module")
 def ref_xas():
-    d = parse_agr(REF_XAS_AGR)
+    d = read_agr(REF_XAS_AGR).data
     pol = d.get("G1.S0")
     diff = d.get("G0.S0")
     if pol is None:
@@ -104,7 +76,7 @@ def ref_xas():
 
 @pytest.fixture(scope="module")
 def ref_sumrule():
-    d = parse_agr(REF_SUMR_AGR)
+    d = read_agr(REF_SUMR_AGR).data
     spin = d.get("G1.S0")
     orb = d.get("G0.S0")
     if spin is None or orb is None:
