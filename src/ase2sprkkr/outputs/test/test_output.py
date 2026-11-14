@@ -130,6 +130,10 @@ dipole moment   1      0.0000000000000000      0.0000000000000000      0.0000000
     def test_scf_sfn(self, tmp_path, monkeypatch):
         fullpot = ScfResult(None, None, tmp_path)
         expected_filename = os.path.join(tmp_path, "shape.sfn")
+        # File actions are exposed only for existing files. Parsing itself is
+        # mocked below; the fixture still needs a real path to be actionable.
+        with open(expected_filename, "wb") as fixture:
+            fixture.write(b"SFN fixture")
         fullpot.files.add_file("SFN", "shape.sfn")
 
         class ParsedSFN:
