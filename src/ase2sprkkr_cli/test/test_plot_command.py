@@ -84,3 +84,33 @@ def test_sfn_mode_flag_and_deferred_sites_are_passed_to_plot(monkeypatch, sites,
     assert plot.run(args, {"debug": True}) is None
     assert output.plot_kwargs["what"] == "shape"
     assert output.plot_kwargs["sites"] == expected
+
+
+
+def test_grace_plot_cli_and_dataset_selection(tmp_path, capsys):
+    from ase2sprkkr.result_files import GraceFile
+
+    source = tmp_path / "spectrum.agr"
+    source.write_text(
+        '@with g0\n@s0 legend "peak"\n@target G0.S0\n@type xy\n0 1\n1 2\n&\n'
+        '@target G0.S1\n@type xy\n0 3\n1 4\n&\n',
+        encoding="utf-8",
+    )
+    _, args = parse_args(str(source), "-V")
+    assert plot.run(args, {"debug": False}) is None
+    assert "G0.S0" in capsys.readouterr().out
+
+    png = tmp_path / "selected.png"
+    _, args = parse_args(str(source), "--value", "g0.s1", "-o", str(png))
+    assert plot.run(args, {"debug": False}) is None
+    assert png.exists() and png.stat().st_size > 0
+    parsed = GraceFile.from_file(source)
+    assert set(parsed.datasets) == {"G0.S0", "G0.S1"}
+
+
+def test_grace_plot_cli_rejects_unknown_set(tmp_path):
+    source = tmp_path / "empty.agr"
+    source.write_text("@target G0.S0\n@type xy\n0 1\n&\n")
+    _, args = parse_args(str(source), "-v", "G1.S0", "-o", str(tmp_path / "bad.png"))
+    with pytest.raises(ValueError, match="Unknown Grace dataset"):
+        plot.run(args, {"debug": False})
