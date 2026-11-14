@@ -184,19 +184,46 @@ retry after a crash can repeat side effects; exactly-once side effects are not
 promised.
 
 Remote commands for users
----------------------------
+-------------------------
+
+A persistent run ID is the default identity for client-side commands:
 
 .. code-block:: console
 
-   ase2sprkkr remote status HANDLE
-   ase2sprkkr remote follow HANDLE
-   ase2sprkkr remote cancel HANDLE
+   ase2sprkkr remote status RUN_ID
+   ase2sprkkr remote status RUN_ID --status-only
+   ase2sprkkr remote follow RUN_ID --info
+   ase2sprkkr remote follow RUN_ID --regex 'WARNING' --from-start
+   ase2sprkkr remote snapshot RUN_ID result.dat --destination /tmp/result.partial.dat
+   ase2sprkkr remote cancel RUN_ID
 
-These commands act on the host where they run and delegate to KKRunner.
-They currently accept a target-side execution handle, not a project run ID.
-Internal submit/recovery/acknowledgement and MPI commands belong to
-``kkrunner``. See the
-`KKRunner command-line guide <https://ase2sprkkr.github.io/kkrunner/command-line.html>`_
+For a running SCF calculation, ``status`` includes the latest **completed**
+iteration when available. It reads a temporary snapshot directly from the
+execution host; it does not assume the local output was already downloaded.
+``--status-only`` omits this additional work.
+
+``snapshot`` accepts one concrete declared output, saved stdout/stderr stream,
+or cache file, named in the run's **local** directory namespace. The copy is
+published atomically at ``--destination`` and cannot overwrite a declared
+run file. Snapshots are observational: the calculation may continue writing
+while the copy is read. They never update canonical synchronized files,
+persistent run records, or historical checksums. Use the normal result retrieval
+API for verified completed files. This command requires a KKRunner version
+providing ``RunManager.snapshot_file``.
+
+Direct backend handles are available explicitly, with reduced functionality:
+
+.. code-block:: console
+
+   ase2sprkkr remote status --remote-id HANDLE
+   ase2sprkkr remote follow --remote-id HANDLE --stdout-path /scratch/run/scf.out
+   ase2sprkkr remote cancel --remote-id HANDLE
+
+A backend handle does not provide a persistent manifest and cannot be used
+with ``snapshot``. Explicit stream paths may be needed to follow scheduler
+jobs or replay completed output. Internal submit/recovery/acknowledgement and
+MPI commands belong to ``kkrunner remote``, not the application CLI.
+See the `KKRunner command-line guide <https://ase2sprkkr.github.io/kkrunner/command-line.html>`_
 and `recovery guide <https://ase2sprkkr.github.io/kkrunner/persistent-runs.html>`_
 for the generic protocol and lifecycle contract.
 
