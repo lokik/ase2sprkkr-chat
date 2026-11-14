@@ -9,7 +9,7 @@ import argparse
 from ase2sprkkr_cli.errors import CLIUsageError
 
 
-description = "Plot structured SPR-KKR result files. File formats are detected automatically."
+description = "Plot structured SPR-KKR result files and Grace .agr projects."
 
 
 def extra_help():
@@ -18,7 +18,7 @@ def extra_help():
     out = "Supported structured result file formats:\n"
     defs = ResultFile.definitions.items()
     out += "\n".join(map(lambda x: f"    {x[0].upper()}: {x[1].info()}", defs))
-    return out
+    return out + "\n    AGR: Grace project with one or more graphs/datasets"
 
 
 help = "Plot SPR-KKR result files."
@@ -35,7 +35,7 @@ SFN_PLOT_MODE_HELP = {
 
 
 def parser(parser):
-    parser.add_argument("output", help="SPR-KKR result file name (see the supported files above).", nargs="+")
+    parser.add_argument("output", help="SPR-KKR result file or Grace .agr project.", nargs="+")
     parser.add_argument(
         "-o",
         "--output_filename",
@@ -185,7 +185,7 @@ def run(args, global_args):
     kwargs = {k: v for k, v in kwargs.items() if v is not None}
 
     from pathlib import Path
-    from ase2sprkkr.result_files import ResultFile
+    from ase2sprkkr.result_files import GraceFile, read_plottable_file
     from ase2sprkkr.result_files.definitions.sfn import SFNResultFile
     from ase2sprkkr.gui.plot import Multiplot
 
@@ -200,7 +200,7 @@ def run(args, global_args):
                     f"File '{of}'{value_label} can not be plotted: {e}"
                 ) from e
 
-        of = ResultFile.from_file(output, unknown=False)
+        of = read_plottable_file(output, unknown=False)
 
         if "what" in kwargs:
             what = kwargs["what"]
@@ -222,13 +222,17 @@ def run(args, global_args):
 
         if show_values:
             print(f"In file {output}, there are values to plot:")
-            for i in of:
-                if hasattr(i, "plot") and callable(i.plot):
-                   print(f"   {i.name:<15} {i._definition.info(False)}")
+            if isinstance(of, GraceFile):
+                for name, dataset in of.datasets.items():
+                    print(f"   {name:<15} {dataset.legend or dataset.type}")
+            else:
+                for i in of:
+                    if hasattr(i, "plot") and callable(i.plot):
+                        print(f"   {i.name:<15} {i._definition.info(False)}")
             continue
 
         for x in ["layer"]:
-            if x in kwargs and x not in of.plot_parameters:
+            if x in kwargs and x not in getattr(of, "plot_parameters", {}):
                 raise ValueError(f"Argument '--{x}' is not valid for {of}")
 
         if filename:
@@ -240,7 +244,11 @@ def run(args, global_args):
         else:
             fn = None
 
-        if value:
+        if value and isinstance(of, GraceFile):
+            plot(lambda: of.plot(
+                datasets=[name.upper() for name in value], filename=fn, **kwargs
+            ), output, value)
+        elif value:
 
             def vals():
                 for name in value:

@@ -14,7 +14,7 @@ from ..common.configuration_containers import Section
 from ..common.file_utils import FilePath
 from ..common.value_definitions import ValueDefinition
 from ..common.warnings import ValidationResult
-from ..result_files import ResultFile
+from ..result_files import ResultFile, read_plottable_file
 
 
 class OutputOption(Option):
@@ -62,6 +62,7 @@ class OutputFileOption(OutputOption):
         "jxc": "Exchange-interaction data",
         "rat": "X-ray spectroscopy data",
         "sfn": "Shape functions (SFN)",
+        "agr": "Grace plot (AGR)",
     }
 
     _FILE_INFO = {
@@ -70,6 +71,7 @@ class OutputFileOption(OutputOption):
         "potential": "Potential used as input for this calculation.",
         "converged": "Potential produced by the converged SCF calculation.",
         "sfn": "Shape-function data used by a full-potential calculation.",
+        "agr": "Grace plot project containing one or more datasets.",
     }
 
     _TYPE_INFO = {
@@ -103,9 +105,13 @@ class OutputFileOption(OutputOption):
 
     @property
     def file_type(self):
+        extension = os.path.splitext(self())[1].lstrip(".").lower()
+        # Grace project format is authoritative even for a named output option
+        # with an older task-specific file type hint.
+        if extension == "agr":
+            return "agr"
         if self._definition.file_type:
             return self._definition.file_type
-        extension = os.path.splitext(self())[1].lstrip(".").lower()
         return extension if extension in ResultFile.definitions else None
 
     def definition(self):
@@ -120,7 +126,9 @@ class OutputFileOption(OutputOption):
         if not os.path.isfile(self.path()):
             return ()
         out = ["open", "open_directory", "save"]
-        if self.file_type:
+        if self.file_type == "agr":
+            out.append("plot")
+        elif self.file_type:
             result_class = self.definition().result_class
             if result_class.can_be_plotted():
                 out.append("plot")
@@ -142,7 +150,7 @@ class OutputFileOption(OutputOption):
         owner = self._container.result
         if owner is not None:
             return owner.parse_result_file(self, potential=potential)
-        return ResultFile.from_file(
+        return read_plottable_file(
             self.path(),
             try_only=self.file_type,
             potential=potential,
@@ -154,7 +162,11 @@ class OutputFileOption(OutputOption):
     def save(self, parent=None):
         from PyQt6.QtWidgets import QFileDialog
 
-        extension = self.definition().extension if self.file_type else "*"
+        extension = (
+            self.definition().extension
+            if self.file_type and self.file_type != "agr"
+            else os.path.splitext(self.path())[1].lstrip(".") or "*"
+        )
         filename, _ = QFileDialog.getSaveFileName(parent, "Save File", "", f"(*.{extension});;All Files (*)")
         if filename:
             shutil.copy(self.path(), filename)
