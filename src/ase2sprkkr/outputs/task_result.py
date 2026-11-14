@@ -159,11 +159,12 @@ class TaskResult:
     def parse_result_file(self, file, potential=None):
         """Parse a registered structured result file in this calculation context."""
 
-        from ..result_files import ResultFile
+        from ..result_files import read_plottable_file
 
-        if potential is None:
+        # Grace plots do not depend on the calculation potential.
+        if potential is None and file.file_type != "agr":
             potential = self.any_potential
-        return ResultFile.from_file(
+        return read_plottable_file(
             file.path(),
             try_only=file.file_type,
             potential=potential,

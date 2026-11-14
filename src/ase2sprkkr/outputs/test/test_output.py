@@ -306,3 +306,25 @@ dipole moment   1      0.0000000000000000      0.0000000000000000      0.0000000
             result = JxcOutputReader.read_from_file(output, directory=directory)
         assert result.path_to("output") == filename
         assert result.files["output"].path() == filename
+
+
+def test_grace_result_file_has_plot_action_and_parses_without_potential(tmp_path, monkeypatch):
+    from ...result_files import GraceFile
+
+    path = tmp_path / "spectrum.agr"
+    path.write_text("@target G0.S0\n@type xy\n0 1\n1 2\n&\n")
+    result = TaskResult(None, None, tmp_path)
+    option = result.files.add_file("spectrum", path.name, "jxc")
+
+    # The actual extension determines the Grace syntax even if the result
+    # carried an older task-specific type hint.
+    assert option.file_type == "agr"
+    assert option.display_name == "Grace plot (AGR)"
+    assert "plot" in option.actions()
+    assert isinstance(option.parsed_file(), GraceFile)
+
+    called = []
+    monkeypatch.setattr(GraceFile, "plot", lambda self, **kwargs: called.append(self))
+    option.plot()
+    assert len(called) == 1
+    assert option.parsed_file().datasets["G0.S0"].data.shape == (2, 2)
