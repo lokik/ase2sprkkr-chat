@@ -120,7 +120,11 @@ def test_jxc_registers_existing_dat_and_agr_without_overwriting_parser_files(tmp
     jij.write_bytes(b"couplings")
     plot.write_bytes(b"agr data")
 
-    result = JxcResult(parameters, None, str(tmp_path), task_name="JXC")
+    # A historical file manifest needs the primary OUT as its provenance root.
+    (tmp_path / "run.out").write_bytes(b"OUT")
+    result = JxcResult(
+        parameters, None, str(tmp_path), output_file="run.out", task_name="JXC",
+    )
     # A parser-provided entry wins, even if the task also declares its path.
     observed = result.files.add_file("jxc", str(jij), "jxc")
     with pytest.warns(RuntimeWarning, match="missing required output"):
