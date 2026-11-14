@@ -84,6 +84,11 @@ class GraceDataset:
     def legend(self):
         return self.settings.get("legend")
 
+    def plot(self, axis, **kwargs):
+        """Draw this set on an existing Matplotlib axis."""
+        from .grace_plot import plot_grace_dataset
+        return plot_grace_dataset(self, axis, **kwargs)
+
 
 @dataclass
 class GraceGraph:
@@ -125,6 +130,11 @@ class GraceGraph:
         """Normalized viewport rectangle, if specified."""
         return self._rectangle("view")
 
+    def plot(self, axis, **kwargs):
+        """Draw this graph on an existing Matplotlib axis."""
+        from .grace_plot import plot_grace_graph
+        return plot_grace_graph(self, axis, **kwargs)
+
 
 @dataclass
 class GraceFile:
@@ -151,6 +161,11 @@ class GraceFile:
     def data(self):
         """Mapping G*.S* to the underlying NumPy arrays."""
         return {name: dataset.data for name, dataset in self.datasets.items()}
+
+    def plot(self, **kwargs):
+        """Render the Grace project with ASE2SPRKKR's plotting helpers."""
+        from .grace_plot import plot_grace
+        return plot_grace(self, **kwargs)
 
     @classmethod
     def from_file(cls, path):
