@@ -10,4 +10,5 @@ if (( PYTHON_MINOR >= 14 )); then
     python3 -m pip install git+https://github.com/lokik/spglib.git
 fi
 
+python3 -m pip install 'git+https://github.com/lokik/kkrunner-chat.git@chatgpt-kkrunner-backend-name'
 python3 -m pip install .
