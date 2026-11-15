@@ -30,16 +30,18 @@ def parser(parser):
     grp.add_argument(
         "--input-file",
         "-i",
-        help="Run ase2sprkkr -i inputfile potfile, if you want to run task determined by the give input file with a given potential.",
+        help="Use this SPR-KKR input file with the supplied potential.",
         type=str,
     )
 
+    parser.add_argument("--profile", dest="execution_profile", help="Named execution profile to use for the calculation.")
+    parser.add_argument("--project-id", help="Existing project UUID for a persistent calculation.")
     parser.add_argument("--print-output", "-O", help="Print the output of SPRKKR.", default="None", action=bool_arg)
     parser.add_argument("--output-file", "-o", help="Output file", type=str)
     parser.add_argument(
         "--empty-spheres",
         "-e",
-        help="Try to add empty spheres (by default, they are added if the potential is not converged and no vacuum atom is present.",
+        help="Control automatic addition of empty spheres.",
         action=bool_arg,
     )
     parser.add_argument(
@@ -87,5 +89,27 @@ def run(args, global_args):
         if o is not None:
             kwargs[i] = o
 
-    calc.calculate(potential=potential, input_parameters=ip, options=options, **kwargs)
+    kwargs["profile"] = args.execution_profile
+    if args.project_id is None:
+        calc.calculate(potential=potential, input_parameters=ip, options=options, **kwargs)
+    else:
+        # Persistent project calculations use the same preparation as a normal
+        # run, but expose the durable ID before the blocking wait.
+        runner = calc.create_run(
+            potential=potential,
+            input_parameters=ip,
+            options=options,
+            project=args.project_id,
+            **kwargs,
+        )
+        print(f"Persistent run ID: {runner.id}", flush=True)
+        runner.run()
+        from kkrunner import RunState
+        from ase.calculators.calculator import CalculationFailed
+
+        if runner.state != RunState.FINISHED:
+            raise CalculationFailed(
+                f"SPR-KKR calculation {runner.state.value} "
+                f"(return code {runner.return_code}): {runner.failure_message}"
+            )
 

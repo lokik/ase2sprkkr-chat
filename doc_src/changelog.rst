@@ -1,6 +1,16 @@
 Changelog
 =========
 
+Unreleased (develop)
+--------------------
+
+* Requires KKRunner 0.2.0 beta3 for the renamed supervised backend.\n* Clarified the distinction between persistent run records, reattachment
+  and submission recovery. Execution profiles now use ``kkrunner`` for
+  the supervised-process backend instead of ``process``.
+* The ``ase2sprkkr run`` command accepts ``--profile`` to select a
+  named execution profile and ``--project-id`` to create a persistent
+  calculation in an existing project. It prints the persistent run ID.
+
 Version 4.0.0 (beta series)
 ---------------------------
 
@@ -147,8 +157,9 @@ Execution, remote calculations and projects
   optional files and wildcard patterns, synchronization policies and
   integrity checks to detect missing or overwritten historical results.
 * Managed stdout/stderr and output listeners. ``ase2sprkkr remote`` provides
-  user-facing status, follow and cancel commands; the execution protocol
-  uses ``kkrunner remote``.
+  user-facing status, follow and cancel commands. The early beta used a
+  ``kkrunner remote`` service command, replaced in later betas by the
+  current SSH transport protocol.
 
 Configuration and profiles
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -265,12 +276,12 @@ Users needing Python 3.8 or the previous execution architecture should
 remain on the 3.6.x series.
 
 * Added support for ANDERSON mixing (experimental), BSF task improved
-* A better debugging in `ase2sprkkr shell`
+* Improved debugging in ``ase2sprkkr shell``
 * `promote_ase_atoms` can be directly imported from the `ase2sprkkr` root package
 * Changing properties via `site` is disallowed in cases where `site_type` is shared
 * JXC output file parsing and plotting
 * XAS output file parsing and plotting
-* Beyond-DFT parammeters (DFTM, DFT+U,...)
+* Beyond-DFT parameters (DFTM, DFT+U,...)
 * Hyperfine-field switches
 * Semi-infinite structure building improved
 * Uppasd improvements: direct calling of `sd`, input file stub writing
@@ -309,9 +320,9 @@ Version 3.4
 * Allow to run computation inside Jupyter notebook
 * promote_ase_atoms exported
 * BSF and SCP outputs improved
-* Calculator do not longer overwrite the potential file, if it is given in constructor
+* The calculator no longer overwrites a potential supplied in its constructor
 * Symmetry handling improved
-* Some fixies and enhancements for plotting
+* Some fixes and enhancements for plotting
 * Allow async running of the process
 * Python 3.14 compatibility
 * MDIR option has no default value
@@ -320,7 +331,7 @@ Version 3.4
 
 Version 3.3.4
 ------------------
-* Sites are update according to the symbols during save
+* Site information is updated from atomic symbols when saving
 * XAS task
 * Torque Task
 * Empty-spheres finding improved
@@ -330,17 +341,17 @@ Version 3.3.4
 * Layer and fermi argument to BSF plotting
 * --separate_plots argument for plotting routines
 * Uppasd task for generating Uppasd input files
-* Various fixies
+* Various fixes
 
 
 Version 3.3.3
 ------------------
 * Added mesh parameter to empty spheres finding
-* Spacegroup from ASE is no longer used, since it have been deprecated
+* ASE's deprecated space-group representation is no longer used
 
 Version 3.3.2
 ------------------
-* Buildsystem changed to scikit-build-core (mesonpy do not support editable build at least in some setups)
+* Build system changed to scikit-build-core (meson-python did not support editable builds in some setups)
 * Atoms rotating, shifting and flipping routines
 * Config file printing, value-setting etc. routines from cmdline
 
@@ -377,7 +388,7 @@ Version 3.0.2-beta
 ------------------
 * Host Madelung potential and Charge moments parsing
 * Sites ASE array
-* Various fixies
+* Various fixes
 * Test tool to run tests
 * has_symmetry and break_symmetry methods of Site and SiteType
 
@@ -389,7 +400,7 @@ User interface
 * Empty spheres finding has been added
 * SiteType class added: sites are now always distinct, site_types can be shared between sites
   due to symmetry
-* The JXC task have been added
+* Added the JXC task
 * Total DOS for DOS plotting added
 * DOS improved (arithmetics, access by atom type)
 * ARPES configuration improved
@@ -399,7 +410,7 @@ User interface
 * Parsing of POTENTIAL and CHARGE sections of potential file
 * ProcessOutputReader.read_from_file can be called as classmethod
 * Occupancies can now have string indices (since some other codes produce such occupancies)
-* Partial occupancy is not upnormalized, vacum pseudoatom is added instead
+* Partial occupancy is not upnormalized, vacuum pseudoatom is added instead
 * Energies in SCF result are returned in more uniform way
 * Writing of modified output files is possible
 * KRMT and KRWS configuration values added
@@ -409,12 +420,12 @@ Tools
 * Tools (``a2s_...``) have been integrated into one ase2sprkkr tool
 * Test tool introduced to test the ase2sprkkr installation
 * Run tool for running the calculations using prepared .pot files
-* Various tools and plotting fixies
+* Various tools and plotting fixes
 
 Internals
 ~~~~~~~~~
 * NumpyArray grammar type improved
-* Some fixies and code lininting
+* Some fixes and code linting
 * Repeated configuration allowed - for parsing output files (e.g. iterations of SCF cycle)
 * The possibility to emit a warning to the options was added
 * Build backend changed to Meson to allow build cython empty spheres
@@ -423,7 +434,7 @@ Internals
 Refactoring
 ~~~~~~~~~~~
 * Output files moved to a separate directory
-* Configuration definitions splitted to several files
+* Configuration definitions split to several files
 
 Version 2.2.1
 -------------
@@ -446,7 +457,7 @@ Internals
 * Switch grammar element: format of a parsed file can depend on the previously parsed values
 * Gather grammar element for ``NAME1 NAME2 = VALUE1 VALUE2`` syntax
 * Routines for plotting the results are (i hope) stabilized
-* Various small improvements and fixies
+* Various small improvements and fixes
 
 
 Version 2.1.1
@@ -464,20 +475,20 @@ User interface
 * input_parameters.change_task method fixed
 * [] access to array options/values (no need for VARIABLE()[] notation)
 * Numbered arrays (e.g. CONTROL.MDIR) can be set using arrays
-* Better formating of input parameters
+* Better formatting of input parameters
 * Some minor tweaks and corrections of input parameters
 
 Internals
 ~~~~~~~~~
-* GrammmarTypes refactorized (splitted to more files)
+* GrammarTypes refactored (split to more files)
 * NumpyArray and RestOfTheFile grammar types for output files
 * Generated grammar types and values for easy access to output files
 * Calculator.save_input refactored
 
 Version 2.0.4
 -------------
-* Some fixies
-* ASR repcipies available as ase2sprkkr.asr subpackage
+* Some fixes
+* ASR recipes available as ase2sprkkr.asr subpackage
 
 Version 2.0.1
 -------------
@@ -514,11 +525,11 @@ User interface
 
 Architecture changes
 ~~~~~~~~~~~~~~~~~~~~
-* Allow the Keywords arguments to accept descirptions of the keywords.
+* Allow the Keywords arguments to accept descriptions of the keywords.
 * Complex GrammarType were added.
 * Option has the result attribute, that can hold the processed value of an user input
 * Possibility to add 'expert' values to a configuration definition. The expert
-  values are outputed only if they differ from the defaults.
+  values are shown only if they differ from the defaults.
 * Expert sections have been introduced. They are printed out only if there is any changes (from defaults).
 * The ARPES task have been documented and more options have been added.
 * The SCF task have been documented and more options have been added.
@@ -539,4 +550,4 @@ Version 1.0.6
 
 * Sites data moved to ASE arrays to allow merging two Atoms structures
 * Testing switched to pytest
-* ARPES task fixies
+* ARPES task fixes
