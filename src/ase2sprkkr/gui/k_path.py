@@ -12,6 +12,10 @@ from ase.dft.bz import bz_vertices
 
 class Arrow3D(FancyArrowPatch):
     def __init__(self, xs, ys, zs, *args, **kwargs):
+        """Draw a 3D arrow from its two endpoint coordinates.
+
+        The remaining arguments are forwarded to FancyArrowPatch.
+        """
         super().__init__((0, 0), (0, 0), *args, **kwargs)
         self._verts3d = xs, ys, zs
 

@@ -5,11 +5,12 @@
 
 .. autoclass:: {{ objname }}
    :members:
-   :inherited-members:
 
    .. rubric:: {{ _('Class hierarchy') }}
+   {% if not objname.startswith('_') %}
    .. inheritance-diagram:: {{ fullname }}
       :parts: 2
+   {% endif %}
 
    |
 
@@ -31,19 +32,6 @@
    {% endif %}
    {% endblock %}
 
-   {% block inherited_attributes %}
-   {% if inherited_attributes %}
-   .. rubric:: {{ _('Inherited attributes') }}
-
-   .. autosummary::
-      :template: custom-base-template.rst
-     {% for item in inherited_attributes %}
-        ~{{ name }}.{{ item }}
-     {%- endfor %}
-
-   {% endif %}
-   {% endblock %}
-
    {% block own_methods %}
    {% if own_methods %}
    .. rubric:: {{ _('Methods') }}
@@ -57,15 +45,3 @@
    {% endif %}
    {% endblock %}
 
-   {% block inherited_methods %}
-   {% if inherited_methods %}
-   .. rubric:: {{ _('Inherited methods') }}
-
-   .. autosummary::
-      :template: custom-base-template.rst
-     {% for item in inherited_methods %}
-        ~{{ name }}.{{ item }}
-     {%- endfor %}
-
-   {% endif %}
-   {% endblock %}

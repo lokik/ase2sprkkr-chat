@@ -71,7 +71,7 @@ class RawData(GrammarType):
         ends_with: Union[str, re.Pattern] = None,
         ends_with_str=None,
         include_ends_with=False,
-        **kwargs,
+        kwargs,
     ):
         """
         Parameters
@@ -84,7 +84,7 @@ class RawData(GrammarType):
           explicit paths such as ``..N``.
 
         indented
-          If there are <n> spaces before data, pass n to this arg.
+          If there are n spaces before data, pass n to this argument.
 
           If the file has the following structure:
 

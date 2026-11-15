@@ -65,28 +65,23 @@ class SPRKKRAtoms(Atoms):
 
     @staticmethod
     def promote_ase_atoms(obj, symmetry=None, update_info=None):
-        """Convert ASE Atoms object to the one usable by SPRKKR.
-        For the case of the usability it is a bit ugly hack: The __class__ attribute
-        is replaced so the extra methods and properties of the objects will
-        be available.
+        """Enable SPR-KKR-specific behavior on an ASE Atoms object.
+
+        The object is promoted in place by changing its class, preserving
+        existing atomic data and references.
 
         Parameters
         ----------
-        obj: ase.Atoms
-         The atoms object to be promoted to be used for SPRKKR calculations
-
-        symmetry: bool or None
-         The sites property of the resulting object will consider the symmetry of the structure.
-         I.e., the by-symmetry-equal atomic sites will share the same sites object.
-         Default None is the same as True, however it does not change the symmetry
-         of the already promoted obj passed into the routine.
-
-        update_info:
-         If True, always update spacegroup info
-         If False, never
-         If None, update it, if it seems to be inited, since it can be messed up by the
-                  Atoms-manipulating routines
-
+        obj : ase.Atoms
+            Object to promote. Already promoted objects may have their site
+            symmetry updated.
+        symmetry : bool or None, optional
+            Whether symmetry-equivalent sites share a site object. None
+            selects True on newly promoted objects and preserves the setting
+            on objects that have already been promoted.
+        update_info : bool or None, optional
+            True always recomputes space-group information, False never does,
+            and None updates already initialized site information.
         """
         if obj is None:
             return None

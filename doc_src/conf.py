@@ -72,6 +72,8 @@ html_theme = 'sphinx_rtd_theme'
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
 autodoc_typehints = 'description'
+autodoc_typehints_format = 'fully-qualified'
+autodoc_inherit_docstrings = False
 github_url = 'https://github.com/ase2sprkkr/ase2sprkkr/'
 
 html_css_files = [
@@ -106,7 +108,11 @@ def setup(app):
     app.connect('autodoc-skip-member', skip_member)
 
 
-exclude_patterns = ['*/test/*', '*/test', 'remarks/**']
+exclude_patterns = [
+    '*/test/*', '*/test', 'remarks/**',
+    'README.rst',
+    'auto/modules.rst',
+]
 
 inheritance_graph_attrs = dict(size='"10.0, 10.0"',
     fontsize=14, ranksep=0.3 )
