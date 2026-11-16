@@ -61,3 +61,31 @@ def test_zr_tracks_public_z_value():
     np.testing.assert_allclose(potential.zr, [2.0, 1.0, 0.5])
     potential.z = 4.0
     np.testing.assert_allclose(potential.zr, [4.0, 2.0, 1.0])
+
+
+
+def test_fullpot_payload_survives_equivalent_mesh_copy_and_refuses_remesh():
+    import pytest
+
+    from ase2sprkkr.sprkkr.radial import RadialCharge
+    from ase2sprkkr.sprkkr.radial_meshes import ExponentialMesh
+
+    mesh = ExponentialMesh(1e-6, 0.02, 2, 1.0, 3, 1.5)
+    mesh.set_fullpot((1, 2, 1, [3]))
+    payload = "NFP\n  1  2  3\n  4.0  5.0"
+    radial_potential = RadialPotential(np.ones((2, 3)), mesh, 26, fullpot=payload)
+    radial_charge = RadialCharge(np.ones((2, 3)), mesh, fullpot=payload)
+    for radial in (radial_potential, radial_charge):
+        clone = mesh.copy()
+        clone.set_fullpot((1, 2, 1, [3]))
+        copied = radial.copy(clone)
+        assert copied.fullpot_data == payload
+        assert copied.mesh is clone
+        np.testing.assert_array_equal(copied.raw_value, radial.raw_value)
+
+        different = ExponentialMesh(1e-6, 0.03, 2, 1.0, 3, 1.5)
+        different.set_fullpot((1, 2, 1, [3]))
+        with pytest.raises(ValueError, match="cannot be remeshed"):
+            radial.copy(different)
+        assert radial.mesh is mesh
+        assert radial.fullpot_data == payload
