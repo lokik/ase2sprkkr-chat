@@ -47,6 +47,15 @@ def _to_start_native(text):
                         "Initial cluster magnetisation directions\n", 1)
 
 
+def _radial_block(name, type_number, values):
+    """Serialize native spherical radial data for one global TYPE."""
+    output = StringIO()
+    np.savetxt(output, np.atleast_2d(values), fmt="% .14E")
+    return _section(
+        name, f"TYPE      {type_number}", output.getvalue().rstrip("\n"), "=" * 79
+    )
+
+
 def _host_potential(atoms):
     host = atoms.info.get(EMBEDDING_HOST)
     if host is None or not hasattr(host, "LATTICE") or not hasattr(host, "OCCUPATION"):
@@ -105,12 +114,11 @@ class ClusterPotential(ConfigurationFile):
                 target.write(text)
 
     @classmethod
-    def from_atoms(cls, atoms, *, title="Embedded cluster"):
-        """Create an initial SCFSTATUS=START CLUPOT from embedded SPRKKRAtoms.
+    def from_atoms(cls, atoms, *, title="Embedded cluster", scf_status=None):
+        """Create START or iterating CLUPOT, including spherical radial data.
 
-        Atom positions are Cartesian Angstrom. CLUPOT SHIFTS are in ALAT
-        units, host-site IDs are converted from Python 0-based to native
-        1-based, and type IDs are local to the cluster.
+        In the absence of radial data the result is START. Complete radial
+        data produce ITERATING, unless scf_status is explicitly specified.
         """
         from ..sprkkr.sprkkr_atoms import SPRKKRAtoms
         SPRKKRAtoms.promote_ase_atoms(atoms)
@@ -127,16 +135,14 @@ class ClusterPotential(ConfigurationFile):
         if alat <= 0:
             raise ValueError("Invalid host ALAT")
 
-        # A type can be shared by symmetry-equivalent Sites, but not merely
-        # because the atomic numbers are equal. The identity of SiteType and
-        # of the occupation's AtomicType are both retained.
+        # A native ITCLU identifies an AtomicType, independently of SiteType.
         known_types = {}
         types = []
         occupations = []
         for site in atoms.sites:
             components = []
             for atom_type, fraction in site.occupation.items():
-                key = (id(site.site_type), id(atom_type))
+                key = id(atom_type)
                 if key not in known_types:
                     known_types[key] = len(types) + 1
                     types.append(atom_type)
@@ -145,10 +151,51 @@ class ClusterPotential(ConfigurationFile):
                 raise ValueError("Each embedded site needs at least one atomic type")
             occupations.append(components)
 
+        complete_radial = all(t.has_converged_data() for t in types)
+        any_radial = any(
+            t.potential is not None or t.charge is not None or t.moments is not None
+            for t in types
+        )
+        if scf_status is None:
+            if any_radial and not complete_radial:
+                raise ValueError(
+                    "Partial radial data cannot be serialized implicitly; "
+                    "use scf_status='START' to intentionally discard them"
+                )
+            scf_status = "ITERATING" if complete_radial else "START"
+        scf_status = str(scf_status).upper()
+        if scf_status not in ("START", "ITERATING", "CONVERGED"):
+            raise ValueError(f"Unsupported cluster SCFSTATUS {scf_status!r}")
+        with_radial = scf_status != "START"
+        if with_radial and not complete_radial:
+            raise ValueError("Writing an iterating/converged CLUPOT requires complete radial data")
+
         shifted = any(np.linalg.norm(site.embedding.displacement) > 1e-10 for site in atoms.sites)
-        # The START file does not include cluster-specific radial mesh data.
-        # CLUSYMMETRY will determine the final number of distinct meshes.
-        nm = n if shifted else 0
+        mesh_ids = []
+        cluster_meshes = []
+        host_type_count = 0
+        if with_radial:
+            if not hasattr(host, "TYPES") or not hasattr(host, "MESH_INFORMATION"):
+                raise ValueError("Writing radial cluster data requires host TYPES and MESH INFORMATION")
+            host_type_count = len(host.TYPES.DATA())
+            host_mesh_data = host.MESH_INFORMATION.DATA()
+            mesh_lookup = {
+                tuple(row[name] for name in ("R(1)", "DX", "JRMT", "RMT", "JRWS", "RWS")): i
+                for i, row in enumerate(host_mesh_data, 1)
+            }
+            for site in atoms.sites:
+                mesh = site.site_type.mesh
+                if mesh.fullpot is not None:
+                    raise NotImplementedError("Writing full-potential cluster meshes is not implemented")
+                signature = tuple(mesh.to_tuple())
+                number = mesh_lookup.get(signature)
+                if number is None:
+                    number = len(host_mesh_data) + len(cluster_meshes) + 1
+                    cluster_meshes.append((number, mesh))
+                    mesh_lookup[signature] = number
+                mesh_ids.append(number)
+        # CLUSYMMETRY assigns displaced meshes when reading START.
+        nm = len(cluster_meshes) if with_radial else (n if shifted else 0)
         lines = [
             "*" * 79,
             "HEADER    'SPR-KKR cluster dataset created by ASE2SPRKKR'",
@@ -159,7 +206,7 @@ class ClusterPotential(ConfigurationFile):
                      f"NQCLU     {n}", f"NTCLU     {len(types)}", f"NMCLU     {nm}"),
             _section("SCF-INFO",
                      "INFO      'Initial embedded cluster'",
-                     "SCFSTATUS START",
+                     f"SCFSTATUS {scf_status}",
                      f"FULLPOT   {'T' if _host_value(host, 'FULLPOT', False) else 'F'}",
                      f"BREITINT  {'T' if _host_value(host, 'BREITINT', False) else 'F'}",
                      f"NONMAG    {'T' if _host_value(host, 'NONMAG', False) else 'F'}",
@@ -206,7 +253,7 @@ class ClusterPotential(ConfigurationFile):
             shift_rows.append(f"{i} {dx:.14g} {dy:.14g} {dz:.14g}")
             theta, phi = site.magnetisation
             mag_rows.append(f"{len(reference) + i} {float(theta):.14g} {float(phi):.14g}")
-            mesh = int(host_occupations[original]["IMQ"])
+            mesh = mesh_ids[i - 1] if with_radial else int(host_occupations[original]["IMQ"])
             fields = " ".join(f"{it} {fraction:.14g}" for it, fraction in components)
             occ_rows.append(f"{i} {mesh} {len(components)} {fields}")
 
@@ -229,6 +276,31 @@ class ClusterPotential(ConfigurationFile):
                        f"{at.n_valence} {at.n_semicore}"
                        for i, at in enumerate(types, 1))),
         ]
+        if with_radial:
+            if cluster_meshes:
+                lines.append(_section(
+                    "MESH INFORMATION", "MESH-TYPE EXPONENTIAL",
+                    "IM R(1) DX JRMT RMT JRWS RWS",
+                    *(f"{number} " + " ".join(str(value) for value in mesh.to_tuple())
+                      for number, mesh in cluster_meshes),
+                ))
+            for i, atom_type in enumerate(types, 1):
+                global_type = host_type_count + i
+                mesh = atom_type.mesh
+                for name, value in (
+                    ("POTENTIAL", atom_type.potential),
+                    ("CHARGE", atom_type.charge),
+                ):
+                    data = np.asarray(value.raw_value)
+                    if data.shape != (2, len(mesh)):
+                        raise ValueError(
+                            f"{name} for cluster type {i} has {data.shape}, "
+                            f"expected (2, {len(mesh)})"
+                        )
+                    lines.append(_radial_block(name, global_type, data))
+                lines.append(_radial_block(
+                    "MOMENTS", global_type, atom_type.moments.as_tuple()
+                ))
         return cls.from_string("\n".join(lines) + "\n")
 
     def to_atoms(self, host):
