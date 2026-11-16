@@ -8,7 +8,7 @@ A cluster potential is not a periodic potential with extra atomic sites.
 import re
 
 from ...common.configuration_definitions import BaseDefinition, SeparatorDefinition
-from ...common.grammar_types import Array, DefKeyword, NumpyArray, Sequence, Table, line_string
+from ...common.grammar_types import Array, DefKeyword, NumpyArray, RawData, Sequence, Table, line_string
 from ..potential_definitions import (
     PotSectionDefinition,
     PotValueDefinition as V,
@@ -280,7 +280,11 @@ def _definition():
         )
     )
     sections.append(_repeated_block("SELF-ENERGY", [V("LOPT", int)]))
-    section("CORE STATES", [], is_optional=True)
+    section(
+        "CORE STATES",
+        [V("DATA", RawData(), name_in_grammar=False, is_required=False)],
+        is_optional=True,
+    )
 
     return ClusterPotentialDefinition(sections)
 

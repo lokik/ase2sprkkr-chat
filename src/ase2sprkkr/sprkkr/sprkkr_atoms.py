@@ -407,8 +407,13 @@ class SPRKKRAtoms(Atoms):
             repeat = (int(m),) * 3
         else:
             repeat = tuple(m)
-        if len(repeat) != 3 or any(not isinstance(v, (int, np.integer)) or v < 1 for v in repeat):
-            raise ValueError("repeat requires three positive integer multipliers")
+        if len(repeat) != 3 or any(not isinstance(v, (int, np.integer)) or v < 0 for v in repeat):
+            raise ValueError("repeat requires three non-negative integer multipliers")
+        # ASE permits zero-length repetitions, which produce an empty Atoms
+        # object. Do not attempt to resolve host translations in that case.
+        if 0 in repeat:
+            super().__imul__(repeat)
+            return self
         sites_before = self.sites.copy() if self.are_sites_inited() else None
         old_cell = np.asarray(self.cell).copy()
         mapping = embedding_data(self).copy() if EMBEDDING_ARRAY in self.arrays else None
