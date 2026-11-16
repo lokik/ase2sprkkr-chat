@@ -17,6 +17,7 @@ from kkrunner.runs.base import ExecutionResources
 from .projects import resolve_project_manager
 from kkrunner.runs import Run
 from ..input_parameters.input_parameters import InputParameters
+from ..potentials.cluster_potentials import ClusterPotential
 from . import _preparation as preparation
 from ._preparation import FilenameTemplator as FilenameTemplator
 from .profile import SPRKKRProfile, executor_from_profile
@@ -50,6 +51,8 @@ class PreparedCalculation:
     _temporary_potential: bool = False
     _temporary_directory: bool = False
     _closed: bool = False
+    cluster_potential_file: str | None = None
+    _temporary_cluster_potential: bool = False
 
     def __post_init__(self):
         preparation.require_named_file(self.input_file, "input_file")
@@ -61,6 +64,13 @@ class PreparedCalculation:
             except TypeError:
                 raise ValueError(
                     "SPR-KKR potential_file must be backed by a filesystem path"
+                ) from None
+        if self.cluster_potential_file is not None:
+            try:
+                os.fspath(self.cluster_potential_file)
+            except TypeError:
+                raise ValueError(
+                    "SPR-KKR cluster_potential_file must be a filesystem path"
                 ) from None
         self.directory = os.path.abspath(os.fspath(self.directory))
 
@@ -135,12 +145,21 @@ class PreparedCalculation:
             atoms = resolved_potential.atoms
             task_name = parameters.task_definition_required().name
             preparation.validate_restart(resolved_potential.potential, task_name, restart_scf)
-            preparation.resolve_empty_spheres(
-                input_parameters=parameters,
-                atoms=atoms,
-                empty_spheres=empty_spheres,
-                default_empty_spheres=default_empty_spheres,
-            )
+            if isinstance(resolved_potential.potential, ClusterPotential):
+                requested_spheres = (
+                    default_empty_spheres if empty_spheres is None else empty_spheres
+                )
+                if requested_spheres not in (None, False, "auto"):
+                    raise ValueError(
+                        "Empty-sphere generation is not supported for an embedded cluster"
+                    )
+            else:
+                preparation.resolve_empty_spheres(
+                    input_parameters=parameters,
+                    atoms=atoms,
+                    empty_spheres=empty_spheres,
+                    default_empty_spheres=default_empty_spheres,
+                )
 
             templator = preparation.FilenameTemplator(
                 label,
@@ -165,15 +184,34 @@ class PreparedCalculation:
             opened_input = files.open_input(resolved_input, default_input_file)
             reused_input = None if resolved_input.write else preparation.named_file_name(opened_input)
 
-            potential_file, temporary_potential = preparation.write_potential(
-                resolved_potential,
-                resolved_input.potential_file,
-                files,
-                default_filename=default_potential_file,
-                task_name=task_name,
-                restart_scf=restart_scf,
+            cluster_file = None
+            temporary_cluster = False
+            if isinstance(resolved_potential.potential, ClusterPotential):
+                potential_file, cluster_file, temporary_potential, temporary_cluster = (
+                    preparation.write_cluster_potentials(
+                        resolved_potential,
+                        resolved_input.potential_file,
+                        files,
+                        default_filename=default_potential_file,
+                        task_name=task_name,
+                        input_parameters=parameters,
+                    )
+                )
+                input_atoms = resolved_potential.potential.host.atoms
+            else:
+                potential_file, temporary_potential = preparation.write_potential(
+                    resolved_potential,
+                    resolved_input.potential_file,
+                    files,
+                    default_filename=default_potential_file,
+                    task_name=task_name,
+                    restart_scf=restart_scf,
+                )
+                input_atoms = atoms
+            preparation.write_input(
+                resolved_input, opened_input, potential_file, input_atoms,
+                cluster_potential_file=cluster_file,
             )
-            preparation.write_input(resolved_input, opened_input, potential_file, atoms)
 
             opened_output = files.open_output(
                 output_file,
@@ -192,6 +230,8 @@ class PreparedCalculation:
                 _directory_resources=directory_resources,
                 _temporary_potential=temporary_potential,
                 _temporary_directory=directory_context.dir is False,
+                cluster_potential_file=cluster_file,
+                _temporary_cluster_potential=temporary_cluster,
             )
         except BaseException:
             try:
@@ -257,6 +297,11 @@ class PreparedCalculation:
     def temporary_potential(self):
         """Whether POTFIL is a managed temporary pathname."""
         return self._temporary_potential
+
+    @property
+    def temporary_cluster_potential(self):
+        """Whether POTFIL_CLU is a managed temporary pathname."""
+        return self._temporary_cluster_potential
 
     def release_file_ownership(self):
         """Transfer ownership of open input/output files to the caller.
