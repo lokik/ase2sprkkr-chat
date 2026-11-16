@@ -268,7 +268,7 @@ class ClusterPotential(ConfigurationFile):
                      "IQCLU DQX DQY DQZ", *shift_rows),
             _section("OCCUPATION", "IQCLU IMQCLU NOQCLU ITCLU CONC", *occ_rows),
             _section("MAGNETISATION DIRECTION",
-                     "initial magnetisation directions",
+                     *(["initial magnetisation directions"] if scf_status == "START" else []),
                      "IQ QMTET QMPHI", *mag_rows),
             _section("TYPES",
                      "ITCLU TXT_TCLU Z_TCLU NCOR_TCLU NVAL_TCLU NSEMCORSHL_TCLU",
@@ -428,6 +428,7 @@ class ClusterPotential(ConfigurationFile):
         # the same mesh; independent types with the same element remain distinct.
         typed_for_mesh = {}
         shared_site_types = {}
+        radial_type_mesh = {}
         for index, (site, occ) in enumerate(zip(atoms.sites, occ_rows)):
             mesh_id = int(occ["IMQCLU"])
             mesh = meshes.get(mesh_id)
@@ -443,6 +444,12 @@ class ClusterPotential(ConfigurationFile):
                 if not 1 <= type_index <= len(types):
                     raise ValueError(f"Unknown cluster type {type_index}")
                 key = (type_index, mesh_id)
+                if radial_blocks:
+                    existing_mesh = radial_type_mesh.setdefault(type_index, mesh_id)
+                    if existing_mesh != mesh_id:
+                        raise ValueError(
+                            f"Cluster type {type_index} is used with several radial meshes"
+                        )
                 if key not in typed_for_mesh:
                     typed_for_mesh[key] = types[type_index - 1].for_mesh(mesh)
                 atomic_type = typed_for_mesh[key]
