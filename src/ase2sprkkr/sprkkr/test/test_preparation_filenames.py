@@ -331,3 +331,57 @@ def test_serialization_without_run_directory_keeps_parent_paths(tmp_path, monkey
     assert saved.CONTROL.POTFIL() == "../shared/existing.pot"
     assert saved.CONTROL.SFNFIL() == "../shared/existing.sfn"
     assert parameters.CONTROL.POTFIL() == str(potential_file)
+
+
+def test_embedded_preparation_writes_both_potentials_and_selects_cluster_executable(tmp_path):
+    from ...potentials.cluster_potentials import ClusterPotential
+    from ...potentials.potentials import Potential
+    from ..executables import executables
+    from ..sprkkr_atoms import SPRKKRAtoms
+
+    host = Potential.from_atoms(bulk("Cu"))
+    embedded = SPRKKRAtoms.from_embedding(host, [(0, (0, 0, 0), "Fe")])
+    cluster = ClusterPotential.from_atoms(embedded)
+    assert cluster.host is host
+    assert cluster.atoms is embedded
+
+    calculator = SPRKKR(
+        potential=cluster, directory=tmp_path, mpi=False, empty_spheres=False
+    )
+    prepared = calculator.prepare(
+        input_file="cluster.inp", potential_file="host.pot", output_file=False
+    )
+    try:
+        assert Path(prepared.potential_file) == tmp_path / "host.pot"
+        assert Path(prepared.cluster_potential_file) == tmp_path / "host.clu.pot"
+        assert Path(prepared.potential_file).is_file()
+        assert Path(prepared.cluster_potential_file).is_file()
+        assert prepared.input_parameters.CONTROL.CLUTYPE() == "embedded"
+        assert prepared.input_parameters.CONTROL.POTFIL_CLU() == "host.clu.pot"
+        assert calculator.input_parameters.CONTROL.CLUTYPE() is None
+        assert executables["kkrscf"].resolve(prepared.input_parameters) == "cluscf"
+
+        saved = InputParameters.from_file(prepared.input_file.name)
+        assert saved.CONTROL.POTFIL() == "host.pot"
+        assert saved.CONTROL.POTFIL_CLU() == "host.clu.pot"
+        assert saved.CONTROL.CLUTYPE() == "embedded"
+        assert str(tmp_path / "host.clu.pot") in saved.input_files(str(tmp_path))
+
+        reloaded = ClusterPotential.from_file(
+            prepared.cluster_potential_file, host=host
+        )
+        assert reloaded.host is host
+        assert len(reloaded.atoms) == 1
+    finally:
+        prepared.close()
+
+
+def test_embedded_input_without_cluster_file_is_rejected(tmp_path):
+    from ..executables import executables
+
+    parameters = InputParameters.create("SCF")
+    parameters.CONTROL.POTFIL = "host.pot"
+    parameters.CONTROL.CLUTYPE = "embedded"
+    assert executables["kkrscf"].resolve(parameters) == "cluscf"
+    with pytest.raises(ValueError, match="CONTROL.POTFIL_CLU"):
+        parameters.input_files(str(tmp_path))
