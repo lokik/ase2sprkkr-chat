@@ -6,6 +6,9 @@ from ..common.decorators import cached_property
 
 def _equivalent_meshes(left, right):
     """Compare spherical and full-potential mesh parameters, not identity."""
+    if not all(hasattr(mesh, "to_tuple") and hasattr(mesh, "fullpot_tuple")
+               for mesh in (left, right)):
+        return False
     if left.to_tuple() != right.to_tuple():
         return False
     full_left = left.fullpot_tuple()
@@ -76,9 +79,12 @@ class RadialValue:
 
     def copy(self, mesh=None):
         out = copy.copy(self)
-        if mesh is None or self._mesh is mesh:
-            out._value = np.copy(self._value)
-        else:
+        # The radial values must be private even if the target is a distinct
+        # but numerically equivalent mesh. Otherwise a SiteType copy would
+        # mutate the original AtomicType through the shared NumPy array.
+        out._value = np.copy(self._value)
+        out.__dict__.pop("interpolator", None)
+        if mesh is not None and self._mesh is not mesh:
             out.mesh = mesh
         return out
 

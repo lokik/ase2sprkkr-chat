@@ -90,8 +90,8 @@ class AtomicTypePotentialSection(PotentialSectionTrait, RepeatedConfigurationSec
         radial = getattr(typ, self.property_name)
         section.TYPE = index
         section.DATA = radial.raw_value
-        if "FULLPOT" in section:
-            section.FULLPOT = radial.fullpot_data or ""
+        if "FULLPOT" in section and radial.fullpot_data:
+            section.FULLPOT = radial.fullpot_data
 
     def _set_from_atoms(self, atoms, write_io_data):
         # A file marked FULLPOT must not silently lose its non-spherical data
