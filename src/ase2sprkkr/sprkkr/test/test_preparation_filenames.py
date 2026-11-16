@@ -357,7 +357,7 @@ def test_embedded_preparation_writes_both_potentials_and_selects_cluster_executa
         assert Path(prepared.potential_file).is_file()
         assert Path(prepared.cluster_potential_file).is_file()
         assert prepared.input_parameters.CONTROL.CLUTYPE() == "embedded"
-        assert prepared.input_parameters.CONTROL.POTFIL_CLU() == "host.clu.pot"
+        assert Path(prepared.input_parameters.CONTROL.POTFIL_CLU()) == tmp_path / "host.clu.pot"
         assert calculator.input_parameters.CONTROL.CLUTYPE() is None
         assert executables["kkrscf"].resolve(prepared.input_parameters) == "cluscf"
 
