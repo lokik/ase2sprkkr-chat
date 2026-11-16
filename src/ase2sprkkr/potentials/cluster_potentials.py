@@ -423,11 +423,10 @@ class ClusterPotential(ConfigurationFile):
 
         atoms = SPRKKRAtoms.from_embedding(host, entries)
 
-        # Reuse both the mesh and AtomicType objects where native identifiers
-        # are equal. SiteTypes are shared only for identical occupations on
-        # the same mesh; independent types with the same element remain distinct.
+        # Reuse meshes and AtomicTypes according to native identities.
+        # Sharing ITCLU does *not* imply that the sites are symmetry equivalent,
+        # so keep individual SiteType instances.
         typed_for_mesh = {}
-        shared_site_types = {}
         radial_type_mesh = {}
         for index, (site, occ) in enumerate(zip(atoms.sites, occ_rows)):
             mesh_id = int(occ["IMQCLU"])
@@ -438,7 +437,6 @@ class ClusterPotential(ConfigurationFile):
                 mesh = meshes.setdefault(mesh_id, Mesh.default())
             site.site_type.mesh = mesh
             occupation = {}
-            identity = []
             for type_index, concentration in occ["ITCLU CONC"]:
                 type_index = int(type_index)
                 if not 1 <= type_index <= len(types):
@@ -455,13 +453,7 @@ class ClusterPotential(ConfigurationFile):
                 atomic_type = typed_for_mesh[key]
                 fraction = float(concentration)
                 occupation[atomic_type] = fraction
-                identity.append((type_index, fraction))
             site.occupation = occupation
-            group = (mesh_id, tuple(identity))
-            if group in shared_site_types:
-                site.site_type = shared_site_types[group]
-            else:
-                shared_site_types[group] = site.site_type
 
             shift = shift_rows[index]
             site.embedding.displacement = (

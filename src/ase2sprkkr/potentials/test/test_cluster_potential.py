@@ -306,6 +306,9 @@ def test_shared_cluster_type_remains_shared_across_start_round_trip():
     assert cluster.GLOBAL_SYSTEM_PARAMETER.NTCLU() == 1
 
     restored = cluster.to_atoms(host)
-    assert restored.sites[0].site_type is restored.sites[1].site_type
+    assert restored.sites[0].site_type is not restored.sites[1].site_type
+    first_type = next(iter(restored.sites[0].occupation.items()))[0]
+    second_type = next(iter(restored.sites[1].occupation.items()))[0]
+    assert first_type is second_type
     written = ClusterPotential.from_atoms(restored)
     assert written.GLOBAL_SYSTEM_PARAMETER.NTCLU() == 1
