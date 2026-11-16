@@ -80,10 +80,18 @@ class AtomicTypePotentialSection(PotentialSectionTrait, RepeatedConfigurationSec
 
     def read_data(self, typ, section):
         setattr(typ, self.property_name, section.DATA())
+        if "FULLPOT" in section:
+            # The native non-spherical coefficients belong to the radial
+            # value, not to the mesh definition. Keep their original layout.
+            radial = getattr(typ, self.property_name)
+            radial.fullpot_data = section.FULLPOT()
 
     def write_data(self, typ, section, index):
+        radial = getattr(typ, self.property_name)
         section.TYPE = index
-        section.DATA = getattr(typ, self.property_name).raw_value
+        section.DATA = radial.raw_value
+        if "FULLPOT" in section:
+            section.FULLPOT = radial.fullpot_data or ""
 
     def _set_from_atoms(self, atoms, write_io_data):
         self.clear()
