@@ -63,7 +63,7 @@ class RadialValue:
         if not self._mesh:
             self._mesh = mesh
             return
-        if _equivalent_meshes(self._mesh, mesh):
+        if self.fullpot and _equivalent_meshes(self._mesh, mesh):
             # Equivalent meshes must not interpolate away numerical precision,
             # especially when copying a native non-spherical potential.
             self._mesh = mesh

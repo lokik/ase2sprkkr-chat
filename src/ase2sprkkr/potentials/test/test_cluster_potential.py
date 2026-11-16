@@ -368,3 +368,35 @@ def test_cluster_fullpot_radial_and_mesh_round_trip():
     assert final.potential.fullpot_data.strip() == potential_payload
     assert final.charge.fullpot_data.strip() == charge_payload
     np.testing.assert_array_equal(final.potential.raw_value, radial.potential.raw_value)
+
+
+def test_optional_empty_tables_not_emitted_in_native_cluster(tmp_path):
+    """Default headers without table records are not parseable by CLUPOTRD."""
+    from types import SimpleNamespace
+    import numpy as np
+    from ase import Atoms
+    from ...sprkkr.sprkkr_atoms import SPRKKRAtoms
+
+    source = ClusterPotential.from_string(_sample(mesh=False))
+    out = StringIO()
+    source.save_to_file(out, validate=False)
+    native = out.getvalue()
+    assert "\nMESH INFORMATION\n" not in native
+    assert len(ClusterPotential.from_string(native).SITES.DATA()) == 1
+
+    host = SimpleNamespace(
+        atoms=Atoms("Cu", positions=[[0, 0, 0]], cell=[2, 2, 2], pbc=True),
+        LATTICE=SimpleNamespace(ALAT=lambda: 4.0, SYSDIM=lambda: "3D",
+                                SYSTYPE=lambda: "BULK"),
+        OCCUPATION=SimpleNamespace(
+            DATA=lambda: np.array([(1,)], dtype=[("IMQ", int)])
+        ),
+    )
+    atoms = SPRKKRAtoms.from_embedding(host, [(0, (0, 0, 0), "Fe")])
+    cluster = ClusterPotential.from_atoms(atoms)
+    out = StringIO()
+    cluster.save_to_file(out, validate=False)
+    native = out.getvalue()
+    assert "\nFORCES\n" not in native
+    restored = ClusterPotential.from_string(native)
+    assert len(restored.OCCUPATION.DATA()) == 1

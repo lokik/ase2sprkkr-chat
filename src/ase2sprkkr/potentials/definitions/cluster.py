@@ -20,6 +20,16 @@ from ..cluster_potentials import ClusterPotential
 from .sections import ChargeSectionDefinition, PotentialSectionDefinition, TypesSectionDefinition
 
 
+def _has_table_rows(root, section_name):
+    """Suppress absent optional native tables, including their default headers.
+
+    The section defaults (e.g. MESH-TYPE EXPONENTIAL) alone do not
+    constitute a valid native section: the parser requires at least one row.
+    """
+    data = getattr(root, section_name).DATA()
+    return data is not None and len(data) > 0
+
+
 def _occupation_count_matches(row):
     """NOQCLU must equal the number of (ITCLU, concentration) pairs."""
     return row[1] == len(row[2]) or "NOQCLU differs from the number of occupations"
@@ -176,6 +186,7 @@ def _definition():
         ],
         has_hidden_members=True,
         is_optional=True,
+        write_condition=lambda root: _has_table_rows(root, "FORCES"),
     )
     section(
         "OCCUPATION",
@@ -238,6 +249,7 @@ def _definition():
         ],
         has_hidden_members=True,
         is_optional=True,
+        write_condition=lambda root: _has_table_rows(root, "MESH_INFORMATION"),
     )
 
     # TYPES are locally numbered ITCLU = 1..NTCLU, while TYPE entries in
