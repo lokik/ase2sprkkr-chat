@@ -400,3 +400,18 @@ def test_optional_empty_tables_not_emitted_in_native_cluster(tmp_path):
     assert "\nFORCES\n" not in native
     restored = ClusterPotential.from_string(native)
     assert len(restored.OCCUPATION.DATA()) == 1
+
+
+
+def test_cluster_potential_keeps_host_reference():
+    host = _radial_host()
+    cluster = ClusterPotential.from_string(_sample(mesh=True), host=host)
+    assert cluster.host is host
+    assert cluster.atoms is not None
+    assert cluster.atoms.info["sprkkr_embedding_host"] is host
+    assert cluster.to_atoms().info["sprkkr_embedding_host"] is host
+
+    other = _radial_host()
+    cluster.host = other
+    assert cluster.host is other
+    assert cluster.atoms.info["sprkkr_embedding_host"] is other

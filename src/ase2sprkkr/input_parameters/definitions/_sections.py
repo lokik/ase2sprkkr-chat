@@ -185,6 +185,21 @@ def CONTROL(ADSI):
                 info="The potential file (see SPRKKR documentation for its format). It isn't necessary to set it, it will be set by the calculator.",
             ),
             V(
+                "POTFIL_CLU",
+                str,
+                is_required=False,
+                is_optional=True,
+                value_mapping=_map_filename,
+                info="Embedded cluster potential file, used together with the host POTFIL.",
+            ),
+            V(
+                "CLUTYPE",
+                str,
+                is_required=False,
+                is_optional=True,
+                info="Native cluster mode; 'embedded' selects the embedded-cluster calculation.",
+            ),
+            V(
                 "KRWS",
                 Integer(min=0, max=1),
                 1,
