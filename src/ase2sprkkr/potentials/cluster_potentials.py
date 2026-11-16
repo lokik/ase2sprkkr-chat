@@ -1,45 +1,284 @@
-"""Representation of a native SPR-KKR embedded-cluster potential.
+"""Native SPR-KKR embedded-cluster potential and conversion to SPRKKRAtoms.
 
-The host lattice and electronic environment live in a separate host POTFIL.
-Unlike :class:`Potential`, this file must not be converted into a periodic
-ASE Atoms object merely by reading it.
+The host remains a separate POTFIL. START files contain the embedding, atomic
+occupations, and initial moment directions, but not converged radial data.
 """
 
 from io import StringIO
+import re
+
+import numpy as np
+from ase.units import Bohr
 
 from ..sprkkr.configuration import ConfigurationFile
+from ..sprkkr.embedding import EMBEDDING_ARRAY, EMBEDDING_HOST, embedding_data, host_atoms
+
+
+def _section(name, *lines):
+    return "\n".join(("*" * 79, name, *lines))
+
+
+def _from_start_native(text):
+    """CLUPOTRD reads two magnetisation header lines for START, one otherwise.
+
+    The grammar's table parser needs just one, so discard the additional
+    descriptive line on input. All numerical rows are kept verbatim.
+    """
+    if not re.search(r"(?m)^SCFSTATUS\s+START\b", text):
+        return text
+    lines = text.splitlines(keepends=True)
+    for i, line in enumerate(lines):
+        if line.strip() == "MAGNETISATION DIRECTION" and i + 2 < len(lines):
+            # A native START file has two successive non-numerical header
+            # lines before the first row. A one-header file also parses.
+            def is_data(line):
+                return bool(re.match(r"^\s*\d+\s+[-+0-9.eEdD]+\s+[-+0-9.eEdD]+", line))
+            if not is_data(lines[i + 2]):
+                del lines[i + 1]
+            break
+    return "".join(lines)
+
+
+def _to_start_native(text):
+    if not re.search(r"(?m)^SCFSTATUS\s+START\b", text):
+        return text
+    return text.replace("MAGNETISATION DIRECTION\n",
+                        "MAGNETISATION DIRECTION\n"
+                        "Initial cluster magnetisation directions\n", 1)
+
+
+def _host_potential(atoms):
+    host = atoms.info.get(EMBEDDING_HOST)
+    if host is None or not hasattr(host, "LATTICE") or not hasattr(host, "OCCUPATION"):
+        raise ValueError("Creating a CLUPOT requires sprkkr_embedding_host to be a host Potential")
+    return host
+
+
+def _host_value(host, name, default):
+    try:
+        value = host.SCF_INFO[name]()
+        if value is None:
+            return default
+        if isinstance(value, (list, tuple, np.ndarray)):
+            return value[-1] if len(value) else default
+        return value
+    except (AttributeError, KeyError, TypeError):
+        return default
 
 
 class ClusterPotential(ConfigurationFile):
-    """A POTFIL_CLU file and its host-site-to-cluster-site mapping.
-
-    Cluster site indices (IQCLU) and atomic type indices (ITCLU) are local
-    to this file.  The radial TYPE numbers and magnetisation site indices
-    refer to the host-plus-cluster global numbering in the native code.
-
-    This object parses and writes the cluster file; computing its Cartesian
-    positions requires the separate host potential and is intentionally not
-    inferred here.
-    """
+    """A native POTFIL_CLU and its mapping to an external host potential."""
 
     def __init__(self, definition=None):
         if definition is None:
             from .definitions.cluster import cluster_definition
-
             definition = cluster_definition
         super().__init__(definition)
 
     @classmethod
     def from_file(cls, filename, *, allow_dangerous=False):
-        """Read a native cluster potential without constructing ASE atoms."""
+        """Read a native cluster potential, preserving all five translations."""
         from .definitions.cluster import cluster_definition
-
-        return cluster_definition.read_from_file(filename, allow_dangerous=allow_dangerous)
+        if hasattr(filename, "read"):
+            content = filename.read()
+        else:
+            with open(filename, encoding="utf-8") as file:
+                content = file.read()
+        return cluster_definition.read_from_file(
+            StringIO(_from_start_native(content)), allow_dangerous=allow_dangerous
+        )
 
     @classmethod
     def from_string(cls, content, *, allow_dangerous=False):
         return cls.from_file(StringIO(content), allow_dangerous=allow_dangerous)
 
     def save_to_file(self, file, *, validate="save"):
-        """Write the cluster file, without ASE-atom synchronization."""
-        return super().save_to_file(file, atoms=False, validate=validate)
+        """Write the native format, including START-specific header handling."""
+        out = StringIO()
+        super().save_to_file(out, atoms=False, validate=validate)
+        text = _to_start_native(out.getvalue())
+        if hasattr(file, "write"):
+            file.write(text)
+            file.flush()
+        else:
+            with open(file, "w", encoding="utf-8") as target:
+                target.write(text)
+
+    @classmethod
+    def from_atoms(cls, atoms, *, title="Embedded cluster"):
+        """Create an initial SCFSTATUS=START CLUPOT from embedded SPRKKRAtoms.
+
+        Atom positions are Cartesian Angstrom. CLUPOT SHIFTS are in ALAT
+        units, host-site IDs are converted from Python 0-based to native
+        1-based, and type IDs are local to the cluster.
+        """
+        from ..sprkkr.sprkkr_atoms import SPRKKRAtoms
+        SPRKKRAtoms.promote_ase_atoms(atoms)
+        host = _host_potential(atoms)
+        reference = host_atoms(host)
+        rows = embedding_data(atoms)
+        identities = [tuple(int(v) for v in row) for row in rows]
+        if len(set(identities)) != len(identities):
+            raise ValueError("A host site and cell translation may only occur once in a cluster")
+        n = len(atoms)
+        if n == 0:
+            raise ValueError("An embedded cluster must contain at least one site")
+        alat = float(host.LATTICE.ALAT()) * Bohr
+        if alat <= 0:
+            raise ValueError("Invalid host ALAT")
+
+        # A type can be shared by symmetry-equivalent Sites, but not merely
+        # because the atomic numbers are equal. The identity of SiteType and
+        # of the occupation's AtomicType are both retained.
+        known_types = {}
+        types = []
+        occupations = []
+        for site in atoms.sites:
+            components = []
+            for atom_type, fraction in site.occupation.items():
+                key = (id(site.site_type), id(atom_type))
+                if key not in known_types:
+                    known_types[key] = len(types) + 1
+                    types.append(atom_type)
+                components.append((known_types[key], float(fraction)))
+            if not components:
+                raise ValueError("Each embedded site needs at least one atomic type")
+            occupations.append(components)
+
+        shifted = any(np.linalg.norm(site.embedding.displacement) > 1e-10 for site in atoms.sites)
+        # The START file does not include cluster-specific radial mesh data.
+        # CLUSYMMETRY will determine the final number of distinct meshes.
+        nm = n if shifted else 0
+        lines = [
+            "*" * 79,
+            "HEADER    'SPR-KKR cluster dataset created by ASE2SPRKKR'",
+            "*" * 79,
+            f"TITLE     '{title}'",
+            "SYSTEM    'Embedded cluster in a host potential'",
+            _section("GLOBAL SYSTEM PARAMETER",
+                     f"NQCLU     {n}", f"NTCLU     {len(types)}", f"NMCLU     {nm}"),
+            _section("SCF-INFO",
+                     "INFO      'Initial embedded cluster'",
+                     "SCFSTATUS START",
+                     f"FULLPOT   {'T' if _host_value(host, 'FULLPOT', False) else 'F'}",
+                     f"BREITINT  {'T' if _host_value(host, 'BREITINT', False) else 'F'}",
+                     f"NONMAG    {'T' if _host_value(host, 'NONMAG', False) else 'F'}",
+                     f"ORBPOL    {_host_value(host, 'ORBPOL', 'NONE')}",
+                     f"EXTFIELD  {'T' if _host_value(host, 'EXTFIELD', False) else 'F'}",
+                     f"BLCOUPL   {'T' if _host_value(host, 'BLCOUPL', False) else 'F'}",
+                     f"BEXT      {_host_value(host, 'BEXT', 0.0)}",
+                     f"SEMICORE  {'T' if _host_value(host, 'SEMICORE', False) else 'F'}",
+                     f"LLOYD     {'T' if _host_value(host, 'LLOYD', False) else 'F'}",
+                     f"NE        {_host_value(host, 'NE', 32)}",
+                     f"IBZINT    {_host_value(host, 'IBZINT', 2)}",
+                     f"NKTAB     {_host_value(host, 'NKTAB', 100)}",
+                     f"XC-POT    {_host_value(host, 'XC-POT', 'VWN')}",
+                     f"SCF-ALG   {_host_value(host, 'SCF-ALG', 'BROYDEN')}",
+                     "SCF-ITER  0",
+                     f"SCF-MIX   {_host_value(host, 'SCF-MIX', 0.2)}",
+                     f"SCF-TOL   {_host_value(host, 'SCF-TOL', 1e-5)}",
+                     "RMSAVV    999999.0",
+                     "RMSAVB    999999.0",
+                     f"EF        {_host_value(host, 'EF', 0.0)}",
+                     f"VMTZ      {_host_value(host, 'VMTZ', 0.7)}"),
+            _section("LATTICE",
+                     f"SYSDIM    {host.LATTICE.SYSDIM()}",
+                     f"SYSTYPE   {host.LATTICE.SYSTYPE()}"),
+        ]
+        site_rows = []
+        shift_rows = []
+        mag_rows = []
+        occ_rows = []
+        host_occupations = host.OCCUPATION.DATA()
+        for i, (site, row, components) in enumerate(zip(atoms.sites, rows, occupations), 1):
+            original = int(row[0])
+            if not 0 <= original < len(reference):
+                raise ValueError(f"Host-site index {original} is invalid")
+            if host.LATTICE.SYSDIM() == "2D":
+                n_left = int(host.LATTICE.NQ_L())
+                n_right = int(host.LATTICE.NQ_R())
+                if original < n_left or original >= len(reference) - n_right:
+                    raise ValueError("CLUPOT cannot embed a site in the semi-infinite bulk")
+            native = " ".join(map(str, row[1:6]))
+            x, y, z = atoms.positions[i - 1] / alat
+            site_rows.append(f"{i} {native} {original + 1} {x:.14g} {y:.14g} {z:.14g}")
+            dx, dy, dz = site.embedding.displacement / alat
+            shift_rows.append(f"{i} {dx:.14g} {dy:.14g} {dz:.14g}")
+            theta, phi = site.magnetisation
+            mag_rows.append(f"{len(reference) + i} {float(theta):.14g} {float(phi):.14g}")
+            mesh = int(host_occupations[original]["IMQ"])
+            fields = " ".join(f"{it} {fraction:.14g}" for it, fraction in components)
+            occ_rows.append(f"{i} {mesh} {len(components)} {fields}")
+
+        lines += [
+            _section("SITES",
+                     "positions of cluster sites (QX,QY,QZ) include SHIFTS",
+                     "IQCLU N5VEC1 N5VEC2 N5VEC3 N5VEC4 N5VEC5 IQ QX QY QZ",
+                     *site_rows),
+            _section("SHIFTS",
+                     "shift from original lattice site positions",
+                     f"SHIFT     {'T' if shifted else 'F'}",
+                     "IQCLU DQX DQY DQZ", *shift_rows),
+            _section("OCCUPATION", "IQCLU IMQCLU NOQCLU ITCLU CONC", *occ_rows),
+            _section("MAGNETISATION DIRECTION",
+                     "initial magnetisation directions",
+                     "IQ QMTET QMPHI", *mag_rows),
+            _section("TYPES",
+                     "ITCLU TXT_TCLU Z_TCLU NCOR_TCLU NVAL_TCLU NSEMCORSHL_TCLU",
+                     *(f"{i} {at.symbol} {at.atomic_number} {at.n_core} "
+                       f"{at.n_valence} {at.n_semicore}"
+                       for i, at in enumerate(types, 1))),
+        ]
+        return cls.from_string("\n".join(lines) + "\n")
+
+    def to_atoms(self, host):
+        """Reconstruct START cluster geometry and occupations from a CLUPOT.
+
+        Converged radial SCF results need their own type/mesh mapping and
+        are deliberately not silently discarded by this conversion.
+        """
+        if not self.SCF_INFO.SCFSTATUS().startswith("START"):
+            raise NotImplementedError("Conversion of converged cluster potentials to Atoms is not implemented")
+        from ..sprkkr.sprkkr_atoms import SPRKKRAtoms
+
+        reference = host_atoms(host)
+        if len(reference) == 0:
+            raise ValueError("Host has no sites")
+        if not hasattr(host, "LATTICE"):
+            raise ValueError("Reading CLUPOT into Atoms requires the host Potential")
+        alat = float(host.LATTICE.ALAT()) * Bohr
+        from ..sprkkr.atomic_types import AtomicType
+
+        # Preserve distinct cluster TYPE identities, even where two types
+        # have the same chemical symbol but independent radial data.
+        types = [
+            AtomicType(
+                row["TXT"], atomic_number=int(row["ZT"]),
+                n_core=int(row["NCORT"]), n_valence=int(row["NVALT"]),
+                n_semicore=int(row["NSEMCORSHLT"]),
+            )
+            for row in self.TYPES.DATA()
+        ]
+        occ_rows = self.OCCUPATION.DATA()
+        site_rows = self.SITES.DATA()
+        shifts = self.SHIFTS.DATA()
+        if not (len(site_rows) == len(occ_rows) == len(shifts)):
+            raise ValueError("Inconsistent cluster site/occupation/shift counts")
+        entries = []
+        for row, occupation in zip(site_rows, occ_rows):
+            original = int(row["IQ"]) - 1
+            indices = tuple(int(row[f"N5VEC{i}"]) for i in range(1, 6))
+            parts = {}
+            for it, concentration in occupation["ITCLU CONC"]:
+                atom_type = types[int(it) - 1]
+                parts[atom_type] = float(concentration)
+            entries.append((original, indices, parts))
+        atoms = SPRKKRAtoms.from_embedding(host, entries)
+        for i, shift in enumerate(shifts):
+            atoms.sites[i].embedding.displacement = (
+                np.asarray([shift["DQX"], shift["DQY"], shift["DQZ"]]) * alat
+            )
+        directions = self.MAGNETISATION_DIRECTION.DATA()
+        for i, row in enumerate(directions):
+            atoms.sites[i].magnetisation = np.array((row["QMTET"], row["QMPHI"]))
+        return atoms

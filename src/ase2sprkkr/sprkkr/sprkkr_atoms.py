@@ -334,12 +334,14 @@ class SPRKKRAtoms(Atoms):
         symbols = []
         for _, _, occ in entries:
             if isinstance(occ, str):
-                symbols.append(occ)
+                symbol = occ
             elif isinstance(occ, dict) and occ:
                 key = next(iter(occ))
-                symbols.append(getattr(key, "symbol", key))
+                symbol = getattr(key, "symbol", key)
             else:
                 raise TypeError("Occupation must be a symbol or nonempty occupation dictionary")
+            # ASE calls the vacuum pseudo-atom X; SPR-KKR calls it Vc.
+            symbols.append("X" if symbol == "Vc" else symbol)
         atoms = cls(symbols=symbols, positions=np.asarray(reference.positions)[indices].copy(),
                     cell=reference.cell.copy(), pbc=False, symmetry=False)
         atoms.arrays[EMBEDDING_ARRAY] = np.column_stack(
@@ -421,7 +423,7 @@ class SPRKKRAtoms(Atoms):
                     for k in range(repeat[2]):
                         shifts.append(repeat_shift(host, np.dot((i, j, k), old_cell)))
         super().__imul__(repeat)
-        if sites_before is not None:
+        if sites_before is not None and len(sites_before):
             count = len(sites_before)
             new_sites = np.empty(len(self), dtype=object)
             for block in range(len(self) // count):

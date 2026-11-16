@@ -168,3 +168,55 @@ def test_cluster_potential_round_trip(mesh):
 def test_invalid_occupation_count_is_rejected():
     with pytest.raises(Exception):
         ClusterPotential.from_string(_sample(broken_occupation=True))
+
+
+def test_embedded_atoms_to_start_cluster_potential_and_back():
+    """START CLUPOT has a second magnetisation header and no radial data."""
+    from types import SimpleNamespace
+    import numpy as np
+    from ase import Atoms
+    from ...sprkkr.sprkkr_atoms import SPRKKRAtoms
+
+    # Minimal host Potential protocol: lattice/occupations plus ASE atoms.
+    host = SimpleNamespace(
+        atoms=Atoms("Cu", positions=[[0., 0., 0.]], cell=[2., 2., 2.], pbc=True),
+        LATTICE=SimpleNamespace(ALAT=lambda: 4.0, SYSDIM=lambda: "3D",
+                                SYSTYPE=lambda: "BULK"),
+        OCCUPATION=SimpleNamespace(
+            DATA=lambda: np.array([(1,)], dtype=[("IMQ", int)])
+        ),
+    )
+    atoms = SPRKKRAtoms.from_embedding(host, [(0, (1, 0, 0), "Fe")])
+    atoms.sites[0].embedding.displacement = (0.1, 0.0, 0.0)
+    cluster = ClusterPotential.from_atoms(atoms)
+
+    assert cluster.SCF_INFO.SCFSTATUS() == "START"
+    assert cluster.GLOBAL_SYSTEM_PARAMETER.NQCLU() == 1
+    assert cluster.SITES.DATA()[0]["N5VEC1"] == 1
+    assert cluster.SITES.DATA()[0]["IQ"] == 1
+    assert cluster.OCCUPATION.DATA()[0]["NOQCLU"] == 1
+    assert len(cluster.POTENTIAL) == 0
+
+    text = StringIO()
+    cluster.save_to_file(text, validate=False)
+    native = text.getvalue()
+    assert "Initial cluster magnetisation directions" in native
+    restored = ClusterPotential.from_string(native)
+    result = restored.to_atoms(host)
+
+    assert result.info["sprkkr_embedding_host"] is host
+    assert result.sites[0].embedding.cell_index == (1, 0, 0)
+    assert result.sites[0].occupation.as_dict == {"Fe": 1.0}
+    np.testing.assert_allclose(result.positions, atoms.positions)
+    np.testing.assert_allclose(result.sites[0].embedding.displacement, [0.1, 0, 0])
+
+
+def test_native_start_with_two_magnetisation_headers_is_readable():
+    text = _sample().replace("SCFSTATUS ITERATING", "SCFSTATUS START")
+    text = text.replace(
+        "MAGNETISATION DIRECTION\\n        IQ      QMTET",
+        "MAGNETISATION DIRECTION\\ninitial directions\\n        IQ      QMTET",
+    )
+    cluster = ClusterPotential.from_string(text)
+    assert cluster.SCF_INFO.SCFSTATUS() == "START"
+    assert cluster.MAGNETISATION_DIRECTION.DATA()[0]["QMTET"] == 0
