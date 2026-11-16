@@ -108,3 +108,13 @@ def test_resolve_native_executable_from_input_parameters():
 def test_invalid_cluster_variant_metadata(variant, error):
     with pytest.raises(error):
         ExecutableDefinition("custom", cluster_variant=variant)
+
+
+def test_unknown_custom_executable_still_works_outside_embedding():
+    from types import SimpleNamespace
+
+    normal = SimpleNamespace(CONTROL=SimpleNamespace(CLUTYPE=lambda: None))
+    embedded = SimpleNamespace(CONTROL=SimpleNamespace(CLUTYPE=lambda: "embedded"))
+    assert executables.resolve("my-custom-binary", normal) == "my-custom-binary"
+    with pytest.raises(ValueError, match="does not support embedded"):
+        executables.resolve("my-custom-binary", embedded)

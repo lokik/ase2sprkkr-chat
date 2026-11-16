@@ -469,7 +469,7 @@ def _create_sprkkr_run(
         )
 
         spec = profile.create_execution(
-            executables[task.executable].resolve(input_parameters),
+            executables.resolve(task.executable, input_parameters),
             prepared.input_file,
             prepared.output_file,
             prepared.directory,
