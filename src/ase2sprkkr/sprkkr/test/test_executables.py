@@ -81,3 +81,30 @@ def test_executables_is_public_read_only_metadata():
 
     with pytest.raises(FrozenInstanceError):
         public_executables["kkrscf"].description = "Changed"
+
+
+def test_resolve_native_executable_from_input_parameters():
+    from types import SimpleNamespace
+
+    def params(mode):
+        return SimpleNamespace(CONTROL=SimpleNamespace(CLUTYPE=lambda: mode))
+
+    for name, cluster_name in (("kkrscf", "cluscf"), ("kkrgen", "clugen")):
+        definition = executables[name]
+        assert definition.resolve(params(None)) == name
+        assert definition.resolve(params("embedded")) == cluster_name
+
+    assert executables["kkrspec"].resolve(params(None)) == "kkrspec"
+    with pytest.raises(ValueError, match="does not support embedded"):
+        executables["kkrspec"].resolve(params("embedded"))
+    with pytest.raises(ValueError, match="Unsupported SPR-KKR CLUTYPE"):
+        executables["kkrscf"].resolve(params("other"))
+
+    legacy = SimpleNamespace(CONTROL=SimpleNamespace())
+    assert executables["kkrscf"].resolve(legacy) == "kkrscf"
+
+
+@pytest.mark.parametrize("variant, error", [(False, TypeError), (" ", ValueError)])
+def test_invalid_cluster_variant_metadata(variant, error):
+    with pytest.raises(error):
+        ExecutableDefinition("custom", cluster_variant=variant)

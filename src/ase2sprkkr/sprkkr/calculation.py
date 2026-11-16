@@ -20,6 +20,7 @@ from ..input_parameters.input_parameters import InputParameters
 from . import _preparation as preparation
 from ._preparation import FilenameTemplator as FilenameTemplator
 from .profile import SPRKKRProfile, executor_from_profile
+from .executables import executables
 
 
 @dataclass
@@ -423,7 +424,7 @@ def _create_sprkkr_run(
         )
 
         spec = profile.create_execution(
-            task.executable,
+            executables[task.executable].resolve(input_parameters),
             prepared.input_file,
             prepared.output_file,
             prepared.directory,

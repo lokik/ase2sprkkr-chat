@@ -28,6 +28,7 @@ class ExecutableDefinition:
     name: str
     default_output_reader: str = "DEFAULT"
     description: str = ""
+    cluster_variant: str | None = None
 
     def __post_init__(self):
         name = _nonblank_string(self.name, "name")
@@ -37,6 +38,29 @@ class ExecutableDefinition:
 
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "default_output_reader", reader)
+        if self.cluster_variant is not None:
+            _nonblank_string(self.cluster_variant, "cluster_variant")
+
+    def resolve(self, input_parameters):
+        """Select the native executable from the prepared CONTROL parameters.
+
+        An absent CLUTYPE retains normal execution, including for older or
+        user-defined input schemas. Unsupported cluster executables fail
+        explicitly rather than running the periodic binary by mistake.
+        """
+        try:
+            cluster_type = input_parameters.CONTROL.CLUTYPE()
+        except (AttributeError, KeyError):
+            cluster_type = None
+        if cluster_type is None or cluster_type == "":
+            return self.name
+        if cluster_type != "embedded":
+            raise ValueError(f"Unsupported SPR-KKR CLUTYPE {cluster_type!r}")
+        if self.cluster_variant is None:
+            raise ValueError(
+                f"Executable {self.name!r} does not support embedded clusters"
+            )
+        return self.cluster_variant
 
 
 class _ExecutableRegistry(Mapping):
@@ -71,10 +95,12 @@ executables = _ExecutableRegistry(
     (
         ExecutableDefinition(
             "kkrscf",
+            cluster_variant="cluscf",
             description="Potential generation and self-consistent calculations.",
         ),
         ExecutableDefinition(
             "kkrgen",
+            cluster_variant="clugen",
             description="Electronic-structure and general property calculations.",
         ),
         ExecutableDefinition(
