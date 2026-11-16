@@ -206,6 +206,22 @@ class EmbeddingSymmetry:
             return None
         return tuple(result)
 
+    def _preserves_2d_native_translations(self, rotation):
+        """Keep lead vectors fixed modulo integer in-plane translations.
+
+        A layer-group operation of the central slab is not necessarily a
+        symmetry of the semi-infinite leads (which can have tilted A_L3/A_R3).
+        The nonperiodic N5VEC coefficients are intentionally not permuted.
+        """
+        periodic = np.asarray(self.atoms.cell, dtype=float)[:2]
+        pinv = np.linalg.pinv(periodic)
+        for vector in translation_basis(self.host)[2:]:
+            delta = np.asarray(vector) @ rotation - vector
+            coeffs = np.rint(delta @ pinv)
+            if np.linalg.norm(delta - coeffs @ periodic) > 2 * self.symprec:
+                return False
+        return True
+
     def _find_operations(self, dataset, inv, scaled, centre_scaled, tags):
         self._candidates = {
             i: tuple(int(j) for j in np.flatnonzero(tags == tag))
@@ -228,10 +244,11 @@ class EmbeddingSymmetry:
             rotation = inv @ fractional_rotation.T @ self._basis
             if not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-5):
                 continue
-            if self.dimension == 2 and not np.allclose(
-                self._normal @ rotation, self._normal, atol=1e-6
-            ):
-                continue
+            if self.dimension == 2:
+                if not np.allclose(self._normal @ rotation, self._normal, atol=1e-6):
+                    continue
+                if not self._preserves_2d_native_translations(rotation):
+                    continue
             permutation = self._site_permutation(rotation)
             if permutation is None:
                 continue
