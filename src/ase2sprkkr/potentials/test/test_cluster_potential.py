@@ -220,3 +220,92 @@ def test_native_start_with_two_magnetisation_headers_is_readable():
     cluster = ClusterPotential.from_string(text)
     assert cluster.SCF_INFO.SCFSTATUS() == "START"
     assert cluster.MAGNETISATION_DIRECTION.DATA()[0]["QMTET"] == 0
+
+
+def _radial_host():
+    """Host with eight native types and six radial meshes."""
+    from types import SimpleNamespace
+    import numpy as np
+    from ase import Atoms
+
+    mesh_dtype = [
+        ("R(1)", float), ("DX", float), ("JRMT", int),
+        ("RMT", float), ("JRWS", int), ("RWS", float),
+    ]
+    meshes = np.array(
+        [(1e-6, 0.02, 2, 2.5, 721, 3.0)] * 6, dtype=mesh_dtype
+    )
+    host_occ = np.array([(1,)] * 20, dtype=[("IMQ", int)])
+    return SimpleNamespace(
+        atoms=Atoms("Cu20", positions=np.zeros((20, 3)),
+                    cell=[2, 2, 2], pbc=True),
+        LATTICE=SimpleNamespace(ALAT=lambda: 4.0, SYSDIM=lambda: "3D",
+                                SYSTYPE=lambda: "BULK"),
+        TYPES=SimpleNamespace(DATA=lambda: [None] * 8),
+        MESH_INFORMATION=SimpleNamespace(DATA=lambda: meshes),
+        OCCUPATION=SimpleNamespace(DATA=lambda: host_occ),
+    )
+
+
+def test_iterating_radial_data_map_to_atomic_type_and_round_trip():
+    import numpy as np
+
+    host = _radial_host()
+    source = ClusterPotential.from_string(_sample(mesh=True))
+    atoms = source.to_atoms(host)
+    atom_type = next(iter(atoms.sites[0].occupation.items()))[0]
+    assert atom_type.mesh.jrws == 3
+    np.testing.assert_allclose(atom_type.potential.raw_value,
+                               [[1, 2, 3], [0, 0, 0]])
+    np.testing.assert_allclose(atom_type.charge.raw_value,
+                               [[1, 2, 3], [0, 0, 0]])
+    assert atom_type.moments.as_tuple() == (1, 0, 2, 0, 0)
+
+    written = ClusterPotential.from_atoms(atoms)
+    assert written.SCF_INFO.SCFSTATUS() == "ITERATING"
+    assert written.GLOBAL_SYSTEM_PARAMETER.NMCLU() == 1
+    assert written.POTENTIAL[0].TYPE() == 9
+    assert written.OCCUPATION.DATA()[0]["IMQCLU"] == 7
+    restored = written.to_atoms(host)
+    restored_type = next(iter(restored.sites[0].occupation.items()))[0]
+    np.testing.assert_allclose(restored_type.potential.raw_value,
+                               atom_type.potential.raw_value)
+    np.testing.assert_allclose(restored_type.charge.raw_value,
+                               atom_type.charge.raw_value)
+    assert restored_type.moments.as_tuple() == atom_type.moments.as_tuple()
+
+
+def test_invalid_global_radial_type_is_rejected():
+    host = _radial_host()
+    source = _sample(mesh=True).replace("TYPE      9", "TYPE      1")
+    cluster = ClusterPotential.from_string(source)
+    with pytest.raises(ValueError, match="does not refer to a cluster type"):
+        cluster.to_atoms(host)
+
+
+def test_shared_cluster_type_remains_shared_across_start_round_trip():
+    from types import SimpleNamespace
+    import numpy as np
+    from ase import Atoms
+    from ...sprkkr.sprkkr_atoms import SPRKKRAtoms
+
+    host = SimpleNamespace(
+        atoms=Atoms("Cu2", positions=[[0, 0, 0], [1, 0, 0]],
+                    cell=[2, 2, 2], pbc=True),
+        LATTICE=SimpleNamespace(ALAT=lambda: 4.0, SYSDIM=lambda: "3D",
+                                SYSTYPE=lambda: "BULK"),
+        OCCUPATION=SimpleNamespace(DATA=lambda: np.array(
+            [(1,), (1,)], dtype=[("IMQ", int)]
+        )),
+    )
+    atoms = SPRKKRAtoms.from_embedding(
+        host, [(0, (0, 0, 0), "Fe"), (1, (0, 0, 0), "Fe")]
+    )
+    atoms.sites[1].site_type = atoms.sites[0].site_type
+    cluster = ClusterPotential.from_atoms(atoms)
+    assert cluster.GLOBAL_SYSTEM_PARAMETER.NTCLU() == 1
+
+    restored = cluster.to_atoms(host)
+    assert restored.sites[0].site_type is restored.sites[1].site_type
+    written = ClusterPotential.from_atoms(restored)
+    assert written.GLOBAL_SYSTEM_PARAMETER.NTCLU() == 1

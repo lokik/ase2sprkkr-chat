@@ -128,3 +128,10 @@ def test_extend_refuses_mixed_embedding():
     atoms = SPRKKRAtoms.from_embedding(h, [(0, (0, 0, 0), "Fe")])
     with pytest.raises(ValueError, match="non-embedded"):
         atoms.extend(SPRKKRAtoms("Cu"))
+
+
+def test_embedded_zero_repeat_retains_empty_embedding_array():
+    atoms = SPRKKRAtoms.from_embedding(host(), [(0, (0, 0, 0), "Fe")])
+    result = atoms.repeat((0, 1, 1))
+    assert len(result) == 0
+    assert result.arrays[EMBEDDING_ARRAY].shape == (0, 6)
