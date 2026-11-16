@@ -1,7 +1,9 @@
-"""
-sprkkr.potential.definitions - definition of SPR-KKR potential format.
+"""Format definitions for SPR-KKR potential files.
 
-The definition is contained in the :mod:`potential<ase2sprkkr.potentials.definitions.potential>` module.
-In the :mod:`sections<ase2sprkkr.potentials.definitions.sections>` package are definitions of the potential sections (used by the potential
-module).
+``potential.potential_definition`` describes the ordinary periodic (host)
+potential.  ``cluster.cluster_definition`` describes the distinct
+``POTFIL_CLU`` embedded-cluster format produced by CLUPOTWR; its site
+indices reference the host potential rather than a standalone ASE cell.
+
+Individual section definitions for periodic potentials live in ``sections``.
 """
