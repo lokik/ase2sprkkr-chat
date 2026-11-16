@@ -94,6 +94,17 @@ class AtomicTypePotentialSection(PotentialSectionTrait, RepeatedConfigurationSec
             section.FULLPOT = radial.fullpot_data or ""
 
     def _set_from_atoms(self, atoms, write_io_data):
+        # A file marked FULLPOT must not silently lose its non-spherical data
+        # during atom synchronization. Missing *all* radial data is legitimate
+        # for an initial START potential, but partial electronic state is not.
+        if self.property_name in ("potential", "charge") and self._container.SCF_INFO.FULLPOT():
+            for typ, _ in write_io_data.types.unique_items():
+                radial = getattr(typ, self.property_name)
+                if radial is not None and not radial.fullpot_data:
+                    raise ValueError(
+                        f"FULLPOT {self.property_name} data missing for "
+                        f"atomic type {typ!r}; refusing lossy save"
+                    )
         self.clear()
         converged = write_io_data.has_converged_data(self._container)
 

@@ -4,6 +4,20 @@ import copy
 from ..common.decorators import cached_property
 
 
+def _equivalent_meshes(left, right):
+    """Compare spherical and full-potential mesh parameters, not identity."""
+    if left.to_tuple() != right.to_tuple():
+        return False
+    full_left = left.fullpot_tuple()
+    full_right = right.fullpot_tuple()
+    if full_left is None or full_right is None:
+        return full_left is full_right
+    return (
+        full_left[:3] == full_right[:3]
+        and np.array_equal(full_left[3], full_right[3])
+    )
+
+
 class RadialValue:
     def __init__(self, value, mesh, fullpot=None):
         self._value = np.asarray(value)
@@ -46,9 +60,7 @@ class RadialValue:
         if not self._mesh:
             self._mesh = mesh
             return
-        if self._mesh.to_tuple() == mesh.to_tuple() and (
-            self._mesh.fullpot_tuple() == mesh.fullpot_tuple()
-        ):
+        if _equivalent_meshes(self._mesh, mesh):
             # Equivalent meshes must not interpolate away numerical precision,
             # especially when copying a native non-spherical potential.
             self._mesh = mesh
