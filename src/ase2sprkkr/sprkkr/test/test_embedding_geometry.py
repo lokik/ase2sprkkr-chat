@@ -197,3 +197,52 @@ def test_2d_potential_lead_indices_are_excluded():
     assert embedding_host_indices(host) == (1,)
     region = embedding_sites_within_radius(host, (0, 0, 0), 3)
     assert all(s.original_site == 1 for s in region)
+
+
+def test_tilted_2d_lead_vectors_restrict_host_symmetry():
+    from ase.units import Bohr
+
+    class Lattice:
+        def NQ_L(self):
+            return 0
+
+        def NQ_R(self):
+            return 0
+
+        def ALAT(self):
+            return 1.0 / Bohr
+
+        def A_L3(self):
+            return (1, 0, 5)
+
+        def A_R3(self):
+            return (1, 0, 5)
+
+    class Host:
+        LATTICE = Lattice()
+
+        def __init__(self):
+            self.atoms = Atoms("Cu", positions=[[0, 0, 0]], cell=[2, 2, 10],
+                               pbc=(True, True, False))
+
+    host = Host()
+    symmetry = EmbeddingSymmetry(host, HostSite(0, (0, 0)))
+    # A quarter-turn would rotate the tilted lead vector into a direction
+    # which is NOT equivalent by an integer in-plane translation.
+    images = set(symmetry.equivalent_sites(HostSite(0, (1, 0))))
+    assert images == {HostSite(0, (1, 0)), HostSite(0, (-1, 0))}
+    native = HostSite(0, (1, 0, 0, 0, 1))
+    assert set(symmetry.equivalent_sites(native)) == {
+        HostSite(0, (1, 0, 0, 0, 1)),
+        HostSite(0, (-2, 0, 0, 0, 1)),
+    }
+
+
+def test_host_site_exposes_occupation_and_2d_region_metadata():
+    host = Atoms("CuNi", positions=[[0, 0, 0], [0, 0, 2]],
+                 cell=[2, 2, 8], pbc=(True, True, False))
+    site = HostSite(1, (0, 0))
+    assert site.occupation(host) == {"Ni": 1.0}
+    assert site.region(host) is None
+    bulk = cubic()
+    assert HostSite(0, (0, 0, 0)).region(bulk) is None
