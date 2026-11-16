@@ -57,6 +57,39 @@ class HostSite:
         return (np.asarray(atoms.positions[self.original_site], dtype=float)
                 + self.translations(host) @ translation_basis(host))
 
+    def occupation(self, host):
+        """Copy of the host site's chemical fractions, including vacancies."""
+        from .occupations import Occupation
+        from .sprkkr_atoms import SPRKKRAtoms
+
+        atoms = host_atoms(host)
+        if not 0 <= self.original_site < len(atoms):
+            raise IndexError("original_site is outside the host structure")
+        if isinstance(atoms, SPRKKRAtoms) and atoms.are_sites_inited():
+            return atoms.sites[self.original_site].occupation.to_dict(True)
+        return Occupation.for_atom_from_ase_atoms(atoms, self.original_site).to_dict(True)
+
+    def region(self, host):
+        """2D host region name if available (left, central or right)."""
+        atoms = host_atoms(host)
+        if not 0 <= self.original_site < len(atoms):
+            raise IndexError("original_site is outside the host structure")
+        if host_dimension(host) != 2:
+            return None
+        regions = getattr(atoms, "regions", {})
+        for name, region in regions.items():
+            if self.original_site in region.ids:
+                return name
+        lattice = getattr(host, "LATTICE", None)
+        if lattice is not None and hasattr(lattice, "NQ_L") and hasattr(lattice, "NQ_R"):
+            left, right = int(lattice.NQ_L()), int(lattice.NQ_R())
+            if self.original_site < left:
+                return "left"
+            if self.original_site >= len(atoms) - right:
+                return "right"
+            return "central"
+        return None
+
 
 def embedding_host_indices(host):
     """Allowed host basis indices (exclude semi-infinite leads for a 2D POTFIL)."""
