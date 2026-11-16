@@ -232,25 +232,25 @@ class ClusterPotential(ConfigurationFile):
         return cls.from_string("\n".join(lines) + "\n")
 
     def to_atoms(self, host):
-        """Reconstruct START cluster geometry and occupations from a CLUPOT.
+        """Convert cluster geometry, occupations and available radial data to atoms.
 
-        Converged radial SCF results need their own type/mesh mapping and
-        are deliberately not silently discarded by this conversion.
+        Host and cluster TYPE/mesh numbers are independent. Cluster radial TYPE
+        records use the native global host-plus-cluster numbering; occupation
+        TYPE references are local ITCLU values.
         """
-        if not self.SCF_INFO.SCFSTATUS().startswith("START"):
-            raise NotImplementedError("Conversion of converged cluster potentials to Atoms is not implemented")
+        from ..sprkkr.atomic_types import AtomicType
+        from ..sprkkr.radial_meshes import ExponentialMesh, Mesh
         from ..sprkkr.sprkkr_atoms import SPRKKRAtoms
 
         reference = host_atoms(host)
         if len(reference) == 0:
             raise ValueError("Host has no sites")
         if not hasattr(host, "LATTICE"):
-            raise ValueError("Reading CLUPOT into Atoms requires the host Potential")
+            raise ValueError("Reading CLUPOT into Atoms requires a host Potential")
         alat = float(host.LATTICE.ALAT()) * Bohr
-        from ..sprkkr.atomic_types import AtomicType
+        if alat <= 0:
+            raise ValueError("Invalid host ALAT")
 
-        # Preserve distinct cluster TYPE identities, even where two types
-        # have the same chemical symbol but independent radial data.
         types = [
             AtomicType(
                 row["TXT"], atomic_number=int(row["ZT"]),
@@ -259,26 +259,147 @@ class ClusterPotential(ConfigurationFile):
             )
             for row in self.TYPES.DATA()
         ]
-        occ_rows = self.OCCUPATION.DATA()
         site_rows = self.SITES.DATA()
-        shifts = self.SHIFTS.DATA()
-        if not (len(site_rows) == len(occ_rows) == len(shifts)):
+        occ_rows = self.OCCUPATION.DATA()
+        shift_rows = self.SHIFTS.DATA()
+        if not (len(site_rows) == len(occ_rows) == len(shift_rows)):
             raise ValueError("Inconsistent cluster site/occupation/shift counts")
+        if len(site_rows) != int(self.GLOBAL_SYSTEM_PARAMETER.NQCLU()):
+            raise ValueError("NQCLU does not match the number of cluster sites")
+        if len(types) != int(self.GLOBAL_SYSTEM_PARAMETER.NTCLU()):
+            raise ValueError("NTCLU does not match the number of cluster types")
+
+        # Collect all meshes by their *native global* identifiers. A cluster
+        # can reuse a host mesh, or define a new one in MESH INFORMATION.
+        meshes = {}
+        if hasattr(host, "MESH_INFORMATION"):
+            for number, row in enumerate(host.MESH_INFORMATION.DATA(), 1):
+                meshes[number] = ExponentialMesh(
+                    *(row[name] for name in ("R(1)", "DX", "JRMT", "RMT", "JRWS", "RWS"))
+                )
+        if hasattr(self, "MESH_INFORMATION") and self.MESH_INFORMATION.DATA() is not None:
+            for row in self.MESH_INFORMATION.DATA():
+                index = int(row["IM"])
+                if index in meshes:
+                    raise ValueError(f"Cluster mesh {index} conflicts with a host mesh")
+                meshes[index] = ExponentialMesh(
+                    *(row[name] for name in ("R(1)", "DX", "JRMT", "RMT", "JRWS", "RWS"))
+                )
+            fullpot = self.MESH_INFORMATION.FULLPOT()
+            if fullpot is not None:
+                for row in fullpot:
+                    index = int(row["IM"])
+                    if index not in meshes:
+                        raise ValueError(f"FULLPOT refers to unknown mesh {index}")
+                    meshes[index].set_fullpot((
+                        int(row["JRNS1"]), int(row["JRCRI"]),
+                        int(row["NPAN"]), row["JRCUT"],
+                    ))
+
+        # These sections use global TYPE = NTHOST + ITCLU, unlike the local
+        # ITCLU indices used by the OCCUPATION table.
+        radial_blocks = []
+        for section_name, property_name in (
+            ("POTENTIAL", "potential"),
+            ("CHARGE", "charge"),
+            ("MOMENTS", "moments"),
+        ):
+            for _, block in getattr(self, section_name).items():
+                radial_blocks.append((section_name, property_name, block))
+        if radial_blocks:
+            if not hasattr(host, "TYPES"):
+                raise ValueError("Reading radial cluster data requires host TYPES")
+            n_host_types = len(host.TYPES.DATA())
+            present = set()
+            for section_name, property_name, block in radial_blocks:
+                global_index = int(block.TYPE())
+                local_index = global_index - n_host_types
+                if not 1 <= local_index <= len(types):
+                    raise ValueError(
+                        f"{section_name} TYPE {global_index} does not refer to a cluster type"
+                    )
+                key = (property_name, local_index)
+                if key in present:
+                    raise ValueError(f"Duplicate {section_name} TYPE {global_index}")
+                present.add(key)
+                if property_name in ("potential", "charge"):
+                    if block.FULLPOT() not in (None, ""):
+                        raise NotImplementedError(
+                            "Non-spherical FULLPOT radial data cannot be represented in AtomicType"
+                        )
+                setattr(types[local_index - 1], property_name, block.DATA())
+
+        # Build geometry without handing the canonical types to from_embedding:
+        # that constructor initially allocates default meshes, and would
+        # remesh (copy/interpolate) the radial data before we assign the
+        # correct cluster mesh.
         entries = []
-        for row, occupation in zip(site_rows, occ_rows):
+        for row, occ in zip(site_rows, occ_rows):
             original = int(row["IQ"]) - 1
+            if not 0 <= original < len(reference):
+                raise ValueError(f"Invalid host-site index {original + 1}")
             indices = tuple(int(row[f"N5VEC{i}"]) for i in range(1, 6))
-            parts = {}
-            for it, concentration in occupation["ITCLU CONC"]:
-                atom_type = types[int(it) - 1]
-                parts[atom_type] = float(concentration)
-            entries.append((original, indices, parts))
+            components = occ["ITCLU CONC"]
+            if not components:
+                raise ValueError("Cluster sites need at least one atomic type")
+            first_type = int(components[0][0])
+            if not 1 <= first_type <= len(types):
+                raise ValueError(f"Unknown cluster type {first_type}")
+            symbol = types[first_type - 1].symbol
+            entries.append((original, indices, "X" if symbol == "Vc" else symbol))
+
         atoms = SPRKKRAtoms.from_embedding(host, entries)
-        for i, shift in enumerate(shifts):
-            atoms.sites[i].embedding.displacement = (
+
+        # Reuse both the mesh and AtomicType objects where native identifiers
+        # are equal. SiteTypes are shared only for identical occupations on
+        # the same mesh; independent types with the same element remain distinct.
+        typed_for_mesh = {}
+        shared_site_types = {}
+        for index, (site, occ) in enumerate(zip(atoms.sites, occ_rows)):
+            mesh_id = int(occ["IMQCLU"])
+            mesh = meshes.get(mesh_id)
+            if mesh is None:
+                if radial_blocks:
+                    raise ValueError(f"Unknown radial mesh IMQCLU={mesh_id}")
+                mesh = meshes.setdefault(mesh_id, Mesh.default())
+            site.site_type.mesh = mesh
+            occupation = {}
+            identity = []
+            for type_index, concentration in occ["ITCLU CONC"]:
+                type_index = int(type_index)
+                if not 1 <= type_index <= len(types):
+                    raise ValueError(f"Unknown cluster type {type_index}")
+                key = (type_index, mesh_id)
+                if key not in typed_for_mesh:
+                    typed_for_mesh[key] = types[type_index - 1].for_mesh(mesh)
+                atomic_type = typed_for_mesh[key]
+                fraction = float(concentration)
+                occupation[atomic_type] = fraction
+                identity.append((type_index, fraction))
+            site.occupation = occupation
+            group = (mesh_id, tuple(identity))
+            if group in shared_site_types:
+                site.site_type = shared_site_types[group]
+            else:
+                shared_site_types[group] = site.site_type
+
+            shift = shift_rows[index]
+            site.embedding.displacement = (
                 np.asarray([shift["DQX"], shift["DQY"], shift["DQZ"]]) * alat
             )
-        directions = self.MAGNETISATION_DIRECTION.DATA()
-        for i, row in enumerate(directions):
-            atoms.sites[i].magnetisation = np.array((row["QMTET"], row["QMPHI"]))
+
+        # Native indices for these rows are NQHOST + IQCLU (1-based).
+        directions = {}
+        for row in self.MAGNETISATION_DIRECTION.DATA():
+            number = int(row["IQ"])
+            if number in directions:
+                raise ValueError(f"Duplicate magnetisation direction for site {number}")
+            directions[number] = row
+        for i, site in enumerate(atoms.sites, 1):
+            number = len(reference) + i
+            if number not in directions:
+                raise ValueError(f"Missing magnetisation direction for site {number}")
+            row = directions[number]
+            site.magnetisation = np.array((row["QMTET"], row["QMPHI"]))
+
         return atoms
