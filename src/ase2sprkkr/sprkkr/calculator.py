@@ -322,11 +322,11 @@ class SPRKKR(BaseCalculator):
         )
 
         if return_files:
-            if prepared.temporary_potential:
+            if prepared.temporary_potential or prepared.temporary_cluster_potential:
                 prepared.close()
                 raise ValueError(
                     "save_input(return_files=True) cannot transfer ownership of "
-                    "a temporary POTFIL pathname; supply potential_file as a path"
+                    "a temporary POTFIL or POTFIL_CLU pathname; use persistent paths"
                 )
             prepared.release_file_ownership()
             prepared.close_directory_context()
