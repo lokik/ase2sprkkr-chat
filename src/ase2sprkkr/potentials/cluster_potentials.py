@@ -278,29 +278,30 @@ class ClusterPotential(ConfigurationFile):
         ]
         if with_radial:
             if cluster_meshes:
-                lines.append(_section(
+                # MESH INFORMATION precedes TYPES in the native grammar.
+                lines.insert(-1, _section(
                     "MESH INFORMATION", "MESH-TYPE EXPONENTIAL",
                     "IM R(1) DX JRMT RMT JRWS RWS",
                     *(f"{number} " + " ".join(str(value) for value in mesh.to_tuple())
                       for number, mesh in cluster_meshes),
                 ))
-            for i, atom_type in enumerate(types, 1):
-                global_type = host_type_count + i
-                mesh = atom_type.mesh
-                for name, value in (
-                    ("POTENTIAL", atom_type.potential),
-                    ("CHARGE", atom_type.charge),
-                ):
-                    data = np.asarray(value.raw_value)
-                    if data.shape != (2, len(mesh)):
-                        raise ValueError(
-                            f"{name} for cluster type {i} has {data.shape}, "
-                            f"expected (2, {len(mesh)})"
-                        )
-                    lines.append(_radial_block(name, global_type, data))
-                lines.append(_radial_block(
-                    "MOMENTS", global_type, atom_type.moments.as_tuple()
-                ))
+            # Repeated radial sections must remain grouped by section name,
+            # not interleaved by TYPE.
+            for name in ("POTENTIAL", "CHARGE", "MOMENTS"):
+                for i, atom_type in enumerate(types, 1):
+                    global_type = host_type_count + i
+                    if name == "MOMENTS":
+                        values = atom_type.moments.as_tuple()
+                    else:
+                        value = getattr(atom_type, name.lower())
+                        values = np.asarray(value.raw_value)
+                        mesh = atom_type.mesh
+                        if values.shape != (2, len(mesh)):
+                            raise ValueError(
+                                f"{name} for cluster type {i} has {values.shape}, "
+                                f"expected (2, {len(mesh)})"
+                            )
+                    lines.append(_radial_block(name, global_type, values))
         return cls.from_string("\n".join(lines) + "\n")
 
     def to_atoms(self, host):
