@@ -156,7 +156,8 @@ def _definition():
             V("SHIFT", False, is_optional=True),
             V(
                 "DATA",
-                Table({"DQX": float, "DQY": float, "DQZ": float}, numbering="IQCLU", free_header=True),
+                Table({"DQX": float, "DQY": float, "DQZ": float},
+                      numbering="IQCLU", free_header=True, named_result=True),
                 name_in_grammar=False,
             ),
         ],
@@ -168,7 +169,8 @@ def _definition():
             V("DESCRIPTION", line_string, "forces acting on the cluster atoms", name_in_grammar=False),
             V(
                 "DATA",
-                Table({"FQX": float, "FQY": float, "FQZ": float}, numbering="IQCLU", free_header=True),
+                Table({"FQX": float, "FQY": float, "FQZ": float},
+                      numbering="IQCLU", free_header=True, named_result=True),
                 name_in_grammar=False,
             ),
         ],
