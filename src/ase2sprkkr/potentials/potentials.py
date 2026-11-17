@@ -196,9 +196,9 @@ class Potential(ConfigurationFile):
                 name = line.strip().upper()
                 if name == "GLOBAL SYSTEM PARAMETER":
                     in_globals = True
-                elif in_globals and re.match(r"^NQCLU\\s+\\d+\\b", name):
+                elif in_globals and re.match(r"^NQCLU\s+\d+\b", name):
                     return True
-                elif in_globals and re.match(r"^NQ\\s+\\d+\\b", name):
+                elif in_globals and re.match(r"^NQ\s+\d+\b", name):
                     return False
                 elif in_globals and name.startswith("*") and in_globals:
                     # Section separators may surround a declaration.
