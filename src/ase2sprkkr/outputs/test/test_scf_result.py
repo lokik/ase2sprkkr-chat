@@ -151,3 +151,28 @@ def test_embedded_result_requires_clupot_and_validates_host_file(tmp_path, monke
     with pytest.raises(OSError):
         result._read_potential(str(tmp_path / "cluster.pot"))
     assert verified == [str(tmp_path / "host.pot")]
+
+
+
+def test_embedded_scf_parser_registers_converged_cluster_not_host(tmp_path):
+    """The parsed FILES table must not redirect embedded SCF to host.pot_new."""
+    from ...input_parameters.input_parameters import InputParameters
+
+    parameters = InputParameters.create("SCF")
+    parameters.CONTROL.POTFIL = "host.pot"
+    parameters.CONTROL.POTFIL_CLU = "cluster.pot"
+    parameters.CONTROL.CLUTYPE = "embedded"
+
+    original = Path(__file__).parent.parent / "examples" / "scf.out"
+    output = tmp_path / "cluster_scf.out"
+    output.write_bytes(original.read_bytes())
+
+    reader = parameters.task_definition_required().output_reader(
+        input_parameters=parameters, directory=str(tmp_path)
+    )
+    result = reader.read_from_file(output)
+
+    assert result.is_embedded
+    assert result.start_potential_filename == str(tmp_path / "cluster.pot")
+    assert result.potential_filename == str(tmp_path / "cluster.pot_new")
+    assert result.files["converged"]() == str(tmp_path / "cluster.pot_new")
