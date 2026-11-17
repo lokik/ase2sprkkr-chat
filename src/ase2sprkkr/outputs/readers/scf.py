@@ -70,9 +70,10 @@ class ScfResult(TaskResult):
     def calculator(self):
         """The calculator that has the new (output) potential assigned - i.e. that
         can be used for further calculations with the (hopefully) converged wavefunctions etc."""
+        potential = self.potential if self.is_embedded else self.potential_filename
         if self._calculator:
-            return self._calculator.copy_with_potential(self.potential_filename)
-        return SPRKKR(potential=self.potential_filename)
+            return self._calculator.copy_with_potential(potential)
+        return SPRKKR(potential=potential)
 
     @cached_property
     def sfn_filename(self):
@@ -103,7 +104,7 @@ class ScfResult(TaskResult):
         """Potential used as input for the SCF calculation."""
 
         self.require_current_file(self.start_potential_filename)
-        return Potential.from_file(self.start_potential_filename)
+        return self._read_potential(self.start_potential_filename)
 
     @property
     def any_potential(self):
@@ -355,8 +356,9 @@ class ScfOutputParser(SprKkrOutputParser):
 
     async def read_output(self, stdout, result):
         await self.read_commons(stdout, result)
-        potential_file = result.files["potential"]()
-        result.files.add_file("converged", os.fspath(potential_file) + "_new")
+        # For embedded calculations the converged file belongs to
+        # POTFIL_CLU, not the host POTFIL reported in the FILES header.
+        result.files.add_file("converged", result.potential_filename)
         iterations = scf_section.create_object()
         try:
             first = True
