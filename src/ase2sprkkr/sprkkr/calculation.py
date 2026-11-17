@@ -195,6 +195,7 @@ class PreparedCalculation:
                         default_filename=default_potential_file,
                         task_name=task_name,
                         input_parameters=parameters,
+                        restart_scf=restart_scf,
                     )
                 )
                 input_atoms = resolved_potential.potential.host.atoms

@@ -121,6 +121,56 @@ class ClusterPotential(ConfigurationFile):
             self.host = host
         self._atoms = atoms
 
+    def host_geometry_warning(self, tolerance=1e-3):
+        """Warn about an incompatible host using native informational Q coordinates.
+
+        CLUPOT does not contain the host cell, so this is a heuristic, never
+        an authoritative identity check. Coordinates are in units of host ALAT.
+        """
+        if self.host is None:
+            return None
+        from ..sprkkr.embedding_geometry import HostSite
+
+        expected_dimension = str(self.LATTICE.SYSDIM())
+        actual_dimension = str(self.host.LATTICE.SYSDIM())
+        if expected_dimension != actual_dimension:
+            return (
+                f"CLUPOT expects a {expected_dimension} host, but the selected "
+                f"potential is {actual_dimension}."
+            )
+        alat = float(self.host.LATTICE.ALAT()) * Bohr
+        errors = []
+        try:
+            rows = self.SITES.DATA()
+            shifts = self.SHIFTS.DATA()
+            for row, shift in zip(rows, shifts):
+                point = HostSite(
+                    int(row["IQ"]) - 1,
+                    tuple(int(row[f"N5VEC{i}"]) for i in range(1, 6)),
+                ).position(self.host)
+                point += np.array([shift["DQX"], shift["DQY"], shift["DQZ"]]) * alat
+                recorded = np.array([row["QX"], row["QY"], row["QZ"]]) * alat
+                errors.append(float(np.linalg.norm(point - recorded)))
+        except (ValueError, TypeError, IndexError, KeyError, AttributeError) as exc:
+            return f"Unable to verify the host geometry: {exc}"
+        if errors and max(errors) > tolerance:
+            return (
+                "The host geometry may not match this CLUPOT "
+                f"(maximum site-position deviation {max(errors):.4g} Å)."
+            )
+        return None
+
+    def is_scf_converged(self, atoms=None):
+        """Use the native cluster SCFSTATUS, as for an ordinary Potential."""
+        status = self.SCF_INFO.SCFSTATUS()
+        if status == "CONVERGED":
+            return True
+        if status != "START":
+            return False
+        if atoms is None:
+            atoms = self._atoms
+        return atoms is not None and atoms.sprkkr_has_converged_data()
+
     @classmethod
     def from_file(cls, filename, *, host=None, allow_dangerous=False):
         """Read a native cluster potential, preserving all five translations."""
@@ -195,6 +245,8 @@ class ClusterPotential(ConfigurationFile):
             t.potential is not None or t.charge is not None or t.moments is not None
             for t in types
         )
+        if scf_status is None:
+            scf_status = atoms.info.get("sprkkr_embedding_scf_status")
         if scf_status is None:
             if any_radial and not complete_radial:
                 raise ValueError(
@@ -552,5 +604,7 @@ class ClusterPotential(ConfigurationFile):
             row = directions[number]
             site.magnetisation = np.array((row["QMTET"], row["QMPHI"]))
 
+        atoms.info["sprkkr_embedding_scf_status"] = self.SCF_INFO.SCFSTATUS()
+        atoms._potential = self
         self._atoms = atoms
         return atoms

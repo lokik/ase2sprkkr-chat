@@ -132,11 +132,48 @@ class TaskResult:
             return filename
         return None
 
+    @property
+    def is_embedded(self):
+        """Whether the run uses a separate cluster potential."""
+        parameters = self.input_parameters
+        if parameters is None:
+            return False
+        try:
+            return parameters.CONTROL.CLUTYPE() == "embedded"
+        except (AttributeError, KeyError):
+            return False
+
+    @cached_property
+    def host_potential_filename(self):
+        """Host POTFIL referenced by a cluster calculation."""
+        parameters = self.input_parameters
+        filename = parameters.CONTROL.POTFIL() if parameters is not None else None
+        if not filename:
+            raise ValueError("An embedded calculation needs a host POTFIL")
+        return os.path.join(self.directory, os.fspath(filename))
+
+    @cached_property
+    def host_potential(self):
+        """Parse the shared host once for input and converged CLUPOT files."""
+        self.require_current_file(self.host_potential_filename)
+        return Potential.from_file(self.host_potential_filename)
+
+    def _read_potential(self, filename):
+        if not self.is_embedded:
+            return Potential.from_file(filename)
+        from ..potentials.cluster_potentials import ClusterPotential
+
+        return ClusterPotential.from_file(filename, host=self.host_potential)
+
     @cached_property
     def potential_filename(self):
-        """New (output) potential file name"""
+        """Input (or newly produced) periodic/cluster potential file name"""
         parameters = self.input_parameters
         potfil = parameters.CONTROL.POTFIL() if parameters is not None else None
+        if self.is_embedded:
+            potfil = parameters.CONTROL.POTFIL_CLU()
+            if not potfil:
+                raise ValueError("Embedded results require CONTROL.POTFIL_CLU")
         if not potfil:
             potfil = self.files["potential"]() if "potential" in self.files else None
         if not potfil:
@@ -149,7 +186,7 @@ class TaskResult:
     def potential(self):
         """The new (output) potential - that contains the converged charge density etc."""
         self.require_current_file(self.potential_filename)
-        return Potential.from_file(self.potential_filename)
+        return self._read_potential(self.potential_filename)
 
     @property
     def any_potential(self):
@@ -204,7 +241,7 @@ class TaskResult:
             )
         )
         return SPRKKR(
-            potential=self.potential_filename,
+            potential=self.potential if self.is_embedded else self.potential_filename,
             input_parameters=parameters,
         )
 

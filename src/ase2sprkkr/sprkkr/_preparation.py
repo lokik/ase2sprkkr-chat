@@ -481,10 +481,10 @@ def validate_restart(potential, task_name, restart_scf):
         return
     if task_name != "SCF":
         raise ValueError("restart_scf=True is only valid for an SCF calculation.")
-    if not isinstance(potential, Potential):
+    if not isinstance(potential, (Potential, ClusterPotential)):
         raise ValueError(
-            "restart_scf=True requires a writable Potential or atoms "
-            "from which one can be generated."
+            "restart_scf=True requires a writable Potential/ClusterPotential "
+            "or atoms from which one can be generated."
         )
 
 
@@ -532,7 +532,7 @@ def write_potential(
 
 def write_cluster_potentials(
     resolved, host_filename, files, *, default_filename, task_name,
-    input_parameters,
+    input_parameters, restart_scf=False,
 ):
     """Write an embedded cluster and its host as separate native POTFILs."""
     cluster = resolved.potential
@@ -562,7 +562,15 @@ def write_cluster_potentials(
             raise ValueError("POTFIL and POTFIL_CLU must be different files")
 
     handle = files.open(cluster_target, "cluster_potential_file")
-    cluster.save_to_file(handle)
+    # Restart is a serialization intent; do not mutate the canonical
+    # converged cluster potential retained by the calling Atoms.
+    if restart_scf:
+        cluster_to_write = ClusterPotential.from_atoms(
+            resolved.atoms, scf_status="START"
+        )
+    else:
+        cluster_to_write = cluster
+    cluster_to_write.save_to_file(handle)
     flush = getattr(handle, "flush", None)
     if flush is not None:
         flush()
