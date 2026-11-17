@@ -121,6 +121,17 @@ class ClusterPotential(ConfigurationFile):
             self.host = host
         self._atoms = atoms
 
+    def is_scf_converged(self, atoms=None):
+        """Use the native cluster SCFSTATUS, as for an ordinary Potential."""
+        status = self.SCF_INFO.SCFSTATUS()
+        if status == "CONVERGED":
+            return True
+        if status != "START":
+            return False
+        if atoms is None:
+            atoms = self._atoms
+        return atoms is not None and atoms.sprkkr_has_converged_data()
+
     @classmethod
     def from_file(cls, filename, *, host=None, allow_dangerous=False):
         """Read a native cluster potential, preserving all five translations."""
@@ -195,6 +206,8 @@ class ClusterPotential(ConfigurationFile):
             t.potential is not None or t.charge is not None or t.moments is not None
             for t in types
         )
+        if scf_status is None:
+            scf_status = atoms.info.get("sprkkr_embedding_scf_status")
         if scf_status is None:
             if any_radial and not complete_radial:
                 raise ValueError(
@@ -379,6 +392,7 @@ class ClusterPotential(ConfigurationFile):
                     ))
         cluster = cls.from_string("\n".join(lines) + "\n", host=host)
         cluster._atoms = atoms
+        atoms.info["sprkkr_embedding_scf_status"] = scf_status
         return cluster
 
     def to_atoms(self, host=None):
@@ -552,5 +566,7 @@ class ClusterPotential(ConfigurationFile):
             row = directions[number]
             site.magnetisation = np.array((row["QMTET"], row["QMPHI"]))
 
+        atoms.info["sprkkr_embedding_scf_status"] = self.SCF_INFO.SCFSTATUS()
+        atoms._potential = self
         self._atoms = atoms
         return atoms
