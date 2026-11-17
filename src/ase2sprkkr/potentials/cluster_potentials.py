@@ -47,13 +47,18 @@ def _to_start_native(text):
                         "Initial cluster magnetisation directions\n", 1)
 
 
-def _radial_block(name, type_number, values):
-    """Serialize native spherical radial data for one global TYPE."""
+def _radial_block(name, type_number, values, *, fullpot_data=None):
+    """Serialize a native radial block without reinterpreting FULLPOT data."""
     output = StringIO()
     np.savetxt(output, np.atleast_2d(values), fmt="% .14E")
-    return _section(
-        name, f"TYPE      {type_number}", output.getvalue().rstrip("\n"), "=" * 79
-    )
+    payload = output.getvalue().rstrip("\n")
+    if fullpot_data:
+        # The raw block includes its NFP marker and original coefficient
+        # structure. It belongs after the spherical rows and before =====.
+        if not fullpot_data.lstrip().startswith("NFP"):
+            raise ValueError("Non-spherical radial data must contain an NFP header")
+        payload += "\n" + fullpot_data.strip("\n")
+    return _section(name, f"TYPE      {type_number}", payload, "=" * 79)
 
 
 def _host_potential(atoms):
@@ -179,15 +184,25 @@ class ClusterPotential(ConfigurationFile):
                 raise ValueError("Writing radial cluster data requires host TYPES and MESH INFORMATION")
             host_type_count = len(host.TYPES.DATA())
             host_mesh_data = host.MESH_INFORMATION.DATA()
-            mesh_lookup = {
-                tuple(row[name] for name in ("R(1)", "DX", "JRMT", "RMT", "JRWS", "RWS")): i
+            # Only match ordinary host meshes. FULLPOT host meshes may have
+            # different radial panel information not present in DATA().
+            host_mesh_fullpot = (
+                host.MESH_INFORMATION.FULLPOT()
+                if hasattr(host.MESH_INFORMATION, "FULLPOT") else None
+            )
+            mesh_lookup = {} if host_mesh_fullpot is not None else {
+                tuple(row[name] for name in ("R(1)", "DX", "JRMT", "RMT", "JRWS", "RWS")) + (None,): i
                 for i, row in enumerate(host_mesh_data, 1)
             }
             for site in atoms.sites:
                 mesh = site.site_type.mesh
-                if mesh.fullpot is not None:
-                    raise NotImplementedError("Writing full-potential cluster meshes is not implemented")
-                signature = tuple(mesh.to_tuple())
+                # Distinguish independent FULLPOT meshes even when their
+                # spherical part is numerically identical.
+                extra = mesh.fullpot_tuple()
+                extra = None if extra is None else (
+                    extra[0], extra[1], extra[2], tuple(extra[3])
+                )
+                signature = tuple(mesh.to_tuple()) + (extra,)
                 number = mesh_lookup.get(signature)
                 if number is None:
                     number = len(host_mesh_data) + len(cluster_meshes) + 1
@@ -196,6 +211,14 @@ class ClusterPotential(ConfigurationFile):
                 mesh_ids.append(number)
         # CLUSYMMETRY assigns displaced meshes when reading START.
         nm = len(cluster_meshes) if with_radial else (n if shifted else 0)
+        has_fullpot = with_radial and any(
+            t.potential.fullpot_data or t.charge.fullpot_data for t in types
+        )
+        if has_fullpot:
+            if any(not t.potential.fullpot_data or not t.charge.fullpot_data for t in types):
+                raise ValueError("Every cluster type needs both FULLPOT potential and charge data")
+            if any(site.mesh.fullpot is None for site in atoms.sites):
+                raise ValueError("FULLPOT radial data require matching FULLPOT mesh information")
         lines = [
             "*" * 79,
             "HEADER    'SPR-KKR cluster dataset created by ASE2SPRKKR'",
@@ -207,7 +230,7 @@ class ClusterPotential(ConfigurationFile):
             _section("SCF-INFO",
                      "INFO      'Initial embedded cluster'",
                      f"SCFSTATUS {scf_status}",
-                     f"FULLPOT   {'T' if _host_value(host, 'FULLPOT', False) else 'F'}",
+                     f"FULLPOT   {'T' if has_fullpot or _host_value(host, 'FULLPOT', False) else 'F'}",
                      f"BREITINT  {'T' if _host_value(host, 'BREITINT', False) else 'F'}",
                      f"NONMAG    {'T' if _host_value(host, 'NONMAG', False) else 'F'}",
                      f"ORBPOL    {_host_value(host, 'ORBPOL', 'NONE')}",
@@ -279,29 +302,47 @@ class ClusterPotential(ConfigurationFile):
         if with_radial:
             if cluster_meshes:
                 # MESH INFORMATION precedes TYPES in the native grammar.
-                lines.insert(-1, _section(
-                    "MESH INFORMATION", "MESH-TYPE EXPONENTIAL",
+                mesh_lines = [
+                    "MESH-TYPE EXPONENTIAL",
                     "IM R(1) DX JRMT RMT JRWS RWS",
                     *(f"{number} " + " ".join(str(value) for value in mesh.to_tuple())
                       for number, mesh in cluster_meshes),
-                ))
+                ]
+                fullpot_meshes = [
+                    (number, mesh.fullpot_tuple())
+                    for number, mesh in cluster_meshes if mesh.fullpot is not None
+                ]
+                if fullpot_meshes:
+                    if len(fullpot_meshes) != len(cluster_meshes):
+                        raise ValueError("Mixed FULLPOT/ordinary cluster mesh definitions")
+                    mesh_lines.extend([
+                        "IM JRNS1 JRCRI NPAN JRCUT",
+                        *(f"{number} {values[0]} {values[1]} {values[2]} " +
+                          " ".join(map(str, values[3]))
+                          for number, values in fullpot_meshes),
+                    ])
+                lines.insert(-1, _section("MESH INFORMATION", *mesh_lines))
             # Repeated radial sections must remain grouped by section name,
             # not interleaved by TYPE.
             for name in ("POTENTIAL", "CHARGE", "MOMENTS"):
                 for i, atom_type in enumerate(types, 1):
                     global_type = host_type_count + i
+                    fullpot_data = None
                     if name == "MOMENTS":
                         values = atom_type.moments.as_tuple()
                     else:
                         value = getattr(atom_type, name.lower())
                         values = np.asarray(value.raw_value)
+                        fullpot_data = value.fullpot_data if hasattr(value, "fullpot_data") else None
                         mesh = atom_type.mesh
                         if values.shape != (2, len(mesh)):
                             raise ValueError(
                                 f"{name} for cluster type {i} has {values.shape}, "
                                 f"expected (2, {len(mesh)})"
                             )
-                    lines.append(_radial_block(name, global_type, values))
+                    lines.append(_radial_block(
+                        name, global_type, values, fullpot_data=fullpot_data
+                    ))
         return cls.from_string("\n".join(lines) + "\n")
 
     def to_atoms(self, host):
@@ -395,12 +436,10 @@ class ClusterPotential(ConfigurationFile):
                 if key in present:
                     raise ValueError(f"Duplicate {section_name} TYPE {global_index}")
                 present.add(key)
+                atom_type = types[local_index - 1]
+                setattr(atom_type, property_name, block.DATA())
                 if property_name in ("potential", "charge"):
-                    if block.FULLPOT() not in (None, ""):
-                        raise NotImplementedError(
-                            "Non-spherical FULLPOT radial data cannot be represented in AtomicType"
-                        )
-                setattr(types[local_index - 1], property_name, block.DATA())
+                    getattr(atom_type, property_name).fullpot_data = block.FULLPOT()
 
         # Build geometry without handing the canonical types to from_embedding:
         # that constructor initially allocates default meshes, and would

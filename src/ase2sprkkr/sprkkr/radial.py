@@ -4,10 +4,28 @@ import copy
 from ..common.decorators import cached_property
 
 
+def _equivalent_meshes(left, right):
+    """Compare spherical and full-potential mesh parameters, not identity."""
+    if not all(hasattr(mesh, "to_tuple") and hasattr(mesh, "fullpot_tuple")
+               for mesh in (left, right)):
+        return False
+    if left.to_tuple() != right.to_tuple():
+        return False
+    full_left = left.fullpot_tuple()
+    full_right = right.fullpot_tuple()
+    if full_left is None or full_right is None:
+        return full_left is full_right
+    return (
+        full_left[:3] == full_right[:3]
+        and np.array_equal(full_left[3], full_right[3])
+    )
+
+
 class RadialValue:
-    def __init__(self, value, mesh):
+    def __init__(self, value, mesh, fullpot=None):
         self._value = np.asarray(value)
         self._mesh = mesh
+        self.fullpot = fullpot
 
     @cached_property
     def interpolator(self):
@@ -45,15 +63,28 @@ class RadialValue:
         if not self._mesh:
             self._mesh = mesh
             return
+        if self.fullpot and _equivalent_meshes(self._mesh, mesh):
+            # Equivalent meshes must not interpolate away numerical precision,
+            # especially when copying a native non-spherical potential.
+            self._mesh = mesh
+            return
+        if self.fullpot:
+            raise ValueError(
+                "Non-spherical FULLPOT data cannot be remeshed: "
+                "the native coefficients must remain on their original mesh"
+            )
         value = self.interpolate(mesh.coors)
         self._mesh = mesh
         self._value = value
 
     def copy(self, mesh=None):
         out = copy.copy(self)
-        if mesh is None or self._mesh is mesh:
-            out._value = np.copy(self._value)
-        else:
+        # The radial values must be private even if the target is a distinct
+        # but numerically equivalent mesh. Otherwise a SiteType copy would
+        # mutate the original AtomicType through the shared NumPy array.
+        out._value = np.copy(self._value)
+        out.__dict__.pop("interpolator", None)
+        if mesh is not None and self._mesh is not mesh:
             out.mesh = mesh
         return out
 
@@ -72,6 +103,31 @@ class RadialValue:
     def raw_value(self):
         return self._value
 
+    @property
+    def fullpot_data(self):
+        """Native non-spherical FULLPOT block, preserved without reinterpretation.
+
+        Unlike the spherical 2-row array, the non-spherical coefficients are
+        stored as an opaque native payload. This permits lossless file
+        round-trips without assuming an undocumented coefficient layout.
+        """
+        return self._fullpot_data
+
+    @fullpot_data.setter
+    def fullpot_data(self, value):
+        if value is not None and not isinstance(value, str):
+            raise TypeError("FULLPOT radial data must be a native text block or None")
+        self._fullpot_data = value or None
+
+    @property
+    def fullpot(self):
+        """Alias for the native non-spherical radial contribution."""
+        return self.fullpot_data
+
+    @fullpot.setter
+    def fullpot(self, value):
+        self.fullpot_data = value
+
 
 class RadialCharge(RadialValue):
     pass
@@ -89,8 +145,8 @@ class RadialPotential(RadialValue):
         out.julich = value
         return out
 
-    def __init__(self, value, mesh, z):
-        super().__init__(value, mesh)
+    def __init__(self, value, mesh, z, fullpot=None):
+        super().__init__(value, mesh, fullpot=fullpot)
         self.z = z
 
     @property
