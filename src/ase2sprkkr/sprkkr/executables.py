@@ -1,5 +1,7 @@
 """Declarative metadata for SPR-KKR executables."""
 
+from __future__ import annotations
+
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -89,6 +91,18 @@ class _ExecutableRegistry(Mapping):
 
     def __len__(self):
         return len(self._definitions)
+
+    def resolve(self, name, input_parameters):
+        """Resolve a known binary or retain an ordinary custom executable.
+
+        Users may define TaskDefinitions with executable names absent from the
+        built-in metadata registry. Such binaries retain their native names in
+        normal mode; cluster mode remains opt-in and fails without metadata.
+        """
+        definition = self._definitions.get(name)
+        if definition is None:
+            definition = ExecutableDefinition(name)
+        return definition.resolve(input_parameters)
 
 
 executables = _ExecutableRegistry(

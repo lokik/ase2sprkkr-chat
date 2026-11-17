@@ -245,7 +245,23 @@ class InputParameters(ConfigurationFile):
         )
 
     def input_files(self, directory):
-        return self._task_files(directory, "input")
+        files = self._task_files(directory, "input")
+        try:
+            embedded = self.CONTROL.CLUTYPE() == "embedded"
+        except (AttributeError, KeyError):
+            embedded = False
+        if not embedded:
+            return files
+        cluster_file = self.CONTROL.POTFIL_CLU()
+        if not cluster_file:
+            raise ValueError(
+                "Embedded calculation requires CONTROL.POTFIL_CLU"
+            )
+        cluster_path = (
+            cluster_file if os.path.isabs(cluster_file)
+            else os.path.join(directory, cluster_file)
+        )
+        return (*files, cluster_path)
 
     def output_files(self, directory):
         return self._task_files(directory, "output")

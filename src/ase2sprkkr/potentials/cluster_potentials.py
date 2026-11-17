@@ -109,6 +109,18 @@ class ClusterPotential(ConfigurationFile):
             self._atoms = self.to_atoms()
         return self._atoms
 
+    @atoms.setter
+    def atoms(self, atoms):
+        """Keep the cluster's attached atoms compatible with its host."""
+        if atoms is not None:
+            host = atoms.info.get(EMBEDDING_HOST)
+            if host is None:
+                raise ValueError("ClusterPotential atoms require an embedding host")
+            if self.host is not None and self.host is not host:
+                raise ValueError("ClusterPotential atoms belong to another host")
+            self.host = host
+        self._atoms = atoms
+
     @classmethod
     def from_file(cls, filename, *, host=None, allow_dangerous=False):
         """Read a native cluster potential, preserving all five translations."""

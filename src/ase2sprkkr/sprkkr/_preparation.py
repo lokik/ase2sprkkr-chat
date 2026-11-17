@@ -21,6 +21,7 @@ from ..bindings.empty_spheres import add_empty_spheres
 from ..common.temporary import temporary_option_value
 from ..input_parameters.input_parameters import InputParameters
 from ..potentials.potentials import Potential
+from ..potentials.cluster_potentials import ClusterPotential
 from .sprkkr_atoms import SPRKKRAtoms
 
 
@@ -194,7 +195,7 @@ class ResolvedPotential:
     POTFIL from the input parameters. Otherwise it selects the output file.
     """
 
-    potential: Potential | None
+    potential: Potential | ClusterPotential | None
     atoms: SPRKKRAtoms | None
     filename: object
 
@@ -261,7 +262,7 @@ def resolve_potential_and_atoms(
             potential_file = source
             potential = None
 
-    if isinstance(potential, Potential):
+    if isinstance(potential, (Potential, ClusterPotential)):
         atoms = potential.atoms
     elif atoms is not None:
         atoms = SPRKKRAtoms.promote_ase_atoms(atoms)
@@ -328,6 +329,14 @@ def resolve_input_parameters(
         input_parameters.change_task(task)
     if options:
         input_parameters.set(options, unknown="find")
+
+    if isinstance(potential.potential, ClusterPotential):
+        cluster_type = input_parameters.CONTROL.CLUTYPE()
+        if cluster_type not in (None, "embedded"):
+            raise ValueError(
+                "ClusterPotential requires CONTROL.CLUTYPE=embedded"
+            )
+        input_parameters.CONTROL.CLUTYPE = "embedded"
 
     if potential_missing and potential_file is None:
         potential_file = potential_from_parameters(input_parameters, directory)
@@ -520,7 +529,54 @@ def write_potential(
     return name, filename is False
 
 
-def write_input(resolved, handle, potential_file, atoms):
+
+def write_cluster_potentials(
+    resolved, host_filename, files, *, default_filename, task_name,
+    input_parameters,
+):
+    """Write an embedded cluster and its host as separate native POTFILs."""
+    cluster = resolved.potential
+    host = cluster.host
+    if not isinstance(host, Potential):
+        raise ValueError(
+            "A ClusterPotential calculation requires a host Potential"
+        )
+
+    host_file, temporary_host = write_potential(
+        ResolvedPotential(host, host.atoms, host_filename),
+        host_filename,
+        files,
+        default_filename=default_filename,
+        task_name=task_name,
+        restart_scf=False,
+    )
+    cluster_target = input_parameters.CONTROL.POTFIL_CLU.result
+    if not cluster_target:
+        if temporary_host:
+            cluster_target = False
+        else:
+            cluster_target = str(Path(host_file).with_suffix(".clu.pot"))
+    if cluster_target is not False:
+        intended = calculation_path(cluster_target, files.directory)
+        if os.path.abspath(host_file) == intended:
+            raise ValueError("POTFIL and POTFIL_CLU must be different files")
+
+    handle = files.open(cluster_target, "cluster_potential_file")
+    cluster.save_to_file(handle)
+    flush = getattr(handle, "flush", None)
+    if flush is not None:
+        flush()
+    if isinstance(handle, TemporaryNamedFile):
+        handle.close_file()
+    else:
+        handle.close()
+    cluster_file = named_file_name(handle)
+    if not os.path.isabs(cluster_file):
+        cluster_file = os.path.abspath(cluster_file)
+    return host_file, cluster_file, temporary_host, cluster_target is False
+
+
+def write_input(resolved, handle, potential_file, atoms, *, cluster_potential_file=None):
     """Serialize the snapshot, letting filename mappings render relative paths."""
     if not resolved.write:
         return
@@ -528,6 +584,8 @@ def write_input(resolved, handle, potential_file, atoms):
     parameters = resolved.parameters
     if potential_file:
         parameters.CONTROL.POTFIL = potential_file
+    if cluster_potential_file:
+        parameters.CONTROL.POTFIL_CLU = cluster_potential_file
     if not parameters.CONTROL.DATASET.is_set():
         parameters.CONTROL.DATASET.result = Path(named_file_name(handle)).stem
     parameters.save_to_file(handle, atoms)
