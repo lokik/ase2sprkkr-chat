@@ -225,19 +225,28 @@ class Potential(ConfigurationFile):
     def from_atoms(cls, atoms):
         """Create the native periodic or embedded potential for *atoms*."""
         SPRKKRAtoms.promote_ase_atoms(atoms)
-        if atoms.has_potential():
-            return atoms.potential
         if not any(atoms.pbc):
-            if atoms.embedding_host is None:
+            host = atoms.embedding_host
+            if host is None:
                 raise ValueError(
                     "A 0D SPR-KKR structure requires sprkkr_embedding_host "
                     "to create a cluster potential"
                 )
             from .cluster_potentials import ClusterPotential
 
+            if atoms.has_potential():
+                cluster = atoms.potential
+                if not isinstance(cluster, ClusterPotential) or cluster.host is not host:
+                    raise ValueError(
+                        "A 0D structure's attached potential must be a "
+                        "ClusterPotential referencing its current host"
+                    )
+                return cluster
             cluster = ClusterPotential.from_atoms(atoms)
             atoms._potential = cluster
             return cluster
+        if atoms.has_potential():
+            return atoms.potential
         pd = Potential.potential_definition
         return cls(atoms=atoms, definition=pd)
 
