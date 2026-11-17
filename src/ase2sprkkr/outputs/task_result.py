@@ -143,20 +143,27 @@ class TaskResult:
         except (AttributeError, KeyError):
             return False
 
+    @cached_property
+    def host_potential_filename(self):
+        """Host POTFIL referenced by a cluster calculation."""
+        parameters = self.input_parameters
+        filename = parameters.CONTROL.POTFIL() if parameters is not None else None
+        if not filename:
+            raise ValueError("An embedded calculation needs a host POTFIL")
+        return os.path.join(self.directory, os.fspath(filename))
+
+    @cached_property
+    def host_potential(self):
+        """Parse the shared host once for input and converged CLUPOT files."""
+        self.require_current_file(self.host_potential_filename)
+        return Potential.from_file(self.host_potential_filename)
+
     def _read_potential(self, filename):
         if not self.is_embedded:
             return Potential.from_file(filename)
         from ..potentials.cluster_potentials import ClusterPotential
 
-        parameters = self.input_parameters
-        host_filename = parameters.CONTROL.POTFIL()
-        if not host_filename:
-            raise ValueError("An embedded calculation needs a host POTFIL")
-        if not os.path.isabs(host_filename):
-            host_filename = os.path.join(self.directory, host_filename)
-        self.require_current_file(host_filename)
-        host = Potential.from_file(host_filename)
-        return ClusterPotential.from_file(filename, host=host)
+        return ClusterPotential.from_file(filename, host=self.host_potential)
 
     @cached_property
     def potential_filename(self):

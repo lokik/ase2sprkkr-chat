@@ -99,7 +99,7 @@ def test_embedded_scf_result_reads_clupot_and_continues_with_dos(tmp_path):
     assert result.is_embedded
     assert isinstance(result.start_potential, ClusterPotential)
     assert isinstance(result.potential, ClusterPotential)
-    assert result.potential.host is not None
+    assert result.potential.host is result.start_potential.host
     assert result.atoms.sites[0].occupation.as_dict == {"Fe": 1.0}
     assert result.atoms.sites[0].embedding.cell_index == (1, 0, 0)
     assert result.calculator.potential is result.potential
