@@ -154,6 +154,7 @@ class TaskResult:
             raise ValueError("An embedded calculation needs a host POTFIL")
         if not os.path.isabs(host_filename):
             host_filename = os.path.join(self.directory, host_filename)
+        self.require_current_file(host_filename)
         host = Potential.from_file(host_filename)
         return ClusterPotential.from_file(filename, host=host)
 
@@ -164,6 +165,8 @@ class TaskResult:
         potfil = parameters.CONTROL.POTFIL() if parameters is not None else None
         if self.is_embedded:
             potfil = parameters.CONTROL.POTFIL_CLU()
+            if not potfil:
+                raise ValueError("Embedded results require CONTROL.POTFIL_CLU")
         if not potfil:
             potfil = self.files["potential"]() if "potential" in self.files else None
         if not potfil:
