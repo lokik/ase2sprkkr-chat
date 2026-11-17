@@ -321,16 +321,39 @@ class SPRKKRAtoms(Atoms):
 
         Host-site indices are zero-based, and cell_index takes 2 or 3
         integers according to the host dimensionality (or native N5VEC).
+        Set occupation=None to inherit the host site's chemical occupation
+        without sharing its mutable SiteType or radial data.
         """
+        from .embedding_geometry import HostSite
+        from .occupations import Occupation
+
         reference = host_atoms(host)
         entries = list(sites)
         if not entries:
             raise ValueError("At least one embedded site is required")
         if any(len(row) != 3 for row in entries):
             raise ValueError("Each entry must be (host_site, cell_index, occupation)")
+
+        # Normalize native/short cell indices before duplicate detection.
+        # A missing occupation means inherit the host chemistry (not its
+        # mutable SiteType or radial arrays).
+        normalized = []
+        seen = set()
+        for index, cell_index, occupation in entries:
+            if isinstance(index, bool) or not isinstance(index, (int, np.integer)) or not 0 <= index < len(reference):
+                raise IndexError("Invalid zero-based host-site index")
+            site = HostSite(int(index), cell_index).canonical(host)
+            if site in seen:
+                raise ValueError("A host site and cell translation may only occur once")
+            seen.add(site)
+            if occupation is None:
+                if isinstance(reference, SPRKKRAtoms) and reference.are_sites_inited():
+                    occupation = reference.sites[index].occupation.to_dict(True)
+                else:
+                    occupation = Occupation.for_atom_from_ase_atoms(reference, index).to_dict(True)
+            normalized.append((site.original_site, site.cell_index, occupation))
+        entries = normalized
         indices = [row[0] for row in entries]
-        if any(not isinstance(i, (int, np.integer)) or not 0 <= i < len(reference) for i in indices):
-            raise IndexError("Invalid zero-based host-site index")
         symbols = []
         for _, _, occ in entries:
             if isinstance(occ, str):
