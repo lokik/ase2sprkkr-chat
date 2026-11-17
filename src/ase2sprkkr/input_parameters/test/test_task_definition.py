@@ -190,6 +190,7 @@ def test_task_definition_normalizes_identifiers_but_preserves_executable_name():
         ({"executable": "   "}, ValueError, "executable must not be empty"),
         ({"mpi": "banana"}, TypeError, "mpi must be a bool"),
         ({"mpi": 1}, TypeError, "mpi must be a bool"),
+        ({"supports_embedded_cluster": 1}, TypeError, "supports_embedded_cluster must be a bool"),
         ({"output_reader": "   "}, ValueError, "output_reader must not be empty"),
         ({"output_reader_name": "   "}, ValueError, "output_reader must not be empty"),
     ],
@@ -384,3 +385,14 @@ def test_unset_required_file_template_is_not_silently_dropped(tmp_path):
         parameters, str(tmp_path),
         (TaskFile("{dataset}.dos", optional=True), TaskFile(lambda _: None)),
     ) == ()
+
+
+def test_only_validated_tasks_declare_embedded_cluster_support():
+    """Sharing clugen does not make a periodic task meaningful for 0D."""
+    supported = {
+        task.name for task in InputParameters.task_registry.values()
+        if task.supports_embedded_cluster
+    }
+    assert supported == {"SCF", "DOS"}
+    assert not TaskDefinition("CUSTOM", executable="kkrgen").supports_embedded_cluster
+    assert replace(TaskDefinition("SCF"), supports_embedded_cluster=True).supports_embedded_cluster
