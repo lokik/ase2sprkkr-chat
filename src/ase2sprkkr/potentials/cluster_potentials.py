@@ -88,9 +88,29 @@ class ClusterPotential(ConfigurationFile):
             from .definitions.cluster import cluster_definition
             definition = cluster_definition
         super().__init__(definition)
+        self._host = None
+        self._atoms = None
+
+    @property
+    def host(self):
+        """The host Potential, retained by reference (not copied)."""
+        return self._host
+
+    @host.setter
+    def host(self, value):
+        if value is not self._host:
+            self._atoms = None
+        self._host = value
+
+    @property
+    def atoms(self):
+        """Embedded atoms associated with this cluster, if a host is known."""
+        if self._atoms is None and self.host is not None:
+            self._atoms = self.to_atoms()
+        return self._atoms
 
     @classmethod
-    def from_file(cls, filename, *, allow_dangerous=False):
+    def from_file(cls, filename, *, host=None, allow_dangerous=False):
         """Read a native cluster potential, preserving all five translations."""
         from .definitions.cluster import cluster_definition
         if hasattr(filename, "read"):
@@ -98,13 +118,15 @@ class ClusterPotential(ConfigurationFile):
         else:
             with open(filename, encoding="utf-8") as file:
                 content = file.read()
-        return cluster_definition.read_from_file(
+        cluster = cluster_definition.read_from_file(
             StringIO(_from_start_native(content)), allow_dangerous=allow_dangerous
         )
+        cluster.host = host
+        return cluster
 
     @classmethod
-    def from_string(cls, content, *, allow_dangerous=False):
-        return cls.from_file(StringIO(content), allow_dangerous=allow_dangerous)
+    def from_string(cls, content, *, host=None, allow_dangerous=False):
+        return cls.from_file(StringIO(content), host=host, allow_dangerous=allow_dangerous)
 
     def save_to_file(self, file, *, validate="save"):
         """Write the native format, including START-specific header handling."""
@@ -343,9 +365,11 @@ class ClusterPotential(ConfigurationFile):
                     lines.append(_radial_block(
                         name, global_type, values, fullpot_data=fullpot_data
                     ))
-        return cls.from_string("\n".join(lines) + "\n")
+        cluster = cls.from_string("\n".join(lines) + "\n", host=host)
+        cluster._atoms = atoms
+        return cluster
 
-    def to_atoms(self, host):
+    def to_atoms(self, host=None):
         """Convert cluster geometry, occupations and available radial data to atoms.
 
         Host and cluster TYPE/mesh numbers are independent. Cluster radial TYPE
@@ -356,7 +380,10 @@ class ClusterPotential(ConfigurationFile):
         from ..sprkkr.radial_meshes import ExponentialMesh, Mesh
         from ..sprkkr.sprkkr_atoms import SPRKKRAtoms
 
+        if host is None:
+            host = self.host
         reference = host_atoms(host)
+        self.host = host
         if len(reference) == 0:
             raise ValueError("Host has no sites")
         if not hasattr(host, "LATTICE"):
@@ -513,4 +540,5 @@ class ClusterPotential(ConfigurationFile):
             row = directions[number]
             site.magnetisation = np.array((row["QMTET"], row["QMPHI"]))
 
+        self._atoms = atoms
         return atoms
