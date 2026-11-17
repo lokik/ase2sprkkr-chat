@@ -135,3 +135,47 @@ def test_embedded_zero_repeat_retains_empty_embedding_array():
     result = atoms.repeat((0, 1, 1))
     assert len(result) == 0
     assert result.arrays[EMBEDDING_ARRAY].shape == (0, 6)
+
+
+def test_potential_factory_uses_cluster_for_zero_dimensional_atoms():
+    from ..sprkkr_atoms import SPRKKRAtoms
+    from ...potentials.potentials import Potential
+    from ...potentials.cluster_potentials import ClusterPotential
+
+    bulk_host = host()
+    # The host must provide a native POTFIL, not merely ASE geometry.
+    native_host = Potential.from_atoms(bulk_host)
+    cluster_atoms = SPRKKRAtoms.from_embedding(
+        native_host, [(0, (0, 0, 0), "Fe")]
+    )
+
+    potential = Potential.from_atoms(cluster_atoms)
+    assert isinstance(potential, ClusterPotential)
+    assert potential.host is native_host
+    assert Potential.from_atoms(cluster_atoms) is potential
+    assert not potential.is_scf_converged()
+
+
+def test_zero_dimensional_atoms_without_host_cannot_make_potential():
+    from ...potentials.potentials import Potential
+
+    atoms = Atoms("Fe", positions=[[0, 0, 0]], pbc=False)
+    with pytest.raises(ValueError, match="sprkkr_embedding_host"):
+        Potential.from_atoms(atoms)
+
+
+def test_potential_native_file_probe_preserves_stream_position(tmp_path):
+    from io import StringIO
+    from ...potentials.potentials import Potential
+
+    content = "HEADER\nGLOBAL SYSTEM PARAMETER\nNQCLU 2\n"
+    stream = StringIO(content)
+    assert Potential.is_cluster_file(stream)
+    assert stream.tell() == 0
+    assert not Potential.is_cluster_file(StringIO(
+        "TITLE 'NQCLU 2'\nGLOBAL SYSTEM PARAMETER\nNQ 2\n"
+    ))
+    filename = tmp_path / "cluster.pot_new"
+    filename.write_text(content)
+    assert Potential.is_cluster_file(filename)
+    assert not Potential.is_cluster_file(tmp_path / "does-not-exist.pot")
