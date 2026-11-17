@@ -182,6 +182,7 @@ def _definition():
                 Table({"FQX": float, "FQY": float, "FQZ": float},
                       numbering="IQCLU", free_header=True, named_result=True),
                 name_in_grammar=False,
+                is_required=False,
             ),
         ],
         has_hidden_members=True,
@@ -236,6 +237,7 @@ def _definition():
                     free_header=True,
                 ),
                 name_in_grammar=False,
+                is_required=False,
             ),
             V(
                 "FULLPOT",
