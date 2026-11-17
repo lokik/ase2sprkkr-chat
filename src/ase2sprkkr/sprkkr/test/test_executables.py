@@ -89,7 +89,7 @@ def test_resolve_native_executable_from_input_parameters():
     def params(mode):
         return SimpleNamespace(CONTROL=SimpleNamespace(CLUTYPE=lambda: mode))
 
-    for name, cluster_name in (("kkrscf", "cluscf"), ("kkrgen", "clugen")):
+    for name, cluster_name in (("kkrscf", "embscf"), ("kkrgen", "embgen")):
         definition = executables[name]
         assert definition.resolve(params(None)) == name
         assert definition.resolve(params("embedded")) == cluster_name

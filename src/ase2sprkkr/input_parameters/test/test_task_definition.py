@@ -159,11 +159,12 @@ def test_task_definition_reader_alias_and_canonical_field_are_unambiguous():
 
 
 def test_task_definition_dataclass_replace_uses_canonical_reader_field():
-    task = TaskDefinition("SCF", output_reader="SCF")
+    task = TaskDefinition("SCF", output_reader="SCF", supports_embedded_cluster=True)
 
     replaced = replace(task, output_reader_name="DOS")
 
     assert replaced.output_reader_name == "DOS"
+    assert replaced.supports_embedded_cluster is True
     assert replace(task) == task
 
 
@@ -263,6 +264,13 @@ def test_builtin_task_definitions_are_metadata_objects():
         "execution_task_name",
     ):
         assert not hasattr(TaskDefinition, name)
+
+
+def test_embedded_cluster_support_is_explicit_task_metadata():
+    assert TaskDefinition("CUSTOM", executable="kkrgen").supports_embedded_cluster is False
+    supported = {task.name for task in InputParameters.task_registry.values()
+                 if task.supports_embedded_cluster}
+    assert supported == {"SCF", "DOS"}
 
 
 def test_input_parameters_use_generic_save_contract():
@@ -388,7 +396,7 @@ def test_unset_required_file_template_is_not_silently_dropped(tmp_path):
 
 
 def test_only_validated_tasks_declare_embedded_cluster_support():
-    """Sharing clugen does not make a periodic task meaningful for 0D."""
+    """Sharing embgen does not make a periodic task meaningful for 0D."""
     supported = {
         task.name for task in InputParameters.task_registry.values()
         if task.supports_embedded_cluster

@@ -89,6 +89,8 @@ class TaskDefinition:
 
     Convenience methods delegate task-bound operations to their owning service
     registries; resolution and parsing policy does not live in this value object.
+    Embedded-cluster support is opt-in per task, independently of whether its
+    executable has a cluster variant.
     """
 
     input_parameters_definition_name: str

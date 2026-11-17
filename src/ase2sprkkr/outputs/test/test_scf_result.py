@@ -127,7 +127,7 @@ def test_embedded_scf_result_reads_clupot_and_continues_with_dos(tmp_path):
         assert executables.resolve(
             prepared.input_parameters.task_definition_required().executable,
             prepared.input_parameters,
-        ) == "clugen"
+        ) == "embgen"
         assert os.path.isfile(prepared.cluster_potential_file)
         assert os.path.isfile(prepared.potential_file)
     finally:
