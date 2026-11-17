@@ -546,6 +546,20 @@ class Site:
     def atoms(self):
         return self._site_type.atoms
 
+    @property
+    def index(self):
+        """Index of this exact Site instance in its owning Atoms."""
+        for i, site in enumerate(self.atoms.sites):
+            if site is self:
+                return i
+        raise ValueError("Site is not present in its owning Atoms")
+
+    @property
+    def embedding(self):
+        """Live host reference and displacement for an embedded-cluster site."""
+        from .embedding import SiteEmbedding
+        return SiteEmbedding(self)
+
     def copy(self, site_type: Optional[Union[bool, SiteType]] = False):
         """
         Copy the site, optionally setting the new site_type (possibly to None) or
