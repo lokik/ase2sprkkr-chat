@@ -214,8 +214,12 @@ class Potential(ConfigurationFile):
             finally:
                 if position is not None:
                     filename.seek(position)
-        with open(filename, encoding="utf-8") as source:
-            return detect(source)
+        try:
+            with open(filename, encoding="utf-8") as source:
+                return detect(source)
+        except FileNotFoundError:
+            # Format probing must not obscure the regular file-loader error.
+            return False
 
     @classmethod
     def from_atoms(cls, atoms):
