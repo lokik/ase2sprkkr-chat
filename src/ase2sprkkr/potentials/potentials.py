@@ -181,12 +181,59 @@ class Potential(ConfigurationFile):
         """Create a potential from a string containing a content of a potential file."""
         return cls.from_file(StringIO(string), atoms, allow_dangerous)
 
+    @staticmethod
+    def is_cluster_file(filename):
+        """Identify native POTFIL_CLU from its contents, not its extension.
+
+        Only the native NQCLU declaration in GLOBAL SYSTEM PARAMETER identifies
+        a cluster file. This deliberately does not guess from a .pot suffix.
+        """
+        import re
+
+        def detect(lines):
+            in_globals = False
+            for line in lines:
+                name = line.strip().upper()
+                if name == "GLOBAL SYSTEM PARAMETER":
+                    in_globals = True
+                elif in_globals and re.match(r"^NQCLU\\s+\\d+\\b", name):
+                    return True
+                elif in_globals and re.match(r"^NQ\\s+\\d+\\b", name):
+                    return False
+                elif in_globals and name.startswith("*") and in_globals:
+                    # Section separators may surround a declaration.
+                    continue
+                elif in_globals and name in ("SCF-INFO", "LATTICE"):
+                    return False
+            return False
+
+        if hasattr(filename, "read"):
+            position = filename.tell() if hasattr(filename, "tell") else None
+            try:
+                return detect(filename)
+            finally:
+                if position is not None:
+                    filename.seek(position)
+        with open(filename, encoding="utf-8") as source:
+            return detect(source)
+
     @classmethod
     def from_atoms(cls, atoms):
-        """Create a potential, that describes the given atoms object."""
+        """Create the native periodic or embedded potential for *atoms*."""
         SPRKKRAtoms.promote_ase_atoms(atoms)
         if atoms.has_potential():
             return atoms.potential
+        if not any(atoms.pbc):
+            if atoms.embedding_host is None:
+                raise ValueError(
+                    "A 0D SPR-KKR structure requires sprkkr_embedding_host "
+                    "to create a cluster potential"
+                )
+            from .cluster_potentials import ClusterPotential
+
+            cluster = ClusterPotential.from_atoms(atoms)
+            atoms._potential = cluster
+            return cluster
         pd = Potential.potential_definition
         return cls(atoms=atoms, definition=pd)
 
