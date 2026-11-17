@@ -359,7 +359,7 @@ def test_embedded_preparation_writes_both_potentials_and_selects_cluster_executa
         assert prepared.input_parameters.CONTROL.CLUTYPE() == "embedded"
         assert Path(prepared.input_parameters.CONTROL.POTFIL_CLU()) == tmp_path / "host.clu.pot"
         assert calculator.input_parameters.CONTROL.CLUTYPE() is None
-        assert executables["kkrscf"].resolve(prepared.input_parameters) == "cluscf"
+        assert executables["kkrscf"].resolve(prepared.input_parameters) == "embscf"
 
         saved = InputParameters.from_file(prepared.input_file.name)
         assert saved.CONTROL.POTFIL() == "host.pot"
@@ -382,6 +382,6 @@ def test_embedded_input_without_cluster_file_is_rejected(tmp_path):
     parameters = InputParameters.create("SCF")
     parameters.CONTROL.POTFIL = "host.pot"
     parameters.CONTROL.CLUTYPE = "embedded"
-    assert executables["kkrscf"].resolve(parameters) == "cluscf"
+    assert executables["kkrscf"].resolve(parameters) == "embscf"
     with pytest.raises(ValueError, match="CONTROL.POTFIL_CLU"):
         parameters.input_files(str(tmp_path))

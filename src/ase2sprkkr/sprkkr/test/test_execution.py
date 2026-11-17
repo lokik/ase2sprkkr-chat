@@ -49,6 +49,22 @@ def test_profile_builds_portable_mpi_intent():
     assert spec.stdin is input_file
 
 
+@pytest.mark.parametrize(("task", "binary"), [("SCF", "embscf"), ("DOS", "embgen")])
+def test_embedded_tasks_use_native_serial_and_mpi_binary_names(task, binary):
+    from ase2sprkkr import InputParameters
+    from ..executables import executables
+
+    parameters = InputParameters.create(task)
+    parameters.CONTROL.CLUTYPE = "embedded"
+    executable = executables.resolve(parameters.task_definition.executable, parameters)
+    spec = SPRKKRProfile(executable_dir="/opt/sprkkr", mpi=2).create_execution(
+        executable, SimpleNamespace(name="/tmp/cluster.inp"), object(), "/tmp",
+        mpi_supported=True,
+    )
+    assert spec.argv == (f"/opt/sprkkr/{binary}",)
+    assert spec.mpi_argv == (f"/opt/sprkkr/{binary}MPI", "/tmp/cluster.inp")
+
+
 def test_non_mpi_task_ignores_profile_mpi():
     input_file = SimpleNamespace(name="/tmp/Fe.inp")
     spec = SPRKKRProfile(mpi=["mpirun", "-np", "4"]).create_execution(

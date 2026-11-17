@@ -51,6 +51,12 @@ native ``executable``, MPI support, output reader, experimental status
 and ``TaskFile`` input/output/cache manifests. It is not a second
 parser or a holder of the parameter values.
 
+Embedded-cluster support is declared separately by
+``supports_embedded_cluster=True`` on the task definition. It defaults to false;
+SCF and DOS currently opt in. Sharing an executable with a cluster variant does
+not imply that every task using it supports embedded clusters. Workflow clients
+check both the task capability and the executable's cluster variant.
+
 The distinction matters because multiple tasks can share one input
 parameter schema. For example, the DMI task uses JXC input parameters:
 

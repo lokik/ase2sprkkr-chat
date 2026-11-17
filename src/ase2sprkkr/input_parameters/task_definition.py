@@ -89,6 +89,8 @@ class TaskDefinition:
 
     Convenience methods delegate task-bound operations to their owning service
     registries; resolution and parsing policy does not live in this value object.
+    Embedded-cluster support is opt-in per task, independently of whether its
+    executable has a cluster variant.
     """
 
     input_parameters_definition_name: str
@@ -96,6 +98,7 @@ class TaskDefinition:
     executable: str
     mpi: bool
     experimental: bool
+    supports_embedded_cluster: bool
     output_reader_name: Optional[str]
     input_files: Tuple[TaskFile, ...]
     output_files: Tuple[TaskFile, ...]
@@ -109,6 +112,7 @@ class TaskDefinition:
         executable: str = "kkrscf",
         mpi: bool = True,
         experimental: bool = False,
+        supports_embedded_cluster: bool = False,
         output_reader_name: Optional[str] = None,
         output_reader: Optional[str] = None,
         input_files: Iterable[_FileTemplate] = (),
@@ -126,6 +130,8 @@ class TaskDefinition:
             raise TypeError("mpi must be a bool")
         if type(experimental) is not bool:
             raise TypeError("experimental must be a bool")
+        if type(supports_embedded_cluster) is not bool:
+            raise TypeError("supports_embedded_cluster must be a bool")
         if output_reader_name is not None and output_reader is not None:
             raise TypeError(
                 "Specify only one of output_reader_name and output_reader"
@@ -144,6 +150,7 @@ class TaskDefinition:
         object.__setattr__(self, "executable", executable)
         object.__setattr__(self, "mpi", mpi)
         object.__setattr__(self, "experimental", experimental)
+        object.__setattr__(self, "supports_embedded_cluster", supports_embedded_cluster)
         object.__setattr__(self, "output_reader_name", output_reader_name)
         for kind, values in (
             ("input", input_files),

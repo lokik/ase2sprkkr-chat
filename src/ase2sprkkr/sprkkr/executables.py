@@ -105,16 +105,18 @@ class _ExecutableRegistry(Mapping):
         return definition.resolve(input_parameters)
 
 
+# CLUSCF/CLUGEN are Fortran program identifiers; native makefile targets install
+# the corresponding binaries as embscf/embgen (with MPI variants suffixed MPI).
 executables = _ExecutableRegistry(
     (
         ExecutableDefinition(
             "kkrscf",
-            cluster_variant="cluscf",
+            cluster_variant="embscf",
             description="Potential generation and self-consistent calculations.",
         ),
         ExecutableDefinition(
             "kkrgen",
-            cluster_variant="clugen",
+            cluster_variant="embgen",
             description="Electronic-structure and general property calculations.",
         ),
         ExecutableDefinition(
