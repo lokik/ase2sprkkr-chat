@@ -1,24 +1,14 @@
 """Potential is object that holds data form SPR-KKR potential file"""
 
-from os import PathLike
-from pathlib import Path
-from io import StringIO
 from typing import Union
 
-from ..sprkkr.configuration import ConfigurationFile
 from ..sprkkr.io_data import ReadIoData, WriteIoData
-from ..common.decorators import class_property, cache
-from kkrunner.files.fingerprints import file_fingerprint
 from ..common.temporary import temporary_option_value
 from ..sprkkr.sprkkr_atoms import SPRKKRAtoms
-from .scf_state import PotentialScfState
+from .potential_base import Potential, PotentialFileChanged
 
 
-class PotentialFileChanged(RuntimeError):
-    """A potential file changed while it was being parsed."""
-
-
-class Potential(PotentialScfState, ConfigurationFile):
+class PeriodicPotential(Potential):
     """It holds data form SPR-KKR potential file
 
     It, in addition to being a containers for their sections, can read/write
@@ -108,136 +98,6 @@ class Potential(PotentialScfState, ConfigurationFile):
         atoms.update_sites_from_symbols()
         super().set_from_atoms(atoms, io_data)
         self.make_complete()
-
-    @class_property
-    @cache
-    def potential_definition(cls):
-        # import here to avoid circular import issues
-        from .definitions import potential as definition
-
-        return definition.potential_definition
-
-    @staticmethod
-    def from_file(
-        filename,
-        atoms=None,
-        allow_dangerous=False,
-        *,
-        check_file_unchanged=False,
-    ):
-        """Create a potential from a given potential file.
-
-        Parameters
-        ----------
-        check_file_unchanged
-          If True, require ``filename`` to be a filesystem path and verify with
-          cheap filesystem fingerprints that it was not replaced or rewritten
-          while being parsed. The check is opt-in because normal potential
-          loading does not require this provenance guarantee.
-        """
-        fingerprint = None
-        path = None
-        if check_file_unchanged:
-            if not isinstance(filename, (str, bytes, PathLike)):
-                raise TypeError(
-                    "check_file_unchanged=True requires a filesystem path"
-                )
-            path = Path(filename)
-            fingerprint = file_fingerprint(path)
-
-        pd = Potential.potential_definition
-        potential = pd.read_from_file(
-            filename,
-            atoms=atoms,
-            allow_dangerous=allow_dangerous,
-        )
-
-        if check_file_unchanged:
-            try:
-                current = file_fingerprint(path)
-            except OSError as exc:
-                raise PotentialFileChanged(
-                    f"Potential file changed while it was being read: {path}"
-                ) from exc
-            if current != fingerprint:
-                raise PotentialFileChanged(
-                    f"Potential file changed while it was being read: {path}"
-                )
-        return potential
-
-    @classmethod
-    def from_string(cls, string: str, atoms=None, allow_dangerous=False):
-        """Create a potential from a string containing a content of a potential file."""
-        return cls.from_file(StringIO(string), atoms, allow_dangerous)
-
-    @staticmethod
-    def is_cluster_file(filename):
-        """Identify native POTFIL_CLU from its contents, not its extension.
-
-        Only the native NQCLU declaration in GLOBAL SYSTEM PARAMETER identifies
-        a cluster file. This deliberately does not guess from a .pot suffix.
-        """
-        import re
-
-        def detect(lines):
-            in_globals = False
-            for line in lines:
-                name = line.strip().upper()
-                if name == "GLOBAL SYSTEM PARAMETER":
-                    in_globals = True
-                elif in_globals and re.match(r"^NQCLU\s+\d+\b", name):
-                    return True
-                elif in_globals and re.match(r"^NQ\s+\d+\b", name):
-                    return False
-                elif in_globals and name.startswith("*") and in_globals:
-                    # Section separators may surround a declaration.
-                    continue
-                elif in_globals and name in ("SCF-INFO", "LATTICE"):
-                    return False
-            return False
-
-        if hasattr(filename, "read"):
-            position = filename.tell() if hasattr(filename, "tell") else None
-            try:
-                return detect(filename)
-            finally:
-                if position is not None:
-                    filename.seek(position)
-        try:
-            with open(filename, encoding="utf-8") as source:
-                return detect(source)
-        except FileNotFoundError:
-            # Format probing must not obscure the regular file-loader error.
-            return False
-
-    @classmethod
-    def from_atoms(cls, atoms):
-        """Create the native periodic or embedded potential for *atoms*."""
-        SPRKKRAtoms.promote_ase_atoms(atoms)
-        if not any(atoms.pbc):
-            host = atoms.embedding_host
-            if host is None:
-                raise ValueError(
-                    "A 0D SPR-KKR structure requires sprkkr_embedding_host "
-                    "to create a cluster potential"
-                )
-            from .cluster_potentials import ClusterPotential
-
-            if atoms.has_potential():
-                cluster = atoms.potential
-                if not isinstance(cluster, ClusterPotential) or cluster.host is not host:
-                    raise ValueError(
-                        "A 0D structure's attached potential must be a "
-                        "ClusterPotential referencing its current host"
-                    )
-                return cluster
-            cluster = ClusterPotential.from_atoms(atoms)
-            atoms._potential = cluster
-            return cluster
-        if atoms.has_potential():
-            return atoms.potential
-        pd = Potential.potential_definition
-        return cls(atoms=atoms, definition=pd)
 
     def reset(self, update_atoms=True):
         copy = [i for i in self]

@@ -5,43 +5,10 @@ host unit cell nor its full geometry, so reading a cluster requires a
 separate host potential supplied through the ``host`` argument.
 """
 
-from io import StringIO
-from os import PathLike
-
 from ase import Atoms
 
 from ..potentials.cluster_potentials import ClusterPotential
 from ..potentials.potentials import Potential
-
-
-def _source(fd):
-    """Make file-like input reusable for format probing and parsing.
-
-    Non-seekable streams cannot be probed and read separately.  Buffer
-    file-like input once; filesystem paths continue to use streaming I/O.
-    """
-    if not hasattr(fd, "read"):
-        return fd
-    content = fd.read()
-    if isinstance(content, bytes):
-        content = content.decode("utf-8")
-    return StringIO(content)
-
-
-def _cluster_host(host):
-    if host is None:
-        raise ValueError(
-            "Reading CLUPOT as ASE Atoms requires a host potential; "
-            "pass host='host.pot' or host=Potential.from_file('host.pot'). "
-            "To inspect CLUPOT without its host, use ClusterPotential.from_file()."
-        )
-    if isinstance(host, (str, bytes, PathLike)) or hasattr(host, "read"):
-        host = Potential.from_file(host)
-    if not all(hasattr(host, attr) for attr in ("atoms", "LATTICE", "OCCUPATION")):
-        raise TypeError("CLUPOT host must be an ordinary SPR-KKR Potential or its file path")
-    if isinstance(host, ClusterPotential):
-        raise TypeError("CLUPOT host must be an ordinary (non-cluster) potential")
-    return host
 
 
 def read_sprkkr(fd, index=None, *, host=None, allow_dangerous=False, **kwargs):
@@ -51,14 +18,13 @@ def read_sprkkr(fd, index=None, *, host=None, allow_dangerous=False, **kwargs):
     extension.  CLUPOT requires ``host``, either a Potential or a path to
     an ordinary potential file.
     """
-    source = _source(fd)
-    if Potential.is_cluster_file(source):
-        potential = ClusterPotential.from_file(
-            source, host=_cluster_host(host), allow_dangerous=allow_dangerous
+    potential = Potential.from_file(fd, host=host, allow_dangerous=allow_dangerous)
+    if isinstance(potential, ClusterPotential) and potential.host is None:
+        raise ValueError(
+            "Reading CLUPOT as ASE Atoms requires a host potential; "
+            "pass host='host.pot' or host=Potential.from_file('host.pot')."
         )
-        atoms = potential.atoms
-    else:
-        atoms = Potential.from_file(source, allow_dangerous=allow_dangerous).atoms
+    atoms = potential.atoms
     if index is not None:
         return [atoms][index]
     return atoms

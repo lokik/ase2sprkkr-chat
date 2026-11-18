@@ -166,6 +166,15 @@ not contain the host cell or full host structure.
    cluster.sites[0].embedding.displacement = (0.1, 0.0, 0.0)
    write("edited.clupot", cluster, format="SPRKKR")
 
+For potential objects, the common ``Potential.from_file()`` entry point
+accepts both native POTFIL and CLUPOT contents (including non-seekable
+file streams) and returns a concrete ``PeriodicPotential`` or
+``EmbeddedPotential``. Their own ``from_file()`` methods are
+strict about the native format; neither accepts the other file type.
+The historic ``ClusterPotential`` name remains an alias for
+``EmbeddedPotential``. Parsing CLUPOT does not require a host; only
+reconstructing embedded ASE atoms does.
+
 The ``host`` argument may also be a path such as ``host="host.pot"``.
 The same reader detects CLUPOT by its contents, even when the filename
 ends in ``.pot``. Writing a zero-dimensional embedded structure selects

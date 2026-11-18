@@ -10,28 +10,23 @@ import re
 import numpy as np
 from ase.units import Bohr
 
-from ..sprkkr.configuration import ConfigurationFile
+from .potential_base import Potential
 from ..sprkkr.embedding import EMBEDDING_ARRAY, EMBEDDING_HOST, embedding_data, host_atoms
-from .scf_state import PotentialScfState
 
 
 def _from_start_native(text):
-    """CLUPOTRD reads two magnetisation header lines for START, one otherwise.
+    """Remove the extra native START direction heading, if present.
 
-    The grammar's table parser needs just one, so discard the additional
-    descriptive line on input. All numerical rows are kept verbatim.
+    This transform is safe to apply before the root-level grammar choice:
+    it only recognizes CLUPOT's specific IQ/QMTET/QMPHI table header,
+    never the periodic potential's different magnetisation fields.
     """
-    if not re.search(r"(?m)^SCFSTATUS\s+START\b", text):
-        return text
     lines = text.splitlines(keepends=True)
     for i, line in enumerate(lines):
-        if line.strip() == "MAGNETISATION DIRECTION" and i + 2 < len(lines):
-            # A native START file has two successive non-numerical header
-            # lines before the first row. A one-header file also parses.
-            def is_data(line):
-                return bool(re.match(r"^\s*\d+\s+[-+0-9.eEdD]+\s+[-+0-9.eEdD]+", line))
-            if not is_data(lines[i + 2]):
-                del lines[i + 1]
+        if line.strip() != "MAGNETISATION DIRECTION" or i + 2 >= len(lines):
+            continue
+        if re.match(r"^\\s*IQ\\s+QMTET\\s+QMPHI\\s*$", lines[i + 2], re.I):
+            del lines[i + 1]
             break
     return "".join(lines)
 
@@ -63,7 +58,7 @@ def _host_value(host, name, default):
         return default
 
 
-class ClusterPotential(PotentialScfState, ConfigurationFile):
+class EmbeddedPotential(Potential):
     """A native POTFIL_CLU and its mapping to an external host potential."""
 
     def __init__(self, definition=None):
@@ -142,25 +137,6 @@ class ClusterPotential(PotentialScfState, ConfigurationFile):
                 f"(maximum site-position deviation {max(errors):.4g} Å)."
             )
         return None
-
-    @classmethod
-    def from_file(cls, filename, *, host=None, allow_dangerous=False):
-        """Read a native cluster potential, preserving all five translations."""
-        from .definitions.cluster import cluster_definition
-        if hasattr(filename, "read"):
-            content = filename.read()
-        else:
-            with open(filename, encoding="utf-8") as file:
-                content = file.read()
-        cluster = cluster_definition.read_from_file(
-            StringIO(_from_start_native(content)), allow_dangerous=allow_dangerous
-        )
-        cluster.host = host
-        return cluster
-
-    @classmethod
-    def from_string(cls, content, *, host=None, allow_dangerous=False):
-        return cls.from_file(StringIO(content), host=host, allow_dangerous=allow_dangerous)
 
     def save_to_file(self, file, *, validate="save"):
         """Write the native format, including START-specific header handling."""
@@ -571,3 +547,7 @@ class ClusterPotential(PotentialScfState, ConfigurationFile):
         atoms._potential = self
         self._atoms = atoms
         return atoms
+
+
+# Compatibility alias for the pre-refactoring embedded potential API.
+ClusterPotential = EmbeddedPotential

@@ -16,7 +16,7 @@ from ..potential_definitions import (
     Separator,
 )
 from ..potential_sections import RepeatedPotentialSection
-from ..cluster_potentials import ClusterPotential
+from ..cluster_potentials import EmbeddedPotential
 from .sections import ChargeSectionDefinition, PotentialSectionDefinition, TypesSectionDefinition, MomentsSectionDefinition
 from .sections.scf_info import scf_info_members
 from .sections.mesh_information import mesh_information_members
@@ -41,7 +41,7 @@ def _occupation_count_matches(row):
 class ClusterPotentialDefinition(PotentialDefinition):
     """Definition of the separate POTFIL_CLU format."""
 
-    result_class = ClusterPotential
+    result_class = EmbeddedPotential
     configuration_type_name = "CLUSTER POTENTIAL FILE"
 
     def _generic_info(self):

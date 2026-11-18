@@ -17,7 +17,7 @@ from ..sprkkr.configuration import (
     CustomConfigurationValue,
 )
 from .custom_potential_section import CustomPotentialSection, SectionString
-from .potentials import Potential
+from .potentials import PeriodicPotential
 from .potential_sections import PotentialSection, ASEArraySection
 from ..common.decorators import cached_class_property, cache
 from ..common.decorators import add_to_signature
@@ -129,7 +129,7 @@ class PotentialDefinition(ConfigurationFileDefinition):
     child_class = PotSectionDefinition
     """ Definition of the standard child class: """
 
-    result_class = Potential
+    result_class = PeriodicPotential
     """ The parsing of a potential file results in an instance of Potential. """
 
     configuration_type_name = "POTENTIAL FILE"
