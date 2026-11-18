@@ -363,7 +363,13 @@ def test_cluster_fullpot_radial_and_mesh_round_trip():
     assert restored.POTENTIAL[0].FULLPOT().strip() == potential_payload
     assert restored.CHARGE[0].FULLPOT().strip() == charge_payload
     assert restored.MESH_INFORMATION.FULLPOT() is not None
-    round_tripped = restored.to_atoms(_radial_host())
+    output = StringIO()
+    restored.save_to_file(output, validate=False)
+    saved = ClusterPotential.from_string(output.getvalue(), host=_radial_host())
+    assert saved.POTENTIAL[0].FULLPOT().strip() == potential_payload
+    assert saved.CHARGE[0].FULLPOT().strip() == charge_payload
+    assert saved.MESH_INFORMATION.FULLPOT() is not None
+    round_tripped = saved.to_atoms()
     final = next(iter(round_tripped.sites[0].occupation.items()))[0]
     assert final.potential.fullpot_data.strip() == potential_payload
     assert final.charge.fullpot_data.strip() == charge_payload
@@ -415,3 +421,51 @@ def test_cluster_potential_keeps_host_reference():
     cluster.host = other
     assert cluster.host is other
     assert cluster.atoms.info["sprkkr_embedding_host"] is other
+
+
+
+def test_generated_cluster_populates_sections_without_reparsing(monkeypatch):
+    """The native grammar is the sole serialization implementation."""
+    host = _radial_host()
+    atoms = ClusterPotential.from_string(_sample(mesh=True)).to_atoms(host)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("from_atoms must not serialize and parse CLUPOT")
+
+    monkeypatch.setattr(ClusterPotential, "from_string", forbidden)
+    cluster = ClusterPotential.from_atoms(atoms)
+    assert cluster.TYPES.DATA()[0]["TXT"] == "Fe"
+    assert cluster.MESH_INFORMATION.DATA()[0]["IM"] == 7
+    assert cluster.POTENTIAL[0].TYPE() == 9
+    assert cluster.MOMENTS[0].TYPE() == 9
+
+
+def test_generated_radial_cluster_save_and_reload():
+    """Generated sections must produce a parseable native iterating file."""
+    import numpy as np
+
+    host = _radial_host()
+    atoms = ClusterPotential.from_string(_sample(mesh=True)).to_atoms(host)
+    rebuilt = ClusterPotential.from_atoms(atoms)
+    output = StringIO()
+    rebuilt.save_to_file(output, validate=False)
+    text = output.getvalue()
+    assert "SCFSTATUS" in text and "ITERATING" in text
+    assert "MESH INFORMATION" in text
+    restored = ClusterPotential.from_string(text, host=host)
+    assert restored.OCCUPATION.DATA()[0]["IMQCLU"] == 7
+    assert restored.POTENTIAL[0].TYPE() == 9
+    assert restored.MOMENTS[0].TYPE() == 9
+    restored_type = next(iter(restored.to_atoms().sites[0].occupation.items()))[0]
+    np.testing.assert_allclose(restored_type.potential.raw_value,
+                               next(iter(atoms.sites[0].occupation.items()))[0].potential.raw_value)
+
+
+
+def test_cluster_convergence_uses_shared_scf_state():
+    cluster = ClusterPotential.from_string(_sample())
+    assert not cluster.is_scf_converged()
+    cluster.SCF_INFO.SCFSTATUS = "CONVERGED"
+    assert cluster.is_scf_converged()
+    cluster.SCF_INFO.SCFSTATUS = "START"
+    assert not cluster.is_scf_converged()

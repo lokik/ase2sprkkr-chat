@@ -11,13 +11,14 @@ from ..common.decorators import class_property, cache
 from kkrunner.files.fingerprints import file_fingerprint
 from ..common.temporary import temporary_option_value
 from ..sprkkr.sprkkr_atoms import SPRKKRAtoms
+from .scf_state import PotentialScfState
 
 
 class PotentialFileChanged(RuntimeError):
     """A potential file changed while it was being parsed."""
 
 
-class Potential(ConfigurationFile):
+class Potential(PotentialScfState, ConfigurationFile):
     """It holds data form SPR-KKR potential file
 
     It, in addition to being a containers for their sections, can read/write
@@ -107,18 +108,6 @@ class Potential(ConfigurationFile):
         atoms.update_sites_from_symbols()
         super().set_from_atoms(atoms, io_data)
         self.make_complete()
-
-    def is_scf_converged(self, atoms=None):
-        """Return whether this potential represents a converged SCF state."""
-        status = self.SCF_INFO.SCFSTATUS()
-        if status == "CONVERGED":
-            return True
-        if status != "START":
-            return False
-
-        if atoms is None:
-            atoms = self._atoms
-        return atoms is not None and atoms.sprkkr_has_converged_data()
 
     @class_property
     @cache

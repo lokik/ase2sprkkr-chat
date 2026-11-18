@@ -18,7 +18,7 @@ class MomentsSection(AtomicTypePotentialSection):
 
 
 class MomentsSectionDefinition(PotSectionDefinition):
-    def __init__(self, name="MOMENTS", **kwargs):
+    def __init__(self, name="MOMENTS", *, cluster=False, **kwargs):
         V = PotValueDefinition
         members = [
             V("TYPE", int),
@@ -29,14 +29,18 @@ class MomentsSectionDefinition(PotSectionDefinition):
             ),
             SeparatorDefinition("=", length=79),
         ]
+        heading = {} if cluster else {
+            "written_name": "MOMENTS        QEL  NOS  SMT  OMT  HFF",
+            "name_regex": re.compile(r"MOMENTS(?:(?: *[A-Z]{3}){5})"),
+        }
         super().__init__(
             name,
             members,
             has_hidden_members=True,
             is_repeated=BaseDefinition.Repeated.LIST_SECTION,
             is_optional=True,
-            written_name="MOMENTS        QEL  NOS  SMT  OMT  HFF",
-            name_regex=re.compile(r"MOMENTS(?:(?: *[A-Z]{3}){5})"),
+            **heading,
+            **kwargs,
         )
 
     result_class = MomentSection

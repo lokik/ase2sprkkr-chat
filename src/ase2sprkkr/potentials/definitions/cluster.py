@@ -8,7 +8,7 @@ A cluster potential is not a periodic potential with extra atomic sites.
 import re
 
 from ...common.configuration_definitions import BaseDefinition, SeparatorDefinition
-from ...common.grammar_types import Array, DefKeyword, NumpyArray, RawData, Sequence, Table, line_string
+from ...common.grammar_types import Array, NumpyArray, RawData, Sequence, Table, line_string
 from ..potential_definitions import (
     PotSectionDefinition,
     PotValueDefinition as V,
@@ -17,7 +17,10 @@ from ..potential_definitions import (
 )
 from ..potential_sections import RepeatedPotentialSection
 from ..cluster_potentials import ClusterPotential
-from .sections import ChargeSectionDefinition, PotentialSectionDefinition, TypesSectionDefinition
+from .sections import ChargeSectionDefinition, PotentialSectionDefinition, TypesSectionDefinition, MomentsSectionDefinition
+from .sections.scf_info import scf_info_members
+from .sections.mesh_information import mesh_information_members
+from .sections.occupation import occupation_count_matches
 
 
 def _has_table_rows(root, section_name):
@@ -32,7 +35,7 @@ def _has_table_rows(root, section_name):
 
 def _occupation_count_matches(row):
     """NOQCLU must equal the number of (ITCLU, concentration) pairs."""
-    return row[1] == len(row[2]) or "NOQCLU differs from the number of occupations"
+    return occupation_count_matches(row[1], row[2], field="NOQCLU")
 
 
 class ClusterPotentialDefinition(PotentialDefinition):
@@ -88,38 +91,8 @@ def _definition():
         has_hidden_members=True,
     )
 
-    # CLUPOTWR uses ITERATING (rather than the periodic potential's
-    # CONVERGED/ITR-* convention), and NE is a scalar.
-    section(
-        "SCF-INFO",
-        [
-            V("INFO", line_string, "NONE"),
-            V("SCFSTATUS", str, "START"),
-            V("FULLPOT", False),
-            V("SPHERCELL", False, is_optional=True),
-            V("BREITINT", False),
-            V("NONMAG", False),
-            V("ORBPOL", str, "NONE"),
-            V("EXTFIELD", False),
-            V("BLCOUPL", False),
-            V("BEXT", 0.0),
-            V("SEMICORE", False),
-            V("LLOYD", False),
-            V("NE", int),
-            V("IBZINT", int),
-            V("NKTAB", int),
-            V("XC-POT", str),
-            V("SCF-ALG", str),
-            V("SCF-ITER", int),
-            V("SCF-MIX", float),
-            V("SCF-TOL", float),
-            V("RMSAVV", float),
-            V("RMSAVB", float),
-            V("EF", float),
-            V("VMTZ", float),
-        ],
-        has_hidden_members=True,
-    )
+    # Share the periodic SCF fields with native CLUPOT-specific overrides.
+    section("SCF-INFO", scf_info_members(cluster=True), has_hidden_members=True)
 
     # The cluster file contains only the dimensionality/type of the
     # lattice.  All lattice vectors belong to the separate host POTFIL.
@@ -225,30 +198,10 @@ def _definition():
         has_hidden_members=True,
     )
 
-    # Only present when NMCLU != 0.  IMs are likewise GLOBAL mesh IDs.
+    # Native global mesh IDs, including possible references to host meshes.
     section(
         "MESH INFORMATION",
-        [
-            V("MESH-TYPE", DefKeyword("EXPONENTIAL")),
-            V(
-                "DATA",
-                Table(
-                    {"IM": int, "R(1)": float, "DX": float, "JRMT": int, "RMT": float, "JRWS": int, "RWS": float},
-                    free_header=True,
-                ),
-                name_in_grammar=False,
-                is_required=False,
-            ),
-            V(
-                "FULLPOT",
-                Table(
-                    {"IM": int, "JRNS1": int, "JRCRI": int, "NPAN": int, "JRCUT": Array(int)},
-                    free_header=True,
-                ),
-                name_in_grammar=False,
-                is_optional=True,
-            ),
-        ],
+        mesh_information_members(cluster=True),
         has_hidden_members=True,
         is_optional=True,
         write_condition=lambda root: _has_table_rows(root, "MESH_INFORMATION"),
@@ -259,21 +212,7 @@ def _definition():
     section("TYPES", cls=TypesSectionDefinition)
     section("POTENTIAL", cls=PotentialSectionDefinition)
     section("CHARGE", cls=ChargeSectionDefinition)
-    sections.append(
-        _repeated_block(
-            "MOMENTS",
-            [
-                V(
-                    "DATA",
-                    NumpyArray(
-                        lines=1, shape=(5,), written_shape=(1, 5),
-                        item_format="% .14E", indented=1,
-                    ),
-                    name_in_grammar=False,
-                ),
-            ],
-        )
-    )
+    section("MOMENTS", cls=MomentsSectionDefinition, cluster=True)
 
     # CLUPOTWR emits optional Brooks orbital-polarization and DMFT blocks.
     sections.append(

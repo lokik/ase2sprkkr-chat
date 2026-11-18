@@ -40,32 +40,39 @@ class MeshInformationSection(UniqueListSection):
                 mesh.set_fullpot(full)
 
 
+def mesh_information_members(*, cluster=False):
+    """Reuse radial mesh fields while respecting CLUPOT global mesh IDs."""
+    V = PotValueDefinition
+    radial_defaults = {
+        "R(1)": 1e-6, "DX": 2e-2, "JRMT": 0,
+        "RMT": 0.0, "JRWS": 721, "RWS": 0.0,
+    }
+    radial_columns = {name: type(default) for name, default in radial_defaults.items()}
+    fullpot_columns = {
+        "JRNS1": int, "JRCRI": int, "NPAN": int, "JRCUT": Array(int),
+    }
+    if cluster:
+        data = Table({"IM": int, **radial_columns}, free_header=True)
+        fullpot = Table({"IM": int, **fullpot_columns}, free_header=True)
+    else:
+        data = Table(radial_defaults, numbering="IM",
+                     numbering_format=">5", format=">16")
+        fullpot = Table(fullpot_columns, numbering="IM",
+                        numbering_format=">5", format=">16")
+    return [
+        V("MESH-TYPE", DefKeyword("EXPONENTIAL")),
+        V("DATA", data, **({
+            "name_in_grammar": False, "is_required": False,
+        } if cluster else {})),
+        V("FULLPOT", fullpot, is_optional=True,
+          **({"name_in_grammar": False} if cluster else {})),
+    ]
+
+
 class MeshInformationSectionDefinition(PotSectionDefinition):
     def __init__(self, name="MESH INFORMATION", **kwargs):
-        V = PotValueDefinition
-        members = [
-            V("MESH-TYPE", DefKeyword("EXPONENTIAL")),
-            V(
-                "DATA",
-                Table(
-                    {"R(1)": 1e-6, "DX": 2e-2, "JRMT": 0, "RMT": 0.0, "JRWS": 721, "RWS": 0.0},
-                    numbering="IM",
-                    numbering_format=">5",
-                    format=">16",  # header_length=80
-                ),
-            ),
-            V(
-                "FULLPOT",
-                Table(
-                    {"JRNS1": int, "JRCRI": int, "NPAN": int, "JRCUT": Array(int)},
-                    numbering="IM",
-                    numbering_format=">5",
-                    format=">16",
-                ),
-                is_optional=True,
-            ),
-        ]
-        super().__init__(name, members, has_hidden_members=True)
+        super().__init__(name, mesh_information_members(),
+                         has_hidden_members=True, **kwargs)
 
     result_class = MeshInformationSection
 

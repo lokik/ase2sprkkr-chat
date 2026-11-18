@@ -79,7 +79,6 @@ def fce():
     Section("CHARGE MOMENTS", cls=ChargeMomentsSectionDefinition)
     Section("MAGNETISATION DIRECTION", cls=MagnetisationDirectionSectionDefinition)
     Section("MESH INFORMATION", cls=MeshInformationSectionDefinition)
-    Section("OCCUPATION", cls=OccupationSectionDefinition)
     Section("TYPES", cls=TypesSectionDefinition)
     Section("POTENTIAL", cls=PotentialSectionDefinition)
     Section("CHARGE", cls=ChargeSectionDefinition)

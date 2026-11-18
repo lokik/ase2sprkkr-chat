@@ -33,40 +33,55 @@ class ScfInfoSection(PotentialSection):
             self.VMTZ = atoms.info["sprkkr_vmtz"]
 
 
+def scf_info_members(*, cluster=False):
+    """Shared POTFIL/CLUPOT SCF fields, retaining native order and types."""
+    V = PotValueDefinition
+    fields = [
+        V("INFO", line_string, "NONE"),
+        (V("SCFSTATUS", str, "START") if cluster else
+         V("SCFSTATUS", DefKeyword(
+             "START", "CONVERGED", "ITR-BULK", "ITR-R-BULK",
+             "ITR-L-BULK", "ITR-I-ZONE", "ITR",
+         ))),
+        V("FULLPOT", False),
+    ]
+    if cluster:
+        fields.append(V("SPHERCELL", False, is_optional=True))
+    fields.extend([
+        V("BREITINT", False),
+        V("NONMAG" if cluster else ("NONMAG", "NOMAG"), False),
+        V("ORBPOL", str, "NONE"),
+        V("EXTFIELD", False),
+        V("BLCOUPL", False),
+        V("BEXT", 0.0),
+        V("SEMICORE", False),
+        V("LLOYD", False),
+        V("NE", int if cluster else Array(int),
+          **({} if cluster else {"is_optional": True})),
+        V("IBZINT", int, **({} if cluster else {"is_optional": True})),
+        V("NKTAB", int, **({} if cluster else {"is_optional": True})),
+    ])
+    if not cluster:
+        fields.append(V("TETDEPPOT", False, is_optional=True))
+    fields.extend([
+        V("XC-POT", str, **({} if cluster else {"is_optional": True})),
+        V("SCF-ALG", str, **({} if cluster else {"is_optional": True})),
+        V("SCF-ITER", int if cluster else 0),
+        V("SCF-MIX", float if cluster else 0.2),
+        V("SCF-TOL", float if cluster else 1e-5),
+        V("RMSAVV", float if cluster else 999999.0),
+        V("RMSAVB", float if cluster else 999999.0),
+        V("EF", float if cluster else 999999.0),
+        V("VMTZ", float if cluster else 0.7),
+    ])
+    if not cluster:
+        fields.append(V("EWORK", float, is_optional=True))
+    return fields
+
+
 class ScfInfoSectionDefinition(PotSectionDefinition):
     def __init__(self, name="SCF-INFO", **kwargs):
-        V = PotValueDefinition
-        members = [
-            V("INFO", line_string, "NONE"),
-            V(
-                "SCFSTATUS",
-                DefKeyword("START", "CONVERGED", "ITR-BULK", "ITR-R-BULK", "ITR-L-BULK", "ITR-I-ZONE", "ITR"),
-            ),
-            V("FULLPOT", False),
-            V("BREITINT", False),
-            V(("NONMAG", "NOMAG"), False),
-            V("ORBPOL", str, "NONE"),
-            V("EXTFIELD", False),
-            V("BLCOUPL", False),
-            V("BEXT", 0.0),
-            V("SEMICORE", False),
-            V("LLOYD", False),
-            V("NE", Array(int), is_optional=True),
-            V("IBZINT", int, is_optional=True),
-            V("NKTAB", int, is_optional=True),
-            V("TETDEPPOT", False, is_optional=True),
-            V("XC-POT", str, is_optional=True),
-            V("SCF-ALG", str, is_optional=True),
-            V("SCF-ITER", 0),
-            V("SCF-MIX", 0.2),
-            V("SCF-TOL", 1e-5),
-            V("RMSAVV", 999999.0),
-            V("RMSAVB", 999999.0),
-            V("EF", 999999.0),
-            V("VMTZ", 0.7),
-            V("EWORK", float, is_optional=True),
-        ]
-        super().__init__(name, members, has_hidden_members=True)
+        super().__init__(name, scf_info_members(), has_hidden_members=True, **kwargs)
 
     result_class = ScfInfoSection
 

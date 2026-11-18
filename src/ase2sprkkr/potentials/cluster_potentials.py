@@ -12,10 +12,7 @@ from ase.units import Bohr
 
 from ..sprkkr.configuration import ConfigurationFile
 from ..sprkkr.embedding import EMBEDDING_ARRAY, EMBEDDING_HOST, embedding_data, host_atoms
-
-
-def _section(name, *lines):
-    return "\n".join(("*" * 79, name, *lines))
+from .scf_state import PotentialScfState
 
 
 def _from_start_native(text):
@@ -47,20 +44,6 @@ def _to_start_native(text):
                         "Initial cluster magnetisation directions\n", 1)
 
 
-def _radial_block(name, type_number, values, *, fullpot_data=None):
-    """Serialize a native radial block without reinterpreting FULLPOT data."""
-    output = StringIO()
-    np.savetxt(output, np.atleast_2d(values), fmt="% .14E")
-    payload = output.getvalue().rstrip("\n")
-    if fullpot_data:
-        # The raw block includes its NFP marker and original coefficient
-        # structure. It belongs after the spherical rows and before =====.
-        if not fullpot_data.lstrip().startswith("NFP"):
-            raise ValueError("Non-spherical radial data must contain an NFP header")
-        payload += "\n" + fullpot_data.strip("\n")
-    return _section(name, f"TYPE      {type_number}", payload, "=" * 79)
-
-
 def _host_potential(atoms):
     host = atoms.info.get(EMBEDDING_HOST)
     if host is None or not hasattr(host, "LATTICE") or not hasattr(host, "OCCUPATION"):
@@ -80,7 +63,7 @@ def _host_value(host, name, default):
         return default
 
 
-class ClusterPotential(ConfigurationFile):
+class ClusterPotential(PotentialScfState, ConfigurationFile):
     """A native POTFIL_CLU and its mapping to an external host potential."""
 
     def __init__(self, definition=None):
@@ -159,17 +142,6 @@ class ClusterPotential(ConfigurationFile):
                 f"(maximum site-position deviation {max(errors):.4g} Å)."
             )
         return None
-
-    def is_scf_converged(self, atoms=None):
-        """Use the native cluster SCFSTATUS, as for an ordinary Potential."""
-        status = self.SCF_INFO.SCFSTATUS()
-        if status == "CONVERGED":
-            return True
-        if status != "START":
-            return False
-        if atoms is None:
-            atoms = self._atoms
-        return atoms is not None and atoms.sprkkr_has_converged_data()
 
     @classmethod
     def from_file(cls, filename, *, host=None, allow_dangerous=False):
@@ -305,42 +277,47 @@ class ClusterPotential(ConfigurationFile):
                 raise ValueError("Every cluster type needs both FULLPOT potential and charge data")
             if any(site.mesh.fullpot is None for site in atoms.sites):
                 raise ValueError("FULLPOT radial data require matching FULLPOT mesh information")
-        lines = [
-            "*" * 79,
-            "HEADER    'SPR-KKR cluster dataset created by ASE2SPRKKR'",
-            "*" * 79,
-            f"TITLE     '{title}'",
-            "SYSTEM    'Embedded cluster in a host potential'",
-            _section("GLOBAL SYSTEM PARAMETER",
-                     f"NQCLU     {n}", f"NTCLU     {len(types)}", f"NMCLU     {nm}"),
-            _section("SCF-INFO",
-                     "INFO      'Initial embedded cluster'",
-                     f"SCFSTATUS {scf_status}",
-                     f"FULLPOT   {'T' if has_fullpot or _host_value(host, 'FULLPOT', False) else 'F'}",
-                     f"BREITINT  {'T' if _host_value(host, 'BREITINT', False) else 'F'}",
-                     f"NONMAG    {'T' if _host_value(host, 'NONMAG', False) else 'F'}",
-                     f"ORBPOL    {_host_value(host, 'ORBPOL', 'NONE')}",
-                     f"EXTFIELD  {'T' if _host_value(host, 'EXTFIELD', False) else 'F'}",
-                     f"BLCOUPL   {'T' if _host_value(host, 'BLCOUPL', False) else 'F'}",
-                     f"BEXT      {_host_value(host, 'BEXT', 0.0)}",
-                     f"SEMICORE  {'T' if _host_value(host, 'SEMICORE', False) else 'F'}",
-                     f"LLOYD     {'T' if _host_value(host, 'LLOYD', False) else 'F'}",
-                     f"NE        {_host_value(host, 'NE', 32)}",
-                     f"IBZINT    {_host_value(host, 'IBZINT', 2)}",
-                     f"NKTAB     {_host_value(host, 'NKTAB', 100)}",
-                     f"XC-POT    {_host_value(host, 'XC-POT', 'VWN')}",
-                     f"SCF-ALG   {_host_value(host, 'SCF-ALG', 'BROYDEN')}",
-                     "SCF-ITER  0",
-                     f"SCF-MIX   {_host_value(host, 'SCF-MIX', 0.2)}",
-                     f"SCF-TOL   {_host_value(host, 'SCF-TOL', 1e-5)}",
-                     "RMSAVV    999999.0",
-                     "RMSAVB    999999.0",
-                     f"EF        {_host_value(host, 'EF', 0.0)}",
-                     f"VMTZ      {_host_value(host, 'VMTZ', 0.7)}"),
-            _section("LATTICE",
-                     f"SYSDIM    {host.LATTICE.SYSDIM()}",
-                     f"SYSTYPE   {host.LATTICE.SYSTYPE()}"),
-        ]
+        # Fill the same section definitions used by the CLUPOT parser.
+        # Do not render native text and parse it back into a second object:
+        # that would duplicate the grammar and hide formatting differences.
+        cluster = cls()
+        cluster.host = host
+        cluster.HEADER.HEADER = "SPR-KKR cluster dataset created by ASE2SPRKKR"
+        cluster.HEADER.TITLE = title
+        cluster.HEADER.SYSTEM = "Embedded cluster in a host potential"
+        cluster.GLOBAL_SYSTEM_PARAMETER.NQCLU = n
+        cluster.GLOBAL_SYSTEM_PARAMETER.NTCLU = len(types)
+        cluster.GLOBAL_SYSTEM_PARAMETER.NMCLU = nm
+
+        scf_values = {
+            "INFO": "Initial embedded cluster",
+            "SCFSTATUS": scf_status,
+            "FULLPOT": has_fullpot or _host_value(host, "FULLPOT", False),
+            "BREITINT": _host_value(host, "BREITINT", False),
+            "NONMAG": _host_value(host, "NONMAG", False),
+            "ORBPOL": _host_value(host, "ORBPOL", "NONE"),
+            "EXTFIELD": _host_value(host, "EXTFIELD", False),
+            "BLCOUPL": _host_value(host, "BLCOUPL", False),
+            "BEXT": _host_value(host, "BEXT", 0.0),
+            "SEMICORE": _host_value(host, "SEMICORE", False),
+            "LLOYD": _host_value(host, "LLOYD", False),
+            "NE": _host_value(host, "NE", 32),
+            "IBZINT": _host_value(host, "IBZINT", 2),
+            "NKTAB": _host_value(host, "NKTAB", 100),
+            "XC-POT": _host_value(host, "XC-POT", "VWN"),
+            "SCF-ALG": _host_value(host, "SCF-ALG", "BROYDEN"),
+            "SCF-ITER": 0,
+            "SCF-MIX": _host_value(host, "SCF-MIX", 0.2),
+            "SCF-TOL": _host_value(host, "SCF-TOL", 1e-5),
+            "RMSAVV": 999999.0,
+            "RMSAVB": 999999.0,
+            "EF": _host_value(host, "EF", 0.0),
+            "VMTZ": _host_value(host, "VMTZ", 0.7),
+        }
+        cluster.SCF_INFO.set(scf_values)
+        cluster.LATTICE.SYSDIM = host.LATTICE.SYSDIM()
+        cluster.LATTICE.SYSTYPE = host.LATTICE.SYSTYPE()
+
         site_rows = []
         shift_rows = []
         mag_rows = []
@@ -355,44 +332,29 @@ class ClusterPotential(ConfigurationFile):
                 n_right = int(host.LATTICE.NQ_R())
                 if original < n_left or original >= len(reference) - n_right:
                     raise ValueError("CLUPOT cannot embed a site in the semi-infinite bulk")
-            native = " ".join(map(str, row[1:6]))
             x, y, z = atoms.positions[i - 1] / alat
-            site_rows.append(f"{i} {native} {original + 1} {x:.14g} {y:.14g} {z:.14g}")
-            dx, dy, dz = site.embedding.displacement / alat
-            shift_rows.append(f"{i} {dx:.14g} {dy:.14g} {dz:.14g}")
+            site_rows.append((*map(int, row[1:6]), original + 1, x, y, z))
+            shift_rows.append(tuple(site.embedding.displacement / alat))
             theta, phi = site.magnetisation
-            mag_rows.append(f"{len(reference) + i} {float(theta):.14g} {float(phi):.14g}")
+            mag_rows.append((len(reference) + i, float(theta), float(phi)))
             mesh = mesh_ids[i - 1] if with_radial else int(host_occupations[original]["IMQ"])
-            fields = " ".join(f"{it} {fraction:.14g}" for it, fraction in components)
-            occ_rows.append(f"{i} {mesh} {len(components)} {fields}")
+            occ_rows.append((mesh, len(components), tuple(components)))
 
-        lines += [
-            _section("SITES",
-                     "positions of cluster sites (QX,QY,QZ) include SHIFTS",
-                     "IQCLU N5VEC1 N5VEC2 N5VEC3 N5VEC4 N5VEC5 IQ QX QY QZ",
-                     *site_rows),
-            _section("SHIFTS",
-                     "shift from original lattice site positions",
-                     f"SHIFT     {'T' if shifted else 'F'}",
-                     "IQCLU DQX DQY DQZ", *shift_rows),
-            _section("OCCUPATION", "IQCLU IMQCLU NOQCLU ITCLU CONC", *occ_rows),
-            _section("MAGNETISATION DIRECTION",
-                     *(["initial magnetisation directions"] if scf_status == "START" else []),
-                     "IQ QMTET QMPHI", *mag_rows),
-            _section("TYPES",
-                     "ITCLU TXT_TCLU Z_TCLU NCOR_TCLU NVAL_TCLU NSEMCORSHL_TCLU",
-                     *(f"{i} {at.symbol} {at.atomic_number} {at.n_core} "
-                       f"{at.n_valence} {at.n_semicore}"
-                       for i, at in enumerate(types, 1))),
+        cluster.SITES.DATA = site_rows
+        cluster.SHIFTS.SHIFT = shifted
+        cluster.SHIFTS.DATA = shift_rows
+        cluster.OCCUPATION.DATA = occ_rows
+        cluster.MAGNETISATION_DIRECTION.DATA = mag_rows
+        cluster.TYPES.DATA = [
+            (at.symbol, at.atomic_number, at.n_core, at.n_valence, at.n_semicore)
+            for at in types
         ]
+
         if with_radial:
             if cluster_meshes:
-                # MESH INFORMATION precedes TYPES in the native grammar.
-                mesh_lines = [
-                    "MESH-TYPE EXPONENTIAL",
-                    "IM R(1) DX JRMT RMT JRWS RWS",
-                    *(f"{number} " + " ".join(str(value) for value in mesh.to_tuple())
-                      for number, mesh in cluster_meshes),
+                cluster.MESH_INFORMATION.DATA = [
+                    (number, *mesh.to_tuple())
+                    for number, mesh in cluster_meshes
                 ]
                 fullpot_meshes = [
                     (number, mesh.fullpot_tuple())
@@ -401,15 +363,12 @@ class ClusterPotential(ConfigurationFile):
                 if fullpot_meshes:
                     if len(fullpot_meshes) != len(cluster_meshes):
                         raise ValueError("Mixed FULLPOT/ordinary cluster mesh definitions")
-                    mesh_lines.extend([
-                        "IM JRNS1 JRCRI NPAN JRCUT",
-                        *(f"{number} {values[0]} {values[1]} {values[2]} " +
-                          " ".join(map(str, values[3]))
-                          for number, values in fullpot_meshes),
-                    ])
-                lines.insert(-1, _section("MESH INFORMATION", *mesh_lines))
-            # Repeated radial sections must remain grouped by section name,
-            # not interleaved by TYPE.
+                    cluster.MESH_INFORMATION.FULLPOT = [
+                        (number, values[0], values[1], values[2], values[3])
+                        for number, values in fullpot_meshes
+                    ]
+            # Native radial blocks have GLOBAL type numbers, while TYPES and
+            # OCCUPATION use ITCLU = 1..NTCLU.  Preserve that distinction.
             for name in ("POTENTIAL", "CHARGE", "MOMENTS"):
                 for i, atom_type in enumerate(types, 1):
                     global_type = host_type_count + i
@@ -417,19 +376,23 @@ class ClusterPotential(ConfigurationFile):
                     if name == "MOMENTS":
                         values = atom_type.moments.as_tuple()
                     else:
-                        value = getattr(atom_type, name.lower())
-                        values = np.asarray(value.raw_value)
-                        fullpot_data = value.fullpot_data if hasattr(value, "fullpot_data") else None
+                        radial = getattr(atom_type, name.lower())
+                        values = np.asarray(radial.raw_value)
+                        fullpot_data = radial.fullpot_data
                         mesh = atom_type.mesh
                         if values.shape != (2, len(mesh)):
                             raise ValueError(
                                 f"{name} for cluster type {i} has {values.shape}, "
                                 f"expected (2, {len(mesh)})"
                             )
-                    lines.append(_radial_block(
-                        name, global_type, values, fullpot_data=fullpot_data
-                    ))
-        cluster = cls.from_string("\n".join(lines) + "\n", host=host)
+                    block = getattr(cluster, name).add()
+                    block.TYPE = global_type
+                    block.DATA = values
+                    if fullpot_data:
+                        if not fullpot_data.lstrip().startswith("NFP"):
+                            raise ValueError("Non-spherical radial data must contain an NFP header")
+                        block.FULLPOT = fullpot_data
+
         cluster._atoms = atoms
         return cluster
 
