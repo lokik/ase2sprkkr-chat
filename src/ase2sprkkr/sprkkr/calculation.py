@@ -479,7 +479,7 @@ def _create_sprkkr_run(
             if file is not None
         )
         auxiliary_outputs, cache_files = _run_cache_files(
-            input_parameters, prepared.directory, clear_cache=prepared.clear_cache,
+            input_parameters, prepared.directory, clear_cache=getattr(prepared, "clear_cache", False),
         )
         output_files = tuple(
             file for file in (

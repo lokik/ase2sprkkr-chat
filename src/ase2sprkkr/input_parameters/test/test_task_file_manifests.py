@@ -30,14 +30,18 @@ def test_xas_reuses_dataset_tau_directory_as_optional_cache(tmp_path):
     parameters = InputParameters.create("XAS")
     parameters.CONTROL.DATASET = "Fe"
 
-    assert parameters.cache_files(str(tmp_path)) == (str(tmp_path / "Fe_XAS.tau.dir"),)
+    caches = parameters.cache_files(str(tmp_path))
+    assert tuple(map(str, caches)) == (str(tmp_path / "Fe_XAS.tau.dir"),)
+    assert caches[0].kind == "directory"
 
 
 def test_bsfek_reuses_dataset_tau_directory_as_optional_cache(tmp_path):
     parameters = InputParameters.create("BSFEK")
     parameters.CONTROL.DATASET = "Fe"
 
-    assert parameters.cache_files(str(tmp_path)) == (str(tmp_path / "Fe_BLOCHSF.tau.dir"),)
+    caches = parameters.cache_files(str(tmp_path))
+    assert tuple(map(str, caches)) == (str(tmp_path / "Fe_BLOCHSF.tau.dir"),)
+    assert caches[0].kind == "directory"
 
 
 def test_gilbert_fluctuation_file_is_required_for_m_t(tmp_path):
