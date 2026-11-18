@@ -2,6 +2,9 @@
 
 import os
 import re
+import stat
+import tempfile
+from pathlib import Path
 import pyparsing as pp
 import unyt
 
@@ -545,6 +548,68 @@ class ScfProgressParser(ScfOutputParser):
         return None
 
 
+def _persist_converged_clupot(path):
+    """Normalize one *new* native CLUPOT before KKRunner captures its checksum.
+
+    Only the SCFSTATUS token changes. Native radial data and the separate host
+    potential are preserved, and existing snapshotted outputs are never touched.
+    """
+    path = Path(path)
+    if not path.is_file():
+        return
+    if not Potential.is_cluster_file(path):
+        raise ValueError(f"Expected a native embedded CLUPOT: {path}")
+    original = path.read_bytes()
+    status_pattern = re.compile(
+        rb"(?m)^[ \\t]*SCFSTATUS[ \\t]+(?P<status>[A-Z-]+)[ \\t]*(?:\\r?$)"
+    )
+    matches = tuple(status_pattern.finditer(original))
+    if len(matches) != 1:
+        raise ValueError(f"Expected exactly one CLUPOT SCFSTATUS field: {path}")
+    status = matches[0].group("status")
+    if status == b"CONVERGED":
+        return
+    if status != b"ITERATING":
+        raise ValueError(f"Cannot promote CLUPOT status {status!r}: {path}")
+    start, end = matches[0].span("status")
+    # ITERATING and CONVERGED are both nine bytes. All sections other than
+    # the authoritative SCFSTATUS token are unchanged.
+    patched = original[:start] + b"CONVERGED" + original[end:]
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb", dir=path.parent, prefix=f".{path.name}.", delete=False
+        ) as target:
+            temporary = Path(target.name)
+            target.write(patched)
+            target.flush()
+            os.fsync(target.fileno())
+        os.chmod(temporary, stat.S_IMODE(path.stat().st_mode))
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 class ScfOutputReader(KkrOutputReader):
     result_class = ScfResult
     parser_class = ScfOutputParser
+
+    def prepare_artifacts(self, outcome):
+        """Persist native embedded convergence before historical fingerprints.
+
+        Called after successful output transfer and before KKRunner records file
+        versions. Only local runs use this normalization: rewriting downloaded
+        remote bytes would diverge from the remote authoritative artifact.
+        """
+        if outcome.return_code != 0 or self.input_parameters is None:
+            return
+        if str(self.input_parameters.CONTROL.CLUTYPE()).strip().lower() != "embedded":
+            return
+        if outcome.output_file is None:
+            return
+        latest = ScfProgressParser.latest_from_file(outcome.output_file)
+        if latest is None or not latest["converged"]:
+            return
+        result = self.create_result(outcome.output_file, outcome.input_file)
+        _persist_converged_clupot(result.potential_filename)
