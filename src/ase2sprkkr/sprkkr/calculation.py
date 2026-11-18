@@ -463,7 +463,8 @@ def _create_sprkkr_run(
             # An untracked run has no conflict reservation. A clean-cache run
             # must use the same persistent run store as ordinary project runs,
             # even when the caller has not assigned a specific project.
-            manager = project_execution_manager()
+            from kkrunner.runs.manager import RunManager
+            manager = RunManager(project_execution_manager().store)
         if metadata is not None and manager is None:
             raise ValueError("Run metadata requires a persistent project")
         if metadata is not None and "ase2sprkkr" in metadata:
