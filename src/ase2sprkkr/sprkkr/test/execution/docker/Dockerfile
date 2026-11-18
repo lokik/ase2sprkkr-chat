@@ -8,6 +8,7 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
+        git \
         munge \
         libgfortran5 \
         liblapack3 \
@@ -24,7 +25,7 @@ RUN apt-get update \
 RUN python3 -m venv "$VIRTUAL_ENV" \
     && pip install --upgrade pip \
     && pip install \
-        "kkrunner[psij]>=0.2.0b1,<0.3" \
+        "git+https://github.com/lokik/kkrunner-chat.git@b48050d51d8198e8b4b6263f6b0aff994290f989" \
         "psij-python==0.9.11" \
         "ase>=3.22.0" \
         colorama \
