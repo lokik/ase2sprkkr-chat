@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from ..common.module_registry import RegistryDefinitionError, RegistryEntryNotFound
 
 
-__all__ = ("ExecutableDefinition", "executables")
+__all__ = ("ExecutableDefinition", "executables", "resolve_task_executable")
 
 
 def _nonblank_string(value, field):
@@ -130,3 +130,22 @@ executables = _ExecutableRegistry(
         ),
     )
 )
+
+
+def resolve_task_executable(task, input_parameters):
+    """Resolve the executable for an enabled *task*, not only its base binary.
+
+    The existence of an embedded variant of KKRGEN is not evidence that every
+    KKRGEN task can be run in an embedded cluster. Keep this opt-in decision in
+    TaskDefinition, and the native program-name mapping in ExecutableDefinition.
+    """
+    try:
+        cluster_type = input_parameters.CONTROL.CLUTYPE()
+    except (AttributeError, KeyError):
+        cluster_type = None
+    if cluster_type == "embedded" and not task.supports_embedded_cluster:
+        raise ValueError(
+            f"Task {task.name!r} is not enabled for embedded-cluster calculations; "
+            "a CLUGEN/CLUSCF executable alone does not establish task support"
+        )
+    return executables.resolve(task.executable, input_parameters)

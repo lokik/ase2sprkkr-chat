@@ -213,3 +213,33 @@ def test_manifest_rejects_duplicate_output_declarations(tmp_path):
     )
     with pytest.raises(ValueError, match="Duplicate file declaration"):
         FileManifest.from_spec(spec)
+
+
+def test_embedded_jxc_and_dmi_use_cluster_tensor_filenames(tmp_path):
+    # CLUXCPLTENSOR writes the same J and D files even for DMI-only inputs.
+    for task in ("JXC", "DMI"):
+        parameters = InputParameters.create(task)
+        parameters.CONTROL.DATASET = "Fe"
+        parameters.CONTROL.CLUTYPE = "embedded"
+
+        assert tuple(map(str, parameters.output_files(str(tmp_path)))) == (
+            str(tmp_path / f"Fe_{task}_JJij.dat"),
+            str(tmp_path / f"Fe_{task}_Jij_*.agr"),
+            str(tmp_path / f"Fe_{task}_Dij_x.dat"),
+            str(tmp_path / f"Fe_{task}_Dij_y.dat"),
+            str(tmp_path / f"Fe_{task}_Dij_z.dat"),
+            str(tmp_path / f"Fe_{task}_Dij_[xyz]_*.agr"),
+        )
+
+
+def test_embedded_jxc_requires_frel_in_current_native_audit():
+    import pytest
+    from ase2sprkkr.common.warnings import DataValidityError
+
+    parameters = InputParameters.create("JXC")
+    parameters.CONTROL.POTFIL = "host.pot"
+    parameters.CONTROL.POTFIL_CLU = "cluster.clupot"
+    parameters.CONTROL.CLUTYPE = "embedded"
+    parameters.MODE.MODE = "SP-SREL"
+    with pytest.raises(DataValidityError, match="Embedded JXC/DMI currently requires FREL"):
+        parameters.validate("save")

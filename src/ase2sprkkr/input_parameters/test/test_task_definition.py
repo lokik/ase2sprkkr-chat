@@ -270,7 +270,7 @@ def test_embedded_cluster_support_is_explicit_task_metadata():
     assert TaskDefinition("CUSTOM", executable="kkrgen").supports_embedded_cluster is False
     supported = {task.name for task in InputParameters.task_registry.values()
                  if task.supports_embedded_cluster}
-    assert supported == {"SCF", "DOS"}
+    assert supported == {"SCF", "DOS", "JXC", "DMI"}
 
 
 def test_input_parameters_use_generic_save_contract():
@@ -401,6 +401,6 @@ def test_only_validated_tasks_declare_embedded_cluster_support():
         task.name for task in InputParameters.task_registry.values()
         if task.supports_embedded_cluster
     }
-    assert supported == {"SCF", "DOS"}
+    assert supported == {"SCF", "DOS", "JXC", "DMI"}
     assert not TaskDefinition("CUSTOM", executable="kkrgen").supports_embedded_cluster
     assert replace(TaskDefinition("SCF"), supports_embedded_cluster=True).supports_embedded_cluster

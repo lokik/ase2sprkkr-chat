@@ -21,7 +21,7 @@ from ..potentials.cluster_potentials import ClusterPotential
 from . import _preparation as preparation
 from ._preparation import FilenameTemplator as FilenameTemplator
 from .profile import SPRKKRProfile, executor_from_profile
-from .executables import executables
+from .executables import resolve_task_executable
 
 
 @dataclass
@@ -470,7 +470,7 @@ def _create_sprkkr_run(
         )
 
         spec = profile.create_execution(
-            executables.resolve(task.executable, input_parameters),
+            resolve_task_executable(task, input_parameters),
             prepared.input_file,
             prepared.output_file,
             prepared.directory,

@@ -4,7 +4,7 @@ import pytest
 
 from ase2sprkkr.sprkkr.executables import executables as public_executables
 from ...common.module_registry import RegistryDefinitionError, RegistryEntryNotFound
-from ..executables import ExecutableDefinition, _ExecutableRegistry, executables
+from ..executables import ExecutableDefinition, _ExecutableRegistry, executables, resolve_task_executable
 
 
 def test_executable_definition_normalizes_reader_name_only():
@@ -118,3 +118,48 @@ def test_unknown_custom_executable_still_works_outside_embedding():
     assert executables.resolve("my-custom-binary", normal) == "my-custom-binary"
     with pytest.raises(ValueError, match="does not support embedded"):
         executables.resolve("my-custom-binary", embedded)
+
+
+@pytest.mark.parametrize(
+    ("task_name", "native_name"),
+    (
+        ("SCF", "embscf"),
+        ("DOS", "embgen"),
+        ("JXC", "embgen"),
+        ("DMI", "embgen"),
+    ),
+)
+def test_only_explicitly_enabled_tasks_resolve_embedded_executable(task_name, native_name):
+    from ase2sprkkr.input_parameters.input_parameters import InputParameters
+
+    parameters = InputParameters.create(task_name)
+    parameters.CONTROL.CLUTYPE = "embedded"
+    assert parameters.task_definition.supports_embedded_cluster
+    assert resolve_task_executable(parameters.task_definition, parameters) == native_name
+
+
+@pytest.mark.parametrize(
+    "task_name",
+    (
+        "PHAGEN", "XAS", "GILBERT", "ARPES", "TORQUE",
+        # The native audit did not establish working embedded input/output
+        # contracts for these tasks (POSANITAU normalization is unverified).
+        "APS", "COMPTON", "POSANI", "POSANIPREP", "POSANITAU", "STONER", "VBPES",
+    ),
+)
+def test_non_enabled_tasks_do_not_inherit_embedding_from_executable(task_name):
+    from ase2sprkkr.input_parameters.input_parameters import InputParameters
+
+    parameters = InputParameters.create(task_name)
+    parameters.CONTROL.CLUTYPE = "embedded"
+    assert not parameters.task_definition.supports_embedded_cluster
+    with pytest.raises(ValueError, match="not enabled for embedded-cluster"):
+        resolve_task_executable(parameters.task_definition, parameters)
+
+
+def test_normal_task_resolution_does_not_use_embedding_gate():
+    from ase2sprkkr.input_parameters.input_parameters import InputParameters
+
+    parameters = InputParameters.create("TORQUE")
+    assert not parameters.task_definition.supports_embedded_cluster
+    assert resolve_task_executable(parameters.task_definition, parameters) == "kkrgen"
