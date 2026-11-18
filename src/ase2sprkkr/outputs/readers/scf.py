@@ -561,7 +561,7 @@ def _persist_converged_clupot(path):
         raise ValueError(f"Expected a native embedded CLUPOT: {path}")
     original = path.read_bytes()
     status_pattern = re.compile(
-        rb"(?m)^[ \t]*SCFSTATUS[ \t]+(?P<status>[A-Z-]+)[ \t]*(?:\r?$)"
+        rb"(?m)^[ \t]*SCFSTATUS[ \t]+(?P<status>[A-Z-]+)(?=[ \t\r\n]|$)"
     )
     matches = tuple(status_pattern.finditer(original))
     if len(matches) != 1:
@@ -606,7 +606,7 @@ class ScfOutputReader(KkrOutputReader):
             return
         if str(self.input_parameters.CONTROL.CLUTYPE()).strip().lower() != "embedded":
             return
-        if outcome.output_file is None:
+        if outcome.output_file is None or not isinstance(outcome.output_file, (str, os.PathLike)):
             return
         latest = ScfProgressParser.latest_from_file(outcome.output_file)
         if latest is None or not latest["converged"]:
