@@ -151,6 +151,30 @@ one:
    potential = Potential.from_atoms(bulk("Al", "fcc", a=4.05))
    previous = Potential.from_file("existing.pot")
 
+ASE's standard ``read()`` and ``write()`` functions support both
+ordinary SPR-KKR potentials and native embedded-cluster ``CLUPOT`` files.
+For clusters, supply the separate host potential explicitly: CLUPOT does
+not contain the host cell or full host structure.
+
+.. code-block:: python
+
+   from ase.io import read, write
+   from ase2sprkkr import Potential
+
+   host = Potential.from_file("host.pot")
+   cluster = read("embedded.clupot", format="SPRKKR", host=host)
+   cluster.sites[0].embedding.displacement = (0.1, 0.0, 0.0)
+   write("edited.clupot", cluster, format="SPRKKR")
+
+The ``host`` argument may also be a path such as ``host="host.pot"``.
+The same reader detects CLUPOT by its contents, even when the filename
+ends in ``.pot``. Writing a zero-dimensional embedded structure selects
+CLUPOT automatically; the host must remain attached to the atoms as
+``atoms.info["sprkkr_embedding_host"]``. To examine a CLUPOT without
+a host, load its sections directly using
+``ClusterPotential.from_file("embedded.clupot")`` instead of ASE's
+atoms reader.
+
 When starting from atoms, ASE2SPRKKR prepares a potential containing
 the site information needed for the native calculation. When starting
 from a previous ``.pot`` file, the stored electronic state can be
