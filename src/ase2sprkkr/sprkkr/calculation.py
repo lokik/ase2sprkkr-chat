@@ -542,10 +542,21 @@ def _create_sprkkr_run(
                     "profile": profile.name,
                 },
             }
+        from kkrunner.transports import LocalTransport
+
+        # The reader can normalize a newly generated local CLUPOT before
+        # KKRunner fingerprints it. Do not rewrite a downloaded remote
+        # artifact: the remote authoritative bytes must remain retrievable.
+        prepare_artifacts = (
+            getattr(reader, "prepare_artifacts", None)
+            if isinstance(getattr(executor, "transport", None), LocalTransport)
+            else None
+        )
         runner = Run.create(
             executor, spec,
             persistent=manager if manager is not None else False,
             process_result=process_result,
+            prepare_artifacts=prepare_artifacts,
             callback=finalized,
             owned_resources=resources,
             **record_options,
