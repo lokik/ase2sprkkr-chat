@@ -219,6 +219,7 @@ class SPRKKR(BaseCalculator):
         empty_spheres=None,
         allow_temporary_files: bool = True,
         restart_scf: bool = False,
+        clear_cache: bool = False,
     ):
         """Materialize current calculation state into one prepared calculation.
 
@@ -255,6 +256,7 @@ class SPRKKR(BaseCalculator):
             empty_spheres=empty_spheres,
             allow_temporary_files=allow_temporary_files,
             restart_scf=restart_scf,
+            clear_cache=clear_cache,
         )
         self._counter = prepared.counter
         return prepared
@@ -365,6 +367,7 @@ class SPRKKR(BaseCalculator):
         executor=None,
         project=None,
         restart_scf: bool = False,
+        clear_cache: bool = False,
         error_file=None,
         metadata=None,
     ):
@@ -408,6 +411,7 @@ class SPRKKR(BaseCalculator):
             task=task,
             allow_temporary_files=True,
             restart_scf=restart_scf,
+            clear_cache=clear_cache,
         )
         return prepared.create_run(
             result_context=self,
@@ -468,6 +472,7 @@ class SPRKKR(BaseCalculator):
         executor=None,
         project=None,
         restart_scf: bool = False,
+        clear_cache: bool = False,
         error_file=None,
         metadata=None,
     ):
@@ -514,6 +519,7 @@ class SPRKKR(BaseCalculator):
             executor=executor,
             project=project,
             restart_scf=restart_scf,
+            clear_cache=clear_cache,
             error_file=error_file,
             metadata=metadata,
         )

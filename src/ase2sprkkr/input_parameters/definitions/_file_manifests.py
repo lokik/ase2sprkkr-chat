@@ -3,6 +3,7 @@
 import os
 
 from ..input_parameters_definitions import InputParametersDefinition
+from kkrunner.files import TaskFile
 from ._filenames import dataset_adsi
 
 
@@ -67,14 +68,14 @@ class RequiredTauInputParametersDefinition(InputParametersDefinition):
     """Task definition requiring an existing TAU-directory file."""
 
     def input_files(self, parameters, directory):
-        return (tau_file(parameters, directory), *super().input_files(parameters, directory))
+        return (TaskFile(tau_file(parameters, directory), kind="directory"), *super().input_files(parameters, directory))
 
 
 class TauCacheInputParametersDefinition(InputParametersDefinition):
     """Task definition optionally reusing a TAU-directory cache."""
 
     def cache_files(self, parameters, directory):
-        return (tau_file(parameters, directory), *super().cache_files(parameters, directory))
+        return (TaskFile(tau_file(parameters, directory), kind="directory"), *super().cache_files(parameters, directory))
 
 
 class XrayRateInputParametersDefinition(TauCacheInputParametersDefinition):

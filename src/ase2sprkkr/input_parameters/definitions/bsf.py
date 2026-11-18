@@ -4,6 +4,7 @@ import numpy as np
 from functools import cache
 from typing import Any, List, Optional
 
+from kkrunner.files import TaskFile
 from ...common.generated_configuration_definitions import Length
 from ...common.grammar_types import Keyword, SetOf, Integer
 from ...common.warnings import DataValidityError, DataValidityWarning
@@ -412,7 +413,7 @@ class BSFInputParametersDefinition(InputParametersDefinition):
         return "BSFEK" if bsf_mode(parameters) == EK else "BSFKK"
 
     def cache_files(self, parameters, directory):
-        return (tau_file(parameters, directory), *super().cache_files(parameters, directory))
+        return (TaskFile(tau_file(parameters, directory), kind="directory"), *super().cache_files(parameters, directory))
 
 
 @cache

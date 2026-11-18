@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import os
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+
+from kkrunner.files import TaskFile
 
 from ..common.file_utils import Directory
 from ..common.output_printing import output_listeners
@@ -53,8 +55,11 @@ class PreparedCalculation:
     _closed: bool = False
     cluster_potential_file: str | None = None
     _temporary_cluster_potential: bool = False
+    clear_cache: bool = False
 
     def __post_init__(self):
+        if type(self.clear_cache) is not bool:
+            raise TypeError("clear_cache must be a bool")
         preparation.require_named_file(self.input_file, "input_file")
         if self.output_file is not None:
             preparation.require_named_file(self.output_file, "output_file")
@@ -101,6 +106,7 @@ class PreparedCalculation:
         empty_spheres=None,
         allow_temporary_files=False,
         restart_scf=False,
+        clear_cache=False,
     ) -> PreparedCalculation:
         """Materialize all state and files required for one SPR-KKR run.
 
@@ -221,6 +227,7 @@ class PreparedCalculation:
             )
 
             return cls(
+                clear_cache=clear_cache,
                 input_parameters=parameters,
                 input_file=opened_input,
                 potential_file=potential_file,
@@ -383,6 +390,23 @@ def _prepare_error_file(error_file, output_file, directory, create_subdirs):
     return opened_error, opened_error is not output_file
 
 
+def _run_cache_files(parameters, directory, *, clear_cache=False):
+    """Return output/cache declarations for one run without mutating task metadata."""
+    outputs = tuple(parameters.output_files(directory))
+    caches = tuple(parameters.cache_files(directory))
+    if not clear_cache:
+        return outputs, caches
+    # An invalidated cache is an optional output: the native executable may
+    # recreate it, but a successful task need not produce it.
+    refreshed = tuple(
+        replace(value, optional=True)
+        if isinstance(value, TaskFile)
+        else TaskFile(value, optional=True)
+        for value in caches
+    )
+    return (*outputs, *refreshed), ()
+
+
 def _create_sprkkr_run(
     prepared: PreparedCalculation,
     *,
@@ -454,19 +478,15 @@ def _create_sprkkr_run(
             )
             if file is not None
         )
+        auxiliary_outputs, cache_files = _run_cache_files(
+            input_parameters, prepared.directory, clear_cache=prepared.clear_cache,
+        )
         output_files = tuple(
-            file
-            for file in (
+            file for file in (
                 prepared.output_file,
                 opened_error if opened_error is not prepared.output_file else None,
-                *input_parameters.output_files(prepared.directory),
-            )
-            if file is not None
-        )
-        cache_files = tuple(
-            file
-            for file in input_parameters.cache_files(prepared.directory)
-            if file is not None
+                *auxiliary_outputs,
+            ) if file is not None
         )
 
         spec = profile.create_execution(
