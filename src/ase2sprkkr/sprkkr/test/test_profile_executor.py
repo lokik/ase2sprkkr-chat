@@ -11,7 +11,7 @@ from ase2sprkkr.sprkkr.profile import (
     SPRKKRProfile, executor_from_profile, resolve_sprkkr_profile,
 )
 from kkrunner.client import EndpointClient
-from kkrunner.client.transports import LocalTransport, SshTransport
+from kkrunner.transports import LocalTransport, SshTransport
 
 
 def fresh_config(monkeypatch):

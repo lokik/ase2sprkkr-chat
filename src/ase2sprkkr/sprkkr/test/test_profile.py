@@ -98,7 +98,7 @@ def test_runtime_profile_splits_endpoint_from_launch_parameters():
         output_sync="always",
     )
 
-    from kkrunner.client.transports import SshTransport
+    from kkrunner.transports import SshTransport
     from kkrunner.backends.config import BackendConfig
     assert profile.transport == SshTransport(
         host="cluster.example", options=("-p", "2222"),

@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from ase2sprkkr.configuration import definition
 from kkrunner.client import EndpointClient
-from kkrunner.client.transports import SshTransport
+from kkrunner.transports import SshTransport
 from kkrunner.runs import RunState
 from ase2sprkkr.profiles import ProfilesConfigurationContainer
 from ase2sprkkr.sprkkr import profile as profile_module

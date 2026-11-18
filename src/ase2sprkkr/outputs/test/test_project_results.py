@@ -4,7 +4,7 @@ import pytest
 from ase2sprkkr.common.module_registry import RegistryEntryNotFound
 from kkrunner.files import FileManifest, FileEntry
 from kkrunner.runs import ExecutionMetadata, WorkingDirectory, RunRecord
-from kkrunner.client.transports import LocalTransport
+from kkrunner.transports import LocalTransport
 from kkrunner import RunState
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from ase2sprkkr.outputs.project_results import ProjectResultUnavailableError, attach_project_run, _reader_for_record

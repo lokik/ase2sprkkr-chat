@@ -6,7 +6,7 @@ import pytest
 
 from kkrunner.client import EndpointClient
 from kkrunner.client.pool import ClientPool
-from kkrunner.client.transports import LocalTransport, SshTransport
+from kkrunner.transports import LocalTransport, SshTransport
 from kkrunner.execution import MpiSpec
 
 from ase2sprkkr.sprkkr.profile import (
