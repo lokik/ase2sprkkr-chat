@@ -561,7 +561,7 @@ def _persist_converged_clupot(path):
         raise ValueError(f"Expected a native embedded CLUPOT: {path}")
     original = path.read_bytes()
     status_pattern = re.compile(
-        rb"(?m)^[ \\t]*SCFSTATUS[ \\t]+(?P<status>[A-Z-]+)[ \\t]*(?:\\r?$)"
+        rb"(?m)^[ \t]*SCFSTATUS[ \t]+(?P<status>[A-Z-]+)[ \t]*(?:\r?$)"
     )
     matches = tuple(status_pattern.finditer(original))
     if len(matches) != 1:
