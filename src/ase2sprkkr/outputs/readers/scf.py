@@ -67,6 +67,30 @@ class ScfResult(TaskResult):
     produces_potential = True
 
     @cached_property
+    def potential(self):
+        """Use the final SCF iteration to interpret an embedded result potential.
+
+        Native CLUPOT can retain SCFSTATUS=ITERATING even when its corresponding
+        OUT reports convergence. For a *parsed* converged SCF result, promote
+        only that in-memory cluster potential to CONVERGED. Never rewrite the
+        historical output file, infer convergence from radial data, or change
+        the separate periodic host.
+        """
+        potential = super().potential
+        if (
+            self.is_embedded
+            and getattr(self, "return_code", 0) == 0
+            and getattr(self, "iterations", None)
+            and self.converged
+            and str(potential.SCF_INFO.SCFSTATUS()).strip().upper() == "ITERATING"
+        ):
+            potential.SCF_INFO.SCFSTATUS = "CONVERGED"
+            atoms = getattr(potential, "_atoms", None)
+            if atoms is not None:
+                atoms.info["sprkkr_embedding_scf_status"] = "CONVERGED"
+        return potential
+
+    @cached_property
     def calculator(self):
         """The calculator that has the new (output) potential assigned - i.e. that
         can be used for further calculations with the (hopefully) converged wavefunctions etc."""

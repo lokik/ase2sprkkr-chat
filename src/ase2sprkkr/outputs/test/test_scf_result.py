@@ -176,3 +176,69 @@ def test_embedded_scf_parser_registers_converged_cluster_not_host(tmp_path):
     assert result.start_potential_filename == str(tmp_path / "cluster.pot")
     assert result.potential_filename == str(tmp_path / "cluster.pot_new")
     assert result.files["converged"]() == str(tmp_path / "cluster.pot_new")
+
+
+@pytest.mark.parametrize(
+    ("converged", "return_code", "expected_status"),
+    [
+        (True, 0, "CONVERGED"),
+        (False, 0, "ITERATING"),
+        (None, 0, "ITERATING"),
+        (True, 139, "ITERATING"),
+    ],
+)
+def test_parsed_embedded_scf_result_updates_in_memory_convergence_only(
+    tmp_path, converged, return_code, expected_status,
+):
+    """Native CLUPOT may retain ITERATING despite a converged SCF OUT.
+
+    Only a positive final iteration is authoritative. The result reader must
+    not touch the original native file (or the separate host potential).
+    """
+    from types import SimpleNamespace
+    from ...input_parameters.input_parameters import InputParameters
+    from ...potentials.cluster_potentials import ClusterPotential
+    from ...potentials.potentials import PeriodicPotential
+
+    host = PeriodicPotential()
+    host.SCF_INFO.SCFSTATUS = "CONVERGED"
+    cluster = ClusterPotential()
+    cluster.host = host
+    cluster.SCF_INFO.SCFSTATUS = "ITERATING"
+    atoms = SimpleNamespace(info={"sprkkr_embedding_scf_status": "ITERATING"})
+    cluster._atoms = atoms
+
+    parameters = InputParameters.create("SCF")
+    parameters.CONTROL.POTFIL = "host.pot"
+    parameters.CONTROL.POTFIL_CLU = "cluster.pot"
+    parameters.CONTROL.CLUTYPE = "embedded"
+    result = ScfResult(parameters, None, tmp_path)
+    result.return_code = return_code
+    result.require_current_file = lambda _path: None
+    result._read_potential = lambda _path: cluster
+    if converged is not None:
+        result.iterations = [{"converged": lambda: converged}]
+
+    assert result.potential is cluster
+    assert result.potential is cluster  # Cached; no redundant re-reading.
+    assert cluster.SCF_INFO.SCFSTATUS() == expected_status
+    assert atoms.info["sprkkr_embedding_scf_status"] == expected_status
+    assert host.SCF_INFO.SCFSTATUS() == "CONVERGED"
+    assert not (tmp_path / "cluster.pot_new").exists()
+
+
+def test_scf_result_does_not_reinterpret_periodic_status(tmp_path):
+    """Convergence reconciliation is specific to embedded result potentials."""
+    from types import SimpleNamespace
+    from ...input_parameters.input_parameters import InputParameters
+
+    parameters = InputParameters.create("SCF")
+    parameters.CONTROL.POTFIL = "Fe.pot"
+    result = ScfResult(parameters, None, tmp_path)
+    result.iterations = [{"converged": lambda: True}]
+    result.require_current_file = lambda _path: None
+    status = SimpleNamespace(SCFSTATUS=lambda: "ITR")
+    periodic = SimpleNamespace(SCF_INFO=status)
+    result._read_potential = lambda _path: periodic
+    assert result.potential is periodic
+    assert status.SCFSTATUS() == "ITR"
