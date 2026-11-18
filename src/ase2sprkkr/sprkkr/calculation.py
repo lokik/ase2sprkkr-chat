@@ -16,7 +16,7 @@ from kkrunner.files import TaskFile
 from ..common.file_utils import Directory
 from ..common.output_printing import output_listeners
 from kkrunner.runs.base import ExecutionResources
-from .projects import resolve_project_manager
+from .projects import resolve_project_manager, project_execution_manager
 from kkrunner.runs import Run
 from ..input_parameters.input_parameters import InputParameters
 from ..potentials.cluster_potentials import ClusterPotential
@@ -459,6 +459,11 @@ def _create_sprkkr_run(
         if executor is None:
             executor = executor_from_profile(profile)
         manager = resolve_project_manager(project)
+        if manager is None and getattr(prepared, "clear_cache", False):
+            # An untracked run has no conflict reservation. A clean-cache run
+            # must use the same persistent run store as ordinary project runs,
+            # even when the caller has not assigned a specific project.
+            manager = project_execution_manager()
         if metadata is not None and manager is None:
             raise ValueError("Run metadata requires a persistent project")
         if metadata is not None and "ase2sprkkr" in metadata:
