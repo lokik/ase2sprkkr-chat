@@ -242,3 +242,71 @@ def test_scf_result_does_not_reinterpret_periodic_status(tmp_path):
     result._read_potential = lambda _path: periodic
     assert result.potential is periodic
     assert status.SCFSTATUS() == "ITR"
+
+
+@pytest.mark.parametrize(
+    ("footer", "exit_code", "should_persist"),
+    [
+        (" ETOT -42.5 SCF - cycle converged - stop", 0, True),
+        (" ETOT -42.5 SCF - cycle not converged", 0, False),
+        (" ETOT -42.5 SCF - cycle converged - stop", 139, False),
+        (None, 0, False),
+    ],
+)
+def test_embedded_scf_persists_convergence_in_native_clupot_before_snapshot(
+    tmp_path, footer, exit_code, should_persist,
+):
+    """Reloading CLUPOT must retain the successful final convergence state."""
+    from types import SimpleNamespace
+    from ...input_parameters.input_parameters import InputParameters
+    from ...potentials.cluster_potentials import ClusterPotential
+    from ...potentials.test.test_cluster_potential import _sample
+    from ..readers.scf import ScfOutputReader
+
+    host_file = tmp_path / "host.pot"
+    host_file.write_text("host must not change")
+    clupot = tmp_path / "cluster.pot_new"
+    original = _sample(mesh=True).encode("utf-8")
+    clupot.write_bytes(original)
+    output = tmp_path / "run.out"
+    header = "  8 ERR 0.123E-04 0.456E-06 EF 0.6 0.01 D 12.00 M 1.2 0.3"
+    output.write_text(header + "\n" + (footer + "\n" if footer else ""))
+
+    parameters = InputParameters.create("SCF")
+    parameters.CONTROL.POTFIL = "host.pot"
+    parameters.CONTROL.POTFIL_CLU = "cluster.pot"
+    parameters.CONTROL.CLUTYPE = "embedded"
+    reader = ScfOutputReader(parameters, None, tmp_path)
+    outcome = SimpleNamespace(
+        output_file=str(output), input_file=None, return_code=exit_code
+    )
+    reader.prepare_artifacts(outcome)
+
+    expected = original.replace(
+        b"SCFSTATUS ITERATING",
+        b"SCFSTATUS CONVERGED",
+    ) if should_persist else original
+    assert clupot.read_bytes() == expected
+    assert host_file.read_text() == "host must not change"
+    # Not just an in-memory change: reopen a new object directly from the file.
+    reloaded = ClusterPotential.from_file(clupot)
+    assert reloaded.SCF_INFO.SCFSTATUS() == (
+        "CONVERGED" if should_persist else "ITERATING"
+    )
+
+
+def test_embedded_clupot_repair_is_idempotent_and_validates_native_type(tmp_path):
+    from ...potentials.test.test_cluster_potential import _sample
+    from ..readers.scf import _persist_converged_clupot
+
+    path = tmp_path / "cluster.pot_new"
+    path.write_text(_sample(mesh=True))
+    _persist_converged_clupot(path)
+    first = path.read_bytes()
+    assert b"SCFSTATUS CONVERGED" in first
+    _persist_converged_clupot(path)
+    assert path.read_bytes() == first
+
+    path.write_text("SCFSTATUS ITERATING\n")
+    with pytest.raises(ValueError, match="native embedded CLUPOT"):
+        _persist_converged_clupot(path)
