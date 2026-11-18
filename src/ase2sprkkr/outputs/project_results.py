@@ -107,6 +107,10 @@ def _result_processor_for_record(manager, record):
             run_record=_record(manager, record),
         )
 
+    # For a newly completed local run, optional application normalization
+    # happens before the generic file manifest is captured. The reader and the
+    # parser must share the same input-parameter snapshot.
+    process_result.prepare_artifacts = getattr(reader, "prepare_artifacts", None)
     return process_result
 
 
@@ -151,6 +155,10 @@ def attach_project_run(
     return manager.attach(
         record,
         process_result=process_result,
+        prepare_artifacts=(
+            process_result.prepare_artifacts
+            if record.execution.directory.remote is None else None
+        ),
         client=executor,
         callback=completed,
         output_listener=output_listener,
