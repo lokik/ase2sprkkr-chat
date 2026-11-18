@@ -142,8 +142,9 @@ def test_only_explicitly_enabled_tasks_resolve_embedded_executable(task_name, na
     "task_name",
     (
         "PHAGEN", "XAS", "GILBERT", "ARPES", "TORQUE",
-        # The native audit did not establish working embedded input/output
-        # contracts for these tasks (POSANITAU normalization is unverified).
+        # These tasks must not inherit embedding from their executable:
+        # POSANITAU has only conditional native support, while STONER is
+        # confirmed broken (SUSC_GAMMA processes host atom types).
         "APS", "COMPTON", "POSANI", "POSANIPREP", "POSANITAU", "STONER", "VBPES",
     ),
 )

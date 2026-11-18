@@ -216,19 +216,21 @@ def test_manifest_rejects_duplicate_output_declarations(tmp_path):
 
 
 def test_embedded_jxc_and_dmi_use_cluster_tensor_filenames(tmp_path):
-    # CLUXCPLTENSOR writes the same J and D files even for DMI-only inputs.
+    # DMI selects a submode of the native JXC task: the output ADSI
+    # remains JXC, and CLUXCPLTENSOR writes both J and D files.
     for task in ("JXC", "DMI"):
         parameters = InputParameters.create(task)
         parameters.CONTROL.DATASET = "Fe"
         parameters.CONTROL.CLUTYPE = "embedded"
 
+        assert parameters.CONTROL.ADSI() == "JXC"
         assert tuple(map(str, parameters.output_files(str(tmp_path)))) == (
-            str(tmp_path / f"Fe_{task}_JJij.dat"),
-            str(tmp_path / f"Fe_{task}_Jij_*.agr"),
-            str(tmp_path / f"Fe_{task}_Dij_x.dat"),
-            str(tmp_path / f"Fe_{task}_Dij_y.dat"),
-            str(tmp_path / f"Fe_{task}_Dij_z.dat"),
-            str(tmp_path / f"Fe_{task}_Dij_[xyz]_*.agr"),
+            str(tmp_path / "Fe_JXC_JJij.dat"),
+            str(tmp_path / "Fe_JXC_Jij_*.agr"),
+            str(tmp_path / "Fe_JXC_Dij_x.dat"),
+            str(tmp_path / "Fe_JXC_Dij_y.dat"),
+            str(tmp_path / "Fe_JXC_Dij_z.dat"),
+            str(tmp_path / "Fe_JXC_Dij_[xyz]_*.agr"),
         )
 
 
