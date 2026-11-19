@@ -21,7 +21,6 @@ from ...sprkkr.calculator import SPRKKR
 from ...common.formats import fortran_format
 from ...common.grammar import replace_whitechars
 from ..task_result import KkrOutputReader
-from ...potentials.potentials import Potential
 
 
 def plot_iterations(
@@ -151,8 +150,10 @@ class ScfResult(TaskResult):
 
     @property
     def converged(self):
-        """The calculation coverged or not?"""
-        return self.last_iteration["converged"]()
+        """Whether the last completed SCF iteration reached convergence."""
+        # Failed or incomplete runs may have no finished iterations.
+        # Repeated sections are truthy even when empty, so check the count.
+        return len(getattr(self, "iterations", ())) > 0 and self.last_iteration["converged"]()
 
     def iteration_values(self, name):
         """Return the array of values of given name from the
@@ -179,7 +180,7 @@ class ScfResult(TaskResult):
     @property
     def last_iteration(self):
         """Return the data of the last iteration"""
-        if not self.iterations:
+        if len(getattr(self, "iterations", ())) == 0:
             raise AttributeError("No iteration has been finished")
         return self.iterations[-1]
 
@@ -194,7 +195,7 @@ class ScfResult(TaskResult):
             [
                 generated_output(
                     "Converged",
-                    lambda _section: str(self.last_iteration.converged()),
+                    lambda _section: str(self.converged),
                     info="Whether the final SCF iteration reached convergence.",
                 ),
                 generated_output(
@@ -283,6 +284,11 @@ atomic_types_definition = Section(
                 free_header=True,
                 default_values=True,
             ),
+        ),
+        V(
+            "magnetic_dipole",
+            Table({"l": string, "P": float, "T_z": float}, free_header=True),
+            written_name="P(T_z)", is_required=False,
         ),
         V("E_band", RealWithUnits(units={"[Ry]": unyt.Ry}), is_required=False),
         V("dipole moment", Sequence(int, Array(float, length=3)), is_required=False),
@@ -386,13 +392,17 @@ class ScfOutputParser(SprKkrOutputParser):
         iterations = scf_section.create_object()
         try:
             first = True
-            _err_or_time = re.compile(rb"execution time for last iteration| ERR.*EF")
+            _err_or_time = re.compile(rb"execution time for last iteration| ERR.*EF|SPRKKR-run for:")
+            pending_line = None
+            pending_energy = {}
 
             while True:
-                out = {"energy": {}}
-                line = await readline_until(
-                    stdout, self._iteration_event_line.search
-                )
+                out = {"energy": pending_energy}
+                pending_energy = {}
+                line = pending_line
+                pending_line = None
+                if line is None:
+                    line = await readline_until(stdout, self._iteration_event_line.search)
                 if not line:
                     break
 
@@ -423,6 +433,8 @@ class ScfOutputParser(SprKkrOutputParser):
                 out["system_name"] = run.strip()
 
                 line = await readline_until(stdout, lambda line: b" E=" in line)
+                if not line:
+                    break
                 atoms = []
                 while True:
                     atoms.append(
@@ -433,19 +445,28 @@ class ScfOutputParser(SprKkrOutputParser):
                         )
                     )
                     line = await readline_until(stdout, lambda line: line != b"\n")
-                    if "E=" not in line:
+                    if not line or "E=" not in line:
                         break
                 out["atomic_types"] = atoms
                 duration = None
-                while True:
-                    line = await readline_until(stdout, _err_or_time.search)
-                    if "execution time for last iteration" in line:
+                while line:
+                    if _err_or_time.search(line.encode("utf8")):
+                        if "execution time for last iteration" not in line:
+                            break
                         try:
                             duration = float(line.split()[-2])
                         except (ValueError, IndexError):
                             pass
-                    else:
-                        break
+                    line = await readline_until(stdout, _err_or_time.search)
+                if not line:
+                    break
+                if "SPRKKR-run for:" in line:
+                    # CLUSCF can first print a host <GEN> summary without an
+                    # SCF footer. Do not attach its atomic types to the later
+                    # cluster iteration whose ERR/ETOT footer follows.
+                    pending_line = line
+                    pending_energy = out["energy"]
+                    continue
                 summary = self.iteration_header(line)
                 out.update({key: value for key, value in summary.items() if key != "energy"})
                 out["energy"].update(summary["energy"])
@@ -459,7 +480,7 @@ class ScfOutputParser(SprKkrOutputParser):
                     print(self.iteration_info(out))
 
             if self.print_info:
-                if not iterations:
+                if len(iterations) == 0:
                     print(
                         "ERROR: No iteration has been finished. There is probably an error in the input files, please, examine the SPR-KKR output file."
                     )

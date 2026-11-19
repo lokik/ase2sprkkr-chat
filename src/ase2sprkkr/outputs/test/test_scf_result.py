@@ -1,11 +1,74 @@
 import os
 from pathlib import Path
+from shutil import copyfile
 
 import pytest
 
+from ...input_parameters.input_parameters import InputParameters
 from ..readers import scf as scf_reader
 from ..readers.scf import ScfOutputParser, ScfResult
 from ..task_result import TaskResult
+
+
+POTENTIAL_EXAMPLES = Path(__file__).resolve().parents[2] / "potentials" / "examples"
+CLUSTER_OUTPUT = Path(__file__).parent / "data" / "native_cluster_restart.txt"
+
+
+@pytest.fixture
+def embedded_scf_result(tmp_path):
+    for example, filename in (
+        ("Fe3CoFe3.host.pot", "host.pot"),
+        ("Fe3CoFe3.clu.pot", "cluster.pot"),
+        ("Fe3CoFe3.clu.iterating.pot", "cluster.pot_new"),
+    ):
+        copyfile(POTENTIAL_EXAMPLES / example, tmp_path / filename)
+
+    parameters = InputParameters.create("SCF")
+    parameters.CONTROL.POTFIL = "host.pot"
+    parameters.CONTROL.POTFIL_CLU = "cluster.pot"
+    parameters.CONTROL.CLUTYPE = "embedded"
+    return ScfResult(parameters, None, tmp_path)
+
+
+def test_native_magnetic_dipole_table_is_preserved():
+    text = CLUSTER_OUTPUT.read_text()
+    start = text.index("  33 E=")
+    end = text.index("\n -------------------------------------------------------------------------------", start)
+    atom = scf_reader.atomic_types_definition.parse(text[start:end])
+    assert atom["IT"] == 1
+    data = atom["magnetic_dipole"]
+    assert list(data["l"]) == ["s", "p", "d", "sum"]
+    assert data["P"][-1] == pytest.approx(0.0052)
+
+
+@pytest.mark.parametrize("complete", [True, False])
+def test_cluster_restart_uses_cluster_atomic_types_after_host_gen_summary(tmp_path, complete):
+    parameters = InputParameters.create("SCF")
+    parameters.CONTROL.POTFIL = "host.pot"
+    parameters.CONTROL.POTFIL_CLU = "cluster.pot"
+    parameters.CONTROL.CLUTYPE = "embedded"
+    result = ScfResult(parameters, None, tmp_path)
+    source = CLUSTER_OUTPUT
+    if not complete:
+        truncated = tmp_path / "truncated.out"
+        truncated.write_text(source.read_text().split("   1 ERR", 1)[0])
+        source = truncated
+    ScfOutputParser().read_from_file(source, None, [result])
+    if not complete:
+        assert len(result.iterations) == 0
+        assert result.converged is False
+        return
+    assert len(result.iterations) == 1
+    assert result.converged is True
+    assert [atom.IT() for atom in result.last_iteration.atomic_types.values()] == [3, 4, 5]
+    assert result.last_iteration.energy.EMIN() == pytest.approx(-0.2)
+
+
+def test_scf_failure_before_first_iteration_has_no_convergence_or_last_iteration(tmp_path):
+    result = ScfResult(None, None, tmp_path)
+    assert result.converged is False
+    with pytest.raises(AttributeError, match="No iteration has been finished"):
+        _ = result.last_iteration
 
 
 def test_scf_output_without_input_file_preserves_result_semantics(tmp_path):
@@ -65,47 +128,30 @@ def test_scf_info_output_includes_final_status(capsys):
     assert "OK: The computation converged." in capsys.readouterr().out
 
 
-
-def test_embedded_scf_result_reads_clupot_and_continues_with_dos(tmp_path):
+def test_embedded_scf_result_reads_clupot_and_continues_with_dos(tmp_path, embedded_scf_result):
     """SCF output must not replace CLUPOT by the unchanged periodic host."""
-    from ase.build import bulk
-    from ...input_parameters.input_parameters import InputParameters
-    from ...potentials.potentials import Potential
     from ...potentials.cluster_potentials import ClusterPotential
-    from ...sprkkr.sprkkr_atoms import SPRKKRAtoms
     from ...sprkkr.executables import executables
 
-    host = Potential.from_atoms(bulk("Cu"))
-    host_file = tmp_path / "host.pot"
-    host.save_to_file(host_file)
-
-    atoms = SPRKKRAtoms.from_embedding(host, [(0, (1, 0, 0), "Fe")])
-    cluster = ClusterPotential.from_atoms(atoms)
+    result = embedded_scf_result
+    ScfOutputParser().read_from_file(CLUSTER_OUTPUT, None, [result])
     start = tmp_path / "cluster.pot"
     converged = tmp_path / "cluster.pot_new"
-    cluster.save_to_file(start)
-    # Use a native CLUPOT fixture for both input and output. Numerical radial
-    # convergence is covered by the independent CLUPOT radial round-trip tests.
-    cluster.save_to_file(converged)
 
-    parameters = InputParameters.create("SCF")
-    parameters.CONTROL.POTFIL = "host.pot"
-    parameters.CONTROL.POTFIL_CLU = "cluster.pot"
-    parameters.CONTROL.CLUTYPE = "embedded"
-
-    result = ScfResult(parameters, None, tmp_path)
     assert result.start_potential_filename == str(start)
     assert result.potential_filename == str(converged)
     assert result.is_embedded
     assert isinstance(result.start_potential, ClusterPotential)
     assert isinstance(result.potential, ClusterPotential)
     assert result.potential.host is result.start_potential.host
-    assert result.atoms.sites[0].occupation.as_dict == {"Fe": 1.0}
-    assert result.atoms.sites[0].embedding.cell_index == (1, 0, 0)
+    assert result.start_potential.SCF_INFO.SCFSTATUS() == "START"
+    assert result.potential.SCF_INFO.SCFSTATUS() == "CONVERGED"
+    assert str(result.atoms.symbols) == "Fe3CoFe3"
+    assert result.atoms.sites[0].embedding.cell_index == (-1, 0, 0)
     assert result.calculator.potential is result.potential
 
     output_paths = {
-        os.fspath(item) for item in parameters.output_files(str(tmp_path))
+        os.fspath(item) for item in result.input_parameters.output_files(str(tmp_path))
     }
     assert str(converged) in output_paths
     assert str(tmp_path / "host.pot_new") not in output_paths
@@ -135,8 +181,6 @@ def test_embedded_scf_result_reads_clupot_and_continues_with_dos(tmp_path):
 
 
 def test_embedded_result_requires_clupot_and_validates_host_file(tmp_path, monkeypatch):
-    from ...input_parameters.input_parameters import InputParameters
-
     parameters = InputParameters.create("SCF")
     parameters.CONTROL.POTFIL = "host.pot"
     parameters.CONTROL.CLUTYPE = "embedded"
@@ -153,15 +197,9 @@ def test_embedded_result_requires_clupot_and_validates_host_file(tmp_path, monke
     assert verified == [str(tmp_path / "host.pot")]
 
 
-
-def test_embedded_scf_parser_registers_converged_cluster_not_host(tmp_path):
+def test_embedded_scf_parser_registers_converged_cluster_not_host(tmp_path, embedded_scf_result):
     """The parsed FILES table must not redirect embedded SCF to host.pot_new."""
-    from ...input_parameters.input_parameters import InputParameters
-
-    parameters = InputParameters.create("SCF")
-    parameters.CONTROL.POTFIL = "host.pot"
-    parameters.CONTROL.POTFIL_CLU = "cluster.pot"
-    parameters.CONTROL.CLUTYPE = "embedded"
+    parameters = embedded_scf_result.input_parameters
 
     original = Path(__file__).parent.parent / "examples" / "scf.out"
     output = tmp_path / "cluster_scf.out"
@@ -175,7 +213,7 @@ def test_embedded_scf_parser_registers_converged_cluster_not_host(tmp_path):
     assert result.is_embedded
     assert result.start_potential_filename == str(tmp_path / "cluster.pot")
     assert result.potential_filename == str(tmp_path / "cluster.pot_new")
-    assert result.files["converged"]() == str(tmp_path / "cluster.pot_new")
+    assert os.fspath(result.files["converged"]()) == str(tmp_path / "cluster.pot_new")
 
 
 @pytest.mark.parametrize(
@@ -188,57 +226,42 @@ def test_embedded_scf_parser_registers_converged_cluster_not_host(tmp_path):
     ],
 )
 def test_parsed_embedded_scf_result_updates_in_memory_convergence_only(
-    tmp_path, converged, return_code, expected_status,
+    tmp_path, monkeypatch, embedded_scf_result, converged, return_code, expected_status,
 ):
     """Native CLUPOT may retain ITERATING despite a converged SCF OUT.
 
     Only a positive final iteration is authoritative. The result reader must
     not touch the original native file (or the separate host potential).
     """
-    from types import SimpleNamespace
-    from ...input_parameters.input_parameters import InputParameters
-    from ...potentials.cluster_potentials import ClusterPotential
-    from ...potentials.potentials import PeriodicPotential
-
-    host = PeriodicPotential()
-    host.SCF_INFO.SCFSTATUS = "CONVERGED"
-    cluster = ClusterPotential()
-    cluster.host = host
-    cluster.SCF_INFO.SCFSTATUS = "ITERATING"
-    atoms = SimpleNamespace(info={"sprkkr_embedding_scf_status": "ITERATING"})
-    cluster._atoms = atoms
-
-    parameters = InputParameters.create("SCF")
-    parameters.CONTROL.POTFIL = "host.pot"
-    parameters.CONTROL.POTFIL_CLU = "cluster.pot"
-    parameters.CONTROL.CLUTYPE = "embedded"
-    result = ScfResult(parameters, None, tmp_path)
+    result = embedded_scf_result
     result.return_code = return_code
-    result.require_current_file = lambda _path: None
-    result._read_potential = lambda _path: cluster
     if converged is not None:
         result.iterations = [{"converged": lambda: converged}]
 
+    read_potential = result._read_potential
+
+    def read_with_atoms(filename):
+        cluster = read_potential(filename)
+        assert cluster.atoms.info["sprkkr_embedding_scf_status"] == "ITERATING"
+        return cluster
+
+    monkeypatch.setattr(result, "_read_potential", read_with_atoms)
+    cluster = result.potential
     assert result.potential is cluster
-    assert result.potential is cluster  # Cached; no redundant re-reading.
     assert cluster.SCF_INFO.SCFSTATUS() == expected_status
-    assert atoms.info["sprkkr_embedding_scf_status"] == expected_status
-    assert host.SCF_INFO.SCFSTATUS() == "CONVERGED"
-    assert not (tmp_path / "cluster.pot_new").exists()
+    assert cluster.atoms.info["sprkkr_embedding_scf_status"] == expected_status
+    assert cluster.host.SCF_INFO.SCFSTATUS() == "CONVERGED"
+    assert (tmp_path / "cluster.pot_new").read_bytes() == (
+        POTENTIAL_EXAMPLES / "Fe3CoFe3.clu.iterating.pot"
+    ).read_bytes()
+    assert (tmp_path / "host.pot").read_bytes() == (POTENTIAL_EXAMPLES / "Fe3CoFe3.host.pot").read_bytes()
 
 
 def test_scf_result_does_not_reinterpret_periodic_status(tmp_path):
     """Convergence reconciliation is specific to embedded result potentials."""
-    from types import SimpleNamespace
-    from ...input_parameters.input_parameters import InputParameters
-
     parameters = InputParameters.create("SCF")
-    parameters.CONTROL.POTFIL = "Fe.pot"
+    parameters.CONTROL.POTFIL = "GeTeX5.pot"
     result = ScfResult(parameters, None, tmp_path)
     result.iterations = [{"converged": lambda: True}]
-    result.require_current_file = lambda _path: None
-    status = SimpleNamespace(SCFSTATUS=lambda: "ITR")
-    periodic = SimpleNamespace(SCF_INFO=status)
-    result._read_potential = lambda _path: periodic
-    assert result.potential is periodic
-    assert status.SCFSTATUS() == "ITR"
+    copyfile(POTENTIAL_EXAMPLES / "GeTeX5.pot", result.potential_filename)
+    assert result.potential.SCF_INFO.SCFSTATUS() == "ITR-BULK"
