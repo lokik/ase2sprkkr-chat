@@ -12,6 +12,7 @@ import pyparsing as pp
 from typing import Iterable, Optional, Union
 
 from .warnings import DataValidityError
+from .native_preset_io import writing_preset, reading_preset
 import re
 import inspect
 from io import StringIO
@@ -450,7 +451,8 @@ class ContainerDefinition(RealItemDefinition):
                     ):
                         message = f"Missing non-optional input item {member.get_path()}"
                         if allow_incomplete:
-                            DataValidityError.warn(message)
+                            if not reading_preset():
+                                DataValidityError.warn(message)
                         else:
                             raise pp.ParseException(message)
             return parsed
@@ -628,7 +630,10 @@ class ContainerDefinition(RealItemDefinition):
             if not self.write_condition(value._container) or not self.allowed(value._container):
                 return
 
-        if self.is_expert:
+        if writing_preset():
+            if not value.as_dict(only_changed="explicit", generated=False):
+                return False
+        elif self.is_expert:
             if not value.is_changed():
                 return False
         else:
