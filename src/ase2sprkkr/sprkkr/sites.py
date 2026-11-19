@@ -130,13 +130,38 @@ class SiteType:
     def moments(self, value):
         self._just_one_type().moments = value
 
-    def copy(self, atoms=False, copy_mesh=True):
-        """Create a copy of the site."""
-        mesh = self.mesh.copy() if copy_mesh else self.mesh
+    def copy(self, atoms=False, copy_mesh=True, *, memo=None, shallow=False):
+        """Copy a site type, preserving shared state within a group of copies.
+
+        A shared ``memo`` keeps shared meshes and atomic types shared in the
+        destination. With ``shallow=True``, radial arrays remain shared with
+        the source; the site/type containers and meshes are still copied.
+        """
+        if memo is None:
+            memo = {}
+
+        def copied(value, create):
+            key = id(value)
+            if key not in memo:
+                memo[key] = create()
+            return memo[key]
+
+        mesh = copied(self.mesh, self.mesh.copy) if copy_mesh else self.mesh
+
+        def copied_type(typ):
+            key = id(typ)
+            if key not in memo:
+                memo[key] = typ.copy(for_mesh=mesh, shallow=shallow)
+            return memo[key]
+
+        occupation = {
+            copied_type(typ) if copy_mesh else typ: concentration
+            for typ, concentration in self.occupation.items()
+        }
         site_type = SiteType(
             self.atoms,
-            self.occupation,  # occupation will be copied
-            self.reference_system.copy(),
+            occupation,
+            copied(self.reference_system, self.reference_system.copy),
             mesh,
         )
         site_type._occupation._site_type = site_type
@@ -359,14 +384,15 @@ class Site:
         return old_site
 
     @staticmethod
-    def copy_sites(sites, atoms=False):
+    def copy_sites(sites, atoms=False, *, shallow=False):
         cache = {}
+        memo = {}
 
         def site(x):
             st = x._site_type
             n_st = cache.get(st, None)
             if not n_st:
-                cache[st] = n_st = st.copy(atoms=atoms)
+                cache[st] = n_st = st.copy(atoms=atoms, memo=memo, shallow=shallow)
             return x.copy(site_type=n_st)
 
         try:

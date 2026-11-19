@@ -39,7 +39,9 @@ def test_potential_attachment_sharing_and_reassignment():
     assert standalone.atoms is new_atoms
     assert attached.atoms is atoms
     assert atoms.potential is attached
-    assert not new_atoms.has_potential()
+    assert new_atoms.has_potential()
+    assert new_atoms.potential is not attached
+    assert new_atoms.potential.atoms is new_atoms
 
 
 def test_empty_atoms_are_explicit_set_from_atoms_input(monkeypatch):

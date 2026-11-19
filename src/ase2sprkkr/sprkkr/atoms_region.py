@@ -3,6 +3,7 @@ that describe a symmetry of a region of Atoms object."""
 
 from ase.cell import Cell
 from ase import Atoms
+from copy import copy
 import numpy as np
 from typing import List, Union, Optional
 from ..common.decorators import cached_property
@@ -231,16 +232,17 @@ class AtomsRegion:
     def spacegroup_info(self):
         return self.atoms.spacegroup_info.info_for_region(self)
 
-    def copy_for_atoms(self, atoms, slice=None):
+    def copy_for_atoms(self, atoms, slice=None, *, add=True):
         # ``incomplete_cell`` and ``incomplete_pbc`` are the canonical stored
         # representation of inherited axes.  Copy them directly so implicit
         # inheritance via a zero cell vector / ``pbc=None`` is preserved too.
         return AtomsRegion(
             self.name,
-            self.slice if slice is None else slice,
+            copy(self.slice) if slice is None else slice,
             self.incomplete_cell.copy(),
             np.array(self.incomplete_pbc, dtype=object, copy=True),
             atoms=atoms,
+            add=add,
         )
 
     def __repr__(self):

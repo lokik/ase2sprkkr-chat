@@ -144,6 +144,8 @@ class SpacegroupInfo(BaseSpacegroupInfo):
         out = copy.copy(self)
         out.atoms = atoms
         out._dataset = None
+        out._regions = {}
+        out._block = None
         return out
 
     def check_spacegroup_kinds(self):

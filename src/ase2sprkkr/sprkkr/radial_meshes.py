@@ -149,7 +149,10 @@ class ExponentialMesh(Mesh):
         return (self.r1, self.dx, self.jrmt, self.rmt, self.jrws, self.rws)
 
     def copy(self):
-        return copy.copy(self)
+        out = copy.copy(self)
+        out._coors = copy.copy(self._coors)
+        out.fullpot = copy.deepcopy(self.fullpot)
+        return out
 
     def set_fullpot(self, data):
         self.fullpot = FullpotMesh.from_tuple(data)

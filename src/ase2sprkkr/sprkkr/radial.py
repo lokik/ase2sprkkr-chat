@@ -77,15 +77,22 @@ class RadialValue:
         self._mesh = mesh
         self._value = value
 
-    def copy(self, mesh=None):
+    def copy(self, mesh=None, *, shallow=False):
+        """Copy the radial container, optionally sharing its numerical values.
+
+        A different, non-equivalent mesh still requires interpolation and new
+        values, even for a shallow copy.
+        """
         out = copy.copy(self)
-        # The radial values must be private even if the target is a distinct
-        # but numerically equivalent mesh. Otherwise a SiteType copy would
-        # mutate the original AtomicType through the shared NumPy array.
-        out._value = np.copy(self._value)
+        # Default copies own their values even on an equivalent mesh. Sharing
+        # is reserved for callers explicitly requesting a shallow copy.
+        out._value = self._value if shallow else np.copy(self._value)
         out.__dict__.pop("interpolator", None)
         if mesh is not None and self._mesh is not mesh:
-            out.mesh = mesh
+            if _equivalent_meshes(self._mesh, mesh):
+                out._mesh = mesh
+            else:
+                out.mesh = mesh
         return out
 
     def for_mesh(self, mesh):

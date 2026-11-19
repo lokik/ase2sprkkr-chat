@@ -414,14 +414,35 @@ class SPRKKRAtoms(Atoms):
             self._potential.reset(update_atoms=False)
             self._potential.set_from_atoms()
 
-    def copy(self):
+    def copy(self, *, shallow=False):
+        """Copy the physical structure, including its attached native potential.
+
+        Site/type/mesh sharing is retained within the independent copy. An
+        embedding host remains an external reference shared with the source.
+
+        ``shallow=True`` shares radial NumPy arrays and attached-potential
+        option values. Geometry, sites, atomic-type containers, meshes and
+        regions remain independent, so geometry/occupation edits and value
+        replacement do not change the source. In-place writes to shared value
+        arrays affect both structures; use the default copy for those edits.
+        """
         with self._without_embedding_host_for_copy() as host:
             out = super().copy()
         if host is not None:
             out.info[EMBEDDING_HOST] = host
         SPRKKRAtoms.promote_ase_atoms(out)
+        spacegroup_info = self.spacegroup_info.copy_for(out)
+        out.info["spacegroup_info"] = spacegroup_info
         if self.are_sites_inited():
-            out.set_sites(Site.copy_sites(out.sites, out), self.spacegroup_info.copy_for(out))
+            out.set_sites(Site.copy_sites(out.sites, out, shallow=shallow), spacegroup_info=True)
+        for name, region in self.regions.items():
+            out._regions[name] = region.copy_for_atoms(out, add=False)
+        if self._potential is not None:
+            potential = self._potential.copy(copy_values=not shallow)
+            potential.atoms = out
+            if hasattr(self._potential, "_complete"):
+                potential._complete = self._potential._complete
+            out._potential = potential
         return out
 
     def __imul__(self, m):

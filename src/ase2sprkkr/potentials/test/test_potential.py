@@ -82,9 +82,10 @@ class TestPotential:
         assert atoms.sprkkr_is_scf_converged()
 
         copied = atoms.copy()
-        assert not copied.has_potential()
+        assert copied.has_potential()
+        assert copied.potential is not potential
         assert copied.sprkkr_is_scf_converged()
-        assert not copied.has_potential()
+        assert copied.has_potential()
 
         for status in ("ITR", "ITR-BULK", "ITR-L-BULK", "ITR-R-BULK", "ITR-I-ZONE"):
             potential.SCF_INFO.SCFSTATUS = status

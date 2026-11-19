@@ -317,13 +317,13 @@ n_semicore: {n_semicore}""")
             return self
         return self.copy(mesh)
 
-    def copy(self, for_mesh=None):
-        """Return an independent copy, optionally remeshed to ``for_mesh``."""
+    def copy(self, for_mesh=None, *, shallow=False):
+        """Copy the type, optionally sharing radial arrays via ``shallow=True``."""
         out = copy.copy(self)
         target_mesh = self.mesh if for_mesh is None else for_mesh
         out._mesh = target_mesh
-        out._potential = self.potential.copy(target_mesh) if self.potential is not None else None
-        out._charge = self.charge.copy(target_mesh) if self.charge is not None else None
+        out._potential = self.potential.copy(target_mesh, shallow=shallow) if self.potential is not None else None
+        out._charge = self.charge.copy(target_mesh, shallow=shallow) if self.charge is not None else None
         out._moments = self.moments.copy() if self.moments is not None else None
         out.magnetisation = self.magnetisation.copy()
         return out

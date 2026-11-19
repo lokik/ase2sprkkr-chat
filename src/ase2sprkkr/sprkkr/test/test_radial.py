@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from ase2sprkkr.sprkkr.radial import RadialPotential
 
@@ -64,9 +65,8 @@ def test_zr_tracks_public_z_value():
 
 
 
-def test_fullpot_payload_survives_equivalent_mesh_copy_and_refuses_remesh():
-    import pytest
-
+@pytest.mark.parametrize("shallow", [False, True])
+def test_fullpot_payload_survives_equivalent_mesh_copy_and_refuses_remesh(shallow):
     from ase2sprkkr.sprkkr.radial import RadialCharge
     from ase2sprkkr.sprkkr.radial_meshes import ExponentialMesh
 
@@ -78,14 +78,15 @@ def test_fullpot_payload_survives_equivalent_mesh_copy_and_refuses_remesh():
     for radial in (radial_potential, radial_charge):
         clone = mesh.copy()
         clone.set_fullpot((1, 2, 1, [3]))
-        copied = radial.copy(clone)
+        copied = radial.copy(clone, shallow=shallow)
         assert copied.fullpot_data == payload
         assert copied.mesh is clone
         np.testing.assert_array_equal(copied.raw_value, radial.raw_value)
+        assert np.shares_memory(copied.raw_value, radial.raw_value) == shallow
 
         different = ExponentialMesh(1e-6, 0.03, 2, 1.0, 3, 1.5)
         different.set_fullpot((1, 2, 1, [3]))
         with pytest.raises(ValueError, match="cannot be remeshed"):
-            radial.copy(different)
+            radial.copy(different, shallow=shallow)
         assert radial.mesh is mesh
         assert radial.fullpot_data == payload
