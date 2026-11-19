@@ -6,11 +6,11 @@ import tempfile
 import numpy as np
 import pyparsing as pp
 import pytest
+from kkrunner import TaskFile
 
 from ...common.grammar_types import Keyword
 from ...common.warnings import DataValidityError, DataValidityWarning
 from ..input_parameters import InputParameters
-from ..input_parameters_definitions import InputParametersDefinition
 from ..task_definition import TaskDefinition
 
 
@@ -62,7 +62,7 @@ class TestDefinitions:
             task, parameters, str(tmp_path), "cache"
         ) == (
             str(tmp_path / "Fe.cache"),
-            str(tmp_path / "Fe_BLOCHSF.tau.dir"),
+            TaskFile(str(tmp_path / "Fe_BLOCHSF.tau.dir"), kind="directory"),
         )
 
     def test_task_definitions_do_not_own_registries_and_are_pickleable(self):
