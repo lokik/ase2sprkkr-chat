@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from .configuration import Configuration as BaseConfiguration, UnknownMemberPolicy
+from .native_preset_io import reading_preset
 from .file_utils import filename_from_file
 import copy
 import itertools
@@ -936,7 +937,10 @@ class RootConfigurationContainer(ConfigurationContainer):
                 file, allow_dangerous=allow_dangerous,
                 allow_incomplete=allow_incomplete,
             )
-        with self._mutation("parse", report_invalid=report_invalid) as (transaction, policy):
+        # Preset fragments allow missing required fields, but not invalid supplied values.
+        # Edit-phase validation preserves atomicity without parse-time omission checks.
+        reason = "set" if reading_preset() else "parse"
+        with self._mutation(reason, report_invalid=report_invalid) as (transaction, policy):
             policy.add_semantic(parse_issues)
             if clear_first:
                 self.stage_clear(transaction, check_required=False)

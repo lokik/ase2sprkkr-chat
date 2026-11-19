@@ -10,6 +10,7 @@ from collections.abc import Mapping
 
 from ..common.grammar_types import mixed
 from .configuration import Configuration, UnknownMemberPolicy
+from .native_preset_io import writing_preset, reading_preset
 from ..common.misc import as_integer
 from .dangerous_values import DangerousValue
 from .configuration_transaction import ConfigurationTransaction
@@ -659,6 +660,8 @@ class Option(BaseOption):
         d = self._definition
         if not d.is_stored:
             return None, False
+        if writing_preset() and not self.is_set():
+            return None, False
 
         if not always:
             if not d.allowed(self._container):
@@ -672,11 +675,11 @@ class Option(BaseOption):
         if self.is_dangerous():
             return self._value, self._value() is not None
 
-        value = self.result
+        value = self._unpack_value(self._value) if writing_preset() else self.result
         missing, _, np = d.type.missing_value()
         if np.__class__ is value.__class__ and np == value:
             return value, False
-        if value is None or (not d.is_always_added and self.is_it_the_default_value(value)):
+        if value is None or (not writing_preset() and not d.is_always_added and self.is_it_the_default_value(value)):
             return value, False
         return value, True
 
@@ -714,7 +717,7 @@ class Option(BaseOption):
                     raise pp.ParseException(message)
                 # The grammar already reported unconditional omissions.
                 # Runtime-dependent presence is resolved only at this stage.
-                if d.condition is not None or callable(d.is_optional):
+                if (d.condition is not None or callable(d.is_optional)) and not reading_preset():
                     DataValidityError.warn(message)
         if not d.allowed(container):
             return

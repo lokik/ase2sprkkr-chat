@@ -90,6 +90,73 @@ a calculation; a potential or atoms must also be provided.
 For task-definition internals and shared parameter schemas, see
 :doc:`philosophy`.
 
+Reusable input presets
+----------------------
+
+Presets are native ``.inp`` fragments that store explicitly assigned
+input parameters, rather than a complete runnable input file. They are
+organized in two scopes under the ASE2SPRKKR user configuration directory::
+
+   presets/
+     input_parameters/bsf/common.inp
+     task/bsfek/along_path.inp
+     task/bsfkk/fermi_surface.inp
+
+An ``input_parameters`` preset must be compatible with *every* task using
+the named IPD. A ``task`` preset belongs to one concrete backend task.
+Shared IPDs such as BSF (BSFEK/BSFKK) and JXC (JXC/DMI) are supported.
+The directory name provides task identity without adding custom syntax to
+the native input file.
+
+Saving with a bare name automatically selects ``input_parameters`` scope
+if the explicitly stored values are task-neutral; otherwise it selects
+the current ``task``. Use a qualified name to require a particular scope::
+
+   from ase2sprkkr import InputParameters
+
+   ip = InputParameters.for_task("BSFEK")
+   ip.ENERGY.NE = [400]
+   ip.save_preset("along_path")               # task:bsfek.along_path
+   ip.save_preset("task:bsfek.my_path")       # Explicit task scope
+
+   ip = InputParameters.for_definition("BSF")
+   ip.TAU.NKTAB = 500
+   ip.save_preset("input_parameters:bsf.dense")
+
+   ip.load_preset("task:bsfkk.fermi_surface")  # Replace and switch to BSFKK
+   ip.load_preset("input_parameters:bsf.dense",
+                  clear_first=False)          # Merge, preserve current task
+
+Loading replaces calculation settings by default (``clear_first=True``);
+merging (``clear_first=False``) preserves the current effective task.
+Replacing with an IPD-neutral preset also preserves the current effective task.
+Replacing with a task-specific preset can select that task as long as the
+caller has not supplied a conflicting ``required_task``. A merge of a
+different task-specific preset is rejected.
+
+By default, loading retains the original dataset, ADSI suffix, potential
+paths, embedding mode (CLUTYPE), and shape-function filenames; use
+``load_structural_info=True`` to load these from the preset instead.
+False native flags are omitted from .inp, so an explicitly false flag can be
+used to clear previous values only when replacing, not when merging.
+
+Manage presets from the command line::
+
+   ase2sprkkr presets list
+   ase2sprkkr presets list input_parameters:bsf
+   ase2sprkkr presets list task:bsfkk
+   ase2sprkkr presets show task:bsfkk.fermi_surface
+   ase2sprkkr presets create task:bsfkk.fermi_surface previous.inp
+   ase2sprkkr run sample.pot --preset task:bsfkk.fermi_surface
+
+The ``input_parameters:jxc.NAME`` and ``task:jxc.NAME`` forms distinguish
+the JXC schema from the JXC task. Unqualified names are accepted only when
+their scope and identity are unambiguous. Explicit ``run --task`` takes
+precedence over a conflicting task-specific preset. Running a neutral
+preset for a shared IPD without any task context requires an explicit
+``--task``, rather than silently selecting a default mode. Command-line
+``NAME=VALUE`` overrides are applied after loading a preset.
+
 Site occupations and symmetry
 -----------------------------
 
