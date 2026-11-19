@@ -404,11 +404,15 @@ def _keyword_transform_identity(value):
 class Keyword(GrammarType):
     """
     A value, that can take values from the predefined set of strings.
+
+    ``trim=True`` removes surrounding whitespace before case conversion and
+    alias lookup, including values assigned directly to configuration options.
     """
 
-    def __init__(self, *keywords, aliases=None, transform="upper", quote=None, **kwargs):
+    def __init__(self, *keywords, aliases=None, transform="upper", quote=None, trim=False, **kwargs):
         self.aliases = aliases or {}
         self.quote = quote
+        self.trim = trim
         if transform == "upper":
             self.transform = _keyword_transform_upper
         elif transform == "lower":
@@ -438,7 +442,12 @@ class Keyword(GrammarType):
             )
 
     def _parse_keyword_token(self, tokens):
-        return self.transform(tokens[0])
+        return self._transform_value(tokens[0])
+
+    def _transform_value(self, value):
+        if self.trim and isinstance(value, str):
+            value = value.strip()
+        return self.transform(value)
 
     def __getstate__(self):
         state = self.__dict__.copy()
@@ -447,6 +456,7 @@ class Keyword(GrammarType):
 
     def __setstate__(self, state):
         self.__dict__.update(state)
+        self.trim = state.get("trim", False)
         self._build_grammar()
 
     def items(self):
@@ -474,7 +484,7 @@ class Keyword(GrammarType):
         return self.grammar_name()
 
     def convert(self, value):
-        out = self.transform(value)
+        out = self._transform_value(value)
         return self.aliases.get(out, out)
 
     def additional_description(self, prefix=""):

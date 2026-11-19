@@ -8,7 +8,7 @@ A cluster potential is not a periodic potential with extra atomic sites.
 import re
 
 from ...common.configuration_definitions import BaseDefinition, SeparatorDefinition
-from ...common.grammar_types import Array, NumpyArray, RawData, Sequence, Table, line_string
+from ...common.grammar_types import Array, Keyword, NumpyArray, RawData, Sequence, Table, line_string
 from ..potential_definitions import (
     PotSectionDefinition,
     PotValueDefinition as V,
@@ -96,7 +96,14 @@ def _definition():
 
     # The cluster file contains only the dimensionality/type of the
     # lattice.  All lattice vectors belong to the separate host POTFIL.
-    section("LATTICE", [V("SYSDIM", str), V("SYSTYPE", str)], has_hidden_members=True)
+    section(
+        "LATTICE",
+        [
+            V("SYSDIM", Keyword("3D", "2D", trim=True)),
+            V("SYSTYPE", Keyword("BULK", "LIV", "LIR", "EMBEDDED-CLUSTER", trim=True)),
+        ],
+        has_hidden_members=True,
+    )
 
     # N5VEC(1:5) identifies a lattice translation, IQ is the host basis
     # index, and (QX,QY,QZ) are printed for information only.  The

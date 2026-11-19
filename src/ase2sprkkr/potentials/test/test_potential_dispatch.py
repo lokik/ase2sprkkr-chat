@@ -1,6 +1,6 @@
 """Native grammar-alternative dispatch and strict potential subclasses."""
 
-from io import BytesIO, StringIO
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -13,7 +13,7 @@ from ..cluster_potentials import EmbeddedPotential, ClusterPotential
 from ...sprkkr.sprkkr_atoms import SPRKKRAtoms
 
 
-CLUPOT = Path(__file__).parent / "data" / "Fe3CoFe3.clu.pot"
+CLUPOT = Path(__file__).parent.parent / "examples" / "Fe3CoFe3.clu.pot"
 PERIODIC = Path(__file__).parent.parent / "examples" / "FePt.new.pot"
 
 

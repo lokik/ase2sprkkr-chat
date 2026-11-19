@@ -1,7 +1,7 @@
 """Common SPR-KKR potential API and native-grammar dispatch.
 
 The public Potential entry point parses POTFIL and CLUPOT with a single
-pyparsing Or expression. Each concrete subclass uses only its native
+pyparsing alternative expression. Each concrete subclass uses only its native
 grammar. No NQ/NQCLU text probe, file rewind or parser retry is involved.
 """
 
@@ -17,6 +17,7 @@ from kkrunner.files.fingerprints import file_fingerprint
 
 from ..common.decorators import class_property, cache
 from ..common.file_utils import filename_from_file
+from ..common.grammar import generate_grammar
 from ..common.warnings import ValidationResult, catch_warnings_of
 from ..sprkkr.configuration import ConfigurationFile
 from ..sprkkr.sprkkr_atoms import SPRKKRAtoms
@@ -25,6 +26,18 @@ from .scf_state import PotentialScfState
 
 class PotentialFileChanged(RuntimeError):
     """A potential file changed while it was being parsed."""
+
+
+class _NativeAlternative(pp.ParseElementEnhance):
+    """Keep a native grammar's committed failures local to its alternative."""
+
+    def parseImpl(self, instring, loc, do_actions=True):
+        try:
+            return self.expr._parse(instring, loc, do_actions)
+        except pp.ParseFatalException as exc:
+            raise pp.ParseException(
+                exc.pstr, exc.loc, exc.msg, exc.parser_element
+            ) from None
 
 
 @lru_cache(maxsize=4)
@@ -42,12 +55,20 @@ def _file_grammar(allow_dangerous=False, kind=None):
         "embedded": cluster_definition,
     }
     names = (kind,) if kind else ("periodic", "embedded")
-    alternatives = [
-        pp.Group(definitions[name].grammar(allow_dangerous=allow_dangerous))(name)
-        for name in names
-    ]
-    return (alternatives[0] if len(alternatives) == 1
-            else pp.Or(alternatives))
+    # Naming a Group copies its child grammar using the current whitespace
+    # defaults. Keep newlines significant throughout wrapper construction.
+    with generate_grammar():
+        alternatives = []
+        for name in names:
+            grammar = definitions[name].grammar(allow_dangerous=allow_dangerous)
+            if kind is None:
+                grammar = _NativeAlternative(grammar)
+            alternatives.append(pp.Group(grammar)(name))
+        # Or probes without parse actions, but native grammars depend on those
+        # actions for delimiters and table lengths. Their headers distinguish
+        # the two formats, so ordered alternatives can parse them normally.
+        return (alternatives[0] if len(alternatives) == 1
+                else pp.MatchFirst(alternatives))
 
 
 class Potential(PotentialScfState, ConfigurationFile):
@@ -78,7 +99,7 @@ class Potential(PotentialScfState, ConfigurationFile):
     ):
         """Read POTFIL or CLUPOT from a path, seekable fd or one-pass stream.
 
-        A base-class call uses one Or grammar; a concrete subclass accepts
+        A base-class call uses one alternative grammar; a concrete subclass accepts
         only its own native grammar. A host is optional for parsing CLUPOT,
         but required to reconstruct its ASE atoms.
         """
@@ -193,9 +214,9 @@ class Potential(PotentialScfState, ConfigurationFile):
                 name = line.strip().upper()
                 if name == "GLOBAL SYSTEM PARAMETER":
                     in_globals = True
-                elif in_globals and re.match(r"^NQCLU\\s+\\d+\\b", name):
+                elif in_globals and re.match(r"^NQCLU\s+\d+\b", name):
                     return True
-                elif in_globals and re.match(r"^NQ\\s+\\d+\\b", name):
+                elif in_globals and re.match(r"^NQ\s+\d+\b", name):
                     return False
                 elif in_globals and name.startswith("*"):
                     continue

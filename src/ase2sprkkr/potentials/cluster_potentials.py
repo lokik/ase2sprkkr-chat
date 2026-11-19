@@ -11,7 +11,7 @@ import numpy as np
 from ase.units import Bohr
 
 from .potential_base import Potential
-from ..sprkkr.embedding import EMBEDDING_ARRAY, EMBEDDING_HOST, embedding_data, host_atoms
+from ..sprkkr.embedding import EMBEDDING_HOST, embedding_data, host_atoms
 
 
 def _from_start_native(text):
@@ -25,7 +25,7 @@ def _from_start_native(text):
     for i, line in enumerate(lines):
         if line.strip() != "MAGNETISATION DIRECTION" or i + 2 >= len(lines):
             continue
-        if re.match(r"^\\s*IQ\\s+QMTET\\s+QMPHI\\s*$", lines[i + 2], re.I):
+        if re.match(r"^\s*IQ\s+QMTET\s+QMPHI\s*$", lines[i + 2], re.IGNORECASE):
             del lines[i + 1]
             break
     return "".join(lines)

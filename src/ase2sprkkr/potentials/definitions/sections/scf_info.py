@@ -38,7 +38,7 @@ def scf_info_members(*, cluster=False):
     V = PotValueDefinition
     fields = [
         V("INFO", line_string, "NONE"),
-        (V("SCFSTATUS", str, "START") if cluster else
+        (V("SCFSTATUS", DefKeyword("START", "ITERATING", "CONVERGED", trim=True)) if cluster else
          V("SCFSTATUS", DefKeyword(
              "START", "CONVERGED", "ITR-BULK", "ITR-R-BULK",
              "ITR-L-BULK", "ITR-I-ZONE", "ITR",
@@ -56,7 +56,7 @@ def scf_info_members(*, cluster=False):
         V("BEXT", 0.0),
         V("SEMICORE", False),
         V("LLOYD", False),
-        V("NE", int if cluster else Array(int),
+        V("NE", Array(int),
           **({} if cluster else {"is_optional": True})),
         V("IBZINT", int, **({} if cluster else {"is_optional": True})),
         V("NKTAB", int, **({} if cluster else {"is_optional": True})),
