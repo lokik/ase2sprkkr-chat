@@ -279,6 +279,8 @@ while preparing a calculation:
      - Local date and time (format ``YYYY-MM-DD_HH:MM``)
    * - ``%c``
      - Incrementing calculation counter
+   * - ``%%``
+     - Literal percent sign (for example, ``Fe%%T`` becomes ``Fe%T``)
    * - ``%_``
      - Underscore separator: omitted at the start of a filename;
        consecutive ``%_`` separators are collapsed
@@ -300,6 +302,16 @@ The values are resolved consistently for each prepared calculation,
 including when multiple filenames use the same placeholder.
 The ``%d`` format contains a colon, which is not portable in
 Windows filenames; choose another template there.
+
+``CONTROL.DATASET`` is a literal native filename prefix and may include
+relative or absolute directories. ``CONTROL.ADSI`` is appended after an
+underscore when nonempty; an empty ADSI adds no suffix. Native input
+delimiters, whitespace, quoting, shell substitutions and wildcards cannot
+be used in either identifier. DATASET cannot start with ``-`` or ``~``:
+SPR-KKR passes derived TAU directory names to unquoted shell commands.
+Hyphens inside paths, such as ``runs/-Fe``, are supported, as are literal
+punctuation such as ``+@%!:^`` and UTF-8 names. Parent directories must
+exist when SPR-KKR opens its output files.
 
 Inspecting SCF results
 ----------------------

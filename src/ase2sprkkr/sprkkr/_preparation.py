@@ -28,8 +28,9 @@ from .sprkkr_atoms import SPRKKRAtoms
 class FilenameTemplator:
     """Render filename templates consistently for one prepared calculation.
 
-    Placeholder values are evaluated lazily and cached, so all filenames
-    created by one instance use the same date, task, symbols and counter value.
+    ``%%`` represents a literal percent sign. Placeholder values are evaluated
+    lazily and cached, so all filenames created by one instance use the same
+    date, task, symbols and counter value.
     """
 
     def __init__(self, label, counter, task, symbols):
@@ -58,12 +59,19 @@ class FilenameTemplator:
     }
 
     def __call__(self, template):
+        return "%".join(
+            self._render(part, leading=index == 0)
+            for index, part in enumerate(template.split("%%"))
+        )
+
+    def _render(self, template, *, leading):
         for placeholder, value in self.replacements.items():
             if placeholder in template:
                 template = template.replace(
                     placeholder, self._get(placeholder, value)
                 )
-        template = re.sub("^%_", "", template)
+        if leading:
+            template = re.sub("^%_", "", template)
         template = re.sub("%_(%_)*", "_", template)
         return template.replace("%_", "_")
 

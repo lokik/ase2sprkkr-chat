@@ -3,13 +3,14 @@
 
 import os
 
-from ...common.grammar_types import SetOf, DefKeyword, flag, energy, Integer, Keyword, String
+from ...common.grammar_types import SetOf, DefKeyword, flag, energy, Integer, Keyword
 from ._filenames import dataset_adsi
 from ..input_parameters_definitions import InputSectionDefinition as Section, InputValueDefinition as V
 from ...sprkkr.sprkkr_grammar_types import Site, AtomicType
 from functools import partial
 from ...common.warnings import DataValidityError
 from ._energy import energy_bound
+from ._identifiers import _DatasetString, _AdsiString, _FilenameString
 
 
 def relative_energy_supported(section):
@@ -128,15 +129,6 @@ def _map_tau_filename(option, value):
     return os.path.relpath(value, parent)
 
 
-class _AdsiString(String):
-    """An empty Python ADSI is serialized by omitting the native keyword."""
-
-    def _validate(self, value, why="set"):
-        if isinstance(value, str) and value == "":
-            return True
-        return super()._validate(value, why)
-
-
 def _adsi_write_condition(option):
     return bool(option())
 
@@ -159,16 +151,18 @@ def CONTROL(ADSI):
         [
             V(
                 "DATASET",
-                str,
+                _DatasetString(),
                 "case",
                 is_required=True,
                 result_is_visible=True,
                 value_mapping=_map_filename,
-                info="Filename prefix; nonempty ADSI is appended with an underscore for native DATSET outputs.",
+                info="Native filename prefix, optionally including directories. Input delimiters, whitespace and shell "
+                     "expansions are forbidden; the path cannot start with - or ~. "
+                     "Nonempty ADSI is appended with an underscore for native DATSET outputs.",
             ),
             V(
                 "SFNFIL",
-                str,
+                _FilenameString(),
                 default_value_from_container=_sections_sfnfil_default_value,
                 is_always_added=False,
                 value_mapping = _map_filename,
@@ -176,17 +170,19 @@ def CONTROL(ADSI):
             ),
             V("ADSI", _AdsiString(), ADSI, is_required=False,
               write_condition=_adsi_write_condition,
-              info="Filename suffix appended to DATASET with an underscore; empty means no suffix."),
+              info="Native filename suffix, appended to DATASET with an underscore; empty means no suffix. "
+                   "Directories and literal punctuation are allowed; input delimiters, whitespace and shell "
+                   "expansions are forbidden."),
             V(
                 "POTFIL",
-                str,
+                _FilenameString(),
                 is_required="save",
                 value_mapping = _map_filename,
                 info="The potential file (see SPRKKR documentation for its format). It isn't necessary to set it, it will be set by the calculator.",
             ),
             V(
                 "POTFIL_CLU",
-                str,
+                _FilenameString(),
                 is_required=False,
                 is_optional=True,
                 value_mapping=_map_filename,

@@ -94,10 +94,26 @@ def _task_selector_map():
 @cache
 def _task_preparse_definition():
     """Build the minimal IPD and its complete grammar exactly once."""
+    from .definitions._identifiers import _FilenameString
+
     values = tuple(sorted(_task_selector_map()))
     if not values:
         raise ValueError("No registered input-parameter TASK selectors")
-    ipd = _CachedPreparseIPD(
+    # The preview only selects TASK. Unknown sections must still accept native
+    # UTF-8 filenames before the selected schema validates their actual types.
+    preview_value = mixed.copy()
+    preview_value.types = (*mixed.types, _FilenameString())
+
+    class _PreparseSection(InputSectionDefinition):
+        custom_class = staticmethod(
+            CustomConfigurationValue.factory(InputValueDefinition, preview_value)
+        )
+
+    class _PreparseIPD(_CachedPreparseIPD):
+        child_class = _PreparseSection
+        custom_class = staticmethod(CustomConfigurationSection.factory(_PreparseSection))
+
+    ipd = _PreparseIPD(
         "_TASK_PREPARSE",
         [InputSectionDefinition(
             "TASK",
