@@ -40,6 +40,8 @@ jobs:
       env:
         ASE2SPRKKR_KKRUNNER_SOURCE: ${{ github.workspace }}/.ci/kkrunner
       run: ./install_dependencies.sh
+    - name: Embedded-host transformation regressions
+      run: python -m pytest -x -q src/ase2sprkkr/sprkkr/test/
     - name: Test installed wheel
       # Profile slow cases without an extra test run or separate CI job.
       run: DO_NOT_RUN_SPRKKR=1 "$GITHUB_WORKSPACE/run_tests" --durations=20
