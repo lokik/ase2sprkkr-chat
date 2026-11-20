@@ -17,7 +17,9 @@ from datetime import datetime
 from pathlib import Path
 
 from ..ase.symbols import filename_from_symbols
-from ..bindings.empty_spheres import add_empty_spheres
+from ..bindings.empty_spheres import (
+    INHOUSE_EMPTY_SPHERES_DEFAULTS, add_empty_spheres,
+)
 from ..common.temporary import temporary_option_value
 from ..input_parameters.input_parameters import InputParameters
 from ..potentials.potentials import Potential
@@ -446,12 +448,28 @@ def resolve_empty_spheres(
         params.update(_empty_sphere_overrides(selected_params, "empty_spheres_params"))
     params.update(overrides)
 
-    # min_radius/max_radius/max_spheres/mesh are XBand arguments and are
-    # incompatible with es_finder, which may otherwise be selected by auto.
-    if "method" not in params and any(
-        key in params for key in ("min_radius", "max_radius", "max_spheres", "mesh")
-    ):
-        params["method"] = "inhouse"
+    # XBand parameters cannot be silently ignored by an auto-selected
+    # es_finder backend (which accepts a different argument vocabulary).
+    xband_keys = set(params) & set(INHOUSE_EMPTY_SPHERES_DEFAULTS)
+    if xband_keys:
+        method = params.get("method", "auto")
+        if method == "es_finder":
+            raise ValueError(
+                "XBand empty_spheres_params are incompatible with method='es_finder'"
+            )
+        if method == "auto":
+            params["method"] = "inhouse"
+        min_radius = params.get("min_radius", INHOUSE_EMPTY_SPHERES_DEFAULTS["min_radius"])
+        max_radius = params.get("max_radius", INHOUSE_EMPTY_SPHERES_DEFAULTS["max_radius"])
+        if min_radius < 0 or max_radius < min_radius:
+            raise ValueError("Empty-sphere radii must satisfy 0 <= min_radius <= max_radius")
+        if params.get("max_spheres", 1) < 1:
+            raise ValueError("max_spheres must be positive")
+        if "mesh" in params:
+            mesh = params["mesh"]
+            mesh = (mesh,) * 3 if isinstance(mesh, int) else tuple(mesh)
+            if len(mesh) != 3 or any(value < 1 for value in mesh):
+                raise ValueError("Empty-sphere mesh must contain three positive integers")
     add_empty_spheres(atoms, **params)
 
 
