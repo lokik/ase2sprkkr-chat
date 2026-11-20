@@ -6,6 +6,7 @@ from io import StringIO
 import pyparsing as pp
 from ..common.grammar_types import Keyword
 from ..common.warnings import DataValidityError
+from ..common.native_preset_io import reading_preset
 from ..common.container_definitions import dict_from_parsed
 from ..sprkkr.configuration import (
     ConfigurationValueDefinition,
@@ -319,7 +320,7 @@ class InputParametersDefinition(ConfigurationFileDefinition):
         values = super().parse_return(val, return_value_only)
         # Task defaults are useful for newly created input, but an omitted
         # ADSI in a native input means an empty suffix, not the task name.
-        if ("CONTROL" in values and "CONTROL" in self
+        if (not reading_preset() and "CONTROL" in values and "CONTROL" in self
                 and "ADSI" in self["CONTROL"]):
             values["CONTROL"].setdefault("ADSI", "")
         return values

@@ -262,10 +262,13 @@ class BaseRealWithUnits(Real):
     def convert(self, value):
         if isinstance(value, unyt_quantity):
             return value
-        if isinstance(value, tuple) and len(value) == 2 and value[1] in self.units:
-            return super().convert(value[0]) * self.units[value[1]]
-        if isinstance(value, tuple) and len(value) == 2:
-            return value
+        if isinstance(value, (list, tuple)) and len(value) == 2:
+            number, unit = value
+            # YAML stores unit pairs as sequences and uses the quantity's unit name.
+            unit = unit if unit in self.units else self.unit_strings.get(unit, unit)
+            if unit in self.units:
+                return super().convert(number) * self.units[unit]
+            return number, unit
         if self.default_unit and isinstance(value, numbers.Real):
             return super().convert(value) * self.units[self.default_unit]
         return super().convert(value)

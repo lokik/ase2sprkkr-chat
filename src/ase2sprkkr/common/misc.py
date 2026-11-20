@@ -1,6 +1,7 @@
 """Various classes and routines used thorough the package"""
 
 import copy
+from collections.abc import Mapping, Sequence
 import numpy as np
 import operator
 
@@ -53,6 +54,32 @@ def as_integer(value):
     TypeError: 'float' object cannot be interpreted as an integer
     """
     return operator.index(value)
+
+
+def values_equal(left, right):
+    """Compare nested scalar and array values without ambiguous truth values."""
+    if isinstance(left, np.ndarray) or isinstance(right, np.ndarray):
+        try:
+            return bool(np.array_equal(np.asarray(left), np.asarray(right), equal_nan=True))
+        except TypeError:
+            return bool(np.array_equal(np.asarray(left), np.asarray(right)))
+    if isinstance(left, Mapping) and isinstance(right, Mapping):
+        return left.keys() == right.keys() and all(
+            values_equal(left[key], right[key]) for key in left
+        )
+    if (
+        isinstance(left, Sequence)
+        and isinstance(right, Sequence)
+        and not isinstance(left, (str, bytes))
+        and not isinstance(right, (str, bytes))
+    ):
+        return len(left) == len(right) and all(
+            values_equal(a, b) for a, b in zip(left, right)
+        )
+    result = left == right
+    if isinstance(result, np.ndarray):
+        return bool(np.all(result))
+    return bool(result)
 
 
 def dict_first_item(self):

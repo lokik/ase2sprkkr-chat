@@ -223,6 +223,29 @@ class InputParameters(ConfigurationFile):
         self._copy_instance_defaults(self, out, copy_values)
         return out
 
+    def save_preset(self, name, *, overwrite=False, store=None):
+        """Save explicitly assigned values as a native .inp preset."""
+        from .presets import PresetStore
+        return (store if store is not None else PresetStore()).save(self, name, overwrite=overwrite)
+
+    def load_preset(
+        self, name, clear_first: bool = True,
+        load_structural_info: bool = False, *,
+        required_task=None, store=None,
+    ):
+        """Apply a preset; replace settings by default but keep structural paths.
+
+        With ``clear_first=False``, only values present in the preset are
+        merged. Structural/dataset fields are preserved unless explicitly
+        requested using ``load_structural_info=True``.
+        """
+        from .presets import PresetStore
+        return (store if store is not None else PresetStore()).load_into(
+            self, name, clear_first=clear_first,
+            load_structural_info=load_structural_info,
+            required_task=required_task,
+        )
+
     def uses_separate_single_site_contour(self):
         switches = (
             ("ENERGY", "SPLITSS"),

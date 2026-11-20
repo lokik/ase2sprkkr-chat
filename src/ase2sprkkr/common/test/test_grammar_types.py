@@ -213,6 +213,7 @@ class TestGrammar:
             test_invalid(v)
         for v, r in [(1, 1.0 * unyt.Ry), (15, 15.0 * unyt.Ry)]:
             test_warning(v, r)
+        assert type.convert([2.0, str(unyt.eV)]) == 2.0 * unyt.eV
 
         type = gt.SetOf(int)
         for val, res in [("a{}", Error), ("{a}", Error), ("{1,2}", np.array([1, 2])), ("{1,a}", Error)]:
