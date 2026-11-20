@@ -34,7 +34,7 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: lokik/kkrunner-chat
-        ref: b48050d51d8198e8b4b6263f6b0aff994290f989
+        ref: 2935f676fc42bf50a4a9318ad9f99c4f65d2944d
         path: .ci/kkrunner
     - name: Install matching KKRunner and ASE2SPRKKR
       env:
@@ -58,7 +58,7 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: lokik/kkrunner-chat
-        ref: b48050d51d8198e8b4b6263f6b0aff994290f989
+        ref: 2935f676fc42bf50a4a9318ad9f99c4f65d2944d
         path: .ci/kkrunner
     - name: Install matching KKRunner and ASE2SPRKKR
       env:
@@ -94,7 +94,7 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: lokik/kkrunner-chat
-        ref: b48050d51d8198e8b4b6263f6b0aff994290f989
+        ref: 2935f676fc42bf50a4a9318ad9f99c4f65d2944d
         path: .ci/kkrunner
     - name: Install matching KKRunner and ASE2SPRKKR
       env:
