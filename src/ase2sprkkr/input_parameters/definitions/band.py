@@ -64,7 +64,7 @@ def input_parameters_definition():
         ]), task, energy, electron],
     )
     schema.task_selectors = ("BAND",)
-    schema._task_definition = TaskDefinition("BAND", experimental=True, executable="kkrspec", mpi=False, output_reader="SPEC",
+    schema._task_definition = TaskDefinition("BAND", supports={"3d", "2d"}, experimental=True, executable="kkrspec", mpi=False, output_reader="SPEC",
         input_files=SPEC_INPUT_FILES, output_files=SPEC_OUTPUT_FILES,
     )
     return schema

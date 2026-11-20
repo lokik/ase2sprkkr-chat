@@ -120,5 +120,5 @@ def input_parameters_definition():
                            "ONLY_CORE and USE_ZJOVZZ workflows are not audited. NONMAG is allowed. "
                            "Native code forces the ZJ wavefunction convention even for FULLPOT."
     )
-    schema._task_definition = TaskDefinition("POSANI", experimental=True, executable="kkrgen", mpi=True, input_files=("{DATASET_ADSI}_pos_dat.pan",))
+    schema._task_definition = TaskDefinition("POSANI", supports={"3d"}, experimental=True, executable="kkrgen", mpi=True, input_files=("{DATASET_ADSI}_pos_dat.pan",))
     return schema

@@ -48,7 +48,7 @@ def input_parameters_definition():
     # Native SUSC_GAMMA is not cluster-safe (host-type loops and missing WF).
     schema._task_definition = TaskDefinition(
         "STONER", experimental=True, executable="kkrgen", mpi=False,
-        supports_embedded_cluster=False, output_files=(
+        supports={"3d", "2d"}, output_files=(
             "{DATASET_ADSI}_*_g-spin.dat",
             "{DATASET_ADSI}_*_g-orb.dat",
             "{DATASET_ADSI}_*_VWN_A-xc.dat",

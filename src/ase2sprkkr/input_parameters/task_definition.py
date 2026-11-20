@@ -83,14 +83,17 @@ def _normalize_task_files(files: Iterable[_FileTemplate], field: str) -> Tuple[T
     return tuple(normalized)
 
 
+SUPPORTED_SYSTEM_KINDS = frozenset({"3d", "2d", "cluster", "embedded"})
+
+
 @dataclass(frozen=True, init=False)
 class TaskDefinition:
     """Immutable declarative metadata identifying one SPR-KKR task.
 
     Convenience methods delegate task-bound operations to their owning service
     registries; resolution and parsing policy does not live in this value object.
-    Embedded-cluster support is opt-in per task, independently of whether its
-    executable has a cluster variant.
+    System support is explicit: 3D periodic, 2D layered, free cluster, or
+    embedded cluster. A native executable variant alone does not imply support.
     """
 
     input_parameters_definition_name: str
@@ -98,7 +101,7 @@ class TaskDefinition:
     executable: str
     mpi: bool
     experimental: bool
-    supports_embedded_cluster: bool
+    supports: frozenset[str]
     output_reader_name: Optional[str]
     input_files: Tuple[TaskFile, ...]
     output_files: Tuple[TaskFile, ...]
@@ -112,7 +115,7 @@ class TaskDefinition:
         executable: str = "kkrscf",
         mpi: bool = True,
         experimental: bool = False,
-        supports_embedded_cluster: bool = False,
+        supports: Iterable[str] = ("3d",),
         output_reader_name: Optional[str] = None,
         output_reader: Optional[str] = None,
         input_files: Iterable[_FileTemplate] = (),
@@ -130,8 +133,17 @@ class TaskDefinition:
             raise TypeError("mpi must be a bool")
         if type(experimental) is not bool:
             raise TypeError("experimental must be a bool")
-        if type(supports_embedded_cluster) is not bool:
-            raise TypeError("supports_embedded_cluster must be a bool")
+        if isinstance(supports, (str, bytes)):
+            raise TypeError("supports must be an iterable of system kinds, not a string")
+        try:
+            supports = frozenset(supports)
+        except TypeError as exc:
+            raise TypeError("supports must be an iterable of system kinds") from exc
+        if not all(isinstance(kind, str) for kind in supports):
+            raise TypeError("supports must contain only string system kinds")
+        invalid = supports - SUPPORTED_SYSTEM_KINDS
+        if invalid:
+            raise ValueError(f"Unknown system kind(s) in supports: {sorted(invalid)}")
         if output_reader_name is not None and output_reader is not None:
             raise TypeError(
                 "Specify only one of output_reader_name and output_reader"
@@ -150,7 +162,7 @@ class TaskDefinition:
         object.__setattr__(self, "executable", executable)
         object.__setattr__(self, "mpi", mpi)
         object.__setattr__(self, "experimental", experimental)
-        object.__setattr__(self, "supports_embedded_cluster", supports_embedded_cluster)
+        object.__setattr__(self, "supports", supports)
         object.__setattr__(self, "output_reader_name", output_reader_name)
         for kind, values in (
             ("input", input_files),

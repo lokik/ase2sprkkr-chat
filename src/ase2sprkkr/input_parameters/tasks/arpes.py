@@ -5,6 +5,7 @@ from ._spec_files import SPEC_INPUT_FILES, SPEC_OUTPUT_FILES
 def task_definition():
     return TaskDefinition(
         "ARPES",
+        supports={"3d", "2d"},
         name="ARPES",
         executable="kkrspec",
         mpi=False,

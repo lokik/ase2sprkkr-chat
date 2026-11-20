@@ -58,7 +58,7 @@ def input_parameters_definition():
         add=[CONTROL("AIPES"), task, energy, out["SPEC_EL"]],
     )
     schema.task_selectors = ("AIPES",)
-    schema._task_definition = TaskDefinition("AIPES", experimental=True, executable="kkrspec", mpi=False, output_reader="SPEC",
+    schema._task_definition = TaskDefinition("AIPES", supports={"3d", "2d"}, experimental=True, executable="kkrspec", mpi=False, output_reader="SPEC",
         input_files=SPEC_INPUT_FILES, output_files=SPEC_OUTPUT_FILES,
     )
     return schema

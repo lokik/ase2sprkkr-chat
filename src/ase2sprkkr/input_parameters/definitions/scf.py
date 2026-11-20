@@ -74,7 +74,7 @@ def input_parameters_definition():
         "SCF",
         name="SCF",
         executable="kkrscf",
-        supports_embedded_cluster=True,
+        supports={"3d", "2d", "embedded"},
         mpi=True,
         output_reader="SCF",
     )

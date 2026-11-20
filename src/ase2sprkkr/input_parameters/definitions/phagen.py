@@ -53,6 +53,7 @@ def input_parameters_definition():
     )
     schema._task_definition = TaskDefinition(
         "PHAGEN",
+        supports={"3d", "2d"},
         name="PHAGEN",
         executable="kkrscf",
         mpi=False,

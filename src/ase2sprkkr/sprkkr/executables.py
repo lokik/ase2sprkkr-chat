@@ -143,7 +143,7 @@ def resolve_task_executable(task, input_parameters):
         cluster_type = input_parameters.CONTROL.CLUTYPE()
     except (AttributeError, KeyError):
         cluster_type = None
-    if cluster_type == "embedded" and not task.supports_embedded_cluster:
+    if cluster_type == "embedded" and "embedded" not in task.supports:
         raise ValueError(
             f"Task {task.name!r} is not enabled for embedded-cluster calculations; "
             "a CLUGEN/CLUSCF executable alone does not establish task support"

@@ -32,7 +32,7 @@ def input_parameters_definition():
         "DOS",
         name="DOS",
         executable="kkrgen",
-        supports_embedded_cluster=True,
+        supports={"3d", "2d", "embedded"},
         mpi=True,
         output_reader="DOS",
         output_files=(TaskFile("{DATASET_ADSI}.dos", type="DOS"),),

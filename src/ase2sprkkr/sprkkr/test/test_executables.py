@@ -134,7 +134,7 @@ def test_only_explicitly_enabled_tasks_resolve_embedded_executable(task_name, na
 
     parameters = InputParameters.create(task_name)
     parameters.CONTROL.CLUTYPE = "embedded"
-    assert parameters.task_definition.supports_embedded_cluster
+    assert "embedded" in parameters.task_definition.supports
     assert resolve_task_executable(parameters.task_definition, parameters) == native_name
 
 
@@ -153,7 +153,7 @@ def test_non_enabled_tasks_do_not_inherit_embedding_from_executable(task_name):
 
     parameters = InputParameters.create(task_name)
     parameters.CONTROL.CLUTYPE = "embedded"
-    assert not parameters.task_definition.supports_embedded_cluster
+    assert "embedded" not in parameters.task_definition.supports
     with pytest.raises(ValueError, match="not enabled for embedded-cluster"):
         resolve_task_executable(parameters.task_definition, parameters)
 
@@ -162,5 +162,5 @@ def test_normal_task_resolution_does_not_use_embedding_gate():
     from ase2sprkkr.input_parameters.input_parameters import InputParameters
 
     parameters = InputParameters.create("TORQUE")
-    assert not parameters.task_definition.supports_embedded_cluster
+    assert "embedded" not in parameters.task_definition.supports
     assert resolve_task_executable(parameters.task_definition, parameters) == "kkrgen"

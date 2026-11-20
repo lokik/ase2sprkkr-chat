@@ -69,5 +69,5 @@ def input_parameters_definition():
                     "FULLPOT, DMFT and LDA+U are unsupported. "
                     "Relativistic output includes logarithmic derivatives; nonrelativistic output includes t matrices."
     )
-    schema._task_definition = TaskDefinition("PSHIFT", experimental=True, executable="kkrgen", mpi=False)
+    schema._task_definition = TaskDefinition("PSHIFT", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
     return schema
