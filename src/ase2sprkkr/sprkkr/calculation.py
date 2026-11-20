@@ -216,7 +216,10 @@ class PreparedCalculation:
                     restart_scf=restart_scf,
                 )
             preparation.write_input(
-                resolved_input, opened_input, potential_file, atoms,
+                resolved_input, opened_input, potential_file,
+                # In existing-POTFIL mode, explicit atoms are validation-only:
+                # never derive or replace native input settings from them.
+                atoms if resolved_potential.potential is not None else None,
                 cluster_potential_file=cluster_file,
             )
 

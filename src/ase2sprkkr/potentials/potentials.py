@@ -114,6 +114,17 @@ class PeriodicPotential(Potential):
     def __str__(self):
         return "SPRKKR POTENTIAL"
 
+    def is_scf_converged(self, atoms=None):
+        """Whether the host contains a converged, restartable SCF state."""
+        status = self.SCF_INFO.SCFSTATUS()
+        if status == "CONVERGED":
+            return True
+        if status != "START":
+            return False
+        if atoms is None:
+            atoms = self._atoms
+        return atoms is not None and atoms.sprkkr_has_converged_data()
+
     def save_to_file(
         self,
         file,

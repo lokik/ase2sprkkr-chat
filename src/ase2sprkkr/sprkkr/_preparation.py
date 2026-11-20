@@ -28,6 +28,7 @@ from .executables import resolve_task_executable, task_system_error
 from .sprkkr_atoms import SPRKKRAtoms, system_kind_for_atoms
 
 
+
 class FilenameTemplator:
     """Render filename templates consistently for one prepared calculation.
 
@@ -237,7 +238,9 @@ def resolve_potential_and_atoms(
     if potential is None:
         potential = atoms is not None or default_atoms is not None
 
-    potential_specified = potential is not None and potential is not True
+    # With potential=False, atoms are optional geometry metadata for native
+    # task validation; they never cause a potential to be generated or rewritten.
+    potential_specified = potential is not None and potential is not True and potential is not False
     if atoms is not None and potential_specified:
         raise ValueError(
             "You can not provide both a potential and atoms object to the SPRKKR "

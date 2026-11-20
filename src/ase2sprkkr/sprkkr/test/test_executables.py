@@ -190,3 +190,21 @@ def test_create_run_rejects_unsupported_2d_before_opening_files(source, tmp_path
         )
     assert existing_input.read_text(encoding="utf-8") == "keep this file\n"
     assert not (tmp_path / "run.out").exists()
+
+
+def test_file_only_potential_uses_explicit_atoms_for_task_validation(tmp_path):
+    from ase import Atoms
+    from ase2sprkkr import SPRKKR
+
+    params = InputParameters.for_task("DOS")
+    path = tmp_path / "native.pot"
+    path.write_text("native file is intentionally not parsed")
+    params.CONTROL.POTFIL = str(path)
+
+    with pytest.raises(ValueError, match="free clusters"):
+        SPRKKR().prepare(
+            atoms=Atoms("Fe", cell=[2, 2, 2], pbc=False),
+            potential=False, input_parameters=params,
+            input_file="dos.inp", directory=tmp_path, empty_spheres=False,
+        )
+    assert not (tmp_path / "dos.inp").exists()

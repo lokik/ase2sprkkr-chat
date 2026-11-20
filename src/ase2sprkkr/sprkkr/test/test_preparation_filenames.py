@@ -365,7 +365,9 @@ def test_embedded_preparation_writes_both_potentials_and_selects_cluster_executa
         assert saved.CONTROL.POTFIL() == "host.pot"
         assert saved.CONTROL.POTFIL_CLU() == "host.clu.pot"
         assert saved.CONTROL.CLUTYPE() == "embedded"
-        assert str(tmp_path / "host.clu.pot") in saved.input_files(str(tmp_path))
+        assert str(tmp_path / "host.clu.pot") in tuple(
+            map(str, saved.input_files(str(tmp_path)))
+        )
 
         reloaded = ClusterPotential.from_file(
             prepared.cluster_potential_file, host=host
