@@ -10,8 +10,19 @@ def main():
     silicon = bulk("Si", "diamond", a=5.43)
     calculator = SPRKKR(atoms=silicon)
 
-    # The simplest form asks ASE2SPRKKR to choose all settings automatically:
+    # The simplest form uses configured search parameters (if any), and
+    # otherwise uses the library's search defaults:
     # calculator.save_input(potential_file="Si.pot", empty_spheres=True)
+    #
+    # Force the built-in defaults, ignoring configured search parameters:
+    # calculator.save_input(potential_file="Si.pot", empty_spheres="library")
+    #
+    # Override only one configured parameter (others remain configured):
+    # calculator.save_input(
+    #     potential_file="Si.pot",
+    #     empty_spheres=True,
+    #     empty_spheres_params={"min_radius": 0.8},
+    # )
 
     # A two-item tuple limits the permitted empty-sphere radii:
     # calculator.save_input(
