@@ -8,6 +8,7 @@ execution is delegated to the generic execution subsystem.
 from __future__ import annotations
 
 import copy
+from collections.abc import Mapping
 import os
 import subprocess
 from pathlib import Path
@@ -18,6 +19,7 @@ from ase.calculators.calculator import (
 from kkrunner.runs import RunState
 import numpy as np
 
+from ..bindings.empty_spheres import configured_empty_spheres_params
 from ..common.file_utils import Directory
 from ..common.misc import config_property, first_non_none
 from ..configuration import config
@@ -64,6 +66,7 @@ class SPRKKR(BaseCalculator):
         print_output=None,
         mpi: Optional[bool] = None,
         empty_spheres: Optional[Union[str, bool, Dict]] = None,
+        empty_spheres_params=None,
         executable_suffix=None,
         executable_dir: Optional[Union[str, bool]] = None,
         profile=None,
@@ -99,7 +102,13 @@ class SPRKKR(BaseCalculator):
         if options or kwargs:
             self.input_parameters.set(options, **kwargs, unknown="find")
         self.print_output = print_output
+        if (isinstance(empty_spheres, (tuple, Mapping)) or empty_spheres == "library") and empty_spheres_params is not None:
+            raise ValueError(
+                "Specify empty-sphere parameters in either empty_spheres "
+                "or empty_spheres_params, not both"
+            )
         self.empty_spheres = empty_spheres
+        self.empty_spheres_params = empty_spheres_params
         self.profile = resolve_sprkkr_profile(profile).with_overrides(
             mpi=mpi,
             executable_dir=executable_dir,
@@ -217,6 +226,7 @@ class SPRKKR(BaseCalculator):
         options=None,
         task=None,
         empty_spheres=None,
+        empty_spheres_params=None,
         allow_temporary_files: bool = True,
         restart_scf: bool = False,
         clear_cache: bool = False,
@@ -241,6 +251,8 @@ class SPRKKR(BaseCalculator):
             default_output_file=self.output_file,
             default_directory=self._directory,
             default_empty_spheres=self.empty_spheres,
+            default_empty_spheres_params=self.empty_spheres_params,
+            configured_empty_spheres_params=configured_empty_spheres_params(config),
             label=self.label,
             counter=self._counter,
             atoms=atoms,
@@ -254,6 +266,7 @@ class SPRKKR(BaseCalculator):
             options=options,
             task=task,
             empty_spheres=empty_spheres,
+            empty_spheres_params=empty_spheres_params,
             allow_temporary_files=allow_temporary_files,
             restart_scf=restart_scf,
             clear_cache=clear_cache,
@@ -280,6 +293,7 @@ class SPRKKR(BaseCalculator):
         options=None,
         task=None,
         empty_spheres=None,
+        empty_spheres_params=None,
         return_files=False,
         restart_scf: bool = False,
     ):
@@ -319,6 +333,7 @@ class SPRKKR(BaseCalculator):
             options=options,
             task=task,
             empty_spheres=empty_spheres,
+            empty_spheres_params=empty_spheres_params,
             allow_temporary_files=return_files,
             restart_scf=restart_scf,
         )
@@ -359,6 +374,7 @@ class SPRKKR(BaseCalculator):
         options=None,
         task=None,
         empty_spheres: Optional[str | bool] = None,
+        empty_spheres_params=None,
         print_output=None,
         read_callback: Optional[callable] = None,
         callback=None,
@@ -407,6 +423,7 @@ class SPRKKR(BaseCalculator):
             directory=directory,
             create_subdirs=create_subdirs,
             empty_spheres=empty_spheres,
+            empty_spheres_params=empty_spheres_params,
             options=options,
             task=task,
             allow_temporary_files=True,
@@ -459,6 +476,7 @@ class SPRKKR(BaseCalculator):
         directory: Union[str, bool, Directory, None] = None,
         create_subdirs: bool = False,
         empty_spheres: Optional[str | bool] = None,
+        empty_spheres_params=None,
         mpi: bool = None,
         options=None,
         task=None,
@@ -512,6 +530,7 @@ class SPRKKR(BaseCalculator):
             options=options,
             task=task,
             empty_spheres=empty_spheres,
+            empty_spheres_params=empty_spheres_params,
             print_output=print_output,
             read_callback=read_callback,
             gdb=gdb,
