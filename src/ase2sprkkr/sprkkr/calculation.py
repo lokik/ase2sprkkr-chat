@@ -149,7 +149,9 @@ class PreparedCalculation:
             )
             parameters = resolved_input.parameters
             atoms = resolved_potential.atoms
-            task_name = parameters.task_definition_required().name
+            task = parameters.task_definition_required()
+            preparation.validate_task_system(task, resolved_input, resolved_potential)
+            task_name = task.name
             preparation.validate_restart(resolved_potential.potential, task_name, restart_scf)
             if isinstance(resolved_potential.potential, ClusterPotential):
                 requested_spheres = (
@@ -204,7 +206,6 @@ class PreparedCalculation:
                         restart_scf=restart_scf,
                     )
                 )
-                input_atoms = resolved_potential.potential.host.atoms
             else:
                 potential_file, temporary_potential = preparation.write_potential(
                     resolved_potential,
@@ -214,9 +215,8 @@ class PreparedCalculation:
                     task_name=task_name,
                     restart_scf=restart_scf,
                 )
-                input_atoms = atoms
             preparation.write_input(
-                resolved_input, opened_input, potential_file, input_atoms,
+                resolved_input, opened_input, potential_file, atoms,
                 cluster_potential_file=cluster_file,
             )
 
@@ -524,8 +524,11 @@ def _create_sprkkr_run(
             )
 
         def finalized(out):
-            if manager is not None and out is not None:
-                out.run_record = manager.store.get(runner.id)
+            if out is not None:
+                if manager is not None:
+                    out.run_record = manager.store.get(runner.id)
+                else:
+                    out.file_manifest = runner.files
             flush_listeners()
             # Run owns and releases ExecutionResources after completion.
             if callback:

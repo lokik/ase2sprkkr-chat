@@ -8,7 +8,10 @@ from dataclasses import dataclass
 from ..common.module_registry import RegistryDefinitionError, RegistryEntryNotFound
 
 
-__all__ = ("ExecutableDefinition", "executables", "resolve_task_executable")
+__all__ = (
+    "ExecutableDefinition", "executables", "resolve_task_executable",
+    "task_system_error",
+)
 
 
 def _nonblank_string(value, field):
@@ -132,6 +135,28 @@ executables = _ExecutableRegistry(
 )
 
 
+def task_system_error(task, system_kind):
+    """Return the reason a task cannot run on the given geometry, if any."""
+    if system_kind is None:
+        return None
+    if system_kind == "unknown":
+        return "The structure is not a native SPR-KKR system."
+    if system_kind not in task.supports:
+        if system_kind == "embedded":
+            return (
+                f"Task {task.name!r} is not enabled for embedded-cluster calculations; "
+                "a CLUGEN/CLUSCF executable alone does not establish task support"
+            )
+        if system_kind == "cluster":
+            return f"Task {task.name!r} does not support free clusters without a host potential."
+        return f"Task {task.name!r} does not support {system_kind.upper()} calculations."
+    if system_kind == "embedded":
+        executable = executables.get(task.executable)
+        if executable is None or executable.cluster_variant is None:
+            return f"Executable {task.executable!r} does not support embedded clusters"
+    return None
+
+
 def resolve_task_executable(task, input_parameters):
     """Resolve the executable for an enabled *task*, not only its base binary.
 
@@ -143,9 +168,8 @@ def resolve_task_executable(task, input_parameters):
         cluster_type = input_parameters.CONTROL.CLUTYPE()
     except (AttributeError, KeyError):
         cluster_type = None
-    if cluster_type == "embedded" and "embedded" not in task.supports:
-        raise ValueError(
-            f"Task {task.name!r} is not enabled for embedded-cluster calculations; "
-            "a CLUGEN/CLUSCF executable alone does not establish task support"
-        )
+    if cluster_type == "embedded":
+        error = task_system_error(task, "embedded")
+        if error:
+            raise ValueError(error)
     return executables.resolve(task.executable, input_parameters)

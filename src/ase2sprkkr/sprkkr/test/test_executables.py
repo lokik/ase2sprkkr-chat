@@ -164,3 +164,29 @@ def test_normal_task_resolution_does_not_use_embedding_gate():
     parameters = InputParameters.create("TORQUE")
     assert "embedded" not in parameters.task_definition.supports
     assert resolve_task_executable(parameters.task_definition, parameters) == "kkrgen"
+
+
+@pytest.mark.parametrize("source", ["potential", "path", "input"])
+def test_create_run_rejects_unsupported_2d_before_opening_files(source, tmp_path):
+    from pathlib import Path
+    from ase2sprkkr import InputParameters, Potential, SPRKKR
+
+    source_path = Path(__file__).parents[2] / "potentials" / "examples" / "GeTe.pot"
+    parameters = InputParameters.for_task("CHILANDAU")
+    if source == "potential":
+        potential = Potential.from_file(source_path)
+    elif source == "path":
+        potential = source_path
+    else:
+        parameters.CONTROL.POTFIL = str(source_path)
+        potential = False
+
+    existing_input = tmp_path / "run.inp"
+    existing_input.write_text("keep this file\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="CHILANDAU.*does not support 2D"):
+        SPRKKR().create_run(
+            potential=potential, input_parameters=parameters, directory=tmp_path,
+            input_file="run.inp", output_file="run.out", empty_spheres=False,
+        )
+    assert existing_input.read_text(encoding="utf-8") == "keep this file\n"
+    assert not (tmp_path / "run.out").exists()

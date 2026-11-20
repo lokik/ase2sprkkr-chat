@@ -16,13 +16,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from pyparsing import ParseBaseException
+
 from ..ase.symbols import filename_from_symbols
 from ..bindings.empty_spheres import add_empty_spheres
 from ..common.temporary import temporary_option_value
 from ..input_parameters.input_parameters import InputParameters
 from ..potentials.potentials import Potential
 from ..potentials.cluster_potentials import ClusterPotential
-from .sprkkr_atoms import SPRKKRAtoms
+from .executables import resolve_task_executable, task_system_error
+from .sprkkr_atoms import SPRKKRAtoms, system_kind_for_atoms
 
 
 class FilenameTemplator:
@@ -360,6 +363,37 @@ def resolve_input_parameters(
         )
 
     return ResolvedInput(input_parameters, input_file, potential_file, write_input)
+
+
+def validate_task_system(task, resolved_input, resolved_potential):
+    """Check known geometry before opening any calculation files."""
+    parameters = resolved_input.parameters
+    resolve_task_executable(task, parameters)
+    kind = system_kind_for_atoms(resolved_potential.atoms)
+    # For a path-only embedded calculation the host POTFIL is not itself
+    # an embedded structure; the complete pair is checked during source loading.
+    if kind is None and getattr(parameters.CONTROL, "CLUTYPE", lambda: None)() == "embedded":
+        kind = "embedded"
+    # When a task does not support both periodic geometries, inspect an
+    # available potential to reject a known unsupported system before creating
+    # output files. A parser failure means the geometry remains unknown:
+    # path-only native execution must not require full Python parsing.
+    filename = resolved_input.potential_file
+    if kind is None and filename and not {"2d", "3d"}.issubset(task.supports):
+        try:
+            potential = Potential.from_file(filename, atoms=False)
+        except (FileNotFoundError, ParseBaseException):
+            pass
+        else:
+            if isinstance(potential, ClusterPotential):
+                kind = "embedded"
+            else:
+                kind = potential.LATTICE.SYSDIM().lower()
+                if kind == "0d":
+                    kind = "cluster"
+    error = task_system_error(task, kind)
+    if error:
+        raise ValueError(error)
 
 
 def resolve_empty_spheres(

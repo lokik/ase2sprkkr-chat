@@ -11,6 +11,24 @@ from .embedding import EMBEDDING_ARRAY, EMBEDDING_HOST, embedding_data, host_ato
 from contextlib import contextmanager
 
 
+def system_kind_for_atoms(atoms):
+    """Classify the geometry for native task selection, without modifying it."""
+    if atoms is None:
+        return None
+    if EMBEDDING_ARRAY in getattr(atoms, "arrays", {}) and getattr(atoms, "info", {}).get(EMBEDDING_HOST) is not None:
+        return "embedded"
+    periodicity = tuple(bool(axis) for axis in atoms.get_pbc())
+    if all(periodicity):
+        return "3d"
+    if not any(periodicity):
+        return "cluster"
+    if periodicity == (True, True, False) and {"left", "central", "right"}.issubset(
+        getattr(atoms, "regions", {})
+    ):
+        return "2d"
+    return "unknown"
+
+
 def _restore_promoted_ase_atoms(original_class, reconstruct, args):
     """Recreate a promoted Atoms subclass before pickle restores its state."""
     obj = reconstruct(*args)
