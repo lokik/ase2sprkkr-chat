@@ -4,6 +4,27 @@ import numpy as np
 import warnings
 
 
+# XBand's built-in defaults, also used to initialise GUI search controls.
+# Keep these in sync with bindings/xband/spheres.pyx.
+INHOUSE_EMPTY_SPHERES_DEFAULTS = {
+    "min_radius": 0.65,
+    "max_radius": 2.0,
+    "max_spheres": 256,
+    "mesh": (24, 24, 24),
+}
+
+
+def configured_empty_spheres_params(configuration):
+    """Return only the XBand parameter overrides explicitly configured by the user."""
+    section = configuration.running.empty_spheres_params
+    values = {}
+    for name in INHOUSE_EMPTY_SPHERES_DEFAULTS:
+        value = getattr(section, name)()
+        if value is not None:
+            values[name] = value
+    return values
+
+
 class EmptySpheresResult(namedtuple("EmptySpheresResult", "positions radii")):
     def __len__(self):
         return len(self.radii)
