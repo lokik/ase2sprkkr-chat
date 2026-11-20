@@ -354,14 +354,65 @@ def resolve_input_parameters(
     return ResolvedInput(input_parameters, input_file, potential_file, write_input)
 
 
+def _embedded_empty_sphere_params(value):
+    """True for the legacy forms that supply parameters instead of a policy."""
+    return isinstance(value, (tuple, collections.abc.Mapping)) or value == "library"
+
+
+def _empty_sphere_overrides(value, name):
+    """Normalize a partial override mapping or the legacy (min, max) tuple."""
+    if value is None:
+        return {}
+    if isinstance(value, collections.abc.Mapping):
+        return dict(value)
+    if isinstance(value, tuple):
+        if len(value) != 2:
+            raise ValueError(f"{name} tuple must contain (min_radius, max_radius)")
+        return {"min_radius": value[0], "max_radius": value[1]}
+    raise ValueError(
+        f"{name} must be a dictionary, a (min_radius, max_radius) tuple, "
+        "or 'library'"
+    )
+
+
 def resolve_empty_spheres(
-    *, input_parameters, atoms, empty_spheres, default_empty_spheres
+    *, input_parameters, atoms, empty_spheres, default_empty_spheres,
+    empty_spheres_params=None, default_empty_spheres_params=None,
+    configured_empty_spheres_params=None,
 ):
-    """Apply the configured empty-sphere preparation policy."""
-    if empty_spheres is None:
-        empty_spheres = default_empty_spheres
-    if empty_spheres == "auto":
-        empty_spheres = (
+    """Resolve policy separately from search parameters.
+
+    Search parameters are layered library -> configuration -> calculator ->
+    per-call override. Legacy tuple/dict policies force searching and override
+    configured values, while 'library' forces built-in finder defaults.
+    """
+    explicit_policy = empty_spheres is not None
+    policy = default_empty_spheres if empty_spheres is None else empty_spheres
+    legacy_params = _embedded_empty_sphere_params(policy)
+
+    if legacy_params:
+        # Parameters explicitly passed in the same call are contradictory.
+        # Calculator defaults are overridable by a per-call legacy shorthand.
+        if empty_spheres_params is not None or (
+            not explicit_policy and default_empty_spheres_params is not None
+        ):
+            raise ValueError(
+                "Specify empty-sphere parameters in either empty_spheres "
+                "or empty_spheres_params, not both"
+            )
+
+    if policy == "library":
+        enabled = True
+        overrides = {}
+    elif isinstance(policy, (tuple, collections.abc.Mapping)):
+        enabled = True
+        overrides = _empty_sphere_overrides(policy, "empty_spheres")
+    else:
+        enabled = policy
+        overrides = {}
+
+    if enabled == "auto":
+        enabled = (
             input_parameters.task_name == "SCF"
             and atoms is not None
             and (
@@ -369,25 +420,39 @@ def resolve_empty_spheres(
                 or atoms.potential.SCF_INFO.SCFSTATUS() == "START"
             )
         )
-        if empty_spheres:
-            empty_spheres = not any(site.is_vacuum() for site in atoms.sites)
+        if enabled:
+            enabled = not any(site.is_vacuum() for site in atoms.sites)
 
-    if not empty_spheres or atoms is None:
+    if enabled not in (True, False, None):
+        raise ValueError(
+            "empty_spheres must be True, False, 'auto', 'library', "
+            "a parameter dictionary, or a (min_radius, max_radius) tuple"
+        )
+    if not enabled or atoms is None:
         return
 
-    if isinstance(empty_spheres, tuple):
-        if len(empty_spheres) != 2:
-            raise ValueError(
-                "empty_spheres tuple must contain (min_radius, max_radius)"
-            )
-        empty_spheres = {
-            "min_radius": empty_spheres[0],
-            "max_radius": empty_spheres[1],
-        }
-    if not isinstance(empty_spheres, collections.abc.Mapping):
-        empty_spheres = {}
+    use_library_defaults = policy == "library"
+    selected_params = (
+        empty_spheres_params
+        if empty_spheres_params is not None
+        else default_empty_spheres_params
+    )
+    if selected_params == "library":
+        use_library_defaults = True
+        selected_params = None
 
-    add_empty_spheres(atoms, **empty_spheres)
+    params = {} if use_library_defaults else dict(configured_empty_spheres_params or {})
+    if not legacy_params and not use_library_defaults:
+        params.update(_empty_sphere_overrides(selected_params, "empty_spheres_params"))
+    params.update(overrides)
+
+    # min_radius/max_radius/max_spheres/mesh are XBand arguments and are
+    # incompatible with es_finder, which may otherwise be selected by auto.
+    if "method" not in params and any(
+        key in params for key in ("min_radius", "max_radius", "max_spheres", "mesh")
+    ):
+        params["method"] = "inhouse"
+    add_empty_spheres(atoms, **params)
 
 
 def symbols_for_filenames(
