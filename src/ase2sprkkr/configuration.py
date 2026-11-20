@@ -5,7 +5,7 @@ import warnings
 from collections.abc import Mapping
 
 from ruamel.yaml.error import YAMLError
-from .common.grammar_types import CustomMixed, AlwaysQString, Array, Bool, Keyword, Integer
+from .common.grammar_types import CustomMixed, AlwaysQString, Array, Bool, Keyword, Integer, Real
 from .common.container_definitions import SectionDefinition, ConfigurationRootDefinition
 from .common.configuration_containers import RootConfigurationContainer, Section as ConfigurationSection
 from .common.value_definitions import ValueDefinition
@@ -390,6 +390,22 @@ definition = ConfigFileDefinition(
                     ),
                     default_value="auto",
                     info="Run empty spheres finding before calculation? Default value ``auto`` means only for SCF calculations not containing any vacuum atom.",
+                ),
+                Section(
+                    "empty_spheres_params",
+                    [
+                        V("min_radius", Real.I, is_optional=True,
+                          info="Optional minimum XBand empty-sphere radius in Å."),
+                        V("max_radius", Real.I, is_optional=True,
+                          info="Optional maximum XBand empty-sphere radius in Å."),
+                        V("max_spheres", Integer.I, is_optional=True,
+                          info="Optional maximum number of XBand empty spheres."),
+                        V("mesh", Array(Integer.I, as_list=tuple, length=3),
+                          is_optional=True,
+                          info="Optional XBand search mesh [nx, ny, nz]."),
+                    ],
+                    is_optional=True,
+                    info="Optional XBand empty-sphere parameter overrides. Omitted fields use library defaults.",
                 ),
                 V(
                     "print_output",
