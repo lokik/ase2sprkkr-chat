@@ -4,7 +4,10 @@ Changelog
 Unreleased (develop)
 --------------------
 
-* Requires KKRunner 0.2.0 beta3 for the renamed supervised backend.
+* Requires KKRunner 0.2.0 beta5 for staged input-version identities and
+  pre-submission validation. Embedded calculations now stage both host and
+  cluster potentials, and file-backed inputs are parsed only once.
+* The supervised backend is named ``kkrunner`` (not ``process``).
 * Clarified the distinction between persistent run records, reattachment
   and submission recovery. Execution profiles now use ``kkrunner`` for
   the supervised-process backend instead of ``process``.
