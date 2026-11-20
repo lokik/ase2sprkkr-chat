@@ -52,6 +52,22 @@ class SPRKKR(BaseCalculator):
 
     implemented_properties = ["energy"]
 
+    @staticmethod
+    def _validate_empty_sphere_arguments(empty_spheres, empty_spheres_params):
+        """Do not silently discard a second explicit parameter source."""
+        if (
+            empty_spheres_params is not None
+            and (
+                isinstance(empty_spheres, (tuple, Mapping))
+                or empty_spheres == "library"
+            )
+        ):
+            raise ValueError(
+                "Specify empty-sphere parameters in either empty_spheres "
+                "or empty_spheres_params, not both"
+            )
+
+
     def __init__(
         self,
         label=None,
@@ -74,6 +90,7 @@ class SPRKKR(BaseCalculator):
         project=None,
         **kwargs,
     ):
+        self._validate_empty_sphere_arguments(empty_spheres, empty_spheres_params)
         if potential is not None and not isinstance(potential, (bool, str)):
             if atoms is not None:
                 raise ValueError(
@@ -102,11 +119,6 @@ class SPRKKR(BaseCalculator):
         if options or kwargs:
             self.input_parameters.set(options, **kwargs, unknown="find")
         self.print_output = print_output
-        if (isinstance(empty_spheres, (tuple, Mapping)) or empty_spheres == "library") and empty_spheres_params is not None:
-            raise ValueError(
-                "Specify empty-sphere parameters in either empty_spheres "
-                "or empty_spheres_params, not both"
-            )
         self.empty_spheres = empty_spheres
         self.empty_spheres_params = empty_spheres_params
         self.profile = resolve_sprkkr_profile(profile).with_overrides(
@@ -242,6 +254,7 @@ class SPRKKR(BaseCalculator):
         :meth:`PreparedCalculation.close` when the object is not transferred to
         a runner.
         """
+        self._validate_empty_sphere_arguments(empty_spheres, empty_spheres_params)
         prepared = PreparedCalculation.prepare(
             default_atoms=self._atoms,
             default_potential=self._potential,
