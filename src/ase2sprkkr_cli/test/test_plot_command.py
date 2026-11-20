@@ -114,3 +114,108 @@ def test_grace_plot_cli_rejects_unknown_set(tmp_path):
     _, args = parse_args(str(source), "-v", "G1.S0", "-o", str(tmp_path / "bad.png"))
     with pytest.raises(ValueError, match="Unknown Grace dataset"):
         plot.run(args, {"debug": False})
+
+
+
+def test_plot_windows_identify_each_source_file_and_show_together(monkeypatch):
+    import matplotlib.pyplot as plt
+    from ase2sprkkr import result_files
+
+    plt.close("all")
+    rendered = []
+    shown = []
+
+    class DummyFile:
+        def __init__(self, path):
+            self.path = path
+
+        def plot(self, *, show=None, **kwargs):
+            assert show is False
+            fig = plt.figure()
+            rendered.append((self.path, fig.number))
+            if self.path.endswith("second.dos"):
+                # A split plot already has a per-value window label.
+                plt.figure().canvas.manager.set_window_title("SPIN UP")
+
+    monkeypatch.setattr(
+        result_files, "read_plottable_file",
+        lambda path, **kwargs: DummyFile(path),
+    )
+    monkeypatch.setattr(
+        plt, "show",
+        lambda: shown.append([
+            (number, plt.figure(number).canvas.manager.get_window_title())
+            for number in plt.get_fignums()
+        ]),
+    )
+
+    try:
+        _, args = parse_args("first.dos", "second.dos")
+        plot.run(args, {"debug": False})
+
+        assert [path for path, _ in rendered] == ["first.dos", "second.dos"]
+        assert len(shown) == 1
+        assert [title for _, title in shown[0]] == [
+            "first.dos", "second.dos", "second.dos — SPIN UP",
+        ]
+    finally:
+        plt.close("all")
+
+
+def test_plot_windows_disambiguate_identical_basenames(monkeypatch):
+    import matplotlib.pyplot as plt
+    from ase2sprkkr import result_files
+
+    plt.close("all")
+    titles = []
+
+    class DummyFile:
+        def plot(self, *, show=None, **kwargs):
+            assert show is False
+            plt.figure()
+
+    monkeypatch.setattr(
+        result_files, "read_plottable_file",
+        lambda path, **kwargs: DummyFile(),
+    )
+    monkeypatch.setattr(
+        plt, "show",
+        lambda: titles.extend(
+            plt.figure(number).canvas.manager.get_window_title()
+            for number in plt.get_fignums()
+        ),
+    )
+    try:
+        _, args = parse_args("one/Fe.dos", "two/Fe.dos")
+        plot.run(args, {"debug": False})
+        assert titles == ["one/Fe.dos", "two/Fe.dos"]
+    finally:
+        plt.close("all")
+
+
+def test_plot_output_only_does_not_show_windows(monkeypatch, tmp_path):
+    import matplotlib.pyplot as plt
+    from ase2sprkkr import result_files
+
+    plt.close("all")
+    calls = []
+
+    class DummyFile:
+        def plot(self, *, filename=None, show=None, **kwargs):
+            calls.append((filename, show))
+            plt.figure()
+
+    monkeypatch.setattr(
+        result_files, "read_plottable_file",
+        lambda path, **kwargs: DummyFile(),
+    )
+    monkeypatch.setattr(
+        plt, "show",
+        lambda: pytest.fail("Saving output should not open plot windows"),
+    )
+    try:
+        _, args = parse_args("Fe.dos", "-o", str(tmp_path / "image.png"))
+        plot.run(args, {"debug": False})
+        assert calls == [(str(tmp_path / "image.png"), False)]
+    finally:
+        plt.close("all")
