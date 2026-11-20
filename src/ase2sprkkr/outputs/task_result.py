@@ -198,15 +198,19 @@ class TaskResult:
 
     def file_is_current(self, path):
         """Whether a path still belongs to this result's captured file version."""
-        if getattr(self, "run_record", None) is None:
+        from .file_provenance import result_file_manifest, result_file_version
+        if result_file_manifest(self) is None and getattr(self, "run_record", None) is None:
             return os.path.isfile(path)
-        from .file_provenance import result_file_version
         version = result_file_version(self, path)
         return version is not None and version.is_current()
 
     def require_current_file(self, path):
         """Refuse to use missing, overwritten or unrecorded historical files."""
-        if getattr(self, "run_record", None) is not None and not self.file_is_current(path):
+        from .file_provenance import result_file_manifest
+        has_provenance = (
+            result_file_manifest(self) is not None or getattr(self, "run_record", None) is not None
+        )
+        if has_provenance and not self.file_is_current(path):
             from kkrunner.runs import HistoricalFileMismatchError
             raise HistoricalFileMismatchError(f"Result file is unavailable or changed: {path}")
 
