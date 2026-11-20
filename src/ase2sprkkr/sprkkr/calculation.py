@@ -91,6 +91,8 @@ class PreparedCalculation:
         default_output_file,
         default_directory,
         default_empty_spheres,
+        default_empty_spheres_params=None,
+        configured_empty_spheres_params=None,
         label,
         counter,
         atoms=None,
@@ -104,6 +106,7 @@ class PreparedCalculation:
         options=None,
         task=None,
         empty_spheres=None,
+        empty_spheres_params=None,
         allow_temporary_files=False,
         restart_scf=False,
         clear_cache=False,
@@ -165,6 +168,9 @@ class PreparedCalculation:
                     atoms=atoms,
                     empty_spheres=empty_spheres,
                     default_empty_spheres=default_empty_spheres,
+                    empty_spheres_params=empty_spheres_params,
+                    default_empty_spheres_params=default_empty_spheres_params,
+                    configured_empty_spheres_params=configured_empty_spheres_params,
                 )
 
             templator = preparation.FilenameTemplator(
