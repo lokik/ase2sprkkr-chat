@@ -5,6 +5,7 @@ from .file_provenance import (
     capture_result_file_versions,
     result_file_version,
 )
+from .output_detection import looks_like_scf_output
 from .project_results import (
     ProjectResultUnavailableError,
     UnrecoverableProjectResultError,
@@ -22,6 +23,7 @@ __all__ = [
     "capture_result_file_manifest",
     "capture_result_file_versions",
     "load_project_result",
+    "looks_like_scf_output",
     "retry_project_postprocessing",
     "result_file_version",
 ]
