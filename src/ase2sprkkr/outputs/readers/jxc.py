@@ -141,52 +141,88 @@ class JxcResult(TaskResult):
 class JxcOutputParser(SprKkrOutputParser):
     """Emit observed JXC milestones, without inventing fractional progress."""
 
-    _info_pattern = re.compile(
-        rb"\s*(?:"
-        rb"(?P<file>results written to file:(?P<file_name>.+_(?P<file_type>XCPLTEN_Jij|XCPLTEN_Dij|DMIVEC_Dij)\.dat|.*))"
-        rb"|Curie temperature within mean field approximation\s+T_C\s*=\s*(?P<curie_temp>[0-9.]+)\s*K"
-        rb"|number of TAU\(I,J\)'s to be calculated:\s*(?P<tau_pairs>\d+)"
-        rb")"
+    # SPR-KKR 9.7: xcpljij.f, xcpltensor.f, cluxcpljij.f,
+    # cluxcpltensor.f, init_mod_tauij_{star,cluster}.f.
+    _file_line = re.compile(
+        rb"^\s*results written to file:\s*(?P<file>\S+)\s*$",
+        re.IGNORECASE,
     )
-    _file_types = {
-        b"XCPLTEN_Jij": "jxc",
-        b"XCPLTEN_Dij": "dij",
-        b"DMIVEC_Dij": "dmi",
-    }
+    _plot_line = re.compile(
+        rb"^\s*(?:exchange coupling parameters|exchange tensor elements)"
+        rb"\s+written to file\s+(?P<file>\S+)\s*$",
+        re.IGNORECASE,
+    )
+    _curie_line = re.compile(
+        rb"Curie temperature within mean field\s+approximation"
+        rb"\s+T_C\s*=\s*(?P<temperature>[+-]?\d+(?:\.\d*)?(?:[EeDd][+-]?\d+)?)\s*K",
+        re.IGNORECASE,
+    )
+    _pair_count_line = re.compile(
+        rb"number of TAU\(I,J\)'s to be calculated:\s*(?P<count>\d+)",
+        re.IGNORECASE,
+    )
+
+    @staticmethod
+    def _file_kind(filename):
+        """Classify only the native filenames actually written by these modes."""
+        name = filename.lower()
+        if name.endswith((b"_j_ij.dat", b"_jjij.dat", b"_xcplten_jij.dat")):
+            return "jxc"
+        if name.endswith(b"_xcplten_dij.dat"):
+            return "dij"
+        if name.endswith(b"_dmivec_dij.dat"):
+            return "dmi"
+        for component in ("x", "y", "z"):
+            if name.endswith(("_dij_" + component + ".dat").encode()):
+                return "dmi_" + component
+        return None
 
     def format_info(self, kind, data):
         if kind == "jxc_pair_count":
             return f"Calculating {data.pairs} TAU(I,J) pairs"
         if kind == "jxc_result_file":
             return f"{data.file_type.upper()} results written to {data.filename}"
+        if kind == "jxc_plot_file":
+            return f"JXC plot written to {data}"
         if kind == "jxc_curie_temperature":
             return f"Mean-field Curie temperature: {data.temperature_kelvin:g} K"
         return None
 
     def _consume_line(self, line, result=None):
-        match = self._info_pattern.match(line)
-        if match is None:
-            return
-        if match.group("tau_pairs"):
-            pairs = int(match.group("tau_pairs"))
+        if match := self._pair_count_line.search(line):
+            pairs = int(match.group("count"))
             if result is not None:
                 result.tau_pair_count = pairs
             self.emit_info("jxc_pair_count", JxcPairCountInfo(pairs))
-        elif match.group("file"):
-            file_type = self._file_types.get(match.group("file_type"))
-            if file_type is None:
-                if result is not None:
-                    warnings.warn(f"Unexpected file type in JXC output: {line}")
+            return
+
+        if match := self._curie_line.search(line):
+            try:
+                temperature = float(match.group("temperature").replace(b"D", b"E").replace(b"d", b"e"))
+            except ValueError:
                 return
-            filename = match.group("file_name").decode("utf8").strip()
-            if result is not None:
-                result.files.add_file(file_type, filename, "jxc")
-            self.emit_info("jxc_result_file", JxcOutputFileInfo(file_type, filename))
-        elif match.group("curie_temp"):
-            temperature = float(match.group("curie_temp"))
             if result is not None:
                 result.mean_field_curie_temperature = temperature
             self.emit_info("jxc_curie_temperature", JxcCurieTemperatureInfo(temperature))
+            return
+
+        if match := self._file_line.match(line):
+            filename = match.group("file").decode("utf8", errors="replace")
+            file_type = self._file_kind(match.group("file"))
+            if file_type is None:
+                # A different supported JXC variant may write other files.
+                # Unrecognized names must not be treated as parser errors.
+                return
+            if result is not None:
+                result.files.add_file(file_type, filename, "jxc")
+            self.emit_info("jxc_result_file", JxcOutputFileInfo(file_type, filename))
+            return
+
+        if match := self._plot_line.match(line):
+            self.emit_info(
+                "jxc_plot_file",
+                match.group("file").decode("utf8", errors="replace"),
+            )
 
     async def read_output(self, stdout, result):
         await self.read_commons(stdout, result)
@@ -194,9 +230,8 @@ class JxcOutputParser(SprKkrOutputParser):
         result.tau_pair_count = None
         async for line in stdout:
             self._consume_line(line, result)
-
-        if result.mean_field_curie_temperature is None:
-            warnings.warn("Curie temperature not found in JXC output")
+        # A missing T_C is legal: e.g. CLUXCPLJIJ omits it and XCPLTENSOR
+        # prints it only when DGEEV succeeds. Do not warn on valid output.
 
 
 class JxcProgressParser(JxcOutputParser):
