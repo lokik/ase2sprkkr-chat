@@ -214,8 +214,7 @@ class BsfProgressParser(BsfOutputParser):
             self._partial = ""
 
 class BsfOutputReader(KkrOutputReader):
-    """BSF task has no special parser, it just has a special
-    result, that allow easy acces to BSF output file"""
+    """Expose BSF results and task-specific structured INFO milestones."""
 
     result_class = BsfResult
     parser_class = BsfOutputParser
