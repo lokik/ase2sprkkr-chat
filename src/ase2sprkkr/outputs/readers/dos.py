@@ -35,13 +35,23 @@ class DosOutputParser(DefaultOutputParser):
     def __init__(self, print_info=False, on_info=None):
         super().__init__(print_info=print_info, on_info=on_info)
         self.last_progress = None
+        self._started = False
+
+    def _note_started(self):
+        if not self._started:
+            self._started = True
+            self.emit_info("dos_started", None)
 
     def format_info(self, kind, data):
+        if kind == "dos_started":
+            return "Calculating density of states..."
         if kind == "dos_progress":
             return f"{data.completed}/{data.total} done."
         return None
 
     def _consume_line(self, line):
+        if line.strip():
+            self._note_started()
         match = self._completed_points.search(line)
         if match is None:
             return
@@ -56,6 +66,7 @@ class DosOutputParser(DefaultOutputParser):
 
     async def read_output(self, stdout, result):
         await self.read_commons(stdout, result)
+        self._note_started()
         result.output_lines = []
         async for raw_line in stdout:
             line = raw_line.decode("utf8", errors="replace").rstrip()
