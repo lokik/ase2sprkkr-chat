@@ -29,10 +29,11 @@ def dos_total_points_from_parameters(parameters):
 
 @dataclass(frozen=True)
 class DosProgressInfo:
-    """Completed DOS energy points; total is optional when unknown."""
+    """Energy progress; estimated=True denotes an MPI rank-0 proxy."""
 
     completed: int
     total: int | None
+    estimated: bool = False
 
 
 @dataclass(frozen=True)
@@ -64,10 +65,11 @@ class _DosHeaderStream:
 
 
 class DosOutputParser(DefaultOutputParser):
-    """Parse native DOS progress lines without estimating missing milestones.
+    """Parse DOS energy milestones, estimating rank-zero MPI progress.
 
-    Progress uses native energy-block transitions or explicit completed counts.
-    The same detection is shared with the incremental GUI parser.
+    The reporting rank owns the final contiguous energy block, so the first
+    observed energy index determines the block length. The same parser also
+    powers GUI live progress, independently of stdout chunk boundaries.
     """
 
     # Native kkrgen prints one such header for every energy AND atomic
@@ -93,6 +95,8 @@ class DosOutputParser(DefaultOutputParser):
         self._current_point = None
         self._started = False
         self._mpi_energy_loop = False
+        self._nprocs = None
+        self._first_mpi_point = None
         self._last_seen = None
 
     def _note_started(self):
@@ -104,23 +108,33 @@ class DosOutputParser(DefaultOutputParser):
         if kind == "dos_started":
             return "Calculating density of states..."
         if kind == "dos_progress":
+            if data.estimated:
+                return (f"~{100 * data.completed // data.total}% done "
+                        f"(estimated from MPI rank 0).")
             return (f"{data.completed}/{data.total} done." if data.total is not None
                     else f"{data.completed} energy points done.")
         if kind == "dos_energy_index":
             return f"DOS energy index {data.index} observed (MPI completion unknown)"
         return None
 
-    def _emit_progress(self, completed, total):
-        if completed <= 0 or (total is not None and completed > total):
+    def _emit_progress(self, completed, total, *, estimated=False):
+        if completed < 0 or (completed == 0 and not estimated):
             return
-        progress = DosProgressInfo(completed, total)
+        if total is not None and (total <= 0 or completed > total):
+            return
+        progress = DosProgressInfo(completed, total, estimated)
         if progress != self.last_progress:
             self.last_progress = progress
             self.emit_info("dos_progress", progress)
 
     def _consume_line(self, line):
+        if "program stopped regularly via STOP_REGULAR" in line:
+            if self.total_points is not None:
+                self._emit_progress(self.total_points, self.total_points)
+            return
         if match := self._nprocs.search(line):
-            self._mpi_energy_loop = int(match[1]) > 1
+            self._nprocs = int(match[1])
+            self._mpi_energy_loop = self._nprocs > 1
         if line.strip():
             self._note_started()
         # An explicitly completed count is authoritative when present.
@@ -137,11 +151,31 @@ class DosOutputParser(DefaultOutputParser):
             return
         point = int(match.group("point"))
         if self._mpi_energy_loop:
-            # GEN/SCF can distribute the energy loop over ranks; an observed
-            # IE is not a count of globally completed energies.
-            if self._last_seen != point:
-                self._last_seen = point
-                self.emit_info("dos_energy_index", DosEnergyInfo(point, self.total_points))
+            if self._last_seen == point:
+                return
+            self._last_seen = point
+            # MPI_SET_IPROCE assigns rank 0 the LAST contiguous energy block.
+            # For example, if the first observed IE is 151 out of NE=200,
+            # its work comprises 50 energies (151..200), not 200.
+            if self.total_points is not None and 1 <= point <= self.total_points:
+                if self._first_mpi_point is None:
+                    # Reject truncated/unusual streams when the ordinary
+                    # rank-to-energy mapping can be checked independently.
+                    if self._nprocs and self._nprocs <= self.total_points:
+                        expected_size = (self.total_points + self._nprocs - 1) // self._nprocs
+                        if point != self.total_points - expected_size + 1:
+                            self.emit_info("dos_energy_index", DosEnergyInfo(point, self.total_points))
+                            return
+                    self._first_mpi_point = point
+                first = self._first_mpi_point
+                if point >= first:
+                    block_size = self.total_points - first + 1
+                    completed_local = point - first  # the current IE has begun
+                    estimate = completed_local * self.total_points // block_size
+                    self._emit_progress(estimate, self.total_points, estimated=True)
+                    return
+            # Without a valid first index and total, no percentage can be inferred.
+            self.emit_info("dos_energy_index", DosEnergyInfo(point, self.total_points))
             return
         previous = self._current_point
         if previous is not None and point > previous:
