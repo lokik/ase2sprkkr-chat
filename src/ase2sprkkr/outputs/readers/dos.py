@@ -26,9 +26,9 @@ class DosOutputParser(DefaultOutputParser):
     """
 
     _completed_points = re.compile(
-        r"(?<!\\d)(?P<completed>\\d+)\\s*(?:/|\\bof\\b)\\s*"
-        r"(?P<total>\\d+)\\s*(?:energy\\s+points?\\s*)?"
-        r"(?:done|completed|processed)\\b",
+        r"(?<!\d)(?P<completed>\d+)\s*(?:/|\bof\b)\s*"
+        r"(?P<total>\d+)\s*(?:energy\s+points?\s*)?"
+        r"(?:done|completed|processed)\b",
         re.IGNORECASE,
     )
 
@@ -72,7 +72,7 @@ class DosProgressParser(DosOutputParser):
         self._partial = ""
 
     def feed(self, text):
-        *lines, self._partial = (self._partial + text).split("\\n")
+        *lines, self._partial = (self._partial + text).split("\n")
         for line in lines:
             self._consume_line(line)
 
