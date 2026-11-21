@@ -16,6 +16,7 @@ def test_dos_progress_is_structured_and_chunk_safe():
     assert events == []
     parser.feed("ne.\n14/300 completed\n")
     assert events == [
+        {"kind": "dos_started", "data": None},
         {"kind": "dos_progress", "data": DosProgressInfo(13, 300)},
         {"kind": "dos_progress", "data": DosProgressInfo(14, 300)},
     ]
@@ -26,9 +27,10 @@ def test_dos_does_not_invent_progress_from_fractions_or_unfinished_points():
     events = []
     parser = DosProgressParser(on_info=lambda **event: events.append(event))
     parser.feed("ENERGY NE=300\n13/300\n1/0 done.\n301/300 done.\n")
-    assert events == []
+    assert events == [{"kind": "dos_started", "data": None}]
     parser.feed("12/300 done.\n12/300 done.\n")
-    assert events == [{"kind": "dos_progress", "data": DosProgressInfo(12, 300)}]
+    assert events[-1] == {"kind": "dos_progress", "data": DosProgressInfo(12, 300)}
+    assert len(events) == 2
 
 
 def test_dos_progress_prints_the_same_info_as_callback(capsys):
@@ -37,8 +39,8 @@ def test_dos_progress_prints_the_same_info_as_callback(capsys):
         print_info=True, on_info=lambda **event: events.append(event)
     )
     parser.feed("DOS energy points: 3 of 20 processed\n")
-    assert events == [{"kind": "dos_progress", "data": DosProgressInfo(3, 20)}]
-    assert capsys.readouterr().out == "3/20 done.\n"
+    assert events[-1] == {"kind": "dos_progress", "data": DosProgressInfo(3, 20)}
+    assert capsys.readouterr().out == "Calculating density of states...\n3/20 done.\n"
 
 
 def test_full_dos_output_parser_emits_same_events_and_retains_lines(tmp_path):
@@ -59,4 +61,5 @@ def test_full_dos_output_parser_emits_same_events_and_retains_lines(tmp_path):
         "14/300 done.",
         "Unrelated native message",
     ]
-    assert [event["data"].completed for event in events] == [13, 14]
+    assert [event["data"].completed for event in events if event["kind"] == "dos_progress"] == [13, 14]
+    assert events[0] == {"kind": "dos_started", "data": None}
