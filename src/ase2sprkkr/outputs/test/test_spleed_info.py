@@ -19,7 +19,7 @@ def diagram(rows):
     )
 
 
-def test_spooled_progress_chunk_safe_and_no_fabricated_percent():
+def test_streamed_progress_chunk_safe_and_no_fabricated_percent():
     events = []
     parser = SpleedProgressParser(on_info=lambda **event: events.append(event))
     output = diagram([(11., 2.), (12., 3.)])
@@ -107,3 +107,26 @@ def test_rotation_diagram_does_not_claim_angles_are_energies():
     assert "rotation diagram" in description
     assert "x = 45" in description
     assert "eV" not in description
+
+
+def test_full_spleed_reader_observes_lines_consumed_by_common_parser(monkeypatch, tmp_path):
+    """The shared SPEC capture hook must see lines before FILES parsing ends."""
+    async def read_commons(stream, _result):
+        assert await stream.readline() == b"i(e)-diagram\\n"
+
+    events = []
+    parser = SpleedOutputParser(on_info=lambda **event: events.append(event))
+    monkeypatch.setattr(parser, "read_commons", read_commons)
+    result = SpecResult(None, None, tmp_path, task_name="SPLEED")
+
+    async def parse():
+        stream = asyncio.StreamReader()
+        stream.feed_data(diagram([(11., 2.)]).encode())
+        stream.feed_eof()
+        await parser.read_output(stream, result)
+
+    asyncio.run(parse())
+    assert result.spleed_info_points == 1
+    assert events[1] == {"kind": "spleed_diagram", "data": "i(e)-diagram"}
+    assert events[2]["kind"] == "spleed_point"
+    assert result.spleed_intensity.RAW_DATA()[0, 0] == 11.
