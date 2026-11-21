@@ -138,11 +138,30 @@ def test_scf_header_probe_checks_produced_potential_not_input(
     assert looks_like_scf_output(out)
 
 
-def test_scf_header_probe_potential_unknown_preserves_fallback(tmp_path):
+def test_scf_header_probe_requires_pot_file_when_matching_potential(tmp_path):
     out = tmp_path / "legacy.out"
     out.write_bytes(_banner() + b" TASK = SCF\n FILES:\n potential: Fe.pot\n")
-    assert looks_like_scf_output(out, tmp_path / "unavailable.pot_new")
+    assert looks_like_scf_output(out)  # No expected POTFIL: preserve SCF detection.
+    assert not looks_like_scf_output(out, tmp_path / "unavailable.pot_new")
+
     out.write_bytes(_banner() + b" TASK = DOS\n pot-file : Fe.pot_new\n")
+    assert not looks_like_scf_output(out, tmp_path / "Fe.pot_new")
+
+
+def test_scf_header_probe_requires_pot_file_within_scan_limit(tmp_path):
+    out = tmp_path / "long.out"
+    out.write_bytes(
+        _banner() + b" TASK = SCF\n"
+        + b" unrelated output text\n" * 13000
+        + b" pot-file : Fe.pot_new\n"
+    )
+    assert looks_like_scf_output(out)  # Detection without POTFIL stays cheap.
+    assert not looks_like_scf_output(out, tmp_path / "Fe.pot_new")
+
+
+def test_scf_header_probe_rejects_empty_pot_file(tmp_path):
+    out = tmp_path / "empty.out"
+    out.write_bytes(_banner() + b" TASK = SCF\n pot-file : \n")
     assert not looks_like_scf_output(out, tmp_path / "Fe.pot_new")
 
 

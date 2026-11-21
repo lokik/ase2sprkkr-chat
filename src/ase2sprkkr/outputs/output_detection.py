@@ -37,8 +37,9 @@ def looks_like_scf_output(
     `pot-file:` line, which names the *produced* potential. The FILES section's
     `potential:` entry instead names the input and must not be compared.
 
-    A missing `pot-file:` is inconclusive: keep the file as a candidate so
-    the full SCF parser can verify it. This remains a non-authoritative probe.
+    With an expected potential, missing `pot-file:` is a failed match: do
+    not invoke the expensive full SCF parser for an unverified candidate.
+    With no expected potential, keep legacy banner/TASK detection behavior.
     Scan no more than 256 KiB, and never read whole SCF iterations.
     """
     path = Path(file)
@@ -85,6 +86,8 @@ def looks_like_scf_output(
                     if not produced.is_absolute():
                         produced = path.resolve().parent / produced
                     return produced.resolve() == expected
-            return True
+            # The expected output POTFIL is mandatory when matching a
+            # companion SCF; older or incomplete outputs are not candidates.
+            return expected is None
     except (OSError, ValueError):
         return False
