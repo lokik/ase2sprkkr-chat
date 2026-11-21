@@ -112,6 +112,8 @@ class BsfOutputParser(DefaultOutputParser):
     """
 
     _nprocs = re.compile(r"\bMPI calculation with NPROCS\s*=\s*(\d+)", re.IGNORECASE)
+    _energy_window = re.compile(r"^\s*energy loop\s+(\d+)\s*$", re.IGNORECASE)
+    _outer_krow = re.compile(r"^\s*outer k-loop:\s*(\d+)\s+k-points done\b", re.IGNORECASE)
     _ek_mode = re.compile(r"\bE\(k\)-relation mode\b", re.IGNORECASE)
     _kk_mode = re.compile(r"\bconstant E mode\b", re.IGNORECASE)
     _ek_grid = re.compile(r"\bwith\s+NE\s*=\s*(\d+)\s+NK\s*=\s*(\d+)", re.IGNORECASE)
@@ -140,6 +142,10 @@ class BsfOutputParser(DefaultOutputParser):
     @staticmethod
     def format_info(kind, data):
         """User-facing INFO strings are owned by ase2sprkkr, not the GUI."""
+        if kind == "bsf_energy_window":
+            return f"BSF photon-energy loop {data}"
+        if kind == "bsf_outer_krow":
+            return f"Entering k-plane row {data} (row not yet complete)"
         if kind == "bsf_mode":
             return "Calculating BSF in E–k mode" if data == "EK" else "Calculating BSF in k–k mode"
         if kind == "bsf_grid":
@@ -177,6 +183,15 @@ class BsfOutputParser(DefaultOutputParser):
             self.emit_info("bsf_grid", grid)
 
     def _consume_line(self, line):
+        if match := self._energy_window.match(line):
+            # EPHOT triggers a second native energy loop (blochsf.f).
+            # Start fresh local-rank accounting; this is not a completion.
+            self._rank_start = None
+            self._last_energy = None
+            self.emit_info("bsf_energy_window", int(match[1]))
+        if self.mode == "KK" and (match := self._outer_krow.match(line)):
+            # Native wording says "done" but WRITE precedes the row's k-loop.
+            self.emit_info("bsf_outer_krow", int(match[1]))
         if match := self._nprocs.search(line):
             self.nprocs = max(1, int(match[1]))
         if self._ek_mode.search(line):
