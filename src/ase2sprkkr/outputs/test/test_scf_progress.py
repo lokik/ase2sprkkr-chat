@@ -36,7 +36,12 @@ def test_scf_progress_ignores_incomplete_iteration():
     assert isinstance(output[0]["data"], ScfIterationInfo)
     assert output[0]["data"].iteration == 8
     assert output[0]["data"].convergence_error == 0.000123
-    assert ScfOutputParser.format_info(**output[0]).startswith("Iteration")
+    assert output[0]["data"].error == 0.0000123
+    assert output[0]["data"].b_error == 0.000000456
+    formatted = ScfOutputParser.format_info(**output[0])
+    assert formatted.startswith("Iteration")
+    assert "RMS(V)" in formatted and "RMS(B)" in formatted
+    assert "1.23e-05" in formatted and "4.56e-07" in formatted
     parser.feed("  9 ERR 0.111E-05 0.000E+00 EF 0.6 0.0 D 11 M 1.2 0.3\n")
     assert parser.last_iteration["iteration"] == 8
 
@@ -90,3 +95,5 @@ def test_print_info_formats_the_same_events_as_callback(capsys):
     assert len(events) == len(output) == 2
     assert output[0] == "SCF tolerance: 1e-05"
     assert output[1] == ScfOutputParser.format_info(**events[1])
+    assert "RMS(V)" in output[1]
+    assert "RMS(B)" in output[1]
