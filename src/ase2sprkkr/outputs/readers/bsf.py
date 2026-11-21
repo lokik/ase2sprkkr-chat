@@ -1,7 +1,9 @@
 """The Bloch spectral functions (BSF) reader and result."""
 
+import os
 import re
 from dataclasses import dataclass
+from math import ceil
 
 from ..task_result import TaskResult, KkrOutputReader
 from .default import DefaultOutputParser
@@ -66,6 +68,41 @@ class BsfFinishedInfo:
     warnings: int
 
 
+@dataclass(frozen=True)
+class BsfRankProgressInfo:
+    """Energy loops entered by the reporting rank, not global MPI completion."""
+
+    entered: int
+    total: int
+    first_global_index: int
+    current_global_index: int
+
+    @property
+    def completed(self):
+        # The current loop has only *started*, not finished.
+        return max(0, self.entered - 1)
+
+
+class _BsfHeaderStream:
+    """Preserve MPI metadata from lines skipped by the standard FILES reader."""
+
+    def __init__(self, source, on_line):
+        self.source = source
+        self.on_line = on_line
+
+    async def readline(self):
+        line = await self.source.readline()
+        if line:
+            self.on_line(line.decode("utf8", errors="replace"))
+        return line
+
+    def __fspath__(self):
+        return os.fspath(self.source)
+
+    def __getattr__(self, name):
+        return getattr(self.source, name)
+
+
 class BsfOutputParser(DefaultOutputParser):
     """Observe native BSF milestones in both E-k and constant-energy k-k modes.
 
@@ -74,6 +111,7 @@ class BsfOutputParser(DefaultOutputParser):
     is only one energy and no k-point counters in native stdout.
     """
 
+    _nprocs = re.compile(r"\bMPI calculation with NPROCS\s*=\s*(\d+)", re.IGNORECASE)
     _ek_mode = re.compile(r"\bE\(k\)-relation mode\b", re.IGNORECASE)
     _kk_mode = re.compile(r"\bconstant E mode\b", re.IGNORECASE)
     _ek_grid = re.compile(r"\bwith\s+NE\s*=\s*(\d+)\s+NK\s*=\s*(\d+)", re.IGNORECASE)
@@ -96,6 +134,8 @@ class BsfOutputParser(DefaultOutputParser):
         self.negative_warnings = 0
         self._finished_seen = False
         self._last_energy = None
+        self.nprocs = None
+        self._rank_start = None
 
     @staticmethod
     def format_info(kind, data):
@@ -113,6 +153,11 @@ class BsfOutputParser(DefaultOutputParser):
             return (
                 f"Entering k-loop for energy index {index}: "
                 f"E = {data.real_ry:g} + {data.imaginary_ry:g}i Ry"
+            )
+        if kind == "bsf_rank_progress":
+            return (
+                f"Reporting MPI rank: energy loop {data.entered}/{data.total} "
+                f"entered (global IE={data.current_global_index})"
             )
         if kind == "bsf_negative_warnings":
             return f"Negative spectral-function warnings: {data:,}"
@@ -132,6 +177,8 @@ class BsfOutputParser(DefaultOutputParser):
             self.emit_info("bsf_grid", grid)
 
     def _consume_line(self, line):
+        if match := self._nprocs.search(line):
+            self.nprocs = max(1, int(match[1]))
         if self._ek_mode.search(line):
             self._set_mode("EK")
         elif self._kk_mode.search(line):
@@ -168,6 +215,24 @@ class BsfOutputParser(DefaultOutputParser):
                 if point != self._last_energy:
                     self._last_energy = point
                     self.emit_info("bsf_energy", point)
+                    if self.mode == "EK" and self.grid is not None and self.nprocs:
+                        if self._rank_start is None or point.index < self._rank_start:
+                            self._rank_start = point.index
+                        # MPI divides NE energy points across ranks. Rank 0
+                        # reports 151..200 for NE=200, NPROCS=4 in this log.
+                        # This is NOT a global completion counter.
+                        total = min(
+                            ceil(self.grid.energies / self.nprocs),
+                            self.grid.energies - self._rank_start + 1,
+                        )
+                        entered = point.index - self._rank_start + 1
+                        if total > 0 and 0 < entered <= total:
+                            self.emit_info(
+                                "bsf_rank_progress",
+                                BsfRankProgressInfo(
+                                    entered, total, self._rank_start, point.index
+                                ),
+                            )
 
         if self._negative.search(line):
             self.negative_warnings += 1
@@ -185,7 +250,9 @@ class BsfOutputParser(DefaultOutputParser):
         return float(value.replace("D", "E").replace("d", "e"))
 
     async def read_output(self, stdout, result):
-        await self.read_commons(stdout, result)
+        await self.read_commons(
+            _BsfHeaderStream(stdout, self._consume_line), result
+        )
         result.output_lines = []
         async for raw_line in stdout:
             line = raw_line.decode("utf8", errors="replace").rstrip()
