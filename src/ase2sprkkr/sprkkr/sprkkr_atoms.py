@@ -397,7 +397,11 @@ class SPRKKRAtoms(Atoms):
     @property
     def potential(self):
         if self._potential is None:
-            self._potential = potentials.Potential.from_atoms(self)
+            # Import on first use: importing potentials while SPRKKRAtoms is
+            # being defined can recurse into an unfinished sprkkr.configuration.
+            from ..potentials.potential_base import Potential
+
+            self._potential = Potential.from_atoms(self)
         return self._potential
 
     def has_potential(self):
@@ -546,5 +550,3 @@ class SPRKKRAtoms(Atoms):
                 sites[i] = sites[i].copy(self)
 
 
-# at the last - to avoid circular imports
-from ..potentials import potentials  # NOQA: E402
