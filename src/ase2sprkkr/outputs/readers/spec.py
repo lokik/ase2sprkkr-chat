@@ -238,6 +238,18 @@ class SpecOutputParser(DefaultOutputParser):
     _D_NUMBER = re.compile(r"\s*[+-]?\d\.\d{5}[dD][+-]\d{2}\s*\Z")
 
     @classmethod
+    def parse_spleed_diagram_row(cls, record):
+        """Return a native SPLOUT D12.5,2X,D12.5 record, or None."""
+        record = record.rstrip("\r\n")
+        if len(record) != 26 or record[12:14] != "  ":
+            return None
+        first, second = record[:12], record[14:]
+        if not (cls._D_NUMBER.fullmatch(first) and cls._D_NUMBER.fullmatch(second)):
+            return None
+        return (float(first.replace("D", "E").replace("d", "e")),
+                float(second.replace("D", "E").replace("d", "e")))
+
+    @classmethod
     def parse_spleed_intensity(cls, lines):
         """Extract the first SPLOUT D12.5,2X,D12.5 table from SPEC.out.
 
@@ -256,14 +268,10 @@ class SpecOutputParser(DefaultOutputParser):
             if not in_diagram:
                 continue
             record = line.rstrip("\r\n")
-            if len(record) == 26 and record[12:14] == "  ":
-                first, second = record[:12], record[14:]
-                if cls._D_NUMBER.fullmatch(first) and cls._D_NUMBER.fullmatch(second):
-                    rows.append((
-                        float(first.replace("D", "E").replace("d", "e")),
-                        float(second.replace("D", "E").replace("d", "e")),
-                    ))
-                    continue
+            row = cls.parse_spleed_diagram_row(record)
+            if row is not None:
+                rows.append(row)
+                continue
             if record.strip():
                 # Blank lines follow SPLOUT's diagram header; a different
                 # nonempty line marks the end of the current diagram.
