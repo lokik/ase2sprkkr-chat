@@ -4,15 +4,11 @@ The record formats and header reproduce the Fe2 SPLEED files supplied for
 this regression (NE=200, NT=NP=1, seven SPC columns, empty DOS payload).
 """
 
-import matplotlib
 import numpy as np
 import pytest
 
 from .. import ResultFile
 from ..definitions.spleed_spc import SPLEEDSPCResultFile
-
-
-matplotlib.use("Agg")
 
 
 def native_header(keyword):
