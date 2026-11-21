@@ -59,17 +59,6 @@ class SpleedOutputParser(SpecOutputParser):
             self._in_diagram = False
             self.emit_info("spleed_diagram_complete", self._points)
 
-    @classmethod
-    def _parse_row(cls, text):
-        # Use the exact native SPLOUT record width, same as SpecResult.
-        if len(text) != 26 or text[12:14] != "  ":
-            return None
-        first, second = text[:12], text[14:]
-        if not (cls._D_NUMBER.fullmatch(first) and cls._D_NUMBER.fullmatch(second)):
-            return None
-        return (float(first.replace("D", "E").replace("d", "e")),
-                float(second.replace("D", "E").replace("d", "e")))
-
     def observe_line(self, line):
         text = line.rstrip("\r\n")
         if not self._started and text.strip():
@@ -100,7 +89,7 @@ class SpleedOutputParser(SpecOutputParser):
         if not self._in_diagram:
             return
 
-        row = self._parse_row(text)
+        row = self.parse_spleed_diagram_row(text)
         if row is not None:
             self._points += 1
             self._last_point = SpleedPointInfo(self._points, *row)
