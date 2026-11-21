@@ -4,6 +4,7 @@ from ase2sprkkr.outputs.readers.bsf import (
     BsfEnergyInfo,
     BsfFinishedInfo,
     BsfGridInfo,
+    BsfRankProgressInfo,
     BsfProgressParser,
 )
 
@@ -80,3 +81,50 @@ def test_bsf_info_parser_handles_partial_last_line_and_d_exponents():
     assert not any(event["kind"] == "bsf_energy" for event in events)
     parser.finish()
     assert events[-1]["data"] == BsfEnergyInfo(1, 0.1, 0.002, None)
+
+
+def test_bsf_ek_local_mpi_rank_progress_from_partitioned_energy_indices():
+    parser, events = _collect()
+    parser.feed(
+        "MPI calculation with NPROCS = 4\n"
+        "E(k)-relation mode for:\n"
+        "with  NE =  200  NK =  297\n"
+    )
+    parser.feed("IE= 151 E= -0.8079 0.0010 all matrices set up - enter k-loop\n")
+    progress = [event["data"] for event in events if event["kind"] == "bsf_rank_progress"]
+    assert progress == [BsfRankProgressInfo(1, 50, 151, 151)]
+    assert progress[-1].completed == 0
+
+    parser.feed("IE= 175 E= -0.9020 0.0010 all matrices set up - enter k-loop\n")
+    progress = [event["data"] for event in events if event["kind"] == "bsf_rank_progress"]
+    assert progress[-1] == BsfRankProgressInfo(25, 50, 151, 175)
+    assert progress[-1].completed == 24
+
+    parser.feed("IE= 200 E= -1.0000 0.0010 all matrices set up - enter k-loop\n")
+    progress = [event["data"] for event in events if event["kind"] == "bsf_rank_progress"]
+    assert progress[-1] == BsfRankProgressInfo(50, 50, 151, 200)
+    assert progress[-1].completed == 49
+    assert parser.format_info("bsf_rank_progress", progress[-1]).startswith(
+        "Reporting MPI rank"
+    )
+    # Native completion is a distinct event; entering the last k-loop
+    # does not justify claiming it has finished.
+    assert not any(event["kind"] == "bsf_finished" for event in events)
+    parser.feed("finished in subroutine <BLOCHSF>\n")
+    assert events[-1]["kind"] == "bsf_finished"
+
+
+def test_bsf_ek_single_process_uses_whole_energy_range():
+    parser, events = _collect()
+    parser.feed(
+        "MPI calculation with NPROCS = 1\n"
+        "E(k)-relation mode for:\n"
+        "with  NE =  3  NK =  20\n"
+        "IE= 1 E= -0.2 0.0010 all matrices set up - enter k-loop\n"
+        "IE= 2 E= -0.1 0.0010 all matrices set up - enter k-loop\n"
+    )
+    local = [x["data"] for x in events if x["kind"] == "bsf_rank_progress"]
+    assert local == [
+        BsfRankProgressInfo(1, 3, 1, 1),
+        BsfRankProgressInfo(2, 3, 1, 2),
+    ]
