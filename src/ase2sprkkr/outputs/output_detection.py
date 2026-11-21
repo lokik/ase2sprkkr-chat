@@ -1,5 +1,8 @@
 """Fast, non-authoritative probes of SPR-KKR output file headers."""
 
+from __future__ import annotations
+
+import os
 import re
 from pathlib import Path
 
@@ -15,30 +18,44 @@ _TASK_LINE = re.compile(
     re.IGNORECASE,
 )
 _FILES_LINE = re.compile(rb"^[ \t]*FILES:[ \t]*(?:\r?\n)?$", re.IGNORECASE)
+# The SCF-cycle "pot-file:" entry names the produced potential; FILES/potential
+# instead refers to the input POTFIL.
+_SCF_POT_FILE = re.compile(rb"^[ \\t]*pot-file[ \\t]*:[ \\t]*(.+?)[ \\t]*\\r?\\n?$", re.IGNORECASE)
 _HEADER_BYTES = 8192
 _TASK_SEARCH_BYTES = 256 * 1024
 
 
-def looks_like_scf_output(file: str | Path) -> bool:
-    """Quickly identify probable SCF outputs without invoking the parser.
+def looks_like_scf_output(
+    file: str | Path, potential_filename: str | Path | None = None,
+) -> bool:
+    """Quickly identify probable SCF outputs, optionally checking their potential.
 
-    Require KKRSCF in the executable's initial VERSION banner. Check the first
-    TASK marker too, which is sometimes more than 8 KiB into a native output.
-    A different task rejects the file even if KKRSCF is the executable.
-    For older outputs with no TASK marker, the banner is the fallback.
+    Require KKRSCF in the executable's initial VERSION banner. The first
+    explicit TASK other than SCF rejects the file (TASK=NONE is ignored).
 
-    Scan only as far as FILES, EOF, or 256 KiB. This is a preliminary check:
-    callers must still parse and validate the output and its provenance.
-    Missing or unreadable files return False.
+    When `potential_filename` is provided, compare it against the SCF-cycle
+    `pot-file:` line, which names the *produced* potential. The FILES section's
+    `potential:` entry instead names the input and must not be compared.
+
+    A missing `pot-file:` is inconclusive: keep the file as a candidate so
+    the full SCF parser can verify it. This remains a non-authoritative probe.
+    Scan no more than 256 KiB, and never read whole SCF iterations.
     """
+    path = Path(file)
+    expected = (
+        Path(potential_filename).resolve()
+        if potential_filename is not None else None
+    )
     try:
-        with Path(file).open("rb") as stream:
+        with path.open("rb") as stream:
             banner = _EXECUTABLE_BANNER.search(stream.read(_HEADER_BYTES))
             if banner is None or banner.group(1).upper() != b"KKRSCF":
                 return False
 
             stream.seek(0)
             remaining = _TASK_SEARCH_BYTES
+            # Continue past FILES only if a potential was requested: native
+            # SPR-KKR writes the produced pot-file line after FILES.
             while remaining > 0:
                 line = stream.readline(min(remaining, 8192))
                 if not line:
@@ -48,9 +65,26 @@ def looks_like_scf_output(file: str | Path) -> bool:
                 if task is not None:
                     value = task.group(1).upper()
                     if value != b"NONE":
-                        return value == b"SCF"
-                if _FILES_LINE.match(line):
-                    break
+                        if value != b"SCF":
+                            return False
+                        if expected is None:
+                            return True
+                if expected is None:
+                    if _FILES_LINE.match(line):
+                        break
+                    continue
+
+                found = _SCF_POT_FILE.match(line)
+                if found is not None:
+                    name = os.fsdecode(found.group(1)).strip()
+                    if not name:
+                        continue
+                    if len(name) >= 2 and name[0] == name[-1] and name[0] in ('"', "'"):
+                        name = name[1:-1]
+                    produced = Path(name)
+                    if not produced.is_absolute():
+                        produced = path.resolve().parent / produced
+                    return produced.resolve() == expected
             return True
-    except OSError:
+    except (OSError, ValueError):
         return False

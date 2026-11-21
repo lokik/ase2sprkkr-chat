@@ -115,3 +115,42 @@ def test_scf_header_probe_treats_unreadable_paths_as_non_matches(tmp_path):
 ])
 def test_scf_header_probe_on_real_sprkkr_examples(filename, expected):
     assert looks_like_scf_output(EXAMPLES / filename) is expected
+
+
+@pytest.mark.parametrize(("reported", "expected", "matches"), [
+    ("Fe.pot_new", "Fe.pot_new", True),
+    ("Fe_other.pot_new", "Fe.pot_new", False),
+    ("subdir/Fe.pot_new", "subdir/Fe.pot_new", True),
+    ("subdir/Fe.pot_new", "Fe.pot_new", False),
+])
+def test_scf_header_probe_checks_produced_potential_not_input(
+    tmp_path, reported, expected, matches,
+):
+    out = tmp_path / "Fe_SCF.out"
+    out.write_bytes(
+        _banner()
+        + b"  TASK = SCF\n  FILES:\n"
+        + b"  potential : ( 4) original_input.pot\n"
+        + b"  parameters for SCF-cycle\n"
+        + f"  pot-file :  {reported}\n".encode()
+    )
+    assert looks_like_scf_output(out, tmp_path / expected) is matches
+    assert looks_like_scf_output(out)
+
+
+def test_scf_header_probe_potential_unknown_preserves_fallback(tmp_path):
+    out = tmp_path / "legacy.out"
+    out.write_bytes(_banner() + b" TASK = SCF\n FILES:\n potential: Fe.pot\n")
+    assert looks_like_scf_output(out, tmp_path / "unavailable.pot_new")
+    out.write_bytes(_banner() + b" TASK = DOS\n pot-file : Fe.pot_new\n")
+    assert not looks_like_scf_output(out, tmp_path / "Fe.pot_new")
+
+
+@pytest.mark.parametrize(("example", "produced"), [
+    ("Al_SCF.out", "Al.pot_new_new"),
+    ("scf.out", "CoPt_mag001-bas.pot_new"),
+])
+def test_scf_header_probe_matches_native_scf_pot_file(example, produced):
+    out = EXAMPLES / example
+    assert looks_like_scf_output(out, out.parent / produced)
+    assert not looks_like_scf_output(out, out.parent / "unrelated.pot_new")

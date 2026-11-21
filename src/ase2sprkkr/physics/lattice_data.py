@@ -10,12 +10,13 @@ import numpy as np
 from ..bindings.spglib import symmetry_dataset
 from ..sprkkr.site_equivalence import site_equivalence_tags
 from ase.units import Bohr
-from scipy.optimize import linear_sum_assignment
 from typing import Union
 from numbers import Integral
 
 
 def reorder_matrix(target, source):
+    from scipy.optimize import linear_sum_assignment
+
     # normalize vectors (rows)
     src_norm = source / np.linalg.norm(source, axis=1, keepdims=True)
     tgt_norm = target / np.linalg.norm(target, axis=1, keepdims=True)
