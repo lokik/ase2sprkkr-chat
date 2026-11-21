@@ -1,4 +1,4 @@
-"""DOS INFO callbacks share one parser and never infer progress."""
+"""DOS INFO callbacks report measured serial and estimated MPI progress."""
 
 from types import SimpleNamespace
 
@@ -112,24 +112,69 @@ def test_dos_total_requires_one_unambiguous_energy_segment():
 
 
 
-def test_native_dos_mpi_energy_index_does_not_invent_global_completion():
-    """GEN MPI_ELOOP/MPI_KLOOP may print only one process's energies."""
-    from ase2sprkkr.outputs.readers.dos import DosEnergyInfo
-
+def test_native_dos_mpi_rank_zero_block_provides_approximate_progress():
+    """GEN MPI_SET_IPROCE assigns high contiguous IE block to rank 0."""
     events = []
     parser = DosProgressParser(
         on_info=lambda **event: events.append(event), total_points=200
     )
     parser.feed("MPI calculation with NPROCS = 4\n")
+    # Rank 0 gets IE=151..200. It is NOT 75% done on IE=151.
     parser.feed(" 151 E= 0.4101 0.0010 IT= 1 Fe\n")
+    parser.feed(" 151 E= 0.4101 0.0010 IT= 2 Fe\n")
     parser.feed(" 152 E= 0.4111 0.0010 IT= 1 Fe\n")
-    assert not any(e["kind"] == "dos_progress" for e in events)
-    assert [e["data"] for e in events if e["kind"] == "dos_energy_index"] == [
-        DosEnergyInfo(151, 200), DosEnergyInfo(152, 200),
+    parser.feed(" 176 E= 0.4121 0.0010 IT= 1 Fe\n")
+    progress = [e["data"] for e in events if e["kind"] == "dos_progress"]
+    assert progress == [
+        DosProgressInfo(0, 200, estimated=True),
+        DosProgressInfo(4, 200, estimated=True),
+        DosProgressInfo(100, 200, estimated=True),
     ]
-    assert parser.format_info("dos_energy_index", DosEnergyInfo(151, 200)) == (
-        "DOS energy index 151 observed (MPI completion unknown)"
+    assert parser.format_info("dos_progress", progress[-1]) == (
+        "~50% done (estimated from MPI rank 0)."
     )
+    assert not any(e["kind"] == "dos_energy_index" for e in events)
+    parser.feed(" 200 E= 0.4131 0.0010 IT= 1 Fe\n")
+    assert [e["data"] for e in events if e["kind"] == "dos_progress"][-1] == (
+        DosProgressInfo(196, 200, estimated=True)
+    )
+    parser.feed("program stopped regularly via STOP_REGULAR\n")
+    assert [e["data"] for e in events if e["kind"] == "dos_progress"][-1] == (
+        DosProgressInfo(200, 200)
+    )
+
+
+def test_native_dos_mpi_uneven_block_size_and_unknown_mapping():
+    from ase2sprkkr.outputs.readers.dos import DosEnergyInfo
+
+    # Rank zero receives 3 of 10 energies (indices 8, 9, 10).
+    events = []
+    parser = DosProgressParser(on_info=lambda **e: events.append(e), total_points=10)
+    parser.feed("MPI calculation with NPROCS = 4\n")
+    parser.feed(" 8 E= 0.4 0.01 IT= 1 Fe\n")
+    parser.feed(" 9 E= 0.5 0.01 IT= 1 Fe\n")
+    assert [e["data"] for e in events if e["kind"] == "dos_progress"] == [
+        DosProgressInfo(0, 10, estimated=True),
+        DosProgressInfo(3, 10, estimated=True),
+    ]
+    # Without known total, an observed index is not sufficient.
+    events = []
+    parser = DosProgressParser(on_info=lambda **e: events.append(e))
+    parser.feed("MPI calculation with NPROCS = 4\n")
+    parser.feed(" 8 E= 0.4 0.01 IT= 1 Fe\n")
+    assert events[-1] == {"kind": "dos_energy_index", "data": DosEnergyInfo(8, None)}
+    assert parser.format_info(**events[-1]) == (
+        "DOS energy index 8 observed (MPI completion unknown)"
+    )
+
+
+def test_mpi_parser_does_not_estimate_outside_rank_zero_block():
+    from ase2sprkkr.outputs.readers.dos import DosEnergyInfo
+    events = []
+    parser = DosProgressParser(on_info=lambda **e: events.append(e), total_points=200)
+    parser.feed("MPI calculation with NPROCS = 4\n")
+    parser.feed(" 100 E= 0.4 0.01 IT= 1 Fe\n")
+    assert events[-1] == {"kind": "dos_energy_index", "data": DosEnergyInfo(100, 200)}
 
 
 def test_native_dos_both_printed_header_variants():
