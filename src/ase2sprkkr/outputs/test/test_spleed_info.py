@@ -105,8 +105,8 @@ def test_rotation_diagram_does_not_claim_angles_are_energies():
     assert point["data"].diagram == "rotation diagram"
     description = parser.format_info(**point)
     assert "rotation diagram" in description
-    assert "x = 45" in description
-    assert "eV" not in description
+    # SPLOUT writes ENERGY in the first column even for TYP=1/2.
+    assert "E = 45 eV" in description
 
 
 def test_full_spleed_reader_observes_lines_consumed_by_common_parser(monkeypatch, tmp_path):
@@ -130,3 +130,50 @@ def test_full_spleed_reader_observes_lines_consumed_by_common_parser(monkeypatch
     assert events[1] == {"kind": "spleed_diagram", "data": "i(e)-diagram"}
     assert events[2]["kind"] == "spleed_point"
     assert result.spleed_intensity.RAW_DATA()[0, 0] == 11.
+
+
+def native_record(values, exponent="E"):
+    """SPLOUT FORMAT 99004 / 99005 in SPR-KKR 9.7."""
+    return "  ".join(f"{value:12.5E}".replace("E", exponent) for value in values)
+
+
+def test_native_splout_branches_2_6_7_columns():
+    from ase2sprkkr.outputs.readers.spec import SpecOutputParser
+
+    # spec_rslabsub.f: TYP=0 or NREL=0: WRITE(*,99005) two D12.5.
+    row2 = native_record([11., 0.25], exponent="D")
+    # TYP=1/2, NREL=1: WRITE(*,99004) omits THETA (6 E12.5).
+    row6 = native_record([12., 0.8, 0.2, 0.3, 0.4, 0.5])
+    # TYP=1/2, NREL=1: WRITE(NOUT1,99004) includes THETA (7 E12.5).
+    row7 = native_record([13., 45., 0.9, 0.2, 0.3, 0.4, 0.5])
+
+    assert [len(row) for row in (row2, row6, row7)] == [26, 82, 96]
+    assert SpecOutputParser.parse_spleed_diagram_row(row2) == (11., 0.25)
+    assert SpecOutputParser.parse_spleed_diagram_row(row6) == (12., 0.8)
+    assert SpecOutputParser.parse_spleed_diagram_row(row7) == (13., 0.9)
+
+    for row, expected in ((row2, [11., 0.25]),
+                          (row6, [12., 0.8]),
+                          (row7, [13., 0.9])):
+        # NOUT1 headers do not appear on WRITE(*) stdout.
+        spectrum = SpecOutputParser.parse_spleed_intensity([row])
+        np.testing.assert_allclose(spectrum.RAW_DATA(), [expected])
+        events = []
+        parser = SpleedProgressParser(on_info=lambda **event: events.append(event))
+        parser.feed(row[:12])
+        assert not any(e["kind"] == "spleed_point" for e in events)
+        parser.feed(row[12:] + "\nnext section\n")
+        point = next(e["data"] for e in events if e["kind"] == "spleed_point")
+        assert point.energy_ev == expected[0]
+        assert point.intensity == expected[1]
+        assert point.diagram == "spectral output"
+
+    assert SpecOutputParser.parse_spleed_diagram_row(" 2.0 3.0") is None
+
+
+def test_spleed_typ_3_and_4_produce_no_splout_points():
+    # SPLOUT has no WRITE branch for TYP=3/4.
+    events = []
+    parser = SpleedProgressParser(on_info=lambda **e: events.append(e))
+    parser.feed("other SPLEED task output\nprogram stopped regularly via STOP_REGULAR\n")
+    assert [e["kind"] for e in events] == ["spleed_started", "spleed_finished"]
