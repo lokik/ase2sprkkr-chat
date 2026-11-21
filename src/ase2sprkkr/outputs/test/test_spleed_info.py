@@ -1,0 +1,98 @@
+"""SPLEED structured INFO uses exactly the native two-column SPLOUT format."""
+
+import asyncio
+from types import SimpleNamespace
+
+import numpy as np
+
+from ase2sprkkr.outputs.reader_registry import reader_registry
+from ase2sprkkr.outputs.readers.spec import SpecResult
+from ase2sprkkr.outputs.readers.spleed import (
+    SpleedOutputParser, SpleedOutputReader, SpleedPointInfo,
+    SpleedProgressParser,
+)
+
+
+def diagram(rows):
+    return "i(e)-diagram\n\n" + "".join(
+        f"{energy:12.5E}  {intensity:12.5E}\n".replace("E", "D")
+        for energy, intensity in rows
+    )
+
+
+def test_spooled_progress_chunk_safe_and_no_fabricated_percent():
+    events = []
+    parser = SpleedProgressParser(on_info=lambda **event: events.append(event))
+    output = diagram([(11., 2.), (12., 3.)])
+    parser.feed(output[:9])
+    assert events == []
+    parser.feed(output[9:30])
+    parser.feed(output[30:])
+    parser.feed("End of i(e) data\n")
+    parser.feed("program stopped regularly via STOP_REGULAR\n")
+    parser.finish()
+
+    assert [event["kind"] for event in events] == [
+        "spleed_started", "spleed_diagram", "spleed_point",
+        "spleed_diagram_complete", "spleed_finished",
+    ]
+    assert events[2]["data"] == SpleedPointInfo(1, 11., 2.)
+    assert events[3]["data"] == 2
+    assert parser.format_info(**events[3]) == "SPLEED I(E) diagram: 2 points read"
+    assert not any("%" in (parser.format_info(**e) or "") for e in events)
+
+
+def test_spleed_full_parser_preserves_spectrum_and_emits_same_events(monkeypatch, tmp_path):
+    async def skip_common_header(_stream, _result):
+        pass
+
+    parser = SpleedOutputParser()
+    events = []
+    parser.on_info = lambda **event: events.append(event)
+    monkeypatch.setattr(parser, "read_commons", skip_common_header)
+    result = SpecResult(None, None, tmp_path, task_name="SPLEED")
+
+    async def parse():
+        stream = asyncio.StreamReader()
+        stream.feed_data(
+            (diagram([(11., 2.), (12., 3.)])
+             + "End of i(e) data\nprogram stopped regularly via STOP_REGULAR\n").encode()
+        )
+        stream.feed_eof()
+        await parser.read_output(stream, result)
+
+    asyncio.run(parse())
+    np.testing.assert_allclose(result.spleed_intensity.RAW_DATA(), [[11., 2.], [12., 3.]])
+    assert result.spleed_info_points == 2
+    assert [e["kind"] for e in events] == [
+        "spleed_started", "spleed_diagram", "spleed_point",
+        "spleed_diagram_complete", "spleed_finished",
+    ]
+
+
+def test_spleed_ignores_seven_column_diagram_and_does_not_invent_finish():
+    events = []
+    parser = SpleedProgressParser(on_info=lambda **event: events.append(event))
+    parser.feed("i(e)-diagram\n\n")
+    parser.feed("1.0 2.0 3.0 4.0 5.0 6.0 7.0\n")
+    parser.finish()
+    assert parser._points == 0
+    assert not any(e["kind"] in {"spleed_point", "spleed_diagram_complete", "spleed_finished"}
+                   for e in events)
+
+
+def test_spleed_registered_to_dedicated_reader():
+    reader = reader_registry.class_for_task_name("SPLEED")
+    assert reader is SpleedOutputReader
+    assert reader.parser_class is SpleedOutputParser
+
+
+def test_spleed_print_info_matches_callback(capsys):
+    events = []
+    parser = SpleedProgressParser(
+        print_info=True, on_info=lambda **event: events.append(event)
+    )
+    parser.feed(diagram([(10., 1.)]))
+    parser.feed("end of table\n")
+    lines = capsys.readouterr().out.splitlines()
+    assert lines == [parser.format_info(**event) for event in events]
