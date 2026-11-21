@@ -29,7 +29,7 @@ def dos_total_points_from_parameters(parameters):
 
 @dataclass(frozen=True)
 class DosProgressInfo:
-    """Number of explicitly reported completed DOS energy points."""
+    """Completed DOS energy points; total is optional when unknown."""
 
     completed: int
     total: int | None
@@ -38,8 +38,8 @@ class DosProgressInfo:
 class DosOutputParser(DefaultOutputParser):
     """Parse native DOS progress lines without estimating missing milestones.
 
-    Numeric progress is emitted only when stdout explicitly reports a completed
-    fraction. The same detection is shared with the incremental GUI parser.
+    Progress uses native energy-block transitions or explicit completed counts.
+    The same detection is shared with the incremental GUI parser.
     """
 
     # Native kkrgen prints one such header for every energy AND atomic
@@ -108,7 +108,7 @@ class DosOutputParser(DefaultOutputParser):
     async def read_output(self, stdout, result):
         await self.read_commons(stdout, result)
         if self.total_points is None:
-            self.total_points = dos_total_points_from_parameters(result.input_parameters)
+            self.total_points = dos_total_points_from_parameters(getattr(result, "input_parameters", None))
         self._note_started()
         result.output_lines = []
         async for raw_line in stdout:
