@@ -238,7 +238,7 @@ class SpecOutputParser(DefaultOutputParser):
     _D_NUMBER = re.compile(r"\s*[+-]?\d\.\d{5}[dD][+-]\d{2}\s*\Z")
 
     _NATIVE_SPLOUT_NUMBER = re.compile(
-        r"\\s*[+-]?\\d\\.\\d{5}[dDeE][+-]\\d{2}\\s*\\Z"
+        r"\s*[+-]?\d\.\d{5}[dDeE][+-]\d{2}\s*\Z"
     )
 
     @classmethod
@@ -250,7 +250,7 @@ class SpecOutputParser(DefaultOutputParser):
         TYP=1/2 and NREL=1: six E12.5 values on stdout, or seven
         in SPEC.out (the additional second column is theta).
         """
-        record = record.rstrip("\\r\\n")
+        record = record.rstrip("\r\n")
         width = len(record)
         if width == 26:
             count = 2
