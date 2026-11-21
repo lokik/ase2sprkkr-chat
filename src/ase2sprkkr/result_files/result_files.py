@@ -257,7 +257,10 @@ class ResultFile(ConfigurationFile):
             return successes[0][1] if successes else None, errors
 
         if try_only is not None:
-            allowed = resolve(try_only)
+            # A format hint that is also a shared file extension (e.g. SPC)
+            # admits every parser of that extension, not only the module named
+            # after it (ARPES). Explicit names such as spleed_spc remain exact.
+            allowed = resolve(try_only, prefer_extension=True)
             if not allowed:
                 raise ValueError(f"Unknown result file format: {try_only!r}")
             preferred = resolve(first_try, prefer_extension=True)
