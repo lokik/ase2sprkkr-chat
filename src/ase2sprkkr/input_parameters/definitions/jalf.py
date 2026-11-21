@@ -25,6 +25,8 @@ def _validate_jalf(parameters, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class JALFInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("JALF", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=("{DATASET}_JALF.dat", "curdns1", "curdns2", "curdns3"))
+
     @classmethod
     def create_definition(cls):
         energy = ENERGY(emax=(None, "Omitted upper bound delegates to EF", None),
@@ -40,7 +42,6 @@ class JALFInputParametersDefinition(_BaseInputParametersDefinition):
                         "The final CURDNS call is skipped by the native MPI postprocessing guard. "
                         "Only the fully relativistic serial workflow is exposed. Numerical output is unverified."
         )
-        schema._task_definition = TaskDefinition("JALF", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=("{DATASET}_JALF.dat", "curdns1", "curdns2", "curdns3"))
         return schema
 
 definition = JALFInputParametersDefinition

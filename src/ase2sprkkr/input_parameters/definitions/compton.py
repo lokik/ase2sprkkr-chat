@@ -14,6 +14,8 @@ from ..task_definition import TaskDefinition
 class ComptonInputParametersDefinition(RequiredTauInputParametersDefinition):
     """COMPTON definition with native 1D/2D momentum-density outputs."""
 
+    _task_definition = TaskDefinition("COMPTON", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=True)
+
     def output_files(self, parameters, directory):
         files = list(super().output_files(parameters, directory))
         dataset = dataset_adsi(parameters)
@@ -67,7 +69,6 @@ class ComptonInputParametersDefinition(RequiredTauInputParametersDefinition):
                                "ONLY_CORE and USE_ZJOVZZ workflows are not audited. NONMAG is allowed. "
                                "Native code forces the ZJ wavefunction convention even for FULLPOT."
         )
-        schema._task_definition = TaskDefinition("COMPTON", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=True)
         return schema
 
 def _validate_compton(p, _values, why):

@@ -13,6 +13,8 @@ from ..task_definition import TaskDefinition
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class TDOBSInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("TDOBS", supports=(), experimental=True, executable="kkrgen", mpi=False, output_files=("{DATASET_ADSI}.dos",))
+
     @classmethod
     def create_definition(cls):
         energy = ENERGY(emax=(1.0, "value of the highest energy", None), defaults={"GRID": 3, "NE": 300, "ImE": 0.01})
@@ -40,7 +42,6 @@ class TDOBSInputParametersDefinition(_BaseInputParametersDefinition):
                  "SPR-KKR 9.7 has no separate TDOBS postprocessing branch. A missing tau file triggers its normal "
                  "recomputation fallback. Serial only: native GEN MPI guard does not permit TDOBS."
         )
-        schema._task_definition = TaskDefinition("TDOBS", supports=(), experimental=True, executable="kkrgen", mpi=False, output_files=("{DATASET_ADSI}.dos",))
         return schema
 
 definition = TDOBSInputParametersDefinition

@@ -14,6 +14,8 @@ from ..task_definition import TaskDefinition
 class PosaniInputParametersDefinition(RequiredTauInputParametersDefinition):
     """POSANI definition with native 1D/2D momentum-density outputs."""
 
+    _task_definition = TaskDefinition("POSANI", supports={"3d"}, experimental=True, executable="kkrgen", mpi=True, input_files=("{DATASET_ADSI}_pos_dat.pan",))
+
     def output_files(self, parameters, directory):
         files = list(super().output_files(parameters, directory))
         dataset = dataset_adsi(parameters)
@@ -67,7 +69,6 @@ class PosaniInputParametersDefinition(RequiredTauInputParametersDefinition):
                                "ONLY_CORE and USE_ZJOVZZ workflows are not audited. NONMAG is allowed. "
                                "Native code forces the ZJ wavefunction convention even for FULLPOT."
         )
-        schema._task_definition = TaskDefinition("POSANI", supports={"3d"}, experimental=True, executable="kkrgen", mpi=True, input_files=("{DATASET_ADSI}_pos_dat.pan",))
         return schema
 
 def _validate_posani(p, _values, why):

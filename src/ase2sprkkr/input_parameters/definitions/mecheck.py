@@ -11,6 +11,8 @@ from ._sections import CONTROL, ENERGY, MODE, SITES, STRCONST, TASK, TAU
 class MecheckInputParametersDefinition(InputParameters):
     """MECHECK definition with the files actually enabled in public 9.7."""
 
+    _task_definition = TaskDefinition("MECHECK", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
+
     def output_files(self, parameters, directory):
         files = list(super().output_files(parameters, directory))
         if parameters.TASK.INITIALSTATE() == "CORE" and parameters.ENERGY.NE()[0] > 1:
@@ -52,7 +54,6 @@ class MecheckInputParametersDefinition(InputParameters):
                         "Full-potential branches exist but are numerically unverified. "
                         "The compiled K_CALC_ME=2 disables the J-to-Z consistency test."
         )
-        schema._task_definition = TaskDefinition("MECHECK", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
         return schema
 
 def _print_default(option):

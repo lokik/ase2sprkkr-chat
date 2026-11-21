@@ -10,6 +10,16 @@ from ..task_definition import TaskDefinition, TaskFile
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class DOSInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition(
+        "DOS",
+        name="DOS",
+        executable="kkrgen",
+        supports={"3d", "2d", "embedded"},
+        mpi=True,
+        output_reader="DOS",
+        output_files=(TaskFile("{DATASET_ADSI}.dos", type="DOS"),),
+    )
+
     @classmethod
     def create_definition(cls):
         energy = ENERGY(
@@ -31,15 +41,6 @@ class DOSInputParametersDefinition(_BaseInputParametersDefinition):
             ],
             info="DOS - The density of states computation",
             validators=_validate_dos,
-        )
-        schema._task_definition = TaskDefinition(
-            "DOS",
-            name="DOS",
-            executable="kkrgen",
-            supports={"3d", "2d", "embedded"},
-            mpi=True,
-            output_reader="DOS",
-            output_files=(TaskFile("{DATASET_ADSI}.dos", type="DOS"),),
         )
         return schema
 

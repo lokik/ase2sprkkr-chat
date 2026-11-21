@@ -28,6 +28,14 @@ def _validate_stoner(parameters, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class STONERInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition(
+        "STONER", experimental=True, executable="kkrgen", mpi=False,
+        supports={"3d", "2d"}, output_files=(
+            "{DATASET_ADSI}_*_g-spin.dat",
+            "{DATASET_ADSI}_*_g-orb.dat",
+            "{DATASET_ADSI}_*_VWN_A-xc.dat",
+        ))
+
     @classmethod
     def create_definition(cls):
         energy = ENERGY(emin=(None, "Omitted bound delegates to EF", None),
@@ -50,13 +58,6 @@ class STONERInputParametersDefinition(_BaseInputParametersDefinition):
                         "numerical results and FULLPOT have not been verified."
         )
         # Native SUSC_GAMMA is not cluster-safe (host-type loops and missing WF).
-        schema._task_definition = TaskDefinition(
-            "STONER", experimental=True, executable="kkrgen", mpi=False,
-            supports={"3d", "2d"}, output_files=(
-                "{DATASET_ADSI}_*_g-spin.dat",
-                "{DATASET_ADSI}_*_g-orb.dat",
-                "{DATASET_ADSI}_*_VWN_A-xc.dat",
-            ))
         return schema
 
 definition = STONERInputParametersDefinition

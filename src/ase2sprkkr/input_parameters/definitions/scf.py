@@ -12,6 +12,15 @@ from ..task_definition import TaskDefinition, TaskFile
 class SCFInputParametersDefinition(InputParametersDefinition):
     """SCF schema with files depending on the concrete parameters."""
 
+    _task_definition = TaskDefinition(
+        "SCF",
+        name="SCF",
+        executable="kkrscf",
+        supports={"3d", "2d", "embedded"},
+        mpi=True,
+        output_reader="SCF",
+    )
+
     def cache_files(self, parameters, directory):
         files = list(super().cache_files(parameters, directory))
         if parameters.SCF.FULLPOT():
@@ -54,14 +63,6 @@ class SCFInputParametersDefinition(InputParametersDefinition):
             [CONTROL("SCF"), TASK("SCF"), TAU, energy, scf, SITES, STRCONST, CPA, MODE],
             info="Calculate a self-consistent potential",
             validators=_validate_scf,
-        )
-        schema._task_definition = TaskDefinition(
-            "SCF",
-            name="SCF",
-            executable="kkrscf",
-            supports={"3d", "2d", "embedded"},
-            mpi=True,
-            output_reader="SCF",
         )
         return schema
 

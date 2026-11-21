@@ -17,6 +17,8 @@ from ._sections import CONTROL, ENERGY, MODE, SITES, STRCONST, TASK, TAU
 class WfplotInputParametersDefinition(InputParameters):
     """WFPLOT definition with native CORE/BAND wave-function plot outputs."""
 
+    _task_definition = TaskDefinition("WFPLOT", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
+
     def output_files(self, parameters, directory):
         files = list(super().output_files(parameters, directory))
         dataset = dataset_adsi(parameters)
@@ -72,7 +74,6 @@ class WfplotInputParametersDefinition(InputParameters):
             description="BAND plots only the first ENERGY point. CORE uses CL and MJ. "
                         "FULLPOT, DMFT and LDA+U are unsupported by SPR-KKR 9.7."
         )
-        schema._task_definition = TaskDefinition("WFPLOT", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
         return schema
 
 def _print_default(option):

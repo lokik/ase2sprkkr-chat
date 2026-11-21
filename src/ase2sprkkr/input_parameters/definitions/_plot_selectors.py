@@ -17,7 +17,7 @@ def _validate_plot(p, _container, why):
         return [DataValidityError("PLOTSFN requires FULLPOT data; native ASA writes no shape functions.")]
 
 
-def plot_parameters(task, info):
+def plot_parameters(task, info, *, task_definition=None):
     scf = Section("SCF", [V("FULLPOT", task == "PLOTSFN", is_always_added=task == "PLOTSFN",
         info="PLOTSFN needs an existing FULLPOT potential with shape-function data; this flag does not generate it.")],
         is_optional=task != "PLOTSFN", is_expert=task != "PLOTSFN")
@@ -27,6 +27,8 @@ def plot_parameters(task, info):
         description="Selective native PLOTPRS output from the existing potential, without an SCF or DOS calculation. "
                     "Native initialization maps this selector to internal TASK=PLOTPRS while retaining its output flag.")
 
-    schema._task_definition = TaskDefinition(task, supports=(() if task == "PLOTRHO" else {"3d", "2d"}), experimental=True, executable="kkrgen", mpi=False,
-        output_files=_OUTPUTS[task])
+    schema._task_definition = task_definition or TaskDefinition(
+        task, supports=(() if task == "PLOTRHO" else {"3d", "2d"}),
+        experimental=True, executable="kkrgen", mpi=False, output_files=_OUTPUTS[task],
+    )
     return schema

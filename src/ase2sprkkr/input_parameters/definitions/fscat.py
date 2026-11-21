@@ -35,6 +35,8 @@ def _validate_fscat(parameters, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class FSCATInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("FSCAT", supports=(), experimental=True, executable="kkrgen", mpi=False, output_files=("{DATASET_ADSI}_GEO?_*.agr",))
+
     @classmethod
     def create_definition(cls):
         energy = ENERGY(emax=(None, "Upper energy in Ry; omitted means the actual Fermi energy", None),
@@ -52,7 +54,6 @@ class FSCATInputParametersDefinition(_BaseInputParametersDefinition):
                         "are unsupported. SPR-KKR 9.7 has an erroneous spherical-harmonic index "
                         "and computes phase before guarding zero amplitude; numerical results are unverified."
         )
-        schema._task_definition = TaskDefinition("FSCAT", supports=(), experimental=True, executable="kkrgen", mpi=False, output_files=("{DATASET_ADSI}_GEO?_*.agr",))
         return schema
 
 definition = FSCATInputParametersDefinition

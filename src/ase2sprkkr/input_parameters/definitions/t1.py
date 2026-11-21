@@ -32,6 +32,8 @@ def _validate_t1(parameters, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class T1InputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("T1", supports=(), experimental=True, executable="kkrgen", mpi=False)
+
     @classmethod
     def create_definition(cls):
         control = CONTROL("T1").copy([V("RUNELOOP", True, is_required=True,
@@ -51,7 +53,6 @@ class T1InputParametersDefinition(_BaseInputParametersDefinition):
                         "are explicitly written to avoid native initialization defects. RELT1 additionally "
                         "uses signed kappa values as loop bounds, so numerical relaxation rates remain unverified."
         )
-        schema._task_definition = TaskDefinition("T1", supports=(), experimental=True, executable="kkrgen", mpi=False)
         return schema
 
 definition = T1InputParametersDefinition

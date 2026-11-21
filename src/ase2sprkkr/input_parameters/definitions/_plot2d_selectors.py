@@ -36,7 +36,7 @@ def _validate_plot2d(p, _container, why):
     return errors or None
 
 
-def plot2d_parameters(task):
+def plot2d_parameters(task, *, task_definition=None):
     t = TASK(task, add=[
         V("AVEC", SetOf(float, length=3), [2., 0., 0.], info="Cartesian plot window vector in units of ALAT."),
         V("BVEC", SetOf(float, length=3), [0., 2., 0.], info="Cartesian window vector in units of ALAT; native orthogonalizes it against AVEC, preserving length."),
@@ -55,6 +55,8 @@ def plot2d_parameters(task):
         description="Requires consistent stored data. FULLPOT=true does not convert an ASA potential. "
                     "The native test writer has fixed sampling details and output filenames; no numerical run certified here.")
 
-    schema._task_definition = TaskDefinition(task, supports=({"3d", "2d"} if task == "PLOT2DPOT" else ()), experimental=True, executable="kkrgen", mpi=False,
-        output_files=_PLY_OUTPUTS)
+    schema._task_definition = task_definition or TaskDefinition(
+        task, supports=({"3d", "2d"} if task == "PLOT2DPOT" else ()),
+        experimental=True, executable="kkrgen", mpi=False, output_files=_PLY_OUTPUTS,
+    )
     return schema

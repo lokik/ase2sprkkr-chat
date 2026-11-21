@@ -38,6 +38,22 @@ def _validate_plot2dpr(parameters, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class PLOT2DPRInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("PLOT2DPR", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=(
+            "PLY-V-ASA-*.ply",
+            "POT-ASA-LINES.ply",
+            "PLY-V-FP-*.ply",
+            "PLY-V-MT-*.ply",
+            "PLY-FP-RWS-*.ply",
+            "PLY-FP-RATM-*.ply",
+            "PLY-V-IS.ply",
+            "PLY-FP-CELL-*.ply",
+            "PLY-FP-RMT.ply",
+            "PLY-FP-CELL-BOUND-V.ply",
+            "PLY-FP-CELL-BOUND-0.ply",
+            "PLY-FP-RATM.ply",
+            "PLY-FP-RWS.ply",
+        ))
+
     @classmethod
     def create_definition(cls):
         energy = ENERGY(emax=(None, "Unused upper energy; omitted retains the native Fermi-energy default", None),
@@ -68,21 +84,6 @@ class PLOT2DPRInputParametersDefinition(_BaseInputParametersDefinition):
                         "Window vectors are Cartesian in units ALAT, not fractional lattice coordinates. "
                         "DMFT and LDA+U are unsupported; numerical output is unverified."
         )
-        schema._task_definition = TaskDefinition("PLOT2DPR", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=(
-                "PLY-V-ASA-*.ply",
-                "POT-ASA-LINES.ply",
-                "PLY-V-FP-*.ply",
-                "PLY-V-MT-*.ply",
-                "PLY-FP-RWS-*.ply",
-                "PLY-FP-RATM-*.ply",
-                "PLY-V-IS.ply",
-                "PLY-FP-CELL-*.ply",
-                "PLY-FP-RMT.ply",
-                "PLY-FP-CELL-BOUND-V.ply",
-                "PLY-FP-CELL-BOUND-0.ply",
-                "PLY-FP-RATM.ply",
-                "PLY-FP-RWS.ply",
-            ))
         return schema
 
 definition = PLOT2DPRInputParametersDefinition

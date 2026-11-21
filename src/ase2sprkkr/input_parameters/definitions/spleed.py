@@ -44,6 +44,10 @@ def _validate_spleed(p, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class SPLEEDInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("SPLEED", supports={"3d", "2d"}, experimental=True, executable="kkrspec", mpi=False, output_reader="SPLEED",
+        input_files=SPEC_INPUT_FILES, output_files=SPEC_OUTPUT_FILES,
+    )
+
     @classmethod
     def create_definition(cls):
         energy = ENERGY(emin=(None, "Incident energy lower bound", 11.0), emax=(None, "Incident energy upper bound", 60.0),
@@ -74,9 +78,6 @@ class SPLEEDInputParametersDefinition(_BaseInputParametersDefinition):
             add=[CONTROL("SPLEED"), energy, task, out["SPEC_EL"], out["SPEC_STR"]],
         )
         schema.task_selectors = ("SPLEED",)
-        schema._task_definition = TaskDefinition("SPLEED", supports={"3d", "2d"}, experimental=True, executable="kkrspec", mpi=False, output_reader="SPLEED",
-            input_files=SPEC_INPUT_FILES, output_files=SPEC_OUTPUT_FILES,
-        )
         return schema
 
 definition = SPLEEDInputParametersDefinition

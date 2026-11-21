@@ -31,6 +31,8 @@ def _validate_chilandau(p, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class CHILANDAUInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("CHILANDAU", supports={"3d"}, experimental=True, executable="kkrchi", mpi=False)
+
     @classmethod
     def create_definition(cls):
         energy = ENERGY(defaults={"GRID": [5], "NE": [30], "ImE": 0.01})
@@ -53,7 +55,6 @@ class CHILANDAUInputParametersDefinition(_BaseInputParametersDefinition):
                         "Native MPI has allocation and reduction defects. Converge both energy mesh and neighbour radius. "
                         "Native output contains partial energy sums; use the last serial block."
         )
-        schema._task_definition = TaskDefinition("CHILANDAU", supports={"3d"}, experimental=True, executable="kkrchi", mpi=False)
         return schema
 
 definition = CHILANDAUInputParametersDefinition

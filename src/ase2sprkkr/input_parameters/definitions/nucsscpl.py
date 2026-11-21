@@ -26,6 +26,14 @@ def _validate(parameters, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class NUCSSCPLInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("NUCSSCPL", supports=(), experimental=True, executable="kkrgen", mpi=False, output_files=(
+            "{DATASET_ADSI}_A_ij.dat",
+            "RK.dat",
+            "tab_aij.dat",
+            "{DATASET_ADSI}_Aij_*.agr",
+            "{DATASET_ADSI}_Rij_*.agr",
+        ))
+
     @classmethod
     def create_definition(cls):
         control = CONTROL("NUCSSCPL").copy(add=[V("FINNUC", False, info="Finite nucleus; forbidden by this task.")])
@@ -54,13 +62,6 @@ class NUCSSCPLInputParametersDefinition(_BaseInputParametersDefinition):
                         "FULLPOT and KMROT!=0 are rejected by native code. Isotopes come from TABMUQIN; "
                         "the task does not read isotope or nuclear-moment input parameters."
         )
-        schema._task_definition = TaskDefinition("NUCSSCPL", supports=(), experimental=True, executable="kkrgen", mpi=False, output_files=(
-                "{DATASET_ADSI}_A_ij.dat",
-                "RK.dat",
-                "tab_aij.dat",
-                "{DATASET_ADSI}_Aij_*.agr",
-                "{DATASET_ADSI}_Rij_*.agr",
-            ))
         return schema
 
 definition = NUCSSCPLInputParametersDefinition

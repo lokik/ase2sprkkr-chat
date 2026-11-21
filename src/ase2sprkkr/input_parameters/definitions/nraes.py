@@ -26,6 +26,8 @@ def _validate_nraes(parameters, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class NRAESInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("NRAES", supports=(), experimental=True, executable="kkrgen", mpi=False, input_files=("{DATASET_ADSI}.dos",))
+
     @classmethod
     def create_definition(cls):
         mode = MODE.copy(
@@ -50,7 +52,6 @@ class NRAESInputParametersDefinition(_BaseInputParametersDefinition):
                         "ENERGY.NE supplies allocation capacity; actual energies come from DOS. "
                         "FULLPOT, DMFT and LDA+U are unsupported. Numerical output is unverified."
         )
-        schema._task_definition = TaskDefinition("NRAES", supports=(), experimental=True, executable="kkrgen", mpi=False, input_files=("{DATASET_ADSI}.dos",))
         return schema
 
 definition = NRAESInputParametersDefinition

@@ -28,6 +28,14 @@ def _validate_chi(p, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class CHIInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("CHI", supports={"3d", "2d"}, experimental=True, executable="kkrchi", mpi=False, output_files=(
+            "{DATASET_ADSI}*_dens.agr",
+            "{DATASET_ADSI}*_chifmag.agr",
+            "{DATASET_ADSI}_*_GAMMA-OP.dat",
+            "{DATASET_ADSI}_*_CHI-r.dat",
+            "{DATASET_ADSI}_*_*_I-spin.dat",
+        ), cache_files=("{DATASET_ADSI}.tau", "TKTK_tables"))
+
     @classmethod
     def create_definition(cls):
         energy = ENERGY(defaults={"GRID": [5], "NE": [30], "ImE": 0.01})
@@ -50,13 +58,6 @@ class CHIInputParametersDefinition(_BaseInputParametersDefinition):
                         "native magnetization iteration is forcibly disabled. FULLPOT is unavailable in the public version. "
                         "Converge energy and k meshes; this definition does not expose restart, AF signs or manual NEF arrays."
         )
-        schema._task_definition = TaskDefinition("CHI", supports={"3d", "2d"}, experimental=True, executable="kkrchi", mpi=False, output_files=(
-                "{DATASET_ADSI}*_dens.agr",
-                "{DATASET_ADSI}*_chifmag.agr",
-                "{DATASET_ADSI}_*_GAMMA-OP.dat",
-                "{DATASET_ADSI}_*_CHI-r.dat",
-                "{DATASET_ADSI}_*_*_I-spin.dat",
-            ), cache_files=("{DATASET_ADSI}.tau", "TKTK_tables"))
         return schema
 
 definition = CHIInputParametersDefinition

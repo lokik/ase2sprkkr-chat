@@ -333,13 +333,12 @@ class InputParametersDefinition(ConfigurationFileDefinition):
     """Syntax and parameter semantics of one SPR-KKR input-file schema."""
 
     _task_definition = None
-    """Canonical 1:1 task declared together with this schema.
+    """Canonical 1:1 task declared as an IPD *class* attribute.
 
-    This is declaration-time metadata for the simple case where one input
-    schema represents exactly one task. Schemas shared by multiple tasks leave
-    it as ``None`` and override :meth:`task_definition_name` using their values.
-
-    The association is internal and must not be changed after registration.
+    Discovery and task listing can inspect this without constructing the IPD.
+    Schemas shared by multiple tasks leave it as ``None`` and override
+    :meth:`task_definition_name` using their values. The association is
+    internal and must not be changed after registration.
     """
 
     is_user_defined = True

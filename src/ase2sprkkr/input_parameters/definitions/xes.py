@@ -35,6 +35,8 @@ def _validate(parameters, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class XESInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("XES", supports=(), experimental=True, executable="kkrgen", mpi=False)
+
     @classmethod
     def create_definition(cls):
         energy = ENERGY(emax=(None, "XES forces the upper bound to EF", None), defaults={"GRID": 3, "NE": 300, "ImE": 0.01})
@@ -63,7 +65,6 @@ class XESInputParametersDefinition(_BaseInputParametersDefinition):
                         "Native XES forces EMAX=EF. RXES shares the calculation with RXAS; numerical emission "
                         "interpretation is unverified. MESPLIT is forced true and is not exposed as a tunable flag."
         )
-        schema._task_definition = TaskDefinition("XES", supports=(), experimental=True, executable="kkrgen", mpi=False)
         return schema
 
 definition = XESInputParametersDefinition

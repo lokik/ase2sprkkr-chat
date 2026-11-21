@@ -30,6 +30,8 @@ def _final_state_photon_label(parameters):
 class VbpesInputParametersDefinition(RequiredTauInputParametersDefinition):
     """VBPES definition with optional reusable final-state TAU data."""
 
+    _task_definition = TaskDefinition("VBPES", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=("arpes.dat", "arpes_spol.dat", "spin.matrix.xps"))
+
     def _uses_final_state_tau(self, parameters):
         return parameters.TASK.USETAUNN() and not parameters.TASK.USETFIN()
 
@@ -79,7 +81,6 @@ class VbpesInputParametersDefinition(RequiredTauInputParametersDefinition):
                         "This is a separate implementation from KKRSPEC ARPES. GRV stops as unimplemented. "
                         "Numerical output and FULLPOT have not been verified."
         )
-        schema._task_definition = TaskDefinition("VBPES", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=("arpes.dat", "arpes_spol.dat", "spin.matrix.xps"))
         return schema
 
 def _validate_vbpes(parameters, _values, why):

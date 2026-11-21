@@ -11,6 +11,8 @@ from ._sections import CONTROL, ENERGY, MODE, SITES, STRCONST, TASK, TAU
 class PshiftInputParametersDefinition(InputParameters):
     """PSHIFT definition with branch-dependent native XMGR outputs."""
 
+    _task_definition = TaskDefinition("PSHIFT", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
+
     def output_files(self, parameters, directory):
         files = list(super().output_files(parameters, directory))
         dataset = dataset_adsi(parameters)
@@ -38,7 +40,6 @@ class PshiftInputParametersDefinition(InputParameters):
                         "FULLPOT, DMFT and LDA+U are unsupported. "
                         "Relativistic output includes logarithmic derivatives; nonrelativistic output includes t matrices."
         )
-        schema._task_definition = TaskDefinition("PSHIFT", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
         return schema
 
 def _validate_pshift(parameters, _values, why):

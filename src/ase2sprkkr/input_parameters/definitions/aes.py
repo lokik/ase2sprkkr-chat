@@ -14,6 +14,8 @@ from ._sections import CONTROL, ENERGY, MODE, SITES, STRCONST, TASK, TAU
 class AESInputParametersDefinition(RequiredTauInputParametersDefinition):
     """AES definition with the native atom/core-shell spectrum filename."""
 
+    _task_definition = TaskDefinition("AES", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, cache_files=("ME", *(f"ME{i}" for i in range(1, 13))))
+
     def output_files(self, parameters, directory):
         files = list(super().output_files(parameters, directory))
         name = core_level_output_name(
@@ -44,7 +46,6 @@ class AESInputParametersDefinition(RequiredTauInputParametersDefinition):
                         "The source stops for NQ>1. ENERGY.NE must allocate enough capacity for the TAU file. "
                         "FULLPOT, DMFT and LDA+U are unsupported. Numerical output is unverified."
         )
-        schema._task_definition = TaskDefinition("AES", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, cache_files=("ME", *(f"ME{i}" for i in range(1, 13))))
         return schema
 
 def _validate_aes(parameters, _values, why):

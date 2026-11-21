@@ -17,6 +17,8 @@ from ._sections import CONTROL, ENERGY, MODE, SITES, STRCONST, TASK, TAU
 class MeplotInputParametersDefinition(InputParameters):
     """MEPLOT definition with its native state/self-energy XMGR outputs."""
 
+    _task_definition = TaskDefinition("MEPLOT", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
+
     def output_files(self, parameters, directory):
         files = list(super().output_files(parameters, directory))
         dataset = dataset_adsi(parameters)
@@ -82,7 +84,6 @@ class MeplotInputParametersDefinition(InputParameters):
                         "Full-potential branches exist but have not been tested here. "
                         "Photon scans must use a single initial electron energy."
         )
-        schema._task_definition = TaskDefinition("MEPLOT", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
         return schema
 
 def _iprint_default(option):

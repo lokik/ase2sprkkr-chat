@@ -33,6 +33,8 @@ def _validate_xas(parameters, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class XASInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("XAS", supports={"3d", "2d"}, executable="kkrgen", mpi=False, output_reader="XAS")
+
     @classmethod
     def create_definition(cls):
         energy = ENERGY(emax=(4.0, "Upper bound in Ry; native XAS default", None),
@@ -61,7 +63,6 @@ class XASInputParametersDefinition(_BaseInputParametersDefinition):
                         "MECHECK is a separate task, not an XAS option; MESPLIT is forced true. "
                         "The DYNAMICAL alternative workflow is not covered by this definition."
         )
-        schema._task_definition = TaskDefinition("XAS", supports={"3d", "2d"}, executable="kkrgen", mpi=False, output_reader="XAS")
         return schema
 
 definition = XASInputParametersDefinition

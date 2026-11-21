@@ -22,6 +22,8 @@ def _validate(parameters, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class BONDINGInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("BONDING", supports=(), experimental=True, executable="kkrgen", mpi=False, output_files=("fort.22",))
+
     @classmethod
     def create_definition(cls):
         tau = TAU.copy(
@@ -42,7 +44,6 @@ class BONDINGInputParametersDefinition(_BaseInputParametersDefinition):
                         "that require KTAUIJ>=2. The native workflow needs repair before numerical use. "
                         "CLUBONDING also returns silently for KMROT!=0 and writes to unit 22."
         )
-        schema._task_definition = TaskDefinition("BONDING", supports=(), experimental=True, executable="kkrgen", mpi=False, output_files=("fort.22",))
         return schema
 
 definition = BONDINGInputParametersDefinition

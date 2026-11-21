@@ -23,6 +23,14 @@ def _validate_plotprs(parameters, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class PLOTPRSInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("PLOTPRS", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=(
+            "{DATASET}_V_*.agr",
+            "{DATASET}_VNS_*.agr",
+            "{DATASET}_RHO_*.agr",
+            "{DATASET}_RNS_*.agr",
+            "{DATASET}_SFN_M*.agr",
+        ))
+
     @classmethod
     def create_definition(cls):
         # INIT_MOD_ENERGY requires NEMAX>0 even though no energy loop is run.
@@ -42,13 +50,6 @@ class PLOTPRSInputParametersDefinition(_BaseInputParametersDefinition):
                         "DMFT and LDA+U are unsupported. Selective PLOTPOT/PLOTRHO/PLOTSFN task aliases "
                         "are not registered by this definition; standalone PLOTRHO has a native allocation bug."
         )
-        schema._task_definition = TaskDefinition("PLOTPRS", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=(
-                "{DATASET}_V_*.agr",
-                "{DATASET}_VNS_*.agr",
-                "{DATASET}_RHO_*.agr",
-                "{DATASET}_RNS_*.agr",
-                "{DATASET}_SFN_M*.agr",
-            ))
         return schema
 
 definition = PLOTPRSInputParametersDefinition

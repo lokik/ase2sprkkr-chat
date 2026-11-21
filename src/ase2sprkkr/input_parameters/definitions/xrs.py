@@ -38,6 +38,8 @@ def _validate(parameters, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class XRSInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("XRS", supports=(), experimental=True, executable="kkrgen", mpi=False)
+
     @classmethod
     def create_definition(cls):
         energy = ENERGY(emin=None, emax=(4.0, "Explicit upper scan bound in Ry", None), defaults={"GRID": 6, "NE": 180, "ImE": 0.01})
@@ -67,7 +69,6 @@ class XRSInputParametersDefinition(_BaseInputParametersDefinition):
                         "Native SIG is only partly initialized, so numerical results require Fortran repair. "
                         "OUTPUT is forced to SIGMA and MESPLIT to true. Dynamic workflow is not read for XRS."
         )
-        schema._task_definition = TaskDefinition("XRS", supports=(), experimental=True, executable="kkrgen", mpi=False)
         return schema
 
 definition = XRSInputParametersDefinition

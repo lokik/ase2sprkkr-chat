@@ -38,6 +38,10 @@ def _validate_band(p, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class BANDInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("BAND", supports={"3d", "2d"}, experimental=True, executable="kkrspec", mpi=False, output_reader="SPEC",
+        input_files=SPEC_INPUT_FILES, output_files=SPEC_OUTPUT_FILES,
+    )
+
     @classmethod
     def create_definition(cls):
         # Work on a copy: sibling SPEC schemas must not mutate cached ARPES.
@@ -70,9 +74,6 @@ class BANDInputParametersDefinition(_BaseInputParametersDefinition):
             ]), task, energy, electron],
         )
         schema.task_selectors = ("BAND",)
-        schema._task_definition = TaskDefinition("BAND", supports={"3d", "2d"}, experimental=True, executable="kkrspec", mpi=False, output_reader="SPEC",
-            input_files=SPEC_INPUT_FILES, output_files=SPEC_OUTPUT_FILES,
-        )
         return schema
 
 definition = BANDInputParametersDefinition

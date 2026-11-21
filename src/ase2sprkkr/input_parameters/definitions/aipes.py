@@ -39,6 +39,10 @@ def _validate_aipes(p, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class AIPESInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("AIPES", supports={"3d", "2d"}, experimental=True, executable="kkrspec", mpi=False, output_reader="SPEC",
+        input_files=SPEC_INPUT_FILES, output_files=SPEC_OUTPUT_FILES,
+    )
+
     @classmethod
     def create_definition(cls):
         # Work on a copy: sibling SPEC schemas must not mutate cached ARPES.
@@ -64,9 +68,6 @@ class AIPESInputParametersDefinition(_BaseInputParametersDefinition):
             add=[CONTROL("AIPES"), task, energy, out["SPEC_EL"]],
         )
         schema.task_selectors = ("AIPES",)
-        schema._task_definition = TaskDefinition("AIPES", supports={"3d", "2d"}, experimental=True, executable="kkrspec", mpi=False, output_reader="SPEC",
-            input_files=SPEC_INPUT_FILES, output_files=SPEC_OUTPUT_FILES,
-        )
         return schema
 
 definition = AIPESInputParametersDefinition

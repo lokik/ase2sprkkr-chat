@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from functools import cache
 import os
 import string
 from typing import Callable, Iterable, Optional, Tuple, Union
@@ -263,13 +264,16 @@ class InputParametersRegistry(ModuleRegistry):
             # _values cache guarantees create_definition() runs at most once.
             definition = self.definition_class(name)
             value = definition.create_definition()
-            # Class-level selectors are authoritative discovery metadata.
-            # Factories that copy an existing IPD can return an instance of a
-            # different class, so propagate explicitly declared selectors.
-            if definition.task_selectors is not None:
-                from .input_parameters_definitions import InputParametersDefinition
-                if isinstance(value, InputParametersDefinition):
+            # A factory may return a copy belonging to a different IPD
+            # class (e.g. SPEC or plotting helpers). Propagate the class
+            # metadata to the materialized singleton, preserving identity.
+            from .input_parameters_definitions import InputParametersDefinition
+            if isinstance(value, InputParametersDefinition):
+                if definition.task_selectors is not None:
                     value.task_selectors = definition.task_selectors
+                declared_task = getattr(definition, "_task_definition", None)
+                if declared_task is not None:
+                    value._task_definition = declared_task
             return value
         # Keep older user-provided input_parameters_definition factories working.
         return super().value_from_module(name, module)
@@ -470,24 +474,23 @@ class _ExtraTaskRegistry(ModuleRegistry):
             raise RegistryDefinitionError(
                 f"Extra task {task.name} is registered as {name}"
             )
-        try:
-            self.input_parameters_registry.definition_for_task(task)
-        except RegistryEntryNotFound:
+        # Check the schema reference without constructing its IPD. The
+        # schema itself is validated when it is first materialized.
+        if task.input_parameters_definition_name not in self.input_parameters_registry:
             raise RegistryDefinitionError(
                 f"Task {task.name} references unknown input schema "
                 f"{task.input_parameters_definition_name}"
-            ) from None
+            )
         return task
 
 
 class TaskRegistry:
     """Authoritative namespace and resolver for SPR-KKR task identities.
 
-    Task declarations intentionally have two sources. A schema with exactly
-    one canonical task may co-locate its :class:`TaskDefinition` on the
-    ``InputParametersDefinition`` as ``_task_definition``; this keeps the
-    common one-schema/one-task case simple and declarative. Tasks sharing one
-    input schema are declared separately in the extra task package and refer
+    Task declarations have two sources. A schema with one canonical task
+    declares its :class:`TaskDefinition` as a class attribute
+    ``_task_definition``, independent of IPD materialization. Tasks sharing
+    one schema are declared separately in the extra task package and refer
     to that schema by name.
 
     The registry owns the task namespace and resolution rules, not necessarily
@@ -505,18 +508,30 @@ class TaskRegistry:
         )
 
     def _input_task(self, name):
-        """ Tasks, defined by the input_parameters """
-        try:
-            definition = self.input_parameters_registry[name]
-        except RegistryEntryNotFound:
+        """Read co-located TaskDefinition metadata without constructing an IPD."""
+        if name not in self.input_parameters_registry:
             return None
-        task = definition._task_definition
-
-        """ Maybe, the definition just use task from another "canonical" definition """
-        if task and task.name == name:
-            return task
+        definition_class = self.input_parameters_registry.definition_class(name)
+        if definition_class is not None:
+            task = getattr(definition_class, "_task_definition", None)
         else:
+            # Compatibility for a legacy user factory: it has no class
+            # metadata, so its IPD remains the only source of task metadata.
+            task = self.input_parameters_registry[name]._task_definition
+
+        if task is None:
             return None
+        if not isinstance(task, TaskDefinition):
+            raise RegistryDefinitionError(
+                f"Input schema {name} declares an invalid TaskDefinition"
+            )
+        if task.name != name:
+            return None
+        if task.input_parameters_definition_name != name:
+            raise RegistryDefinitionError(
+                f"Task {name} references IPD {task.input_parameters_definition_name}"
+            )
+        return task
 
     def _extra_task(self, name):
         """ Tasks, defined separatelly, to be shared by more tasks """
@@ -546,19 +561,43 @@ class TaskRegistry:
             return False
         return True
 
+    @cache
     def names(self, *, name_contains=None):
-        """Enumerate valid tasks; broken unrelated definitions are skipped."""
-        names = {task.name for task in self.extra_tasks.iter_valid_values(name_contains=name_contains)}
-        for schema in self.input_parameters_registry.iter_canonical_values(name_contains=name_contains):
-            task = schema._task_definition
+        """Cached task names; discover class metadata, never build native IPDs.
+
+        Only legacy user modules with a factory instead of a definition class
+        need to materialize their schema to discover a co-located task.
+        The tuple is immutable and can be iterated repeatedly by callers.
+        """
+        from ..common.module_registry import RegistryLoadWarning
+        import warnings
+
+        names = {
+            task.name for task in self.extra_tasks.iter_valid_values(
+                name_contains=name_contains
+            )
+        }
+        registry = self.input_parameters_registry
+        for name in registry.names(
+            include_aliases=False, name_contains=name_contains
+        ):
+            try:
+                task = self._input_task(name)
+            except Exception as exc:
+                warnings.warn(
+                    f"Skipping invalid registry entry {name} while "
+                    f"discovering task metadata: {type(exc).__name__}: {exc}",
+                    RegistryLoadWarning,
+                    stacklevel=2,
+                )
+                continue
             if task is None:
                 continue
-            name = task.name
-            if name in names:
+            if task.name in names:
                 raise RegistryDefinitionError(
-                    f"Task {name} is defined both by an input schema and explicitly"
+                    f"Task {task.name} is defined both by an input schema and explicitly"
                 )
-            names.add(name)
+            names.add(task.name)
         return tuple(sorted(names))
 
     def values(self, *, name_contains=None):

@@ -42,6 +42,14 @@ def _validate_torque(parameters, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class TORQUEInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition(
+        "TORQUE",
+        supports={"3d", "2d"},
+        name="TORQUE",
+        executable="kkrgen",
+        mpi=True,
+    )
+
     @classmethod
     def create_definition(cls):
         mmode = MODE["MODE"].copy(warning_condition=_torque_mode_warning_condition)
@@ -66,13 +74,6 @@ class TORQUEInputParametersDefinition(_BaseInputParametersDefinition):
             description="Requires a potential with rotated moments (KMROT=1 or 2), with torque axes perpendicular to them. Native repeats the final angle for remaining sites.",
         )
         schema["CONTROL"]["NONMAG"].warning_condition = _torque_nonmag_warning_condition
-        schema._task_definition = TaskDefinition(
-            "TORQUE",
-            supports={"3d", "2d"},
-            name="TORQUE",
-            executable="kkrgen",
-            mpi=True,
-        )
         return schema
 
 definition = TORQUEInputParametersDefinition

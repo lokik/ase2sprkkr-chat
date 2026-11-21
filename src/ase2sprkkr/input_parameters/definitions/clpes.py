@@ -44,6 +44,11 @@ def _validate_clpes(p, _container, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class CLPESInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("CLPES", supports={"3d", "2d"}, experimental=True, executable="kkrspec", mpi=False, output_reader="ARPES",
+        input_files=SPEC_INPUT_FILES,
+        output_files=(*SPEC_OUTPUT_FILES, "{DATASET_ADSI}_corewf")
+    )
+
     @classmethod
     def create_definition(cls):
         # Work on a copy: sibling SPEC schemas must not mutate cached ARPES.
@@ -72,10 +77,6 @@ class CLPESInputParametersDefinition(_BaseInputParametersDefinition):
             add=[CONTROL("CLPES"), task, energy, photon, cl],
         )
         schema.task_selectors = ("CLPES",)
-        schema._task_definition = TaskDefinition("CLPES", supports={"3d", "2d"}, experimental=True, executable="kkrspec", mpi=False, output_reader="ARPES",
-            input_files=SPEC_INPUT_FILES,
-            output_files=(*SPEC_OUTPUT_FILES, "{DATASET_ADSI}_corewf")
-        )
         return schema
 
 definition = CLPESInputParametersDefinition

@@ -11,6 +11,8 @@ from ._sections import CONTROL, ENERGY, MODE, SITES, STRCONST, TASK, TAU
 class CLXPSInputParametersDefinition(InputParameters):
     """CLXPS definition with the native atom/core-shell XPS filename."""
 
+    _task_definition = TaskDefinition("CLXPS", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
+
     def output_files(self, parameters, directory):
         files = list(super().output_files(parameters, directory))
         name = core_level_output_name(
@@ -50,7 +52,6 @@ class CLXPSInputParametersDefinition(InputParameters):
                         "Geometries use index 0 for one overriding geometry, or consecutive indices 1..10. "
                         "FULLPOT, DMFT and LDA+U are unsupported; numerical output is unverified."
         )
-        schema._task_definition = TaskDefinition("CLXPS", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
         return schema
 
 def _validate_clxps(parameters, _values, why):

@@ -22,6 +22,8 @@ def _validate_fmag(parameters, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class FMAGInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("FMAG", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=True, output_files=("{DATASET_ADSI}_fmag_*.agr", "{DATASET_ADSI}_dens_*.agr"))
+
     @classmethod
     def create_definition(cls):
         energy = ENERGY(emax=(None, "Omitted upper bound delegates to EF", None),
@@ -37,7 +39,6 @@ class FMAGInputParametersDefinition(_BaseInputParametersDefinition):
                         "The momentum mesh is fixed to 100 points. FULLPOT stops in GEN. "
                         "Normalization of a zero magnetic moment is unguarded in SPR-KKR. Numerical output is unverified."
         )
-        schema._task_definition = TaskDefinition("FMAG", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=True, output_files=("{DATASET_ADSI}_fmag_*.agr", "{DATASET_ADSI}_dens_*.agr"))
         return schema
 
 definition = FMAGInputParametersDefinition

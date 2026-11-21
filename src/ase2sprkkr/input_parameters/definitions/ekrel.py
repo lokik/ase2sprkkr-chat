@@ -47,6 +47,8 @@ def _validate_ekrel(parameters, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class EKRELInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("EKREL", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=True, output_files=("{DATASET_ADSI}.bnd",))
+
     @classmethod
     def create_definition(cls):
         energy = ENERGY(emax=(None, "Initialization-only upper energy; native fallback EF", None),
@@ -76,7 +78,6 @@ class EKRELInputParametersDefinition(_BaseInputParametersDefinition):
                         "even for F-SURF, so its lattice restrictions remain relevant. "
                         "MPI is implemented in the native k-loop; numerical output is unverified."
         )
-        schema._task_definition = TaskDefinition("EKREL", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=True, output_files=("{DATASET_ADSI}.bnd",))
         return schema
 
 definition = EKRELInputParametersDefinition

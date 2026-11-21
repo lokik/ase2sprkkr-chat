@@ -120,6 +120,8 @@ def _validate_tutorial(p, _container, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class TUTORIALInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("TUTORIAL", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
+
     @classmethod
     def create_definition(cls):
         task = TASK("TUTORIAL", add=[
@@ -171,7 +173,6 @@ class TUTORIALInputParametersDefinition(_BaseInputParametersDefinition):
                         "wave functions and absolute Ry bounds. DOS-CLU requires explicit TAU cluster geometry; DOS-BULK "
                         "and GEN retain the supplied TAU settings. Native diagnostic branches are not certified for MPI."
         )
-        schema._task_definition = TaskDefinition("TUTORIAL", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
         return schema
 
 definition = TUTORIALInputParametersDefinition

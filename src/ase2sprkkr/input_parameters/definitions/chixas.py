@@ -12,6 +12,8 @@ from ..task_definition import TaskDefinition
 class ChixasInputParametersDefinition(InputParameters):
     """CHIXAS definition with the source-defined XAS output families."""
 
+    _task_definition = TaskDefinition("CHIXAS", supports={"3d", "2d"}, experimental=True, executable="kkrchi", mpi=False)
+
     def output_files(self, parameters, directory):
         files = list(super().output_files(parameters, directory))
         dataset = dataset_adsi(parameters)
@@ -60,7 +62,6 @@ class ChixasInputParametersDefinition(InputParameters):
                         "Input-only validation cannot establish agreement with the potential or DOS normalization. "
                         "Spin-resolved orbital input, restart and TAU cache workflows are outside this audit."
         )
-        schema._task_definition = TaskDefinition("CHIXAS", supports={"3d", "2d"}, experimental=True, executable="kkrchi", mpi=False)
         return schema
 
 def _validate_chixas(p, _values, why):

@@ -31,6 +31,8 @@ def _validate_posanitau(p, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class POSANITAUInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("POSANITAU", supports={"3d"}, experimental=True, executable="kkrgen", mpi=False, cache_files=("{DATASET_ADSI}_positron.rho",))
+
     @classmethod
     def create_definition(cls):
         energy = ENERGY(emax=(None, "Upper integration bound in Ry; omitted native value is EF.", None),
@@ -54,7 +56,6 @@ class POSANITAUInputParametersDefinition(_BaseInputParametersDefinition):
                         "Uses an electronic potential and may reuse DATASET_positron.rho. "
                         "Integration bounds need physical verification. Lifetime enhancement is fixed independently of POSVC."
         )
-        schema._task_definition = TaskDefinition("POSANITAU", supports={"3d"}, experimental=True, executable="kkrgen", mpi=False, cache_files=("{DATASET_ADSI}_positron.rho",))
         return schema
 
 definition = POSANITAUInputParametersDefinition

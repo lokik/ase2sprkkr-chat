@@ -390,7 +390,8 @@ def test_shared_schema_task_lookup_is_lazy(tmp_path, monkeypatch):
     ip_registry = InputParametersRegistry(definitions)
     registry = TaskRegistry(ip_registry, tasks)
     assert registry["FIRST"].name == "FIRST"
-    assert "SHARED" in ip_registry._values
+    # A declared shared schema need not be constructed just to resolve a task.
+    assert "SHARED" not in ip_registry._values
     assert "BROKEN" not in ip_registry._values
     assert "SECOND" not in registry.extra_tasks._values
     assert "_lazy_distinct_task_ipds.broken" not in __import__("sys").modules

@@ -24,6 +24,12 @@ def _validate(parameters, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class BSDOSIJInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("BSDOSIJ", supports=(), experimental=True, executable="kkrgen", mpi=True, output_files=(
+            "{DATASET_ADSI}_XCPLTEN_Jij.dat",
+            "{DATASET_ADSI}_XCPLTEN_Jij_*.agr",
+            "{DATASET_ADSI}_XCPLTEN_Dij_[xyz]_*.agr",
+        ))
+
     @classmethod
     def create_definition(cls):
         energy = ENERGY(emax=(None, "Omitted upper bound delegates to EF", None), defaults={"GRID": 3, "NE": 300, "ImE": 0.01})
@@ -49,11 +55,6 @@ class BSDOSIJInputParametersDefinition(_BaseInputParametersDefinition):
             description="Native 9.7 component and output indexing appear faulty; numerical results are unverified. "
                         "Potential-dependent native checks also require KMROT=0, NKM=NKMMAX and representative type sites."
         )
-        schema._task_definition = TaskDefinition("BSDOSIJ", supports=(), experimental=True, executable="kkrgen", mpi=True, output_files=(
-                "{DATASET_ADSI}_XCPLTEN_Jij.dat",
-                "{DATASET_ADSI}_XCPLTEN_Jij_*.agr",
-                "{DATASET_ADSI}_XCPLTEN_Dij_[xyz]_*.agr",
-            ))
         return schema
 
 definition = BSDOSIJInputParametersDefinition

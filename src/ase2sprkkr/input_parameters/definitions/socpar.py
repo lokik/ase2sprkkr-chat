@@ -40,6 +40,8 @@ def _validate_socpar(parameters, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class SOCPARInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("SOCPAR", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=("{DATASET_ADSI}_soc_*.agr", "{DATASET_ADSI}_exc_*.agr"))
+
     @classmethod
     def create_definition(cls):
         energy = ENERGY(emax=(None, "Upper energy in Ry; omitted means the actual Fermi energy", None),
@@ -56,7 +58,6 @@ class SOCPARInputParametersDefinition(_BaseInputParametersDefinition):
                         "FULLPOT, DMFT and LDA+U are unsupported. The exchange-output eV label "
                         "does not match its unconverted Ry values in the 9.7 source."
         )
-        schema._task_definition = TaskDefinition("SOCPAR", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=("{DATASET_ADSI}_soc_*.agr", "{DATASET_ADSI}_exc_*.agr"))
         return schema
 
 definition = SOCPARInputParametersDefinition

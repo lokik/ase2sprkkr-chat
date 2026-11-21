@@ -40,6 +40,8 @@ def _validate_sigma(p, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class SIGMAInputParametersDefinition(_BaseInputParametersDefinition):
+    _task_definition = TaskDefinition("SIGMA", supports={"3d", "2d"}, experimental=True, executable="kkrchi", mpi=False, output_files=("sigma?????.dat",))
+
     @classmethod
     def create_definition(cls):
         energy = ENERGY(defaults={"GRID": [0], "NE": [1], "ImE": 0.01})
@@ -64,7 +66,6 @@ class SIGMAInputParametersDefinition(_BaseInputParametersDefinition):
                         "use GRID=5 and NE>1 to include it. Native surface point is EF+i*ImE. "
                         "Layer, NLCPA, PROJECT, thermal and many-body workflows are not audited here; MPI not certified."
         )
-        schema._task_definition = TaskDefinition("SIGMA", supports={"3d", "2d"}, experimental=True, executable="kkrchi", mpi=False, output_files=("sigma?????.dat",))
         return schema
 
 definition = SIGMAInputParametersDefinition

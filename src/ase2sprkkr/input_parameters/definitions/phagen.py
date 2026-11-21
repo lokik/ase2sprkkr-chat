@@ -9,6 +9,14 @@ from ..task_definition import TaskDefinition
 
 
 class PhagenInputParametersDefinition(InputParametersDefinition):
+    _task_definition = TaskDefinition(
+        "PHAGEN",
+        supports={"3d", "2d"},
+        name="PHAGEN",
+        executable="kkrscf",
+        mpi=False,
+    )
+
     def output_files(self, parameters, directory):
         files = list(super().output_files(parameters, directory))
         potfil = parameters.CONTROL.POTFIL()
@@ -36,13 +44,6 @@ class PhagenInputParametersDefinition(InputParametersDefinition):
                         "POTFIL.only_coulomb_new. "
                         "PHAGEN_CALCTYPE is hardcoded EXP; no phase-shift solver is invoked.",
             validators=_validate_phagen,
-        )
-        schema._task_definition = TaskDefinition(
-            "PHAGEN",
-            supports={"3d", "2d"},
-            name="PHAGEN",
-            executable="kkrscf",
-            mpi=False,
         )
         return schema
 

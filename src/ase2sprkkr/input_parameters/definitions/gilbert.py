@@ -11,6 +11,12 @@ from ..task_definition import TaskDefinition
 
 
 class GilbertInputParametersDefinition(TauCacheInputParametersDefinition):
+    _task_definition = TaskDefinition("GILBERT", supports={"3d", "2d"}, executable="kkrchi", output_files=(
+            "{DATASET_ADSI}alfa_x.dat",
+            "{DATASET_ADSI}alfa_T.dat",
+            "{DATASET_ADSI}_alfa_T.agr",
+        ))
+
     def input_files(self, parameters, directory):
         files = list(super().input_files(parameters, directory))
         if parameters.TASK.SETFLUCT() == "M_T" and parameters.TASK.FLUCTFIL():
@@ -74,11 +80,6 @@ class GilbertInputParametersDefinition(TauCacheInputParametersDefinition):
                         "MCS, RDLM and NLCPA workflows are not audited here.",
             info="The Gilbert damping parameter calculation"
         )
-        schema._task_definition = TaskDefinition("GILBERT", supports={"3d", "2d"}, executable="kkrchi", output_files=(
-                "{DATASET_ADSI}alfa_x.dat",
-                "{DATASET_ADSI}alfa_T.dat",
-                "{DATASET_ADSI}_alfa_T.agr",
-            ))
         return schema
 
 def _validate_gilbert(p, _values, why):

@@ -6,8 +6,10 @@ subclass with a ``create_definition()`` classmethod. The registry reads its
 result of ``create_definition()`` when first requested. Legacy user modules
 with an ``input_parameters_definition`` factory remain supported.
 
-Standard schemas attach their 1:1 task as ``_task_definition``; schemas
-shared by several tasks leave it unset and resolve task names from values.
+Standard IPD classes declare their 1:1 task as a class attribute
+``_task_definition``. ``TaskRegistry.names()`` reads this declaration without
+constructing the IPD; schemas shared by multiple tasks leave it unset and
+resolve task names from parameter values.
 """
 
 import os
