@@ -75,3 +75,18 @@ def test_full_parser_emits_typed_info_and_retains_native_tolerance():
     assert len(iterations) == 1
     assert iterations[0].converged
     assert events[-1] == {"kind": "scf_finished", "data": True}
+
+
+
+def test_print_info_formats_the_same_events_as_callback(capsys):
+    events = []
+    parser = ScfProgressParser(
+        print_info=True, on_info=lambda **event: events.append(event),
+    )
+    parser.feed(" SCF-tol: 1.0D-5\n")
+    parser.feed(" 1 ERR 0.1E-03 0.2E-03 EF 0.7 0 D 0 M 1 2\n")
+    parser.feed(" ETOT -42.5 SCF - cycle not converged - continue\n")
+    output = capsys.readouterr().out.splitlines()
+    assert len(events) == len(output) == 2
+    assert output[0] == "SCF tolerance: 1e-05"
+    assert output[1] == ScfOutputParser.format_info(**events[1])
