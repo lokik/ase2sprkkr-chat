@@ -29,6 +29,47 @@ class PosaniInputParametersDefinition(RequiredTauInputParametersDefinition):
         return tuple(files)
 
 
+    @classmethod
+    def create_definition(cls):
+        energy = ENERGY(defaults={"GRID": [5], "NE": [30], "ImE": 0.01})
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        energy.copy_member("SPLITSS", default_value=False)
+        tau = TAU.copy(
+            add=[
+                V("TAUDIR", _FilenameString(), is_optional=True, value_mapping=_map_tau_filename,
+                  default_value_from_container=_tau_directory_default,
+                  info="Existing DATASET.tau.dir directory by default."),
+                V("TAUPATH", _FilenameString(), is_optional=True, value_mapping=_map_filename,
+                  info="Parent of TAUDIR; native default is current directory."),
+                TAU["BZINT"].copy(default_value="POINTS"),
+            ],
+        )
+        members = [
+            V("SPLITSS", False, info="Excluded from this single-contour workflow."),
+            V("MEMODE", Integer(min=1, max=2), 1, info="1 interpolates radial matrix elements; 2 evaluates each momentum."),
+            V("NPMAX", Integer(min=2, max=10000), 250, info="Radial interpolation point count for MEMODE=1."),
+            V("PNMAX", 0.0, info="Longitudinal momentum maximum in atomic units; zero gives one point."),
+            V("PPMAX", 10.0, info="Transverse momentum maximum in atomic units."),
+            V("NPN", Integer(min=1), 50), V("NPP", Integer(min=1), 50),
+            V("USE_PEQUIV", Integer(min=0, max=2), 0, info="Momentum symmetry reuse mode."),
+        ]
+        members += [V(name, SetOf(float, min_length=3, max_length=3), is_optional=True)
+                    for name in ("PNVEC", "PPVEC1", "PPVEC2")]
+        members += [V(name, False) for name in ("MD2D", "EMD2D", "SHFT", "SHFT_PP", "SHFT_PN", "INSIDE_SPHERE", "SQQ_RESOLVED")]
+        control = CONTROL("POSANI").copy(add=[V("RDTAU", True, is_always_added=True, info="Use existing electron TAU data.")])
+        schema = PosaniInputParametersDefinition(
+            "posani",
+            [control, tau, MODE, STRCONST, CPA,
+                               energy, TASK("POSANI", add=members), SITES],
+            validators=_validate_posani,
+            info="Positron annihilation momentum density and profiles",
+            description="Periodic FREL workflow using electron potential, electron TAU data and DATASET_pos_dat.pan from POSANIPREP. Native TAUQQ reader/writer assumes NQ=NT; other systems are unsafe. "
+                               "ONLY_CORE and USE_ZJOVZZ workflows are not audited. NONMAG is allowed. "
+                               "Native code forces the ZJ wavefunction convention even for FULLPOT."
+        )
+        schema._task_definition = TaskDefinition("POSANI", supports={"3d"}, experimental=True, executable="kkrgen", mpi=True, input_files=("{DATASET_ADSI}_pos_dat.pan",))
+        return schema
+
 def _validate_posani(p, _values, why):
     if why == "set":
         return None
@@ -83,42 +124,4 @@ def _validate_posani(p, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    energy = ENERGY(defaults={"GRID": [5], "NE": [30], "ImE": 0.01})
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    energy.copy_member("SPLITSS", default_value=False)
-    tau = TAU.copy(
-        add=[
-            V("TAUDIR", _FilenameString(), is_optional=True, value_mapping=_map_tau_filename,
-              default_value_from_container=_tau_directory_default,
-              info="Existing DATASET.tau.dir directory by default."),
-            V("TAUPATH", _FilenameString(), is_optional=True, value_mapping=_map_filename,
-              info="Parent of TAUDIR; native default is current directory."),
-            TAU["BZINT"].copy(default_value="POINTS"),
-        ],
-    )
-    members = [
-        V("SPLITSS", False, info="Excluded from this single-contour workflow."),
-        V("MEMODE", Integer(min=1, max=2), 1, info="1 interpolates radial matrix elements; 2 evaluates each momentum."),
-        V("NPMAX", Integer(min=2, max=10000), 250, info="Radial interpolation point count for MEMODE=1."),
-        V("PNMAX", 0.0, info="Longitudinal momentum maximum in atomic units; zero gives one point."),
-        V("PPMAX", 10.0, info="Transverse momentum maximum in atomic units."),
-        V("NPN", Integer(min=1), 50), V("NPP", Integer(min=1), 50),
-        V("USE_PEQUIV", Integer(min=0, max=2), 0, info="Momentum symmetry reuse mode."),
-    ]
-    members += [V(name, SetOf(float, min_length=3, max_length=3), is_optional=True)
-                for name in ("PNVEC", "PPVEC1", "PPVEC2")]
-    members += [V(name, False) for name in ("MD2D", "EMD2D", "SHFT", "SHFT_PP", "SHFT_PN", "INSIDE_SPHERE", "SQQ_RESOLVED")]
-    control = CONTROL("POSANI").copy(add=[V("RDTAU", True, is_always_added=True, info="Use existing electron TAU data.")])
-    schema = PosaniInputParametersDefinition(
-        "posani",
-        [control, tau, MODE, STRCONST, CPA,
-                           energy, TASK("POSANI", add=members), SITES],
-        validators=_validate_posani,
-        info="Positron annihilation momentum density and profiles",
-        description="Periodic FREL workflow using electron potential, electron TAU data and DATASET_pos_dat.pan from POSANIPREP. Native TAUQQ reader/writer assumes NQ=NT; other systems are unsafe. "
-                           "ONLY_CORE and USE_ZJOVZZ workflows are not audited. NONMAG is allowed. "
-                           "Native code forces the ZJ wavefunction convention even for FULLPOT."
-    )
-    schema._task_definition = TaskDefinition("POSANI", supports={"3d"}, experimental=True, executable="kkrgen", mpi=True, input_files=("{DATASET_ADSI}_pos_dat.pan",))
-    return schema
+definition = PosaniInputParametersDefinition

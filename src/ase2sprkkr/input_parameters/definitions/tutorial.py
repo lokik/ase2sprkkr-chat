@@ -117,55 +117,61 @@ def _validate_tutorial(p, _container, why):
     return errors or None
 
 
-def input_parameters_definition():
-    task = TASK("TUTORIAL", add=[
-        V("TUT-TASK", Keyword(TUTORIAL_TASKS), "YLM", is_always_added=True,
-          info="Select the native educational or diagnostic calculation."),
-        V("L", Integer(min=0), 2, info="YLM angular momentum; RWF-E selected l (must be below NL)."),
-        V("M", int, 0, info="YLM real harmonic index, abs(M)<=L."),
-        V("LMAX", Integer(min=0, max=4), 2, info="Largest l in JLX plots."),
-        V("NX", Integer(min=2), 300, info="JLX mesh point count."),
-        V("XMIN", .001, info="JLX lower bound; SMALL asymptote forces .001."),
-        V("XMAX", 5.0, info="JLX upper bound."),
-        V("X-RANGE", Keyword("SMALL", "LARGE"), "SMALL", info="JLX-ASYMPT limit; ignored by plain JLX."),
-        V("ITSEL", Integer(min=1), 1, info="Potential type used by RWF-L/RWF-E; must exist in POTFIL."),
-        V("NORMALISATION", Keyword("1", "MST"), "1",
-          info="RWF: 1 normalizes the plotted real radial part; MST retains multiple-scattering normalization."),
-    ])
-    scf = Section("SCF", [V("FULLPOT", False,
-        info="Native potential format takes precedence; POT-DECOMP/POT-XC/CORE-ALL and audited RWF require ASA.")],
-        is_optional=True, is_expert=True)
-    mode = MODE.copy(
-        add=[
-            MODE["MODE"].copy(type=Keyword("NREL", "SREL", "SP-SREL", "FREL"), default_value=_tutorial_mode),
-        ],
-        is_expert=False, is_optional=False,
-    )
-    tau = TAU.copy(
-        add=[
-            TAU["BZINT"].copy(default_value=_tutorial_bzint),
-            TAU["KKRMODE"].copy(default_value=_tutorial_kkrmode, is_always_added=True),
-        ],
-    )
-    energy = ENERGY(emin=(_tutorial_emin, "Absolute lower energy in Ry; RWF ignores relative eV bounds", None),
-        emax=(1.0, "Absolute upper energy in Ry", None),
-        defaults={"GRID": _tutorial_grid, "NE": _tutorial_ne, "ImE": _tutorial_ime})
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    schema = InputParametersDefinition(
-        "tutorial",
-        [CONTROL("TUTORIAL"), tau, energy, SITES, task, scf, mode, CPA, STRCONST],
-        validators=_validate_tutorial,
-        info="Educational and diagnostic KKR calculations selected by TASK.TUT-TASK: real spherical harmonics "
-             "(YLM), spherical Bessel/Neumann functions and asymptotes (JLX, JLX-ASYMPT), stored potential and "
-             "densities (CHR-POT), potential decomposition (POT-DECOMP), XC comparison on one density (POT-XC), "
-             "radial valence wave functions across l or energy (RWF-L, RWF-E), nonmagnetic core states of "
-             "type 1 (CORE-ALL), and free-electron, single-site, cluster or bulk DOS (DOS-FEG, DOS-SS, "
-             "DOS-CLU, DOS-BULK). GEN runs the general observable calculation. All branches use native "
-             "kkrgen startup and require a potential file. Several branches have native limitations; see their descriptions.",
-        description="POT-DECOMP requires ASA with XC=VBH/MJW/VWN. POT-XC compares VBH/MJW/VWN/PBE on the same density, "
-                    "without separate SCF runs. CORE-ALL uses only type 1 and forces B=0. RWF uses scalar-relativistic "
-                    "wave functions and absolute Ry bounds. DOS-CLU requires explicit TAU cluster geometry; DOS-BULK "
-                    "and GEN retain the supplied TAU settings. Native diagnostic branches are not certified for MPI."
-    )
-    schema._task_definition = TaskDefinition("TUTORIAL", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
-    return schema
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class TUTORIALInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        task = TASK("TUTORIAL", add=[
+            V("TUT-TASK", Keyword(TUTORIAL_TASKS), "YLM", is_always_added=True,
+              info="Select the native educational or diagnostic calculation."),
+            V("L", Integer(min=0), 2, info="YLM angular momentum; RWF-E selected l (must be below NL)."),
+            V("M", int, 0, info="YLM real harmonic index, abs(M)<=L."),
+            V("LMAX", Integer(min=0, max=4), 2, info="Largest l in JLX plots."),
+            V("NX", Integer(min=2), 300, info="JLX mesh point count."),
+            V("XMIN", .001, info="JLX lower bound; SMALL asymptote forces .001."),
+            V("XMAX", 5.0, info="JLX upper bound."),
+            V("X-RANGE", Keyword("SMALL", "LARGE"), "SMALL", info="JLX-ASYMPT limit; ignored by plain JLX."),
+            V("ITSEL", Integer(min=1), 1, info="Potential type used by RWF-L/RWF-E; must exist in POTFIL."),
+            V("NORMALISATION", Keyword("1", "MST"), "1",
+              info="RWF: 1 normalizes the plotted real radial part; MST retains multiple-scattering normalization."),
+        ])
+        scf = Section("SCF", [V("FULLPOT", False,
+            info="Native potential format takes precedence; POT-DECOMP/POT-XC/CORE-ALL and audited RWF require ASA.")],
+            is_optional=True, is_expert=True)
+        mode = MODE.copy(
+            add=[
+                MODE["MODE"].copy(type=Keyword("NREL", "SREL", "SP-SREL", "FREL"), default_value=_tutorial_mode),
+            ],
+            is_expert=False, is_optional=False,
+        )
+        tau = TAU.copy(
+            add=[
+                TAU["BZINT"].copy(default_value=_tutorial_bzint),
+                TAU["KKRMODE"].copy(default_value=_tutorial_kkrmode, is_always_added=True),
+            ],
+        )
+        energy = ENERGY(emin=(_tutorial_emin, "Absolute lower energy in Ry; RWF ignores relative eV bounds", None),
+            emax=(1.0, "Absolute upper energy in Ry", None),
+            defaults={"GRID": _tutorial_grid, "NE": _tutorial_ne, "ImE": _tutorial_ime})
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        schema = cls(
+            "tutorial",
+            [CONTROL("TUTORIAL"), tau, energy, SITES, task, scf, mode, CPA, STRCONST],
+            validators=_validate_tutorial,
+            info="Educational and diagnostic KKR calculations selected by TASK.TUT-TASK: real spherical harmonics "
+                 "(YLM), spherical Bessel/Neumann functions and asymptotes (JLX, JLX-ASYMPT), stored potential and "
+                 "densities (CHR-POT), potential decomposition (POT-DECOMP), XC comparison on one density (POT-XC), "
+                 "radial valence wave functions across l or energy (RWF-L, RWF-E), nonmagnetic core states of "
+                 "type 1 (CORE-ALL), and free-electron, single-site, cluster or bulk DOS (DOS-FEG, DOS-SS, "
+                 "DOS-CLU, DOS-BULK). GEN runs the general observable calculation. All branches use native "
+                 "kkrgen startup and require a potential file. Several branches have native limitations; see their descriptions.",
+            description="POT-DECOMP requires ASA with XC=VBH/MJW/VWN. POT-XC compares VBH/MJW/VWN/PBE on the same density, "
+                        "without separate SCF runs. CORE-ALL uses only type 1 and forces B=0. RWF uses scalar-relativistic "
+                        "wave functions and absolute Ry bounds. DOS-CLU requires explicit TAU cluster geometry; DOS-BULK "
+                        "and GEN retain the supplied TAU settings. Native diagnostic branches are not certified for MPI."
+        )
+        schema._task_definition = TaskDefinition("TUTORIAL", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
+        return schema
+
+definition = TUTORIALInputParametersDefinition

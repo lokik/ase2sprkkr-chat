@@ -20,29 +20,35 @@ def _validate_plotprs(parameters, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    # INIT_MOD_ENERGY requires NEMAX>0 even though no energy loop is run.
-    energy = ENERGY(emax=(None, "Unused upper energy; omitted retains the native Fermi-energy default", None),
-                    defaults={"GRID": 1, "NE": 1, "ImE": 0.0})
-    energy.copy_member("EMAX", is_optional=True)
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    schema = InputParameters(
-        "plotprs",
-        [CONTROL("PLOTPRS"), TAU, MODE, STRCONST, energy, TASK("PLOTPRS"), SITES],
-        validators=_validate_plotprs,
-        info="Plot existing radial potentials, densities and full-potential shape functions (serial).",
-        description="PLOTPRS enables all three plot groups. ASA writes spherical potentials and "
-                    "densities; FULLPOT adds nonspherical components and shape functions per radial mesh. "
-                    "The potential must already contain the radial data. This task does not create "
-                    "a self-consistent density or new shape functions. No task-specific options are read. "
-                    "DMFT and LDA+U are unsupported. Selective PLOTPOT/PLOTRHO/PLOTSFN task aliases "
-                    "are not registered by this definition; standalone PLOTRHO has a native allocation bug."
-    )
-    schema._task_definition = TaskDefinition("PLOTPRS", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=(
-            "{DATASET}_V_*.agr",
-            "{DATASET}_VNS_*.agr",
-            "{DATASET}_RHO_*.agr",
-            "{DATASET}_RNS_*.agr",
-            "{DATASET}_SFN_M*.agr",
-        ))
-    return schema
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class PLOTPRSInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        # INIT_MOD_ENERGY requires NEMAX>0 even though no energy loop is run.
+        energy = ENERGY(emax=(None, "Unused upper energy; omitted retains the native Fermi-energy default", None),
+                        defaults={"GRID": 1, "NE": 1, "ImE": 0.0})
+        energy.copy_member("EMAX", is_optional=True)
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        schema = cls(
+            "plotprs",
+            [CONTROL("PLOTPRS"), TAU, MODE, STRCONST, energy, TASK("PLOTPRS"), SITES],
+            validators=_validate_plotprs,
+            info="Plot existing radial potentials, densities and full-potential shape functions (serial).",
+            description="PLOTPRS enables all three plot groups. ASA writes spherical potentials and "
+                        "densities; FULLPOT adds nonspherical components and shape functions per radial mesh. "
+                        "The potential must already contain the radial data. This task does not create "
+                        "a self-consistent density or new shape functions. No task-specific options are read. "
+                        "DMFT and LDA+U are unsupported. Selective PLOTPOT/PLOTRHO/PLOTSFN task aliases "
+                        "are not registered by this definition; standalone PLOTRHO has a native allocation bug."
+        )
+        schema._task_definition = TaskDefinition("PLOTPRS", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=(
+                "{DATASET}_V_*.agr",
+                "{DATASET}_VNS_*.agr",
+                "{DATASET}_RHO_*.agr",
+                "{DATASET}_RNS_*.agr",
+                "{DATASET}_SFN_M*.agr",
+            ))
+        return schema
+
+definition = PLOTPRSInputParametersDefinition

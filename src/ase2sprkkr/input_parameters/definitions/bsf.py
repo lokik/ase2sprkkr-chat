@@ -411,6 +411,10 @@ class BSFInputParametersDefinition(InputParametersDefinition):
         return (TaskFile(tau_file(parameters, directory), kind="directory"), *super().cache_files(parameters, directory))
 
 
+    @classmethod
+    def create_definition(cls):
+        return bsf_definition()
+
 @cache
 def bsf_definition():
     """Return the single definition shared by BSF task views."""
@@ -433,4 +437,4 @@ def bsf_definition():
     return out
 
 
-input_parameters_definition = bsf_definition
+definition = BSFInputParametersDefinition

@@ -26,25 +26,31 @@ def _validate_posaniprep(p, _values, why):
     return issues
 
 
-def input_parameters_definition():
-    energy = ENERGY(defaults={"GRID": [0], "NE": [1], "ImE": 0.0})
-    tau = TAU.copy(
-        add=[
-            TAU["BZINT"].copy(default_value="POINTS"),
-        ],
-    )
-    schema = InputParameters(
-        "posaniprep",
-        [CONTROL("POSANIPREP"), tau, MODE, STRCONST, CPA, energy, Section("SCF", [V("FULLPOT", False)], is_optional=True, is_expert=True),
-                       TASK("POSANIPREP", add=[
-                           V("POSVC", Keyword({"BM": "Native BM correlation potential", "DR": "Native DR correlation potential", "IPM": "Independent-particle model"}), "BM",
-                             info="ASA electron-positron correlation potential: BM, DR, or independent-particle IPM."),
-                       ]), SITES],
-        validators=_validate_posaniprep,
-        info="Prepare positron wavefunction and scattering data for POSANI",
-        description="Periodic 3D ASA FREL preparation at a user-chosen energy near the positron band bottom. "
-                    "Uses an electronic potential and writes DATASET_pos_dat.pan. Native code keeps s_1/2 only. "
-                    "Requires KMROT=0 and NQ=NT for the current export; an existing DATASET_positron.rho can suppress the energy loop and must not be reused as this task's cache."
-    )
-    schema._task_definition = TaskDefinition("POSANIPREP", supports={"3d"}, experimental=True, executable="kkrgen", mpi=False, output_files=("{DATASET_ADSI}_pos_dat.pan",))
-    return schema
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class POSANIPREPInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        energy = ENERGY(defaults={"GRID": [0], "NE": [1], "ImE": 0.0})
+        tau = TAU.copy(
+            add=[
+                TAU["BZINT"].copy(default_value="POINTS"),
+            ],
+        )
+        schema = cls(
+            "posaniprep",
+            [CONTROL("POSANIPREP"), tau, MODE, STRCONST, CPA, energy, Section("SCF", [V("FULLPOT", False)], is_optional=True, is_expert=True),
+                           TASK("POSANIPREP", add=[
+                               V("POSVC", Keyword({"BM": "Native BM correlation potential", "DR": "Native DR correlation potential", "IPM": "Independent-particle model"}), "BM",
+                                 info="ASA electron-positron correlation potential: BM, DR, or independent-particle IPM."),
+                           ]), SITES],
+            validators=_validate_posaniprep,
+            info="Prepare positron wavefunction and scattering data for POSANI",
+            description="Periodic 3D ASA FREL preparation at a user-chosen energy near the positron band bottom. "
+                        "Uses an electronic potential and writes DATASET_pos_dat.pan. Native code keeps s_1/2 only. "
+                        "Requires KMROT=0 and NQ=NT for the current export; an existing DATASET_positron.rho can suppress the energy loop and must not be reused as this task's cache."
+        )
+        schema._task_definition = TaskDefinition("POSANIPREP", supports={"3d"}, experimental=True, executable="kkrgen", mpi=False, output_files=("{DATASET_ADSI}_pos_dat.pan",))
+        return schema
+
+definition = POSANIPREPInputParametersDefinition

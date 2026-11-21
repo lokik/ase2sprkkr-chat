@@ -30,32 +30,38 @@ def _validate_xas(parameters, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    energy = ENERGY(emax=(4.0, "Upper bound in Ry; native XAS default", None),
-                    defaults={"ImE": 0.01, "GRID": 6, "NE": 180})
-    energy.copy_member("NE", type=SetOf(Integer(min=2), min_length=1, max_length=2))
-    schema = XrayRateInputParametersDefinition(
-        "xas",
-        [CONTROL("XAS"), TAU, MODE, energy,
-        TASK("XAS", add=[
-            V("IT", Integer(min=1), 1, info="Atom type index, not site index."),
-            V("CL", Keyword(*(f"{n}{s}" for n in range(1, 6) for s in "SPDF")), "2P", info="Initial core shell."),
-            V("OUTPUT", Keyword("MBARN", "BARN", "SIGMA"), is_optional=True, info="Default cross section in Mb; SIGMA uses 10^15/s."),
-            V("ME", Keyword("ADA", "NAB", "GRV"), "ADA", is_always_added=False),
-            V("POLOBS", Keyword("S", "C"), "S", is_always_added=False),
-            V("DIPOL", Integer(min=0, max=1), 0, is_always_added=False),
-            V("GFCONVRH", False), V("WRREGIRR", False),
-            V("NONDIPE2", False), V("NONDIPM1", False),
-            V("FRAMETET", float, 0.0, is_expert=True, is_optional=True, info="Frame Euler polar angle in degrees."),
-            V("FRAMEPHI", float, 0.0, is_expert=True, is_optional=True, info="Frame Euler azimuth in degrees."),
-            V("FRAMEGAM", float, 0.0, is_expert=True, is_optional=True, info="Third frame Euler angle in degrees."),
-        ]), SITES],
-        validators=_validate_xas,
-        info="Calculates X-ray absorption spectra",
-        description="Requires NE to match the first TAU contour and a valid core shell in the potential. "
-                    "Frame angles rotate the polarization frame. Native MPI exits before XRAYSPEC. "
-                    "MECHECK is a separate task, not an XAS option; MESPLIT is forced true. "
-                    "The DYNAMICAL alternative workflow is not covered by this definition."
-    )
-    schema._task_definition = TaskDefinition("XAS", supports={"3d", "2d"}, executable="kkrgen", mpi=False, output_reader="XAS")
-    return schema
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class XASInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        energy = ENERGY(emax=(4.0, "Upper bound in Ry; native XAS default", None),
+                        defaults={"ImE": 0.01, "GRID": 6, "NE": 180})
+        energy.copy_member("NE", type=SetOf(Integer(min=2), min_length=1, max_length=2))
+        schema = XrayRateInputParametersDefinition(
+            "xas",
+            [CONTROL("XAS"), TAU, MODE, energy,
+            TASK("XAS", add=[
+                V("IT", Integer(min=1), 1, info="Atom type index, not site index."),
+                V("CL", Keyword(*(f"{n}{s}" for n in range(1, 6) for s in "SPDF")), "2P", info="Initial core shell."),
+                V("OUTPUT", Keyword("MBARN", "BARN", "SIGMA"), is_optional=True, info="Default cross section in Mb; SIGMA uses 10^15/s."),
+                V("ME", Keyword("ADA", "NAB", "GRV"), "ADA", is_always_added=False),
+                V("POLOBS", Keyword("S", "C"), "S", is_always_added=False),
+                V("DIPOL", Integer(min=0, max=1), 0, is_always_added=False),
+                V("GFCONVRH", False), V("WRREGIRR", False),
+                V("NONDIPE2", False), V("NONDIPM1", False),
+                V("FRAMETET", float, 0.0, is_expert=True, is_optional=True, info="Frame Euler polar angle in degrees."),
+                V("FRAMEPHI", float, 0.0, is_expert=True, is_optional=True, info="Frame Euler azimuth in degrees."),
+                V("FRAMEGAM", float, 0.0, is_expert=True, is_optional=True, info="Third frame Euler angle in degrees."),
+            ]), SITES],
+            validators=_validate_xas,
+            info="Calculates X-ray absorption spectra",
+            description="Requires NE to match the first TAU contour and a valid core shell in the potential. "
+                        "Frame angles rotate the polarization frame. Native MPI exits before XRAYSPEC. "
+                        "MECHECK is a separate task, not an XAS option; MESPLIT is forced true. "
+                        "The DYNAMICAL alternative workflow is not covered by this definition."
+        )
+        schema._task_definition = TaskDefinition("XAS", supports={"3d", "2d"}, executable="kkrgen", mpi=False, output_reader="XAS")
+        return schema
+
+definition = XASInputParametersDefinition

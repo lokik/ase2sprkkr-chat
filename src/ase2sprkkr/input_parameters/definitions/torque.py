@@ -39,34 +39,40 @@ def _validate_torque(parameters, _values, why):
 
 
 
-def input_parameters_definition():
-    mmode = MODE["MODE"].copy(warning_condition=_torque_mode_warning_condition)
-    energy = ENERGY(defaults={"ImE": 0.0, "GRID": 8, "NE": 36})
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    schema = InputParametersDefinition(
-        "torque",
-        [
-            CONTROL("TORQUE"),
-            TAU,
-            MODE.copy(add=[mmode]),
-            STRCONST,
-            energy,
-            TASK("TORQUE", add=[
-                V("THETAQ", SetOf(float, min_length=1), [90.0], info="Polar angles of the torque axis per site, in degrees."),
-                V("PHIQ", SetOf(float, min_length=1), [90.0], info="Azimuthal angles of the torque axis per site, in degrees."),
-            ]),
-            SITES,
-        ],
-        info="TORQUE",
-        validators=_validate_torque,
-        description="Requires a potential with rotated moments (KMROT=1 or 2), with torque axes perpendicular to them. Native repeats the final angle for remaining sites.",
-    )
-    schema["CONTROL"]["NONMAG"].warning_condition = _torque_nonmag_warning_condition
-    schema._task_definition = TaskDefinition(
-        "TORQUE",
-        supports={"3d", "2d"},
-        name="TORQUE",
-        executable="kkrgen",
-        mpi=True,
-    )
-    return schema
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class TORQUEInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        mmode = MODE["MODE"].copy(warning_condition=_torque_mode_warning_condition)
+        energy = ENERGY(defaults={"ImE": 0.0, "GRID": 8, "NE": 36})
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        schema = cls(
+            "torque",
+            [
+                CONTROL("TORQUE"),
+                TAU,
+                MODE.copy(add=[mmode]),
+                STRCONST,
+                energy,
+                TASK("TORQUE", add=[
+                    V("THETAQ", SetOf(float, min_length=1), [90.0], info="Polar angles of the torque axis per site, in degrees."),
+                    V("PHIQ", SetOf(float, min_length=1), [90.0], info="Azimuthal angles of the torque axis per site, in degrees."),
+                ]),
+                SITES,
+            ],
+            info="TORQUE",
+            validators=_validate_torque,
+            description="Requires a potential with rotated moments (KMROT=1 or 2), with torque axes perpendicular to them. Native repeats the final angle for remaining sites.",
+        )
+        schema["CONTROL"]["NONMAG"].warning_condition = _torque_nonmag_warning_condition
+        schema._task_definition = TaskDefinition(
+            "TORQUE",
+            supports={"3d", "2d"},
+            name="TORQUE",
+            executable="kkrgen",
+            mpi=True,
+        )
+        return schema
+
+definition = TORQUEInputParametersDefinition

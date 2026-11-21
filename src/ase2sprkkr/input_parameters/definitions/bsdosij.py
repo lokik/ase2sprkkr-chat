@@ -21,33 +21,39 @@ def _validate(parameters, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    energy = ENERGY(emax=(None, "Omitted upper bound delegates to EF", None), defaults={"GRID": 3, "NE": 300, "ImE": 0.01})
-    energy.copy_member("EMAX", is_optional=True)
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    tau = TAU.copy(
-        add=[
-            TAU["BZINT"].copy(default_value="POINTS"),
-        ],
-    )
-    task = TASK("BSDOSIJ", add=[
-        V("CLURAD", 2.2, info="Cluster radius in ALAT units; explicit convenience default."),
-        V("NSHLCLU", Integer(min=0), is_optional=True, info="Shell count; overrides CLURAD."),
-        V("SELECT", SetOf(str, min_length=1, max_length=100), is_optional=True, info="Included element symbols."),
-        V("EXCLUDE", SetOf(str, min_length=1, max_length=100), is_optional=True, info="Excluded element symbols."),
-        V("QREPONLY", False, info="Treat only representative central sites."),
-    ])
-    schema = InputParameters(
-        "bsdosij",
-        [CONTROL("BSDOSIJ"), tau, MODE, STRCONST, energy, task, SITES],
-        validators=_validate,
-        info="Experimental site-resolved back-scattering DOS.",
-        description="Native 9.7 component and output indexing appear faulty; numerical results are unverified. "
-                    "Potential-dependent native checks also require KMROT=0, NKM=NKMMAX and representative type sites."
-    )
-    schema._task_definition = TaskDefinition("BSDOSIJ", supports=(), experimental=True, executable="kkrgen", mpi=True, output_files=(
-            "{DATASET_ADSI}_XCPLTEN_Jij.dat",
-            "{DATASET_ADSI}_XCPLTEN_Jij_*.agr",
-            "{DATASET_ADSI}_XCPLTEN_Dij_[xyz]_*.agr",
-        ))
-    return schema
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class BSDOSIJInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        energy = ENERGY(emax=(None, "Omitted upper bound delegates to EF", None), defaults={"GRID": 3, "NE": 300, "ImE": 0.01})
+        energy.copy_member("EMAX", is_optional=True)
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        tau = TAU.copy(
+            add=[
+                TAU["BZINT"].copy(default_value="POINTS"),
+            ],
+        )
+        task = TASK("BSDOSIJ", add=[
+            V("CLURAD", 2.2, info="Cluster radius in ALAT units; explicit convenience default."),
+            V("NSHLCLU", Integer(min=0), is_optional=True, info="Shell count; overrides CLURAD."),
+            V("SELECT", SetOf(str, min_length=1, max_length=100), is_optional=True, info="Included element symbols."),
+            V("EXCLUDE", SetOf(str, min_length=1, max_length=100), is_optional=True, info="Excluded element symbols."),
+            V("QREPONLY", False, info="Treat only representative central sites."),
+        ])
+        schema = cls(
+            "bsdosij",
+            [CONTROL("BSDOSIJ"), tau, MODE, STRCONST, energy, task, SITES],
+            validators=_validate,
+            info="Experimental site-resolved back-scattering DOS.",
+            description="Native 9.7 component and output indexing appear faulty; numerical results are unverified. "
+                        "Potential-dependent native checks also require KMROT=0, NKM=NKMMAX and representative type sites."
+        )
+        schema._task_definition = TaskDefinition("BSDOSIJ", supports=(), experimental=True, executable="kkrgen", mpi=True, output_files=(
+                "{DATASET_ADSI}_XCPLTEN_Jij.dat",
+                "{DATASET_ADSI}_XCPLTEN_Jij_*.agr",
+                "{DATASET_ADSI}_XCPLTEN_Dij_[xyz]_*.agr",
+            ))
+        return schema
+
+definition = BSDOSIJInputParametersDefinition

@@ -37,28 +37,34 @@ def _validate_sigma(p, _values, why):
     return errors or None
 
 
-def input_parameters_definition():
-    energy = ENERGY(defaults={"GRID": [0], "NE": [1], "ImE": 0.01})
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    schema = InputParameters(
-        "sigma",
-        [CONTROL("SIGMA"), TAU, MODE, CPA, STRCONST, energy,
-            Section("SCF", [V("FULLPOT", False)], is_optional=True, is_expert=True),
-            TASK("SIGMA", add=[
-                V("SIGSPROJ", SetOf(Integer(min=1, max=16), min_length=1, max_length=16), is_optional=True,
-                  info="Response operator indices; first must be 1 or 9. Omitted native FREL selection is 1..16."),
-                V("SP_NO_ALPHA", False, info="Disable alpha part of the spin-polarization operator."),
-                V("SP_NO_NABLA", False, info="Disable nabla part of the spin-polarization operator."),
-                V("NOSYMSIG", False, info="Disable response and global native symmetry."),
-                V("FRAMETET", float, is_optional=True, info="Response-frame Euler polar angle in degrees."),
-                V("FRAMEPHI", float, is_optional=True, info="Response-frame Euler azimuth in degrees."),
-                V("FRAMEGAM", float, is_optional=True, info="Response-frame third Euler angle in degrees."),
-            ]), SITES],
-        validators=_validate_sigma,
-        info="DC conductivity and selected response tensors",
-        description="Standard periodic ASA FREL Kubo-Streda SIGMA. Default NE=1 omits the Fermi-sea integral; "
-                    "use GRID=5 and NE>1 to include it. Native surface point is EF+i*ImE. "
-                    "Layer, NLCPA, PROJECT, thermal and many-body workflows are not audited here; MPI not certified."
-    )
-    schema._task_definition = TaskDefinition("SIGMA", supports={"3d", "2d"}, experimental=True, executable="kkrchi", mpi=False, output_files=("sigma?????.dat",))
-    return schema
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class SIGMAInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        energy = ENERGY(defaults={"GRID": [0], "NE": [1], "ImE": 0.01})
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        schema = cls(
+            "sigma",
+            [CONTROL("SIGMA"), TAU, MODE, CPA, STRCONST, energy,
+                Section("SCF", [V("FULLPOT", False)], is_optional=True, is_expert=True),
+                TASK("SIGMA", add=[
+                    V("SIGSPROJ", SetOf(Integer(min=1, max=16), min_length=1, max_length=16), is_optional=True,
+                      info="Response operator indices; first must be 1 or 9. Omitted native FREL selection is 1..16."),
+                    V("SP_NO_ALPHA", False, info="Disable alpha part of the spin-polarization operator."),
+                    V("SP_NO_NABLA", False, info="Disable nabla part of the spin-polarization operator."),
+                    V("NOSYMSIG", False, info="Disable response and global native symmetry."),
+                    V("FRAMETET", float, is_optional=True, info="Response-frame Euler polar angle in degrees."),
+                    V("FRAMEPHI", float, is_optional=True, info="Response-frame Euler azimuth in degrees."),
+                    V("FRAMEGAM", float, is_optional=True, info="Response-frame third Euler angle in degrees."),
+                ]), SITES],
+            validators=_validate_sigma,
+            info="DC conductivity and selected response tensors",
+            description="Standard periodic ASA FREL Kubo-Streda SIGMA. Default NE=1 omits the Fermi-sea integral; "
+                        "use GRID=5 and NE>1 to include it. Native surface point is EF+i*ImE. "
+                        "Layer, NLCPA, PROJECT, thermal and many-body workflows are not audited here; MPI not certified."
+        )
+        schema._task_definition = TaskDefinition("SIGMA", supports={"3d", "2d"}, experimental=True, executable="kkrchi", mpi=False, output_files=("sigma?????.dat",))
+        return schema
+
+definition = SIGMAInputParametersDefinition

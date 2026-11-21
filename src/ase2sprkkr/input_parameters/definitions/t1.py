@@ -29,23 +29,29 @@ def _validate_t1(parameters, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    control = CONTROL("T1").copy([V("RUNELOOP", True, is_required=True,
-                                    info="Override T1's native disabled energy loop to initialize TAUT.")])
-    control.copy_member("PRINT", default_value=1,
-                        info="T1 needs >=1 to initialize matrix-print dimensions in SPR-KKR 9.7; RELT1 later resets it to 0.")
-    energy = ENERGY(emin=None, defaults={"GRID": 3, "NE": 1, "ImE": 0.0})
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    schema = InputParameters(
-        "t1",
-        [control, TAU, MODE, STRCONST, energy, TASK("T1"), SITES],
-        validators=_validate_t1,
-        info="Nuclear spin relaxation at EF (ASA, serial; SPR-KKR numerical caveats).",
-        description="No task-specific parameters are read. The energy is fixed at EF+i*ImE. "
-                    "Nuclear data come from internal tables; no temperature or isotope option is read. "
-                    "NREL/SREL, FULLPOT, DMFT and LDA+U are unavailable. PRINT=1 and RUNELOOP "
-                    "are explicitly written to avoid native initialization defects. RELT1 additionally "
-                    "uses signed kappa values as loop bounds, so numerical relaxation rates remain unverified."
-    )
-    schema._task_definition = TaskDefinition("T1", supports=(), experimental=True, executable="kkrgen", mpi=False)
-    return schema
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class T1InputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        control = CONTROL("T1").copy([V("RUNELOOP", True, is_required=True,
+                                        info="Override T1's native disabled energy loop to initialize TAUT.")])
+        control.copy_member("PRINT", default_value=1,
+                            info="T1 needs >=1 to initialize matrix-print dimensions in SPR-KKR 9.7; RELT1 later resets it to 0.")
+        energy = ENERGY(emin=None, defaults={"GRID": 3, "NE": 1, "ImE": 0.0})
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        schema = cls(
+            "t1",
+            [control, TAU, MODE, STRCONST, energy, TASK("T1"), SITES],
+            validators=_validate_t1,
+            info="Nuclear spin relaxation at EF (ASA, serial; SPR-KKR numerical caveats).",
+            description="No task-specific parameters are read. The energy is fixed at EF+i*ImE. "
+                        "Nuclear data come from internal tables; no temperature or isotope option is read. "
+                        "NREL/SREL, FULLPOT, DMFT and LDA+U are unavailable. PRINT=1 and RUNELOOP "
+                        "are explicitly written to avoid native initialization defects. RELT1 additionally "
+                        "uses signed kappa values as loop bounds, so numerical relaxation rates remain unverified."
+        )
+        schema._task_definition = TaskDefinition("T1", supports=(), experimental=True, executable="kkrgen", mpi=False)
+        return schema
+
+definition = T1InputParametersDefinition

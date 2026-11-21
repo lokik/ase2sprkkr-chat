@@ -1,6 +1,8 @@
 """Definitions of SPR-KKR input-parameter file formats."""
 
 import os
+import pkgutil
+import re
 from io import StringIO
 
 import pyparsing as pp
@@ -62,11 +64,38 @@ def _snapshot_stream(text, filename):
     return stream
 
 
+def _normalized_task_selectors(declared, name):
+    """Validate metadata on a class or a materialized IPD."""
+    names = (name,) if declared is None else (declared,) if isinstance(declared, str) else tuple(declared)
+    if not names:
+        raise ValueError(f"IPD {name}: task_selectors may not be empty")
+    normalized = []
+    for token in names:
+        if not isinstance(token, str) or not token.strip():
+            raise ValueError(f"IPD {name}: TASK selectors must be nonempty strings")
+        normalized.append(token.strip().upper())
+    if len(normalized) != len(set(normalized)):
+        raise ValueError(f"IPD {name}: duplicate TASK selectors")
+    return tuple(normalized)
+
+
 class _TaskSelectorMap(dict):
-    """Map TASK selectors to IPDs, allowing filtering by their origin."""
+    """Map TASK selectors to cached IPDs, without materializing non-candidates."""
+
+    def __init__(self, values, registry=None):
+        super().__init__(values)
+        self._registry = registry
+
+    def __getitem__(self, selector):
+        values = super().__getitem__(selector)
+        if self._registry is None:
+            return values
+        return tuple(
+            self._registry[value] if isinstance(value, str) else value
+            for value in values
+        )
 
     def definitions(self, selector, *, user_defined=None):
-        """Return all, built-in, or user-defined candidates for a selector."""
         candidates = self[selector]
         if user_defined is None:
             return candidates
@@ -80,28 +109,63 @@ class _TaskSelectorMap(dict):
 
 @cache
 def _task_selector_map():
-    """A single map for the singleton input-definition registry."""
+    """Discover TASK selectors by importing classes, not building their IPDs."""
+    registry = InputParameters.input_parameters_registry
     selectors = {}
-    for definition in InputParameters.input_parameters_registry.iter_canonical_values():
-        for token in definition.accepted_task_selectors():
-            if not token:
-                raise ValueError(f"Empty TASK selector in IPD {definition.name}")
-            selectors.setdefault(token, [])
-            if all(definition is not other for other in selectors[token]):
-                selectors[token].append(definition)
-    return _TaskSelectorMap({key: tuple(value) for key, value in selectors.items()})
+    for name in registry.names(include_aliases=False):
+        try:
+            definition_class = registry.definition_class(name)
+            if definition_class is None:
+                # Backwards compatibility for old user modules that export an
+                # already materialized definition or a legacy factory.
+                definition = next(registry.iter_valid_values(
+                    names=(name,), condition=lambda item: not item.is_derived_definition(),
+                ), None)
+                if definition is None:
+                    continue
+                tokens = definition.accepted_task_selectors()
+                candidate = definition
+            else:
+                tokens = _normalized_task_selectors(
+                    definition_class.task_selectors, name,
+                )
+                candidate = name
+            for token in tokens:
+                members = selectors.setdefault(token, [])
+                if candidate not in members:
+                    members.append(candidate)
+        except Exception:
+            # Match existing registry enumeration policy: a broken unrelated
+            # user definition must not block reading a valid native input.
+            # The registry emits a warning once for the offending module.
+            list(registry.iter_valid_values(names=(name,)))
+    return _TaskSelectorMap(
+        {key: tuple(value) for key, value in selectors.items()},
+        registry=registry,
+    )
 
 
 @cache
 def _task_preparse_definition():
-    """Build the minimal IPD and its complete grammar exactly once."""
+    """Build the complete TASK-selector preview, including custom aliases."""
+    return _build_task_preparse_definition(tuple(sorted(_task_selector_map())))
+
+
+@cache
+def _fast_task_preparse_definition():
+    """Build the preview from names only: no definition module is imported."""
+    registry = InputParameters.input_parameters_registry
+    return _build_task_preparse_definition(
+        tuple(sorted(registry.names(include_aliases=False)))
+    )
+
+
+def _build_task_preparse_definition(values):
+    """Build a tiny grammar that finds known selectors in an unordered TASK."""
     from .definitions._identifiers import _FilenameString
 
-    values = tuple(sorted(_task_selector_map()))
     if not values:
         raise ValueError("No registered input-parameter TASK selectors")
-    # The preview only selects TASK. Unknown sections must still accept native
-    # UTF-8 filenames before the selected schema validates their actual types.
     preview_value = mixed.copy()
     preview_value.types = (*mixed.types, _FilenameString())
 
@@ -130,8 +194,48 @@ def _task_preparse_definition():
             is_optional=True,
         )],
     )
-    ipd.grammar()  # Compile and cache the completed minimal grammar now.
+    ipd.grammar()
     return ipd
+
+
+def _has_external_input_definitions():
+    """A user module might claim an existing TASK selector; disable fast lookup."""
+    paths = tuple(InputParameters.input_parameters_registry.package.__path__)
+    return any(
+        info.name != "sections" and not info.name.startswith("_")
+        for info in pkgutil.iter_modules(paths[1:])
+    )
+
+
+def _direct_definition_for_input(text, *, allow_incomplete=False):
+    """Try a same-named IPD before importing any unrelated definition module.
+
+    Full discovery remains authoritative for aliases, multiple selectors and
+    installations with user modules that might claim built-in TASK values.
+    """
+    if _has_external_input_definitions():
+        return None
+
+    preview = _fast_task_preparse_definition().read_from_string(
+        text, allow_dangerous=False
+    )
+    selected = preview.TASK.TASK()
+    names = (tuple(dict.fromkeys(str(token).upper() for token in selected))
+             if selected is not None else ())
+    if len(names) == 1:
+        name = names[0]
+    elif not names and not allow_incomplete and not re.search(r"(?m)^[ \t]*TASK\b", text):
+        name = "SCF"
+    else:
+        return None
+
+    registry = InputParameters.input_parameters_registry
+    if name not in registry.names(include_aliases=False):
+        return None
+    definition = registry[name]
+    if definition.is_derived_definition() or name not in definition.accepted_task_selectors():
+        return None
+    return definition
 
 
 def _read_selected_definitions(text, selectors, *, filename=None,
@@ -262,24 +366,7 @@ class InputParametersDefinition(ConfigurationFileDefinition):
     """
 
     def accepted_task_selectors(self):
-        names = self.task_selectors
-        if names is None:
-            names = (self.name,)
-        elif isinstance(names, str):
-            names = (names,)
-        names = tuple(names)
-        if not names:
-            raise ValueError(f"IPD {self.name}: task_selectors may not be empty")
-        normalized = []
-        for name in names:
-            if not isinstance(name, str) or not name.strip():
-                raise ValueError(
-                    f"IPD {self.name}: TASK selectors must be nonempty strings"
-                )
-            normalized.append(name.strip().upper())
-        if len(set(normalized)) != len(normalized):
-            raise ValueError(f"IPD {self.name}: duplicate TASK selectors")
-        return tuple(normalized)
+        return _normalized_task_selectors(self.task_selectors, self.name)
 
     @maybeclassmethod
     def from_file(self, cls, file, allow_dangerous=False, *,
@@ -298,6 +385,18 @@ class InputParametersDefinition(ConfigurationFileDefinition):
                 allow_incomplete=allow_incomplete,
                 filename = filename,
                 report_invalid=report_invalid,
+            )
+
+        direct = _direct_definition_for_input(
+            text, allow_incomplete=allow_incomplete,
+        )
+        if direct is not None:
+            return direct.read_from_file(
+                _snapshot_stream(text, filename),
+                allow_dangerous=allow_dangerous,
+                allow_incomplete=allow_incomplete,
+                filename=filename,
+                **({"report_invalid": report_invalid} if report_invalid is not None else {}),
             )
 
         preview = _task_preparse_definition().read_from_string(

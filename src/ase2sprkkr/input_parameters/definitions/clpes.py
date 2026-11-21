@@ -1,6 +1,6 @@
 """Core-level photoemission through native KKRSPEC (serial scope)."""
 import numpy as np
-from .arpes import input_parameters_definition as arpes_parameters
+
 from ..task_definition import TaskDefinition
 from ..tasks._spec_files import SPEC_INPUT_FILES, SPEC_OUTPUT_FILES
 from ._sections import CONTROL
@@ -41,33 +41,41 @@ def _validate_clpes(p, _container, why):
     return errors or None
 
 
-def input_parameters_definition():
-    out = arpes_parameters()
-    task = out["TASK"].copy(add=[
-        out["TASK"]["TASK"].copy(type=Keyword("CLPES"), default_value="CLPES"),
-    ])
-    energy = out["ENERGY"]
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    photon = out["SPEC_PH"]
-    photon.copy_member("EPHOT", default_value=1000.0)
-    for name in ("EMIN", "EMAX", "EMINEV", "EMAXEV"):
-        energy.copy_member(name, info="Initialization bound; CLPES replaces the spectral window using core energies +/-3 eV.")
-    cl = Section("SPEC_CL", [
-        V("IT", Integer(min=1), 1, info="Potential type; native selector also includes sites of the same atomic number."),
-        V("CL", Keyword(*[f"{n}{l}" for n in range(1, 8) for i, l in enumerate("SPDF") if i < n]), "2P", is_always_added=True),
-        V("IE_ICST", Integer(min=1), 1, info="Core state index, used only for NE=1."),
-    ])
-    schema = out.copy(
-        new_schema=True,
-        name="clpes",
-        validators=_validate_clpes,
-        info="Core-level photoemission and photoelectron diffraction",
-        description="Ordered potential only: native CLPES stops for CPA. Energy window is generated from core levels +/-3 eV; NE=1 selects IE_ICST. Photon energy must exceed the emission threshold.",
-        add=[CONTROL("CLPES"), task, energy, photon, cl],
-    )
-    schema.task_selectors = ("CLPES",)
-    schema._task_definition = TaskDefinition("CLPES", supports={"3d", "2d"}, experimental=True, executable="kkrspec", mpi=False, output_reader="ARPES",
-        input_files=SPEC_INPUT_FILES,
-        output_files=(*SPEC_OUTPUT_FILES, "{DATASET_ADSI}_corewf")
-    )
-    return schema
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class CLPESInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        # Work on a copy: sibling SPEC schemas must not mutate cached ARPES.
+        from ..input_parameters import InputParameters
+        out = InputParameters.input_parameters_registry["ARPES"].copy()
+        task = out["TASK"].copy(add=[
+            out["TASK"]["TASK"].copy(type=Keyword("CLPES"), default_value="CLPES"),
+        ])
+        energy = out["ENERGY"]
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        photon = out["SPEC_PH"]
+        photon.copy_member("EPHOT", default_value=1000.0)
+        for name in ("EMIN", "EMAX", "EMINEV", "EMAXEV"):
+            energy.copy_member(name, info="Initialization bound; CLPES replaces the spectral window using core energies +/-3 eV.")
+        cl = Section("SPEC_CL", [
+            V("IT", Integer(min=1), 1, info="Potential type; native selector also includes sites of the same atomic number."),
+            V("CL", Keyword(*[f"{n}{l}" for n in range(1, 8) for i, l in enumerate("SPDF") if i < n]), "2P", is_always_added=True),
+            V("IE_ICST", Integer(min=1), 1, info="Core state index, used only for NE=1."),
+        ])
+        schema = out.copy(
+            new_schema=True,
+            name="clpes",
+            validators=_validate_clpes,
+            info="Core-level photoemission and photoelectron diffraction",
+            description="Ordered potential only: native CLPES stops for CPA. Energy window is generated from core levels +/-3 eV; NE=1 selects IE_ICST. Photon energy must exceed the emission threshold.",
+            add=[CONTROL("CLPES"), task, energy, photon, cl],
+        )
+        schema.task_selectors = ("CLPES",)
+        schema._task_definition = TaskDefinition("CLPES", supports={"3d", "2d"}, experimental=True, executable="kkrspec", mpi=False, output_reader="ARPES",
+            input_files=SPEC_INPUT_FILES,
+            output_files=(*SPEC_OUTPUT_FILES, "{DATASET_ADSI}_corewf")
+        )
+        return schema
+
+definition = CLPESInputParametersDefinition

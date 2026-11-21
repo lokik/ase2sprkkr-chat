@@ -4,7 +4,7 @@ from ...common.grammar_types import Integer, SetOf
 from ...common.warnings import DataValidityError
 from ..task_definition import TaskDefinition
 from ..tasks._spec_files import SPEC_INPUT_FILES, SPEC_OUTPUT_FILES
-from .arpes import input_parameters_definition as arpes_parameters
+
 from ._sections import CONTROL, ENERGY
 from ..input_parameters_definitions import InputValueDefinition as V
 
@@ -41,34 +41,42 @@ def _validate_spleed(p, _values, why):
     return errors or None
 
 
-def input_parameters_definition():
-    energy = ENERGY(emin=(None, "Incident energy lower bound", 11.0), emax=(None, "Incident energy upper bound", 60.0),
-                    add=[V("EWORK_EV", 4.2, info="Work function in eV."), V("IMV_INI_EV", 0.2, info="Initial optical potential imaginary part in eV."),
-                         V("IMV_FIN_EV", 0.2, info="Final optical potential imaginary part in eV.")], defaults={"GRID": 1, "NE": 200})
-    energy.copy_member("NE", type=SetOf(Integer(min=2), min_length=1, max_length=2))
-    energy.copy_member("EMINEV", info="Incident energy lower bound in eV; NOT relative to EF in SPLEED.")
-    energy.copy_member("EMAXEV", info="Incident energy upper bound in eV; NOT relative to EF in SPLEED.")
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
-    out = arpes_parameters()
-    out["SPEC_EL"].copy_member("NT", type=Integer(min=1))
-    out["SPEC_EL"].copy_member("NP", type=Integer(min=1))
-    out["SPEC_STR"].copy_member("N_LAYER", default_value=1)
-    out["SPEC_STR"].copy_member("NLAT_G_VEC", default_value=30)
-    task = out["TASK"].copy(add=[
-        out["TASK"]["TASK"].copy(default_value="SPLEED"),
-    ])
-    schema = out.copy(
-        new_schema=True,
-        name="spleed",
-        remove=["SPEC_PH"],
-        validators=_validate_spleed,
-        info="Spin-polarized low-energy electron diffraction",
-        description="Dedicated fixed-angle SPLEED. Incident energies are read as eV. Native SPOL default 1 is retained. "
-                    "Modern input requires NE>=2 here; momentum and alternative polarization workflows are not audited.",
-        add=[CONTROL("SPLEED"), energy, task, out["SPEC_EL"], out["SPEC_STR"]],
-    )
-    schema.task_selectors = ("SPLEED",)
-    schema._task_definition = TaskDefinition("SPLEED", supports={"3d", "2d"}, experimental=True, executable="kkrspec", mpi=False, output_reader="SPLEED",
-        input_files=SPEC_INPUT_FILES, output_files=SPEC_OUTPUT_FILES,
-    )
-    return schema
+class SPLEEDInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        energy = ENERGY(emin=(None, "Incident energy lower bound", 11.0), emax=(None, "Incident energy upper bound", 60.0),
+                        add=[V("EWORK_EV", 4.2, info="Work function in eV."), V("IMV_INI_EV", 0.2, info="Initial optical potential imaginary part in eV."),
+                             V("IMV_FIN_EV", 0.2, info="Final optical potential imaginary part in eV.")], defaults={"GRID": 1, "NE": 200})
+        energy.copy_member("NE", type=SetOf(Integer(min=2), min_length=1, max_length=2))
+        energy.copy_member("EMINEV", info="Incident energy lower bound in eV; NOT relative to EF in SPLEED.")
+        energy.copy_member("EMAXEV", info="Incident energy upper bound in eV; NOT relative to EF in SPLEED.")
+
+        # Work on a copy: sibling SPEC schemas must not mutate cached ARPES.
+        from ..input_parameters import InputParameters
+        out = InputParameters.input_parameters_registry["ARPES"].copy()
+        out["SPEC_EL"].copy_member("NT", type=Integer(min=1))
+        out["SPEC_EL"].copy_member("NP", type=Integer(min=1))
+        out["SPEC_STR"].copy_member("N_LAYER", default_value=1)
+        out["SPEC_STR"].copy_member("NLAT_G_VEC", default_value=30)
+        task = out["TASK"].copy(add=[
+            out["TASK"]["TASK"].copy(default_value="SPLEED"),
+        ])
+        schema = out.copy(
+            new_schema=True,
+            name="spleed",
+            remove=["SPEC_PH"],
+            validators=_validate_spleed,
+            info="Spin-polarized low-energy electron diffraction",
+            description="Dedicated fixed-angle SPLEED. Incident energies are read as eV. Native SPOL default 1 is retained. "
+                        "Modern input requires NE>=2 here; momentum and alternative polarization workflows are not audited.",
+            add=[CONTROL("SPLEED"), energy, task, out["SPEC_EL"], out["SPEC_STR"]],
+        )
+        schema.task_selectors = ("SPLEED",)
+        schema._task_definition = TaskDefinition("SPLEED", supports={"3d", "2d"}, experimental=True, executable="kkrspec", mpi=False, output_reader="SPLEED",
+            input_files=SPEC_INPUT_FILES, output_files=SPEC_OUTPUT_FILES,
+        )
+        return schema
+
+definition = SPLEEDInputParametersDefinition

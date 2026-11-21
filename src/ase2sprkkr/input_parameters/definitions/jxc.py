@@ -58,6 +58,60 @@ class JxcInputParametersDefinition(InputParametersDefinition):
         return tuple(files)
 
 
+    @classmethod
+    def create_definition(cls):
+        mmode = MODE["MODE"].copy(warning_condition=_jxc_mode_warning_condition)
+        energy = ENERGY(defaults={"NE": [30], "ImE": 0.01})
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        tau = TAU.copy(
+            add=[
+                TAU["BZINT"].copy(default_value="POINTS"),
+            ],
+        )
+        schema = JxcInputParametersDefinition(
+            "jxc",
+            [
+                CONTROL("JXC"),
+                tau,
+                MODE.copy(add=[mmode]),
+                STRCONST,
+                energy,
+                Section(
+                    "TASK",
+                    [
+                        V("JXC", flag, default_value=_jxc_default, is_required=False,
+                          info="Calculate exchange couplings and exchange tensor."),
+                        V("DMI", flag, default_value=_dmi_default, is_required=False,
+                          info="Calculate Dzyaloshinskii-Moriya interaction vectors."),
+                        GeneratedValueDefinition("TASK", _selected_task_name),
+                        V("HFF", False, info="Enable the hyperfine-field calculation."),
+                        V("NSHLCLU", Integer(min=0), is_optional=True,
+                          info="Shell count; overrides CLURAD."),
+                        V("SELECT", SetOf(str, min_length=1, max_length=100),
+                          is_optional=True, info="Included element symbols."),
+                        V("EXCLUDE", SetOf(str, min_length=1, max_length=100),
+                          is_optional=True, info="Excluded element symbols."),
+                        V("QREPONLY", False, info="Treat only representative central sites."),
+                        V(
+                            "CLURAD",
+                            2.2,
+                            info="""The radius of a sphere restricting the cluster
+            of atoms for which the exchange coupling
+            constants will be calculated""",
+                        ),
+                    ],
+                ),
+                SITES,
+            ],
+            info="JXC / DMI",
+            validators=_validate_jxc,
+            description="Magnetic E-INTEGRAL JXC/DMI: periodic FREL tensor and DMIVECTOR "
+                        "or SP-SREL scalar Jij; embedded CLUGEN supports the FREL "
+                        "CLUXCPLTENSOR branch with separate output filenames.",
+        )
+        schema["CONTROL"]["NONMAG"].warning_condition = _jxc_nonmag_warning_condition
+        return schema
+
 def _requested_task_name(option):
     return option._get_root_container().requested_task_name
 
@@ -136,55 +190,4 @@ def _validate_jxc(parameters, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    mmode = MODE["MODE"].copy(warning_condition=_jxc_mode_warning_condition)
-    energy = ENERGY(defaults={"NE": [30], "ImE": 0.01})
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    tau = TAU.copy(
-        add=[
-            TAU["BZINT"].copy(default_value="POINTS"),
-        ],
-    )
-    schema = JxcInputParametersDefinition(
-        "jxc",
-        [
-            CONTROL("JXC"),
-            tau,
-            MODE.copy(add=[mmode]),
-            STRCONST,
-            energy,
-            Section(
-                "TASK",
-                [
-                    V("JXC", flag, default_value=_jxc_default, is_required=False,
-                      info="Calculate exchange couplings and exchange tensor."),
-                    V("DMI", flag, default_value=_dmi_default, is_required=False,
-                      info="Calculate Dzyaloshinskii-Moriya interaction vectors."),
-                    GeneratedValueDefinition("TASK", _selected_task_name),
-                    V("HFF", False, info="Enable the hyperfine-field calculation."),
-                    V("NSHLCLU", Integer(min=0), is_optional=True,
-                      info="Shell count; overrides CLURAD."),
-                    V("SELECT", SetOf(str, min_length=1, max_length=100),
-                      is_optional=True, info="Included element symbols."),
-                    V("EXCLUDE", SetOf(str, min_length=1, max_length=100),
-                      is_optional=True, info="Excluded element symbols."),
-                    V("QREPONLY", False, info="Treat only representative central sites."),
-                    V(
-                        "CLURAD",
-                        2.2,
-                        info="""The radius of a sphere restricting the cluster
-        of atoms for which the exchange coupling
-        constants will be calculated""",
-                    ),
-                ],
-            ),
-            SITES,
-        ],
-        info="JXC / DMI",
-        validators=_validate_jxc,
-        description="Magnetic E-INTEGRAL JXC/DMI: periodic FREL tensor and DMIVECTOR "
-                    "or SP-SREL scalar Jij; embedded CLUGEN supports the FREL "
-                    "CLUXCPLTENSOR branch with separate output filenames.",
-    )
-    schema["CONTROL"]["NONMAG"].warning_condition = _jxc_nonmag_warning_condition
-    return schema
+definition = JxcInputParametersDefinition

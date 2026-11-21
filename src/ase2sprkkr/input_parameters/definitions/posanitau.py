@@ -28,27 +28,33 @@ def _validate_posanitau(p, _values, why):
     return issues
 
 
-def input_parameters_definition():
-    energy = ENERGY(emax=(None, "Upper integration bound in Ry; omitted native value is EF.", None),
-                    defaults={"GRID": [5], "NE": [30], "ImE": 0.01})
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    tau = TAU.copy(
-        add=[
-            TAU["BZINT"].copy(default_value="POINTS"),
-        ],
-    )
-    schema = InputParameters(
-        "posanitau",
-        [CONTROL("POSANITAU"), tau, MODE, STRCONST, CPA, energy, Section("SCF", [V("FULLPOT", False)], is_optional=True, is_expert=True),
-                       TASK("POSANITAU", add=[
-                           V("POSVC", Keyword({"BM": "Native BM correlation potential", "DR": "Native DR correlation potential", "IPM": "Independent-particle model"}), "BM",
-                             info="ASA electron-positron correlation potential: BM, DR, or independent-particle IPM."),
-                       ]), SITES],
-        validators=_validate_posanitau,
-        info="Positron annihilation rate and lifetime",
-        description="Periodic 3D ASA FREL lifetime from integrated positron density. "
-                    "Uses an electronic potential and may reuse DATASET_positron.rho. "
-                    "Integration bounds need physical verification. Lifetime enhancement is fixed independently of POSVC."
-    )
-    schema._task_definition = TaskDefinition("POSANITAU", supports={"3d"}, experimental=True, executable="kkrgen", mpi=False, cache_files=("{DATASET_ADSI}_positron.rho",))
-    return schema
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class POSANITAUInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        energy = ENERGY(emax=(None, "Upper integration bound in Ry; omitted native value is EF.", None),
+                        defaults={"GRID": [5], "NE": [30], "ImE": 0.01})
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        tau = TAU.copy(
+            add=[
+                TAU["BZINT"].copy(default_value="POINTS"),
+            ],
+        )
+        schema = cls(
+            "posanitau",
+            [CONTROL("POSANITAU"), tau, MODE, STRCONST, CPA, energy, Section("SCF", [V("FULLPOT", False)], is_optional=True, is_expert=True),
+                           TASK("POSANITAU", add=[
+                               V("POSVC", Keyword({"BM": "Native BM correlation potential", "DR": "Native DR correlation potential", "IPM": "Independent-particle model"}), "BM",
+                                 info="ASA electron-positron correlation potential: BM, DR, or independent-particle IPM."),
+                           ]), SITES],
+            validators=_validate_posanitau,
+            info="Positron annihilation rate and lifetime",
+            description="Periodic 3D ASA FREL lifetime from integrated positron density. "
+                        "Uses an electronic potential and may reuse DATASET_positron.rho. "
+                        "Integration bounds need physical verification. Lifetime enhancement is fixed independently of POSVC."
+        )
+        schema._task_definition = TaskDefinition("POSANITAU", supports={"3d"}, experimental=True, executable="kkrgen", mpi=False, cache_files=("{DATASET_ADSI}_positron.rho",))
+        return schema
+
+definition = POSANITAUInputParametersDefinition

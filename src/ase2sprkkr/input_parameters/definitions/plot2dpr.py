@@ -35,48 +35,54 @@ def _validate_plot2dpr(parameters, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    energy = ENERGY(emax=(None, "Unused upper energy; omitted retains the native Fermi-energy default", None),
-                    defaults={"GRID": 1, "NE": 1, "ImE": 0.0})
-    energy.copy_member("EMAX", is_optional=True)
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    task = TASK("PLOT2DPR", [
-        V("AVEC", SetOf(float, length=3), [2.0, 0.0, 0.0], is_always_added=False,
-          info="First plot-window edge in Cartesian coordinates, units ALAT."),
-        V("BVEC", SetOf(float, length=3), [0.0, 2.0, 0.0], is_always_added=False,
-          info="Second edge in units ALAT; orthogonalized against AVEC with its length preserved."),
-        V("DVEC", SetOf(float, length=3), [0.0, 0.0, 0.0], is_always_added=False,
-          info="Plot-window displacement from the common origin in units ALAT."),
-        V("NA", Integer(min=1), 50, is_always_added=False,
-          info="Number of intervals along AVEC; regular FULLPOT grid would have NA+1 points."),
-        V("NB", Integer(min=1), is_optional=True,
-          info="Intervals along BVEC; omitted means NINT(NA*|BVEC|/|AVEC|), not a fixed 50."),
-    ])
-    task.copy_member("TASK", type=Keyword("PLOT2DPR", "PLOT2DPOT", "PLOT2DRHO"), default_value="PLOT2DPR")
-    schema = InputParameters(
-        "plot2dpr",
-        [CONTROL("PLOT2DPR"), TAU, MODE, STRCONST, energy, task, SITES],
-        validators=_validate_plot2dpr,
-        info="2D windows for stored potential/density data (serial).",
-        description="Select PLOT2DPOT or PLOT2DRHO through TASK.TASK. The ASA routine writes "
-                    "only potential PLY files and ignores the density selection. FULLPOT first calls "
-                    "an experimental PLY routine which terminates the program before the older grid writer. "
-                    "Window vectors are Cartesian in units ALAT, not fractional lattice coordinates. "
-                    "DMFT and LDA+U are unsupported; numerical output is unverified."
-    )
-    schema._task_definition = TaskDefinition("PLOT2DPR", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=(
-            "PLY-V-ASA-*.ply",
-            "POT-ASA-LINES.ply",
-            "PLY-V-FP-*.ply",
-            "PLY-V-MT-*.ply",
-            "PLY-FP-RWS-*.ply",
-            "PLY-FP-RATM-*.ply",
-            "PLY-V-IS.ply",
-            "PLY-FP-CELL-*.ply",
-            "PLY-FP-RMT.ply",
-            "PLY-FP-CELL-BOUND-V.ply",
-            "PLY-FP-CELL-BOUND-0.ply",
-            "PLY-FP-RATM.ply",
-            "PLY-FP-RWS.ply",
-        ))
-    return schema
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class PLOT2DPRInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        energy = ENERGY(emax=(None, "Unused upper energy; omitted retains the native Fermi-energy default", None),
+                        defaults={"GRID": 1, "NE": 1, "ImE": 0.0})
+        energy.copy_member("EMAX", is_optional=True)
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        task = TASK("PLOT2DPR", [
+            V("AVEC", SetOf(float, length=3), [2.0, 0.0, 0.0], is_always_added=False,
+              info="First plot-window edge in Cartesian coordinates, units ALAT."),
+            V("BVEC", SetOf(float, length=3), [0.0, 2.0, 0.0], is_always_added=False,
+              info="Second edge in units ALAT; orthogonalized against AVEC with its length preserved."),
+            V("DVEC", SetOf(float, length=3), [0.0, 0.0, 0.0], is_always_added=False,
+              info="Plot-window displacement from the common origin in units ALAT."),
+            V("NA", Integer(min=1), 50, is_always_added=False,
+              info="Number of intervals along AVEC; regular FULLPOT grid would have NA+1 points."),
+            V("NB", Integer(min=1), is_optional=True,
+              info="Intervals along BVEC; omitted means NINT(NA*|BVEC|/|AVEC|), not a fixed 50."),
+        ])
+        task.copy_member("TASK", type=Keyword("PLOT2DPR", "PLOT2DPOT", "PLOT2DRHO"), default_value="PLOT2DPR")
+        schema = cls(
+            "plot2dpr",
+            [CONTROL("PLOT2DPR"), TAU, MODE, STRCONST, energy, task, SITES],
+            validators=_validate_plot2dpr,
+            info="2D windows for stored potential/density data (serial).",
+            description="Select PLOT2DPOT or PLOT2DRHO through TASK.TASK. The ASA routine writes "
+                        "only potential PLY files and ignores the density selection. FULLPOT first calls "
+                        "an experimental PLY routine which terminates the program before the older grid writer. "
+                        "Window vectors are Cartesian in units ALAT, not fractional lattice coordinates. "
+                        "DMFT and LDA+U are unsupported; numerical output is unverified."
+        )
+        schema._task_definition = TaskDefinition("PLOT2DPR", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=(
+                "PLY-V-ASA-*.ply",
+                "POT-ASA-LINES.ply",
+                "PLY-V-FP-*.ply",
+                "PLY-V-MT-*.ply",
+                "PLY-FP-RWS-*.ply",
+                "PLY-FP-RATM-*.ply",
+                "PLY-V-IS.ply",
+                "PLY-FP-CELL-*.ply",
+                "PLY-FP-RMT.ply",
+                "PLY-FP-CELL-BOUND-V.ply",
+                "PLY-FP-CELL-BOUND-0.ply",
+                "PLY-FP-RATM.ply",
+                "PLY-FP-RWS.ply",
+            ))
+        return schema
+
+definition = PLOT2DPRInputParametersDefinition

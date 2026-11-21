@@ -22,19 +22,25 @@ def _validate_jalf(parameters, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    energy = ENERGY(emax=(None, "Omitted upper bound delegates to EF", None),
-                    defaults={"GRID": 5, "NE": 30, "ImE": 0.0})
-    energy.copy_member("EMAX", is_optional=True)
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    schema = InputParameters(
-        "jalf",
-        [CONTROL("JALF"), TAU, MODE, STRCONST, energy, TASK("JALF"), SITES],
-        validators=_validate_jalf,
-        info="Valence current density from Dirac alpha matrices, with magnetic moment.",
-        description="No task-specific options are read. JALF becomes E-INTEGRAL internally. "
-                    "The final CURDNS call is skipped by the native MPI postprocessing guard. "
-                    "Only the fully relativistic serial workflow is exposed. Numerical output is unverified."
-    )
-    schema._task_definition = TaskDefinition("JALF", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=("{DATASET}_JALF.dat", "curdns1", "curdns2", "curdns3"))
-    return schema
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class JALFInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        energy = ENERGY(emax=(None, "Omitted upper bound delegates to EF", None),
+                        defaults={"GRID": 5, "NE": 30, "ImE": 0.0})
+        energy.copy_member("EMAX", is_optional=True)
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        schema = cls(
+            "jalf",
+            [CONTROL("JALF"), TAU, MODE, STRCONST, energy, TASK("JALF"), SITES],
+            validators=_validate_jalf,
+            info="Valence current density from Dirac alpha matrices, with magnetic moment.",
+            description="No task-specific options are read. JALF becomes E-INTEGRAL internally. "
+                        "The final CURDNS call is skipped by the native MPI postprocessing guard. "
+                        "Only the fully relativistic serial workflow is exposed. Numerical output is unverified."
+        )
+        schema._task_definition = TaskDefinition("JALF", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=("{DATASET}_JALF.dat", "curdns1", "curdns2", "curdns3"))
+        return schema
+
+definition = JALFInputParametersDefinition

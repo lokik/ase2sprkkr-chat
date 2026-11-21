@@ -235,6 +235,37 @@ class InputParametersRegistry(ModuleRegistry):
             include=lambda name: not name.startswith("_") and name != "sections",
         )
 
+    def definition_class(self, name):
+        """Return the declared schema class without constructing its IPD.
+
+        Legacy user modules exporting `input_parameters_definition` have no
+        such class; they are materialized through the original factory path.
+        """
+        module = self._load_module(self.normalize_name(name))
+        candidate = vars(module).get("definition")
+        if candidate is None:
+            return None
+        from .input_parameters_definitions import InputParametersDefinition
+
+        if (not isinstance(candidate, type)
+                or not issubclass(candidate, InputParametersDefinition)
+                or not callable(getattr(candidate, "create_definition", None))):
+            raise RegistryDefinitionError(
+                f"{module.__name__}.definition must be an "
+                "InputParametersDefinition subclass with create_definition()"
+            )
+        return candidate
+
+    def value_from_module(self, name, module):
+        definition = vars(module).get("definition")
+        if definition is not None:
+            # Validation is shared with metadata discovery. The ModuleRegistry
+            # _values cache guarantees create_definition() runs at most once.
+            definition = self.definition_class(name)
+            return definition.create_definition()
+        # Keep older user-provided input_parameters_definition factories working.
+        return super().value_from_module(name, module)
+
     def prepare_value(self, name, module, value):
         from .input_parameters_definitions import InputParametersDefinition
 

@@ -22,6 +22,30 @@ class PhagenInputParametersDefinition(InputParametersDefinition):
         return tuple(files)
 
 
+    @classmethod
+    def create_definition(cls):
+        energy = ENERGY()
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        schema = PhagenInputParametersDefinition(
+            "phagen",
+            [CONTROL("PHAGEN"), TASK("PHAGEN"), TAU, energy, SCF, MODE],
+            info="Export radial potential, charge density and Coulomb potential for PHAGEN/MsSpec.",
+            description="Requires an existing non-spin-polarized ASA VWN potential with NT=1, no CPA/NLCPA "
+                        "and no thermal fluctuations. Native export runs one Hartree SCF step with NITER=1 "
+                        "and MIX=1 regardless of the input values, writing POTFIL_ex_sprkkr and "
+                        "POTFIL.only_coulomb_new. "
+                        "PHAGEN_CALCTYPE is hardcoded EXP; no phase-shift solver is invoked.",
+            validators=_validate_phagen,
+        )
+        schema._task_definition = TaskDefinition(
+            "PHAGEN",
+            supports={"3d", "2d"},
+            name="PHAGEN",
+            executable="kkrscf",
+            mpi=False,
+        )
+        return schema
+
 def _validate_phagen(parameters, _values, why):
     if why == "set":
         return None
@@ -37,25 +61,4 @@ def _validate_phagen(parameters, _values, why):
 
 
 
-def input_parameters_definition():
-    energy = ENERGY()
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    schema = PhagenInputParametersDefinition(
-        "phagen",
-        [CONTROL("PHAGEN"), TASK("PHAGEN"), TAU, energy, SCF, MODE],
-        info="Export radial potential, charge density and Coulomb potential for PHAGEN/MsSpec.",
-        description="Requires an existing non-spin-polarized ASA VWN potential with NT=1, no CPA/NLCPA "
-                    "and no thermal fluctuations. Native export runs one Hartree SCF step with NITER=1 "
-                    "and MIX=1 regardless of the input values, writing POTFIL_ex_sprkkr and "
-                    "POTFIL.only_coulomb_new. "
-                    "PHAGEN_CALCTYPE is hardcoded EXP; no phase-shift solver is invoked.",
-        validators=_validate_phagen,
-    )
-    schema._task_definition = TaskDefinition(
-        "PHAGEN",
-        supports={"3d", "2d"},
-        name="PHAGEN",
-        executable="kkrscf",
-        mpi=False,
-    )
-    return schema
+definition = PhagenInputParametersDefinition

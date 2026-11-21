@@ -23,28 +23,34 @@ def _validate_nraes(parameters, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    mode = MODE.copy(
-        add=[
-            MODE["MODE"].copy(default_value="SREL"),
-        ],
-    )
-    schema = NrSpectroscopyInputParametersDefinition(
-        "nraes",
-        [CONTROL("NRAES"), TAU, mode, STRCONST,
-        ENERGY(emin=None, defaults={"GRID": 1, "NE": 300, "ImE": 0.0}),
-        TASK("NRAES", [
-            V("IT", Integer(min=1), 1, is_always_added=False),
-            V("CL", Keyword(*(f"{n}{s}" for n in range(1, 6) for s in "SPDF")), "2P", is_always_added=False),
-            V("CALCLS", False, info="Calculate (l,s)-resolved spectra."),
-            V("OUTGNU", False, info="Write additional gnuplot data."),
-        ]), SITES],
-        output_extension="aes",
-        validators=_validate_nraes,
-        info="Nonrelativistic Auger electron spectroscopy from existing DATASET.dos (ASA).",
-        description="Requires old-format spin-polarized DOS on a uniform increasing mesh covering occupied states up to EF. "
-                    "ENERGY.NE supplies allocation capacity; actual energies come from DOS. "
-                    "FULLPOT, DMFT and LDA+U are unsupported. Numerical output is unverified."
-    )
-    schema._task_definition = TaskDefinition("NRAES", supports=(), experimental=True, executable="kkrgen", mpi=False, input_files=("{DATASET_ADSI}.dos",))
-    return schema
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class NRAESInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        mode = MODE.copy(
+            add=[
+                MODE["MODE"].copy(default_value="SREL"),
+            ],
+        )
+        schema = NrSpectroscopyInputParametersDefinition(
+            "nraes",
+            [CONTROL("NRAES"), TAU, mode, STRCONST,
+            ENERGY(emin=None, defaults={"GRID": 1, "NE": 300, "ImE": 0.0}),
+            TASK("NRAES", [
+                V("IT", Integer(min=1), 1, is_always_added=False),
+                V("CL", Keyword(*(f"{n}{s}" for n in range(1, 6) for s in "SPDF")), "2P", is_always_added=False),
+                V("CALCLS", False, info="Calculate (l,s)-resolved spectra."),
+                V("OUTGNU", False, info="Write additional gnuplot data."),
+            ]), SITES],
+            output_extension="aes",
+            validators=_validate_nraes,
+            info="Nonrelativistic Auger electron spectroscopy from existing DATASET.dos (ASA).",
+            description="Requires old-format spin-polarized DOS on a uniform increasing mesh covering occupied states up to EF. "
+                        "ENERGY.NE supplies allocation capacity; actual energies come from DOS. "
+                        "FULLPOT, DMFT and LDA+U are unsupported. Numerical output is unverified."
+        )
+        schema._task_definition = TaskDefinition("NRAES", supports=(), experimental=True, executable="kkrgen", mpi=False, input_files=("{DATASET_ADSI}.dos",))
+        return schema
+
+definition = NRAESInputParametersDefinition

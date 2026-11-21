@@ -1,4 +1,10 @@
 from ._plot2d_selectors import plot2d_parameters
 
-def input_parameters_definition():
-    return plot2d_parameters("PLOT2DRHO")
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class PLOT2DRHOInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        return plot2d_parameters("PLOT2DRHO")
+
+definition = PLOT2DRHOInputParametersDefinition

@@ -21,6 +21,40 @@ class MecheckInputParametersDefinition(InputParameters):
         return tuple(files)
 
 
+    @classmethod
+    def create_definition(cls):
+        energy = ENERGY(emax=(None, "Upper CORE final-state energy in Ry; omitted means the Fermi energy", None),
+                        defaults={"GRID": 3, "NE": 1, "ImE": 0.01})
+        energy.copy_member("EMAX", is_optional=True)
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        schema = MecheckInputParametersDefinition(
+            "mecheck",
+            [CONTROL("MECHECK"), TAU, MODE, STRCONST, energy,
+             TASK("MECHECK", [
+                 V("ITSEL", Integer(min=1), 1, is_always_added=False,
+                   info="One-based atomic-type index; native default 1."),
+                 V("PRINT", int, _print_default, is_required=False, is_always_added=False,
+                   info="Override CONTROL.PRINT in ME_TEST_11 (key PRINT, not IPRINT)."),
+                 V("INITIALSTATE", Keyword("BAND", "CORE"), "BAND", is_always_added=False),
+                 V("CL", Keyword(*(f"{n}{s}" for n in range(1, 7) for s in "SPDF")),
+                   "2P", is_always_added=False, info="Initial CORE shell; native default 2P."),
+                 V("ERYDI", SetOf(float, length=2), [0.5, 0.01], is_always_added=False,
+                   info="Initial BAND energy {real, imaginary} in Ry. Omitted or near-zero means {0.5,0.01}."),
+                 V("ERYDF", SetOf(float, length=2), [0.8, 0.01], is_always_added=False,
+                   info="Final BAND energy {real, imaginary} in Ry. Omitted or near-zero means {0.8,0.01}."),
+                 V("NONMAG", False, info="Suppress the magnetic field of the selected atomic type."),
+                 V("NMEFORM", Integer(min=1, max=3), 3, is_always_added=False,
+                   info="Native reader default 3, but SPR-KKR 9.7 unconditionally overwrites this with 2."),
+             ]), SITES],
+            validators=_validate_mecheck,
+            info="Compare NAB and ADA matrix elements (fully relativistic, serial).",
+            description="BAND uses two complex TASK energies; CORE uses CL and the ENERGY mesh. "
+                        "Full-potential branches exist but are numerically unverified. "
+                        "The compiled K_CALC_ME=2 disables the J-to-Z consistency test."
+        )
+        schema._task_definition = TaskDefinition("MECHECK", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
+        return schema
+
 def _print_default(option):
     return option._container._get_root_container().CONTROL.PRINT()
 
@@ -63,35 +97,4 @@ def _validate_mecheck(parameters, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    energy = ENERGY(emax=(None, "Upper CORE final-state energy in Ry; omitted means the Fermi energy", None),
-                    defaults={"GRID": 3, "NE": 1, "ImE": 0.01})
-    energy.copy_member("EMAX", is_optional=True)
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    schema = MecheckInputParametersDefinition(
-        "mecheck",
-        [CONTROL("MECHECK"), TAU, MODE, STRCONST, energy,
-         TASK("MECHECK", [
-             V("ITSEL", Integer(min=1), 1, is_always_added=False,
-               info="One-based atomic-type index; native default 1."),
-             V("PRINT", int, _print_default, is_required=False, is_always_added=False,
-               info="Override CONTROL.PRINT in ME_TEST_11 (key PRINT, not IPRINT)."),
-             V("INITIALSTATE", Keyword("BAND", "CORE"), "BAND", is_always_added=False),
-             V("CL", Keyword(*(f"{n}{s}" for n in range(1, 7) for s in "SPDF")),
-               "2P", is_always_added=False, info="Initial CORE shell; native default 2P."),
-             V("ERYDI", SetOf(float, length=2), [0.5, 0.01], is_always_added=False,
-               info="Initial BAND energy {real, imaginary} in Ry. Omitted or near-zero means {0.5,0.01}."),
-             V("ERYDF", SetOf(float, length=2), [0.8, 0.01], is_always_added=False,
-               info="Final BAND energy {real, imaginary} in Ry. Omitted or near-zero means {0.8,0.01}."),
-             V("NONMAG", False, info="Suppress the magnetic field of the selected atomic type."),
-             V("NMEFORM", Integer(min=1, max=3), 3, is_always_added=False,
-               info="Native reader default 3, but SPR-KKR 9.7 unconditionally overwrites this with 2."),
-         ]), SITES],
-        validators=_validate_mecheck,
-        info="Compare NAB and ADA matrix elements (fully relativistic, serial).",
-        description="BAND uses two complex TASK energies; CORE uses CL and the ENERGY mesh. "
-                    "Full-potential branches exist but are numerically unverified. "
-                    "The compiled K_CALC_ME=2 disables the J-to-Z consistency test."
-    )
-    schema._task_definition = TaskDefinition("MECHECK", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
-    return schema
+definition = MecheckInputParametersDefinition

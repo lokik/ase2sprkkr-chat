@@ -22,6 +22,25 @@ class PshiftInputParametersDefinition(InputParameters):
         return tuple(files)
 
 
+    @classmethod
+    def create_definition(cls):
+        energy = ENERGY(emax=(1.0, "Upper absolute energy in Ry; 1 Ry includes the resonance search window", None),
+                        defaults={"GRID": 1, "NE": 300, "ImE": 0.0})
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        schema = PshiftInputParametersDefinition(
+            "pshift",
+            [CONTROL("PSHIFT"), TAU, MODE, STRCONST, energy, TASK("PSHIFT"), SITES],
+            validators=_validate_pshift,
+            info="Calculate single-site phase shifts and resonance diagnostics (ASA, serial).",
+            description="All atomic types are evaluated; no task-specific options are read. "
+                        "Supports fully relativistic and NREL/SREL/SP-SREL branches. "
+                        "Energies on the output axis are absolute eV, not relative to the Fermi energy. "
+                        "FULLPOT, DMFT and LDA+U are unsupported. "
+                        "Relativistic output includes logarithmic derivatives; nonrelativistic output includes t matrices."
+        )
+        schema._task_definition = TaskDefinition("PSHIFT", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
+        return schema
+
 def _validate_pshift(parameters, _values, why):
     if why == "set":
         return None
@@ -54,20 +73,4 @@ def _validate_pshift(parameters, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    energy = ENERGY(emax=(1.0, "Upper absolute energy in Ry; 1 Ry includes the resonance search window", None),
-                    defaults={"GRID": 1, "NE": 300, "ImE": 0.0})
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    schema = PshiftInputParametersDefinition(
-        "pshift",
-        [CONTROL("PSHIFT"), TAU, MODE, STRCONST, energy, TASK("PSHIFT"), SITES],
-        validators=_validate_pshift,
-        info="Calculate single-site phase shifts and resonance diagnostics (ASA, serial).",
-        description="All atomic types are evaluated; no task-specific options are read. "
-                    "Supports fully relativistic and NREL/SREL/SP-SREL branches. "
-                    "Energies on the output axis are absolute eV, not relative to the Fermi energy. "
-                    "FULLPOT, DMFT and LDA+U are unsupported. "
-                    "Relativistic output includes logarithmic derivatives; nonrelativistic output includes t matrices."
-    )
-    schema._task_definition = TaskDefinition("PSHIFT", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
-    return schema
+definition = PshiftInputParametersDefinition

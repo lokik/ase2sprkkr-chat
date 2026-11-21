@@ -23,38 +23,44 @@ def _validate(parameters, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    control = CONTROL("NUCSSCPL").copy(add=[V("FINNUC", False, info="Finite nucleus; forbidden by this task.")])
-    control.copy_member("NONMAG", default_value=True, is_always_added=True)
-    tau = TAU.copy(
-        add=[
-            TAU["BZINT"].copy(default_value="POINTS"),
-        ],
-    )
-    energy = ENERGY(emax=(None, "GRID=5 uses the Fermi energy", None), defaults={"GRID": 5, "NE": 30, "ImE": 0.01})
-    energy.copy_member("EMAX", is_optional=True)
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    task = TASK("NUCSSCPL", add=[
-        V("CLURAD", 2.2, info="Cluster radius in ALAT units; explicit convenience default."),
-        V("NSHLCLU", Integer(min=0), is_optional=True, info="Shell count; overrides CLURAD."),
-        V("SELECT", SetOf(str, min_length=1, max_length=100), is_optional=True, info="Included element symbols."),
-        V("EXCLUDE", SetOf(str, min_length=1, max_length=100), is_optional=True, info="Excluded element symbols."),
-    ])
-    schema = InputParameters(
-        "nucsscpl",
-        [control, tau, MODE, STRCONST, energy, task, SITES],
-        validators=_validate,
-        info="Experimental nuclear spin-spin coupling tensor (ASA).",
-        description="Native 9.7 deallocates unallocated arrays on intermediate energies and clears "
-                    "previous types' matrix elements. Fortran repair is needed before numerical use. "
-                    "FULLPOT and KMROT!=0 are rejected by native code. Isotopes come from TABMUQIN; "
-                    "the task does not read isotope or nuclear-moment input parameters."
-    )
-    schema._task_definition = TaskDefinition("NUCSSCPL", supports=(), experimental=True, executable="kkrgen", mpi=False, output_files=(
-            "{DATASET_ADSI}_A_ij.dat",
-            "RK.dat",
-            "tab_aij.dat",
-            "{DATASET_ADSI}_Aij_*.agr",
-            "{DATASET_ADSI}_Rij_*.agr",
-        ))
-    return schema
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class NUCSSCPLInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        control = CONTROL("NUCSSCPL").copy(add=[V("FINNUC", False, info="Finite nucleus; forbidden by this task.")])
+        control.copy_member("NONMAG", default_value=True, is_always_added=True)
+        tau = TAU.copy(
+            add=[
+                TAU["BZINT"].copy(default_value="POINTS"),
+            ],
+        )
+        energy = ENERGY(emax=(None, "GRID=5 uses the Fermi energy", None), defaults={"GRID": 5, "NE": 30, "ImE": 0.01})
+        energy.copy_member("EMAX", is_optional=True)
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        task = TASK("NUCSSCPL", add=[
+            V("CLURAD", 2.2, info="Cluster radius in ALAT units; explicit convenience default."),
+            V("NSHLCLU", Integer(min=0), is_optional=True, info="Shell count; overrides CLURAD."),
+            V("SELECT", SetOf(str, min_length=1, max_length=100), is_optional=True, info="Included element symbols."),
+            V("EXCLUDE", SetOf(str, min_length=1, max_length=100), is_optional=True, info="Excluded element symbols."),
+        ])
+        schema = cls(
+            "nucsscpl",
+            [control, tau, MODE, STRCONST, energy, task, SITES],
+            validators=_validate,
+            info="Experimental nuclear spin-spin coupling tensor (ASA).",
+            description="Native 9.7 deallocates unallocated arrays on intermediate energies and clears "
+                        "previous types' matrix elements. Fortran repair is needed before numerical use. "
+                        "FULLPOT and KMROT!=0 are rejected by native code. Isotopes come from TABMUQIN; "
+                        "the task does not read isotope or nuclear-moment input parameters."
+        )
+        schema._task_definition = TaskDefinition("NUCSSCPL", supports=(), experimental=True, executable="kkrgen", mpi=False, output_files=(
+                "{DATASET_ADSI}_A_ij.dat",
+                "RK.dat",
+                "tab_aij.dat",
+                "{DATASET_ADSI}_Aij_*.agr",
+                "{DATASET_ADSI}_Rij_*.agr",
+            ))
+        return schema
+
+definition = NUCSSCPLInputParametersDefinition

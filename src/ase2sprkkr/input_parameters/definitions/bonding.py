@@ -19,24 +19,30 @@ def _validate(parameters, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    tau = TAU.copy(
-        add=[
-            TAU["BZINT"].copy(default_value="CLUSTER"),
-            TAU["MOL"].copy(default_value=True, is_always_added=True),
-            TAU["NSHLCLU"].copy(default_value=0, is_always_added=True),
-        ],
-    )
-    energy = ENERGY(emax=(1.0, "Explicit upper scan bound in Ry", None), defaults={"GRID": 3, "NE": 300, "ImE": 0.01})
-    energy.copy_member("NE", type=SetOf(Integer(min=2), min_length=1, max_length=2))
-    schema = InputParameters(
-        "bonding",
-        [CONTROL("BONDING"), tau, MODE, STRCONST, energy, TASK("BONDING"), SITES],
-        validators=_validate,
-        info="Experimental bonding analysis of molecular site 1.",
-        description="Native 9.7 TAU_DRIVE supplies KTAUIJ=0, while CLUBONDING reads scratch units "
-                    "that require KTAUIJ>=2. The native workflow needs repair before numerical use. "
-                    "CLUBONDING also returns silently for KMROT!=0 and writes to unit 22."
-    )
-    schema._task_definition = TaskDefinition("BONDING", supports=(), experimental=True, executable="kkrgen", mpi=False, output_files=("fort.22",))
-    return schema
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class BONDINGInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        tau = TAU.copy(
+            add=[
+                TAU["BZINT"].copy(default_value="CLUSTER"),
+                TAU["MOL"].copy(default_value=True, is_always_added=True),
+                TAU["NSHLCLU"].copy(default_value=0, is_always_added=True),
+            ],
+        )
+        energy = ENERGY(emax=(1.0, "Explicit upper scan bound in Ry", None), defaults={"GRID": 3, "NE": 300, "ImE": 0.01})
+        energy.copy_member("NE", type=SetOf(Integer(min=2), min_length=1, max_length=2))
+        schema = cls(
+            "bonding",
+            [CONTROL("BONDING"), tau, MODE, STRCONST, energy, TASK("BONDING"), SITES],
+            validators=_validate,
+            info="Experimental bonding analysis of molecular site 1.",
+            description="Native 9.7 TAU_DRIVE supplies KTAUIJ=0, while CLUBONDING reads scratch units "
+                        "that require KTAUIJ>=2. The native workflow needs repair before numerical use. "
+                        "CLUBONDING also returns silently for KMROT!=0 and writes to unit 22."
+        )
+        schema._task_definition = TaskDefinition("BONDING", supports=(), experimental=True, executable="kkrgen", mpi=False, output_files=("fort.22",))
+        return schema
+
+definition = BONDINGInputParametersDefinition

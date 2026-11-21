@@ -19,19 +19,25 @@ def _validate_jorb(parameters, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    energy = ENERGY(emax=(None, "Omitted upper bound delegates to EF", None),
-                    defaults={"GRID": 5, "NE": 30, "ImE": 0.0})
-    energy.copy_member("EMAX", is_optional=True)
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    schema = InputParameters(
-        "jorb",
-        [CONTROL("JORB"), TAU, MODE, STRCONST, energy, TASK("JORB"), SITES],
-        validators=_validate_jorb,
-        info="Valence paramagnetic current density in the full-potential formalism.",
-        description="No task-specific options are read. JORB becomes E-INTEGRAL internally. "
-                    "The final ORBCURDNS call is skipped by the native MPI postprocessing guard. "
-                    "Only the fully relativistic serial workflow is exposed. Numerical output is unverified."
-    )
-    schema._task_definition = TaskDefinition("JORB", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=("{DATASET}_JORB.dat", "{DATASET}_JORB_UP.dat", "{DATASET}_JORB_DN.dat"))
-    return schema
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class JORBInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        energy = ENERGY(emax=(None, "Omitted upper bound delegates to EF", None),
+                        defaults={"GRID": 5, "NE": 30, "ImE": 0.0})
+        energy.copy_member("EMAX", is_optional=True)
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        schema = cls(
+            "jorb",
+            [CONTROL("JORB"), TAU, MODE, STRCONST, energy, TASK("JORB"), SITES],
+            validators=_validate_jorb,
+            info="Valence paramagnetic current density in the full-potential formalism.",
+            description="No task-specific options are read. JORB becomes E-INTEGRAL internally. "
+                        "The final ORBCURDNS call is skipped by the native MPI postprocessing guard. "
+                        "Only the fully relativistic serial workflow is exposed. Numerical output is unverified."
+        )
+        schema._task_definition = TaskDefinition("JORB", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=("{DATASET}_JORB.dat", "{DATASET}_JORB_UP.dat", "{DATASET}_JORB_DN.dat"))
+        return schema
+
+definition = JORBInputParametersDefinition

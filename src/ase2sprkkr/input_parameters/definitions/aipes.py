@@ -4,7 +4,7 @@ from ...common.grammar_types import Integer, SetOf
 from ...common.warnings import DataValidityError
 from ..task_definition import TaskDefinition
 from ..tasks._spec_files import SPEC_INPUT_FILES, SPEC_OUTPUT_FILES
-from .arpes import input_parameters_definition as arpes_parameters
+
 from ._sections import CONTROL
 from ._energy import energy_relative_default
 
@@ -36,29 +36,37 @@ def _validate_aipes(p, _values, why):
     return errors or None
 
 
-def input_parameters_definition():
-    out = arpes_parameters()
-    task = out["TASK"].copy(add=[
-        out["TASK"]["TASK"].copy(default_value="AIPES"),
-    ])
-    energy = out["ENERGY"]
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    energy["EMAXEV"].default_value = energy_relative_default('EMAX', 0.0)
-    energy.copy_member("EWORK_EV", info="Work function in eV.")
-    for name in ("NT", "NP"):
-        out["SPEC_EL"].copy_member(name, type=Integer(min=1))
-    schema = out.copy(
-        new_schema=True,
-        name="aipes",
-        validators=_validate_aipes,
-        info="Native angle-integrated valence photoemission with surface contribution",
-        description="AIPES is a native local/incoherent photoemission approximation plus surface contribution, "
-                    "not numerical integration of an ARPES angular mesh. Fixed electron geometry is audited here; "
-                    "converge layers, angular-momentum cutoff and optical potentials.",
-        add=[CONTROL("AIPES"), task, energy, out["SPEC_EL"]],
-    )
-    schema.task_selectors = ("AIPES",)
-    schema._task_definition = TaskDefinition("AIPES", supports={"3d", "2d"}, experimental=True, executable="kkrspec", mpi=False, output_reader="SPEC",
-        input_files=SPEC_INPUT_FILES, output_files=SPEC_OUTPUT_FILES,
-    )
-    return schema
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class AIPESInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        # Work on a copy: sibling SPEC schemas must not mutate cached ARPES.
+        from ..input_parameters import InputParameters
+        out = InputParameters.input_parameters_registry["ARPES"].copy()
+        task = out["TASK"].copy(add=[
+            out["TASK"]["TASK"].copy(default_value="AIPES"),
+        ])
+        energy = out["ENERGY"]
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        energy["EMAXEV"].default_value = energy_relative_default('EMAX', 0.0)
+        energy.copy_member("EWORK_EV", info="Work function in eV.")
+        for name in ("NT", "NP"):
+            out["SPEC_EL"].copy_member(name, type=Integer(min=1))
+        schema = out.copy(
+            new_schema=True,
+            name="aipes",
+            validators=_validate_aipes,
+            info="Native angle-integrated valence photoemission with surface contribution",
+            description="AIPES is a native local/incoherent photoemission approximation plus surface contribution, "
+                        "not numerical integration of an ARPES angular mesh. Fixed electron geometry is audited here; "
+                        "converge layers, angular-momentum cutoff and optical potentials.",
+            add=[CONTROL("AIPES"), task, energy, out["SPEC_EL"]],
+        )
+        schema.task_selectors = ("AIPES",)
+        schema._task_definition = TaskDefinition("AIPES", supports={"3d", "2d"}, experimental=True, executable="kkrspec", mpi=False, output_reader="SPEC",
+            input_files=SPEC_INPUT_FILES, output_files=SPEC_OUTPUT_FILES,
+        )
+        return schema
+
+definition = AIPESInputParametersDefinition

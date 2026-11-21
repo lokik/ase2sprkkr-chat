@@ -48,6 +48,40 @@ class VbpesInputParametersDefinition(RequiredTauInputParametersDefinition):
         return tuple(files)
 
 
+    @classmethod
+    def create_definition(cls):
+        energy = ENERGY(emax=(None, "Omitted upper bound uses EF", None),
+                        defaults={"GRID": 3, "NE": 300, "ImE": 0.01},
+                        add=[V("ERANGE", float, is_optional=True, info="Occupied energy window below EF, in eV; overrides EMIN.")])
+        energy.copy_member("EMAX", is_optional=True)
+        schema = VbpesInputParametersDefinition(
+            "vbpes",
+            [CONTROL("VBPES"), TAU, MODE, STRCONST, energy,
+            TASK("VBPES", [
+                V("EPHOT", float, 1253.6, is_always_added=False, info="Photon energy in eV; values rounding to 1/2 select 1253.6/1486.6 eV."),
+                V("DEFEP0", float, 0.0, is_always_added=False, info="Read and printed in eV; not used to shift energies in VBPES."),
+                V("ME", Keyword("ADA", "NAB"), "ADA", is_always_added=False),
+                V("MODE", Integer(min=1, max=3), 2, is_always_added=False, info="Matrix-element mode; FULLPOT forces 2."),
+                V("EWORK", float, is_optional=True, info="Work function in eV; only reported as EVAC in this routine."),
+                V("GEOMETRY", Integer(min=0, max=4), 0, is_always_added=False),
+                V("QVEC", SetOf(float, length=3), is_optional=True),
+                V("QVECPH", SetOf(float, length=3), is_optional=True),
+                V("TETPH", float, is_optional=True, info="Photon polar angle in degrees for custom geometry."),
+                V("PHIPH", float, is_optional=True, info="Photon azimuth in degrees for custom geometry."),
+                V("NSPIN", SetOf(float, length=3), is_optional=True, info="Spin direction; omitted means minus the resulting QHAT."),
+                V("ImEFIN", float, is_optional=True, info="Final-state broadening in Ry; omitted means Im(ETAB(NE,1))."),
+                V("USETAUNN", False, info="Use or calculate the final-state TAU directory."),
+                V("USETFIN", False, info="Single-site final state; disables USETAUNN."),
+            ]), SITES],
+            validators=_validate_vbpes,
+            info="Angle-integrated valence-band photoemission (KKRGEN).",
+            description="Requires the initial-state TAU directory. Full relativity is required. "
+                        "This is a separate implementation from KKRSPEC ARPES. GRV stops as unimplemented. "
+                        "Numerical output and FULLPOT have not been verified."
+        )
+        schema._task_definition = TaskDefinition("VBPES", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=("arpes.dat", "arpes_spol.dat", "spin.matrix.xps"))
+        return schema
+
 def _validate_vbpes(parameters, _values, why):
     if why == "set":
         return None
@@ -78,35 +112,4 @@ def _validate_vbpes(parameters, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    energy = ENERGY(emax=(None, "Omitted upper bound uses EF", None),
-                    defaults={"GRID": 3, "NE": 300, "ImE": 0.01},
-                    add=[V("ERANGE", float, is_optional=True, info="Occupied energy window below EF, in eV; overrides EMIN.")])
-    energy.copy_member("EMAX", is_optional=True)
-    schema = VbpesInputParametersDefinition(
-        "vbpes",
-        [CONTROL("VBPES"), TAU, MODE, STRCONST, energy,
-        TASK("VBPES", [
-            V("EPHOT", float, 1253.6, is_always_added=False, info="Photon energy in eV; values rounding to 1/2 select 1253.6/1486.6 eV."),
-            V("DEFEP0", float, 0.0, is_always_added=False, info="Read and printed in eV; not used to shift energies in VBPES."),
-            V("ME", Keyword("ADA", "NAB"), "ADA", is_always_added=False),
-            V("MODE", Integer(min=1, max=3), 2, is_always_added=False, info="Matrix-element mode; FULLPOT forces 2."),
-            V("EWORK", float, is_optional=True, info="Work function in eV; only reported as EVAC in this routine."),
-            V("GEOMETRY", Integer(min=0, max=4), 0, is_always_added=False),
-            V("QVEC", SetOf(float, length=3), is_optional=True),
-            V("QVECPH", SetOf(float, length=3), is_optional=True),
-            V("TETPH", float, is_optional=True, info="Photon polar angle in degrees for custom geometry."),
-            V("PHIPH", float, is_optional=True, info="Photon azimuth in degrees for custom geometry."),
-            V("NSPIN", SetOf(float, length=3), is_optional=True, info="Spin direction; omitted means minus the resulting QHAT."),
-            V("ImEFIN", float, is_optional=True, info="Final-state broadening in Ry; omitted means Im(ETAB(NE,1))."),
-            V("USETAUNN", False, info="Use or calculate the final-state TAU directory."),
-            V("USETFIN", False, info="Single-site final state; disables USETAUNN."),
-        ]), SITES],
-        validators=_validate_vbpes,
-        info="Angle-integrated valence-band photoemission (KKRGEN).",
-        description="Requires the initial-state TAU directory. Full relativity is required. "
-                    "This is a separate implementation from KKRSPEC ARPES. GRV stops as unimplemented. "
-                    "Numerical output and FULLPOT have not been verified."
-    )
-    schema._task_definition = TaskDefinition("VBPES", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=("arpes.dat", "arpes_spol.dat", "spin.matrix.xps"))
-    return schema
+definition = VbpesInputParametersDefinition

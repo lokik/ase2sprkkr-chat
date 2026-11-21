@@ -44,33 +44,39 @@ def _validate_ekrel(parameters, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    energy = ENERGY(emax=(None, "Initialization-only upper energy; native fallback EF", None),
-                    defaults={"GRID": 1, "NE": 1, "ImE": 0.0})
-    energy.copy_member("EMAX", is_optional=True)
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    schema = InputParameters(
-        "ekrel",
-        [CONTROL("EKREL"), TAU, MODE, STRCONST, energy,
-        TASK("EKREL", [
-            V("NK", Integer(min=2), 1000, is_always_added=False, info="Requested number of k-points; path/grid construction may change it."),
-            V("EMIN", float, 0.01, is_always_added=False, info="Search lower energy in absolute Ry (TASK, not ENERGY)."),
-            V("EMAX", float, 1.0, is_always_added=False, info="Search upper energy in absolute Ry."),
-            V("NE", Integer(min=2), 501, is_always_added=False, info="Number of search energies; >=2 avoids division by NE-1."),
-            V("F-SURF", False, info="Search Fermi-surface bands on a whole-Brillouin-zone grid."),
-            V("ESLICE", float, is_optional=True, info="F-SURF slice in absolute Ry; omitted means the actual EF."),
-            V("KPATH", Keyword(kpaths), 1, is_always_added=False,
-              info="Predefined path; availability depends on Bravais lattice, as in BSF."),
-            V("NKDIR", Integer(min=0, max=9), 0, is_always_added=False, info="Manual segments, each requires KAi and KEi; native maximum 9."),
-        ] + [V(f"{name}{i}", SetOf(float, length=3), is_optional=True,
-                info="Manual segment endpoint in Cartesian multiples of 2*pi/a.")
-             for i in range(1, 10) for name in ("KA", "KE")]), SITES],
-        validators=_validate_ekrel,
-        info="E(k) bands or Fermi-surface search for ordered systems.",
-        description="CPA alloys are rejected by SPR-KKR: use BSF for disorder. TASK sets the actual "
-                    "energy search and k-path; ENERGY is used for initialization. KDIRTAB is called "
-                    "even for F-SURF, so its lattice restrictions remain relevant. "
-                    "MPI is implemented in the native k-loop; numerical output is unverified."
-    )
-    schema._task_definition = TaskDefinition("EKREL", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=True, output_files=("{DATASET_ADSI}.bnd",))
-    return schema
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class EKRELInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        energy = ENERGY(emax=(None, "Initialization-only upper energy; native fallback EF", None),
+                        defaults={"GRID": 1, "NE": 1, "ImE": 0.0})
+        energy.copy_member("EMAX", is_optional=True)
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        schema = cls(
+            "ekrel",
+            [CONTROL("EKREL"), TAU, MODE, STRCONST, energy,
+            TASK("EKREL", [
+                V("NK", Integer(min=2), 1000, is_always_added=False, info="Requested number of k-points; path/grid construction may change it."),
+                V("EMIN", float, 0.01, is_always_added=False, info="Search lower energy in absolute Ry (TASK, not ENERGY)."),
+                V("EMAX", float, 1.0, is_always_added=False, info="Search upper energy in absolute Ry."),
+                V("NE", Integer(min=2), 501, is_always_added=False, info="Number of search energies; >=2 avoids division by NE-1."),
+                V("F-SURF", False, info="Search Fermi-surface bands on a whole-Brillouin-zone grid."),
+                V("ESLICE", float, is_optional=True, info="F-SURF slice in absolute Ry; omitted means the actual EF."),
+                V("KPATH", Keyword(kpaths), 1, is_always_added=False,
+                  info="Predefined path; availability depends on Bravais lattice, as in BSF."),
+                V("NKDIR", Integer(min=0, max=9), 0, is_always_added=False, info="Manual segments, each requires KAi and KEi; native maximum 9."),
+            ] + [V(f"{name}{i}", SetOf(float, length=3), is_optional=True,
+                    info="Manual segment endpoint in Cartesian multiples of 2*pi/a.")
+                 for i in range(1, 10) for name in ("KA", "KE")]), SITES],
+            validators=_validate_ekrel,
+            info="E(k) bands or Fermi-surface search for ordered systems.",
+            description="CPA alloys are rejected by SPR-KKR: use BSF for disorder. TASK sets the actual "
+                        "energy search and k-path; ENERGY is used for initialization. KDIRTAB is called "
+                        "even for F-SURF, so its lattice restrictions remain relevant. "
+                        "MPI is implemented in the native k-loop; numerical output is unverified."
+        )
+        schema._task_definition = TaskDefinition("EKREL", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=True, output_files=("{DATASET_ADSI}.bnd",))
+        return schema
+
+definition = EKRELInputParametersDefinition

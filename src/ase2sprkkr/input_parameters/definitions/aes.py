@@ -23,6 +23,30 @@ class AESInputParametersDefinition(RequiredTauInputParametersDefinition):
         return tuple(files)
 
 
+    @classmethod
+    def create_definition(cls):
+        energy = ENERGY(emax=(None, "Omitted bound delegates to EF", None),
+                        defaults={"GRID": 3, "NE": 300, "ImE": .01})
+        energy.copy_member("EMAX", is_optional=True)
+        schema = AESInputParametersDefinition(
+            "aes",
+            [CONTROL("AES"), TAU, MODE, STRCONST, energy,
+            TASK("AES", [
+                V("IT", Integer(min=1), 1, is_always_added=False),
+                V("CL", Keyword(*(f"{n}{s}" for n in range(1, 6) for s in "SPDF")), "2P", is_always_added=False),
+                V("NEME", Integer(min=3), 10, is_always_added=False, info="Coarse matrix-element mesh; actual count is min(NEME, NE from TAU)."),
+                V("PRINTME", False, info="Write matrix-element diagnostics."),
+                V("PRINTAME", False, info="Print angular-matrix-element diagnostics."),
+            ]), SITES],
+            validators=_validate_aes,
+            info="Fully relativistic Auger electron spectroscopy (ASA, NQ=1).",
+            description="Requires an initial-state TAU directory on a uniform increasing mesh with at least three energies. "
+                        "The source stops for NQ>1. ENERGY.NE must allocate enough capacity for the TAU file. "
+                        "FULLPOT, DMFT and LDA+U are unsupported. Numerical output is unverified."
+        )
+        schema._task_definition = TaskDefinition("AES", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, cache_files=("ME", *(f"ME{i}" for i in range(1, 13))))
+        return schema
+
 def _validate_aes(parameters, _values, why):
     if why == "set":
         return None
@@ -41,25 +65,4 @@ def _validate_aes(parameters, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    energy = ENERGY(emax=(None, "Omitted bound delegates to EF", None),
-                    defaults={"GRID": 3, "NE": 300, "ImE": .01})
-    energy.copy_member("EMAX", is_optional=True)
-    schema = AESInputParametersDefinition(
-        "aes",
-        [CONTROL("AES"), TAU, MODE, STRCONST, energy,
-        TASK("AES", [
-            V("IT", Integer(min=1), 1, is_always_added=False),
-            V("CL", Keyword(*(f"{n}{s}" for n in range(1, 6) for s in "SPDF")), "2P", is_always_added=False),
-            V("NEME", Integer(min=3), 10, is_always_added=False, info="Coarse matrix-element mesh; actual count is min(NEME, NE from TAU)."),
-            V("PRINTME", False, info="Write matrix-element diagnostics."),
-            V("PRINTAME", False, info="Print angular-matrix-element diagnostics."),
-        ]), SITES],
-        validators=_validate_aes,
-        info="Fully relativistic Auger electron spectroscopy (ASA, NQ=1).",
-        description="Requires an initial-state TAU directory on a uniform increasing mesh with at least three energies. "
-                    "The source stops for NQ>1. ENERGY.NE must allocate enough capacity for the TAU file. "
-                    "FULLPOT, DMFT and LDA+U are unsupported. Numerical output is unverified."
-    )
-    schema._task_definition = TaskDefinition("AES", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, cache_files=("ME", *(f"ME{i}" for i in range(1, 13))))
-    return schema
+definition = AESInputParametersDefinition

@@ -35,6 +35,34 @@ class ChixasInputParametersDefinition(InputParameters):
         return tuple(files)
 
 
+    @classmethod
+    def create_definition(cls):
+        energy = ENERGY(emax=(4.0, "Upper spectral energy in Ry; explicit ASE choice.", None),
+                        defaults={"GRID": [3], "NE": [180], "ImE": 0.01})
+        energy.copy_member("NE", type=SetOf(Integer(min=2), min_length=1, max_length=2))
+        schema = ChixasInputParametersDefinition(
+            "chixas",
+            [CONTROL("CHIXAS"), TAU, MODE, CPA, STRCONST, energy,
+                Section("SCF", [V("FULLPOT", False)], is_optional=True, is_expert=True),
+                TASK("CHIXAS", add=[
+                    V("ITXRAY", Integer(min=1), 1, info="Absorbing atom type; native key is ITXRAY, not IT."),
+                    V("CL", str, "2P", info="Initial core shell."),
+                    V("NEF", SetOf(real, min_length=1), is_repeated="NUMBERED", is_optional=True,
+                      info="NEF1, NEF2, ...: l-resolved DOS at EF for every potential type; must match native normalization."),
+                    V("CHISPN", SetOf(real, min_length=1), is_optional=True, info="Per-type spin susceptibility in 10^-6 cm^3/mol."),
+                    V("CHIVV", SetOf(real, min_length=1), is_optional=True, info="Per-type total orbital susceptibility in 10^-6 cm^3/mol; split equally between spins."),
+                    V("ABSUNIT", False, info="Use absolute absorption units."),
+                    V("PRINT", Integer(min=0), is_optional=True, info="Native CHIXAS print control."),
+                ]), SITES],
+            validators=_validate_chixas,
+            info="Field-induced magnetic circular dichroism in XAS",
+            description="Serial periodic ASA FREL CHIXAS with supplied NEF, CHISPN and CHIVV for every potential type. "
+                        "Input-only validation cannot establish agreement with the potential or DOS normalization. "
+                        "Spin-resolved orbital input, restart and TAU cache workflows are outside this audit."
+        )
+        schema._task_definition = TaskDefinition("CHIXAS", supports={"3d", "2d"}, experimental=True, executable="kkrchi", mpi=False)
+        return schema
+
 def _validate_chixas(p, _values, why):
     if why == "set":
         return None
@@ -69,29 +97,4 @@ def _validate_chixas(p, _values, why):
     return errors or None
 
 
-def input_parameters_definition():
-    energy = ENERGY(emax=(4.0, "Upper spectral energy in Ry; explicit ASE choice.", None),
-                    defaults={"GRID": [3], "NE": [180], "ImE": 0.01})
-    energy.copy_member("NE", type=SetOf(Integer(min=2), min_length=1, max_length=2))
-    schema = ChixasInputParametersDefinition(
-        "chixas",
-        [CONTROL("CHIXAS"), TAU, MODE, CPA, STRCONST, energy,
-            Section("SCF", [V("FULLPOT", False)], is_optional=True, is_expert=True),
-            TASK("CHIXAS", add=[
-                V("ITXRAY", Integer(min=1), 1, info="Absorbing atom type; native key is ITXRAY, not IT."),
-                V("CL", str, "2P", info="Initial core shell."),
-                V("NEF", SetOf(real, min_length=1), is_repeated="NUMBERED", is_optional=True,
-                  info="NEF1, NEF2, ...: l-resolved DOS at EF for every potential type; must match native normalization."),
-                V("CHISPN", SetOf(real, min_length=1), is_optional=True, info="Per-type spin susceptibility in 10^-6 cm^3/mol."),
-                V("CHIVV", SetOf(real, min_length=1), is_optional=True, info="Per-type total orbital susceptibility in 10^-6 cm^3/mol; split equally between spins."),
-                V("ABSUNIT", False, info="Use absolute absorption units."),
-                V("PRINT", Integer(min=0), is_optional=True, info="Native CHIXAS print control."),
-            ]), SITES],
-        validators=_validate_chixas,
-        info="Field-induced magnetic circular dichroism in XAS",
-        description="Serial periodic ASA FREL CHIXAS with supplied NEF, CHISPN and CHIVV for every potential type. "
-                    "Input-only validation cannot establish agreement with the potential or DOS normalization. "
-                    "Spin-resolved orbital input, restart and TAU cache workflows are outside this audit."
-    )
-    schema._task_definition = TaskDefinition("CHIXAS", supports={"3d", "2d"}, experimental=True, executable="kkrchi", mpi=False)
-    return schema
+definition = ChixasInputParametersDefinition

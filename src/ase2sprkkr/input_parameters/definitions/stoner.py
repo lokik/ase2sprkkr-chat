@@ -25,32 +25,38 @@ def _validate_stoner(parameters, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    energy = ENERGY(emin=(None, "Omitted bound delegates to EF", None),
-                    emax=(None, "Omitted bound delegates to EF", None),
-                    defaults={"GRID": 0, "NE": 1, "ImE": 0.0})
-    for name in ("EMIN", "EMAX"):
-        energy.copy_member(name, is_optional=True)
-    schema = TauCacheInputParametersDefinition(
-        "stoner",
-        [CONTROL("STONER"), TAU, MODE, STRCONST, energy, TASK("STONER"), SITES],
-        validators=_validate_stoner,
-        info="Stoner parameter from the DOS and radial wave functions at EF.",
-        description="No task-specific input options. Uses the VWN susceptibility kernel. "
-                    "Native STONER enables reading a TAU directory and falls back to the normal KKRGEN calculation when no reusable TAU cache is available. "
-                    "The final STONER branch is skipped by SPR-KKR in MPI mode. "
-                    "Embedded clusters are unsupported: native SUSC_GAMMA loops over "
-                    "host atom types, substitutes artificial host DOS and can read "
-                    "unwritten host wave-function records (SPR-KKR 9.7 audit). "
-                    "Only the fully relativistic, single-energy workflow is exposed; "
-                    "numerical results and FULLPOT have not been verified."
-    )
-    # Native SUSC_GAMMA is not cluster-safe (host-type loops and missing WF).
-    schema._task_definition = TaskDefinition(
-        "STONER", experimental=True, executable="kkrgen", mpi=False,
-        supports={"3d", "2d"}, output_files=(
-            "{DATASET_ADSI}_*_g-spin.dat",
-            "{DATASET_ADSI}_*_g-orb.dat",
-            "{DATASET_ADSI}_*_VWN_A-xc.dat",
-        ))
-    return schema
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class STONERInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        energy = ENERGY(emin=(None, "Omitted bound delegates to EF", None),
+                        emax=(None, "Omitted bound delegates to EF", None),
+                        defaults={"GRID": 0, "NE": 1, "ImE": 0.0})
+        for name in ("EMIN", "EMAX"):
+            energy.copy_member(name, is_optional=True)
+        schema = TauCacheInputParametersDefinition(
+            "stoner",
+            [CONTROL("STONER"), TAU, MODE, STRCONST, energy, TASK("STONER"), SITES],
+            validators=_validate_stoner,
+            info="Stoner parameter from the DOS and radial wave functions at EF.",
+            description="No task-specific input options. Uses the VWN susceptibility kernel. "
+                        "Native STONER enables reading a TAU directory and falls back to the normal KKRGEN calculation when no reusable TAU cache is available. "
+                        "The final STONER branch is skipped by SPR-KKR in MPI mode. "
+                        "Embedded clusters are unsupported: native SUSC_GAMMA loops over "
+                        "host atom types, substitutes artificial host DOS and can read "
+                        "unwritten host wave-function records (SPR-KKR 9.7 audit). "
+                        "Only the fully relativistic, single-energy workflow is exposed; "
+                        "numerical results and FULLPOT have not been verified."
+        )
+        # Native SUSC_GAMMA is not cluster-safe (host-type loops and missing WF).
+        schema._task_definition = TaskDefinition(
+            "STONER", experimental=True, executable="kkrgen", mpi=False,
+            supports={"3d", "2d"}, output_files=(
+                "{DATASET_ADSI}_*_g-spin.dat",
+                "{DATASET_ADSI}_*_g-orb.dat",
+                "{DATASET_ADSI}_*_VWN_A-xc.dat",
+            ))
+        return schema
+
+definition = STONERInputParametersDefinition

@@ -32,32 +32,38 @@ def _validate(parameters, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    energy = ENERGY(emax=(None, "XES forces the upper bound to EF", None), defaults={"GRID": 3, "NE": 300, "ImE": 0.01})
-    energy.copy_member("EMAX", is_optional=True)
-    energy.copy_member("NE", type=SetOf(Integer(min=2), min_length=1, max_length=2))
-    task = TASK("XES", add=[
-        V("IT", Integer(min=1), 1, is_always_added=False, info="Atom type, not site index."),
-        V("CL", Keyword(*(f"{n}{s}" for n in range(1, 6) for s in "SPDF")), "2P", is_always_added=False),
-        V("ME", Keyword("ADA", "NAB", "GRV"), "ADA", is_always_added=False),
-        V("OUTPUT", Keyword("BARN", "MBARN", "SIGMA"), "BARN", is_always_added=False),
-        V("POLOBS", Keyword("S", "C"), "S", is_always_added=False, info="Spherical (+,-,z) or Cartesian (x,y,z) polarization."),
-        V("DIPOL", Integer(min=0, max=1), 0, is_always_added=False, info="0 includes non-dipole terms; NAB forces 1."),
-        V("TAUCORE", SetOf(float, min_length=1, max_length=2), is_optional=True, info="Core widths in eV; last entry repeats. Read by XRAYSPEC, but no use in the RXES rate is established."),
-        V("GFCONVRH", False), V("WRREGIRR", False),
-        V("NONDIPE2", False), V("NONDIPM1", False),
-        V("FRAMETET", float, is_optional=True, info="Frame Euler angle in degrees."),
-        V("FRAMEPHI", float, is_optional=True, info="Frame Euler angle in degrees."),
-        V("FRAMEGAM", float, is_optional=True, info="Frame Euler angle in degrees."),
-    ])
-    schema = XrayRateInputParametersDefinition(
-        "xes",
-        [CONTROL("XES"), TAU, MODE, energy, task, SITES],
-        validators=_validate,
-        info="X-ray emission through the common XRAYSPEC workflow.",
-        description="Requires an occupied-state TAU directory with NE matching ENERGY.NE, or a workflow producing it. "
-                    "Native XES forces EMAX=EF. RXES shares the calculation with RXAS; numerical emission "
-                    "interpretation is unverified. MESPLIT is forced true and is not exposed as a tunable flag."
-    )
-    schema._task_definition = TaskDefinition("XES", supports=(), experimental=True, executable="kkrgen", mpi=False)
-    return schema
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class XESInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        energy = ENERGY(emax=(None, "XES forces the upper bound to EF", None), defaults={"GRID": 3, "NE": 300, "ImE": 0.01})
+        energy.copy_member("EMAX", is_optional=True)
+        energy.copy_member("NE", type=SetOf(Integer(min=2), min_length=1, max_length=2))
+        task = TASK("XES", add=[
+            V("IT", Integer(min=1), 1, is_always_added=False, info="Atom type, not site index."),
+            V("CL", Keyword(*(f"{n}{s}" for n in range(1, 6) for s in "SPDF")), "2P", is_always_added=False),
+            V("ME", Keyword("ADA", "NAB", "GRV"), "ADA", is_always_added=False),
+            V("OUTPUT", Keyword("BARN", "MBARN", "SIGMA"), "BARN", is_always_added=False),
+            V("POLOBS", Keyword("S", "C"), "S", is_always_added=False, info="Spherical (+,-,z) or Cartesian (x,y,z) polarization."),
+            V("DIPOL", Integer(min=0, max=1), 0, is_always_added=False, info="0 includes non-dipole terms; NAB forces 1."),
+            V("TAUCORE", SetOf(float, min_length=1, max_length=2), is_optional=True, info="Core widths in eV; last entry repeats. Read by XRAYSPEC, but no use in the RXES rate is established."),
+            V("GFCONVRH", False), V("WRREGIRR", False),
+            V("NONDIPE2", False), V("NONDIPM1", False),
+            V("FRAMETET", float, is_optional=True, info="Frame Euler angle in degrees."),
+            V("FRAMEPHI", float, is_optional=True, info="Frame Euler angle in degrees."),
+            V("FRAMEGAM", float, is_optional=True, info="Frame Euler angle in degrees."),
+        ])
+        schema = XrayRateInputParametersDefinition(
+            "xes",
+            [CONTROL("XES"), TAU, MODE, energy, task, SITES],
+            validators=_validate,
+            info="X-ray emission through the common XRAYSPEC workflow.",
+            description="Requires an occupied-state TAU directory with NE matching ENERGY.NE, or a workflow producing it. "
+                        "Native XES forces EMAX=EF. RXES shares the calculation with RXAS; numerical emission "
+                        "interpretation is unverified. MESPLIT is forced true and is not exposed as a tunable flag."
+        )
+        schema._task_definition = TaskDefinition("XES", supports=(), experimental=True, executable="kkrgen", mpi=False)
+        return schema
+
+definition = XESInputParametersDefinition

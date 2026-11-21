@@ -19,19 +19,25 @@ def _validate_fmag(parameters, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    energy = ENERGY(emax=(None, "Omitted upper bound delegates to EF", None),
-                    defaults={"GRID": 5, "NE": 30, "ImE": 0.0})
-    energy.copy_member("EMAX", is_optional=True)
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    schema = InputParameters(
-        "fmag",
-        [CONTROL("FMAG"), TAU, MODE, STRCONST, energy, TASK("FMAG"), SITES],
-        validators=_validate_fmag,
-        info="Magnetic form factor from charge, spin and orbital densities (ASA).",
-        description="No task-specific form-factor options are read. FMAG becomes E-INTEGRAL internally. "
-                    "The momentum mesh is fixed to 100 points. FULLPOT stops in GEN. "
-                    "Normalization of a zero magnetic moment is unguarded in SPR-KKR. Numerical output is unverified."
-    )
-    schema._task_definition = TaskDefinition("FMAG", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=True, output_files=("{DATASET_ADSI}_fmag_*.agr", "{DATASET_ADSI}_dens_*.agr"))
-    return schema
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class FMAGInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        energy = ENERGY(emax=(None, "Omitted upper bound delegates to EF", None),
+                        defaults={"GRID": 5, "NE": 30, "ImE": 0.0})
+        energy.copy_member("EMAX", is_optional=True)
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        schema = cls(
+            "fmag",
+            [CONTROL("FMAG"), TAU, MODE, STRCONST, energy, TASK("FMAG"), SITES],
+            validators=_validate_fmag,
+            info="Magnetic form factor from charge, spin and orbital densities (ASA).",
+            description="No task-specific form-factor options are read. FMAG becomes E-INTEGRAL internally. "
+                        "The momentum mesh is fixed to 100 points. FULLPOT stops in GEN. "
+                        "Normalization of a zero magnetic moment is unguarded in SPR-KKR. Numerical output is unverified."
+        )
+        schema._task_definition = TaskDefinition("FMAG", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=True, output_files=("{DATASET_ADSI}_fmag_*.agr", "{DATASET_ADSI}_dens_*.agr"))
+        return schema
+
+definition = FMAGInputParametersDefinition

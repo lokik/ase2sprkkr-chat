@@ -28,26 +28,32 @@ def _validate_chilandau(p, _values, why):
     return errors or None
 
 
-def input_parameters_definition():
-    energy = ENERGY(defaults={"GRID": [5], "NE": [30], "ImE": 0.01})
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    schema = InputParameters(
-        "chilandau",
-        [CONTROL("CHILANDAU"), TAU, MODE, CPA, STRCONST, energy,
-            Section("SCF", [V("FULLPOT", False)], is_optional=True, is_expert=True),
-            TASK("CHILANDAU", add=[
-                V("CLURAD", 2.2, info="Neighbour radius in ALAT units; explicit convergence choice, not a native default."),
-                V("NSHLCLU", Integer(min=0), is_optional=True, info="Shell count overrides CLURAD when supplied."),
-                V("SELECT", SetOf(str, min_length=1, max_length=100), is_optional=True, info="Select neighbouring sites by element."),
-                V("EXCLUDE", SetOf(str, min_length=1, max_length=100), is_optional=True, info="Exclude neighbouring sites by element."),
-                V("QREPONLY", False, info="Representative central sites only; check multiplicities before enabling."),
-                V("PRINT", Integer(min=0), is_optional=True, info="Native TASK print control."),
-            ]), SITES],
-        validators=_validate_chilandau,
-        info="Landau orbital magnetic susceptibility",
-        description="Serial periodic ASA FREL workflow; KMROT=0 required by native calculation. "
-                    "Native MPI has allocation and reduction defects. Converge both energy mesh and neighbour radius. "
-                    "Native output contains partial energy sums; use the last serial block."
-    )
-    schema._task_definition = TaskDefinition("CHILANDAU", supports={"3d"}, experimental=True, executable="kkrchi", mpi=False)
-    return schema
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class CHILANDAUInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        energy = ENERGY(defaults={"GRID": [5], "NE": [30], "ImE": 0.01})
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        schema = cls(
+            "chilandau",
+            [CONTROL("CHILANDAU"), TAU, MODE, CPA, STRCONST, energy,
+                Section("SCF", [V("FULLPOT", False)], is_optional=True, is_expert=True),
+                TASK("CHILANDAU", add=[
+                    V("CLURAD", 2.2, info="Neighbour radius in ALAT units; explicit convergence choice, not a native default."),
+                    V("NSHLCLU", Integer(min=0), is_optional=True, info="Shell count overrides CLURAD when supplied."),
+                    V("SELECT", SetOf(str, min_length=1, max_length=100), is_optional=True, info="Select neighbouring sites by element."),
+                    V("EXCLUDE", SetOf(str, min_length=1, max_length=100), is_optional=True, info="Exclude neighbouring sites by element."),
+                    V("QREPONLY", False, info="Representative central sites only; check multiplicities before enabling."),
+                    V("PRINT", Integer(min=0), is_optional=True, info="Native TASK print control."),
+                ]), SITES],
+            validators=_validate_chilandau,
+            info="Landau orbital magnetic susceptibility",
+            description="Serial periodic ASA FREL workflow; KMROT=0 required by native calculation. "
+                        "Native MPI has allocation and reduction defects. Converge both energy mesh and neighbour radius. "
+                        "Native output contains partial energy sums; use the last serial block."
+        )
+        schema._task_definition = TaskDefinition("CHILANDAU", supports={"3d"}, experimental=True, executable="kkrchi", mpi=False)
+        return schema
+
+definition = CHILANDAUInputParametersDefinition

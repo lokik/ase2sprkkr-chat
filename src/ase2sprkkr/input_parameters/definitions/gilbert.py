@@ -18,6 +18,69 @@ class GilbertInputParametersDefinition(TauCacheInputParametersDefinition):
         return tuple(files)
 
 
+    @classmethod
+    def create_definition(cls):
+        schema = GilbertInputParametersDefinition(
+            "gilbert",
+            [
+                CONTROL("GILBERT"),
+                TAU,
+                MODE,
+                CPA,
+                STRCONST,
+                ENERGY(emin=None, emax=None, defaults={"GRID": 0, "NE": 1}),
+                SITES.copy(defaults={"NL": 4}),
+                TASK("GILBERT", add=[
+                    V("NTMP", Integer(min=1), is_required=False, info="Number of temperature points used for α(T)"),
+                    V(
+                        "SETFLUCT",
+                        Keyword(
+                            {
+                                "MLIN": "Linear temperature mesh with optional linear M(T)=1-DMAGDT*T spin fluctuations; lattice vibrations can be combined.",
+                                "M_T": "Temperature mesh and magnetization read from FLUCTFIL; spin fluctuations and lattice vibrations can be combined.",
+                            }
+                        ),
+                        default_value=None,
+                        is_required=False,
+                        info="Finite temperature calculation mode",
+                    ),
+                    V(
+                        "NVIBRA",
+                        Integer(min=1),
+                        is_required=False,
+                        info="Number of directions for atomic displacements representing thermal lattice vibrations",
+                    ),
+                    V("TMPMIN", real, is_required=False, info="Lower limit of the temperature region (SETFLUCT=MLIN)."),
+                    V("TMPMAX", real, is_required=False, info="Upper limit of the temperature region (SETFLUCT=MLIN)"),
+                    V(
+                        "FLUCTFIL",
+                        str,
+                        is_required=False,
+                        value_mapping=_map_filename,
+                        info="Data ﬁle which contains the information about "
+                        "temperature dependent magnetization, taken from the "
+                        "experiment or Monte Carlo simulations",
+                    ),
+                    V("NFTET", Integer(min=1), is_required=False, info="Number of grid points specifying θ angle (SETFLUCT=M_T)"),
+                    V("NFPHI", Integer(min=1), is_required=False, info="Azimuthal spin grid for M_T or MLIN."),
+                    V("DMAGDT", real, is_optional=True, info="Slope of normalized M(T) in MLIN; required when NFPHI>1."),
+                    V("TDEBYE", real, is_optional=True, info="Debye temperature in K for lattice displacements."),
+                    V("INITSVEC", Integer(min=0, max=1), is_optional=True, info="0 uses native canonical displacement directions; 1 constructs directions."),
+                ]),
+            ],
+            validators=_validate_gilbert,
+            description="Standard periodic magnetic FREL Gilbert damping at EF. Native GIL requires KMROT=0. "
+                        "RDTAU is set by native INITVAR; compatible initialization TAU data may be required. "
+                        "MCS, RDLM and NLCPA workflows are not audited here.",
+            info="The Gilbert damping parameter calculation"
+        )
+        schema._task_definition = TaskDefinition("GILBERT", supports={"3d", "2d"}, executable="kkrchi", output_files=(
+                "{DATASET_ADSI}alfa_x.dat",
+                "{DATASET_ADSI}alfa_T.dat",
+                "{DATASET_ADSI}_alfa_T.agr",
+            ))
+        return schema
+
 def _validate_gilbert(p, _values, why):
     if why == "set":
         return None
@@ -60,67 +123,6 @@ def _validate_gilbert(p, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    schema = GilbertInputParametersDefinition(
-        "gilbert",
-        [
-            CONTROL("GILBERT"),
-            TAU,
-            MODE,
-            CPA,
-            STRCONST,
-            ENERGY(emin=None, emax=None, defaults={"GRID": 0, "NE": 1}),
-            SITES.copy(defaults={"NL": 4}),
-            TASK("GILBERT", add=[
-                V("NTMP", Integer(min=1), is_required=False, info="Number of temperature points used for α(T)"),
-                V(
-                    "SETFLUCT",
-                    Keyword(
-                        {
-                            "MLIN": "Linear temperature mesh with optional linear M(T)=1-DMAGDT*T spin fluctuations; lattice vibrations can be combined.",
-                            "M_T": "Temperature mesh and magnetization read from FLUCTFIL; spin fluctuations and lattice vibrations can be combined.",
-                        }
-                    ),
-                    default_value=None,
-                    is_required=False,
-                    info="Finite temperature calculation mode",
-                ),
-                V(
-                    "NVIBRA",
-                    Integer(min=1),
-                    is_required=False,
-                    info="Number of directions for atomic displacements representing thermal lattice vibrations",
-                ),
-                V("TMPMIN", real, is_required=False, info="Lower limit of the temperature region (SETFLUCT=MLIN)."),
-                V("TMPMAX", real, is_required=False, info="Upper limit of the temperature region (SETFLUCT=MLIN)"),
-                V(
-                    "FLUCTFIL",
-                    str,
-                    is_required=False,
-                    value_mapping=_map_filename,
-                    info="Data ﬁle which contains the information about "
-                    "temperature dependent magnetization, taken from the "
-                    "experiment or Monte Carlo simulations",
-                ),
-                V("NFTET", Integer(min=1), is_required=False, info="Number of grid points specifying θ angle (SETFLUCT=M_T)"),
-                V("NFPHI", Integer(min=1), is_required=False, info="Azimuthal spin grid for M_T or MLIN."),
-                V("DMAGDT", real, is_optional=True, info="Slope of normalized M(T) in MLIN; required when NFPHI>1."),
-                V("TDEBYE", real, is_optional=True, info="Debye temperature in K for lattice displacements."),
-                V("INITSVEC", Integer(min=0, max=1), is_optional=True, info="0 uses native canonical displacement directions; 1 constructs directions."),
-            ]),
-        ],
-        validators=_validate_gilbert,
-        description="Standard periodic magnetic FREL Gilbert damping at EF. Native GIL requires KMROT=0. "
-                    "RDTAU is set by native INITVAR; compatible initialization TAU data may be required. "
-                    "MCS, RDLM and NLCPA workflows are not audited here.",
-        info="The Gilbert damping parameter calculation"
-    )
-    schema._task_definition = TaskDefinition("GILBERT", supports={"3d", "2d"}, executable="kkrchi", output_files=(
-            "{DATASET_ADSI}alfa_x.dat",
-            "{DATASET_ADSI}alfa_T.dat",
-            "{DATASET_ADSI}_alfa_T.agr",
-        ))
-    return schema
-
+definition = GilbertInputParametersDefinition
 
 """ The Gilbert damping input parameters definition"""

@@ -37,20 +37,26 @@ def _validate_socpar(parameters, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    energy = ENERGY(emax=(None, "Upper energy in Ry; omitted means the actual Fermi energy", None),
-                    defaults={"GRID": 1, "NE": 300, "ImE": 0.0})
-    energy.copy_member("EMAX", is_optional=True)
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    schema = InputParameters(
-        "socpar",
-        [CONTROL("SOCPAR"), TAU, MODE, STRCONST, energy, TASK("SOCPAR"), SITES],
-        validators=_validate_socpar,
-        info="Calculate single-site spin-orbit and exchange parameters (ASA, serial).",
-        description="All atomic types and l=1..NL-1 are evaluated; no task-specific options are read. "
-                    "SPR-KKR forces BS-SOC, suppresses the magnetic field and sets SOC scaling to 1e-3. "
-                    "FULLPOT, DMFT and LDA+U are unsupported. The exchange-output eV label "
-                    "does not match its unconverted Ry values in the 9.7 source."
-    )
-    schema._task_definition = TaskDefinition("SOCPAR", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=("{DATASET_ADSI}_soc_*.agr", "{DATASET_ADSI}_exc_*.agr"))
-    return schema
+from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
+
+class SOCPARInputParametersDefinition(_BaseInputParametersDefinition):
+    @classmethod
+    def create_definition(cls):
+        energy = ENERGY(emax=(None, "Upper energy in Ry; omitted means the actual Fermi energy", None),
+                        defaults={"GRID": 1, "NE": 300, "ImE": 0.0})
+        energy.copy_member("EMAX", is_optional=True)
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        schema = cls(
+            "socpar",
+            [CONTROL("SOCPAR"), TAU, MODE, STRCONST, energy, TASK("SOCPAR"), SITES],
+            validators=_validate_socpar,
+            info="Calculate single-site spin-orbit and exchange parameters (ASA, serial).",
+            description="All atomic types and l=1..NL-1 are evaluated; no task-specific options are read. "
+                        "SPR-KKR forces BS-SOC, suppresses the magnetic field and sets SOC scaling to 1e-3. "
+                        "FULLPOT, DMFT and LDA+U are unsupported. The exchange-output eV label "
+                        "does not match its unconverted Ry values in the 9.7 source."
+        )
+        schema._task_definition = TaskDefinition("SOCPAR", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=("{DATASET_ADSI}_soc_*.agr", "{DATASET_ADSI}_exc_*.agr"))
+        return schema
+
+definition = SOCPARInputParametersDefinition

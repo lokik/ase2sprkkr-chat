@@ -41,6 +41,50 @@ class MeplotInputParametersDefinition(InputParameters):
         return tuple(files)
 
 
+    @classmethod
+    def create_definition(cls):
+        # EMAX is left unset so SPR-KKR can use the actual Fermi energy.
+        energy = ENERGY(emax=(None, "Upper electron energy in Ry; omitted means the Fermi energy", None),
+                        defaults={"GRID": 3, "NE": 300, "ImE": 0.01})
+        energy.copy_member("EMAX", is_optional=True)
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        schema = MeplotInputParametersDefinition(
+            "meplot",
+            [CONTROL("MEPLOT"), TAU, MODE, STRCONST, energy,
+             TASK("MEPLOT", [
+                 V("ITSEL", Integer(min=1), 1, is_always_added=False,
+                   info="One-based atomic-type index. SPR-KKR defaults to 1."),
+                 V("IPRINT", int, _iprint_default, is_required=False, is_always_added=False,
+                   info="Override CONTROL.PRINT inside ME_PLOT. The input key is IPRINT, not PRINT."),
+                 V("INITIALSTATE", Keyword("BAND", "CORE"), "BAND", is_always_added=False,
+                   info="BAND: ENERGY specifies initial states; CORE: ENERGY specifies final states."),
+                 V("L", Integer(min=0), is_optional=True,
+                   info="Select initial BAND orbital l. If omitted, all initial band orbitals are included."),
+                 V("CL", Keyword(*(f"{n}{shell}" for n in range(1, 7) for shell in "SPDF")),
+                   "2P", is_always_added=False, info="Initial CORE shell. Default: 2P."),
+                 V("NONMAG", False,
+                   info="Suppress the selected type's magnetic field and apply nonmagnetic dipole selection rules. "
+                        "This TASK flag is distinct from CONTROL.NONMAG."),
+                 V("SEFIN", Integer(min=0, max=3), 0, is_always_added=False,
+                   info="Final-state self energy: 0 none; 1 Hedin-Lundqvist; 2 Dirac-Hara; "
+                        "3 Dirac-Hara real and Hedin-Lundqvist imaginary part. Disabled in photon scans."),
+                 V("EPHOT", float, 100.0, is_always_added=False,
+                   info="Fixed photon energy in eV, for INITIALSTATE=BAND. Default: 100 eV."),
+                 # Writing even NEPHOT=1 selects the range branch in ME_PLOT.
+                 V("NEPHOT", Integer(min=1), 1, is_always_added=False,
+                   info="Number of photon energies. For >1 supply both bounds and ENERGY.NE=1."),
+                 V("EPHOTMIN", float, is_optional=True, info="Minimum photon energy in eV (NEPHOT>1)."),
+                 V("EPHOTMAX", float, is_optional=True, info="Maximum photon energy in eV (NEPHOT>1)."),
+             ]), SITES],
+            validators=_validate_meplot,
+            info="Plot dipole matrix elements for core/band initial states (serial).",
+            description="ME_PLOT fixes initial m_j=1/2 and polarization q=0. "
+                        "Full-potential branches exist but have not been tested here. "
+                        "Photon scans must use a single initial electron energy."
+        )
+        schema._task_definition = TaskDefinition("MEPLOT", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
+        return schema
+
 def _iprint_default(option):
     return option._container._get_root_container().CONTROL.PRINT()
 
@@ -98,45 +142,4 @@ def _validate_meplot(parameters, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    # EMAX is left unset so SPR-KKR can use the actual Fermi energy.
-    energy = ENERGY(emax=(None, "Upper electron energy in Ry; omitted means the Fermi energy", None),
-                    defaults={"GRID": 3, "NE": 300, "ImE": 0.01})
-    energy.copy_member("EMAX", is_optional=True)
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    schema = MeplotInputParametersDefinition(
-        "meplot",
-        [CONTROL("MEPLOT"), TAU, MODE, STRCONST, energy,
-         TASK("MEPLOT", [
-             V("ITSEL", Integer(min=1), 1, is_always_added=False,
-               info="One-based atomic-type index. SPR-KKR defaults to 1."),
-             V("IPRINT", int, _iprint_default, is_required=False, is_always_added=False,
-               info="Override CONTROL.PRINT inside ME_PLOT. The input key is IPRINT, not PRINT."),
-             V("INITIALSTATE", Keyword("BAND", "CORE"), "BAND", is_always_added=False,
-               info="BAND: ENERGY specifies initial states; CORE: ENERGY specifies final states."),
-             V("L", Integer(min=0), is_optional=True,
-               info="Select initial BAND orbital l. If omitted, all initial band orbitals are included."),
-             V("CL", Keyword(*(f"{n}{shell}" for n in range(1, 7) for shell in "SPDF")),
-               "2P", is_always_added=False, info="Initial CORE shell. Default: 2P."),
-             V("NONMAG", False,
-               info="Suppress the selected type's magnetic field and apply nonmagnetic dipole selection rules. "
-                    "This TASK flag is distinct from CONTROL.NONMAG."),
-             V("SEFIN", Integer(min=0, max=3), 0, is_always_added=False,
-               info="Final-state self energy: 0 none; 1 Hedin-Lundqvist; 2 Dirac-Hara; "
-                    "3 Dirac-Hara real and Hedin-Lundqvist imaginary part. Disabled in photon scans."),
-             V("EPHOT", float, 100.0, is_always_added=False,
-               info="Fixed photon energy in eV, for INITIALSTATE=BAND. Default: 100 eV."),
-             # Writing even NEPHOT=1 selects the range branch in ME_PLOT.
-             V("NEPHOT", Integer(min=1), 1, is_always_added=False,
-               info="Number of photon energies. For >1 supply both bounds and ENERGY.NE=1."),
-             V("EPHOTMIN", float, is_optional=True, info="Minimum photon energy in eV (NEPHOT>1)."),
-             V("EPHOTMAX", float, is_optional=True, info="Maximum photon energy in eV (NEPHOT>1)."),
-         ]), SITES],
-        validators=_validate_meplot,
-        info="Plot dipole matrix elements for core/band initial states (serial).",
-        description="ME_PLOT fixes initial m_j=1/2 and polarization q=0. "
-                    "Full-potential branches exist but have not been tested here. "
-                    "Photon scans must use a single initial electron energy."
-    )
-    schema._task_definition = TaskDefinition("MEPLOT", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
-    return schema
+definition = MeplotInputParametersDefinition

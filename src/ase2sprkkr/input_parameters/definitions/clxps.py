@@ -20,6 +20,39 @@ class CLXPSInputParametersDefinition(InputParameters):
         return tuple(files)
 
 
+    @classmethod
+    def create_definition(cls):
+        # Allocate enough space even for 4f (14 states); native CLXPS default is 18.
+        energy = ENERGY(emax=(None, "Initialization bound; actual final energies come from core levels plus EPHOT", None),
+                        defaults={"GRID": 3, "NE": 18, "ImE": 0.01})
+        energy.copy_member("EMAX", is_optional=True)
+        energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+        values = [
+            V("ME", Keyword("ADA"), "ADA", is_always_added=False, info="Only ADA reaches the implemented matrix-element branch."),
+            V("IT", Integer(min=1), 1, is_always_added=False, info="One-based atomic type index."),
+            V("CL", Keyword(*(f"{n}{s}" for n in range(1, 6) for s in "SPDF")), "2P", is_always_added=False),
+            V("EPHOT", float, 1253.6, is_always_added=False, info="Photon energy in eV; final states must lie above EF."),
+            V("ImE", float, 0.01, is_always_added=False, info="Final-state imaginary energy in Ry; near-zero values become 0.01."),
+            V("MECHECK", False, info="Print diagnostic matrix elements."),
+            V("LINPOL", False, info="Linear polarization; omitted means circular."),
+            V("USETSS", False, info="Use the single-site t matrix instead of the scattering-path operator."),
+            V("ANGRES", False, info="Angle-resolved case; supply a complete geometry."),
+        ] + [V(f"{name}{i}", SetOf(float, length=2), is_optional=True,
+               info="Polar and azimuthal angles in degrees; photon q, polarization e or electron k.")
+             for i in range(11) for name in ("ANGQ", "ANGE", "ANGK")]
+        schema = CLXPSInputParametersDefinition(
+            "clxps",
+            [CONTROL("CLXPS"), TAU, MODE, STRCONST, energy, TASK("CLXPS", values), SITES],
+            validators=_validate_clxps,
+            info="Core-level XPS (ASA, fully relativistic).",
+            description="TASK sets core shell, photon energy and optional angular geometries. "
+                        "Final electron energies are core eigenenergies + EPHOT, not an ENERGY scan. "
+                        "Geometries use index 0 for one overriding geometry, or consecutive indices 1..10. "
+                        "FULLPOT, DMFT and LDA+U are unsupported; numerical output is unverified."
+        )
+        schema._task_definition = TaskDefinition("CLXPS", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
+        return schema
+
 def _validate_clxps(parameters, _values, why):
     if why == "set":
         return None
@@ -58,34 +91,4 @@ def _validate_clxps(parameters, _values, why):
     return issues or None
 
 
-def input_parameters_definition():
-    # Allocate enough space even for 4f (14 states); native CLXPS default is 18.
-    energy = ENERGY(emax=(None, "Initialization bound; actual final energies come from core levels plus EPHOT", None),
-                    defaults={"GRID": 3, "NE": 18, "ImE": 0.01})
-    energy.copy_member("EMAX", is_optional=True)
-    energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
-    values = [
-        V("ME", Keyword("ADA"), "ADA", is_always_added=False, info="Only ADA reaches the implemented matrix-element branch."),
-        V("IT", Integer(min=1), 1, is_always_added=False, info="One-based atomic type index."),
-        V("CL", Keyword(*(f"{n}{s}" for n in range(1, 6) for s in "SPDF")), "2P", is_always_added=False),
-        V("EPHOT", float, 1253.6, is_always_added=False, info="Photon energy in eV; final states must lie above EF."),
-        V("ImE", float, 0.01, is_always_added=False, info="Final-state imaginary energy in Ry; near-zero values become 0.01."),
-        V("MECHECK", False, info="Print diagnostic matrix elements."),
-        V("LINPOL", False, info="Linear polarization; omitted means circular."),
-        V("USETSS", False, info="Use the single-site t matrix instead of the scattering-path operator."),
-        V("ANGRES", False, info="Angle-resolved case; supply a complete geometry."),
-    ] + [V(f"{name}{i}", SetOf(float, length=2), is_optional=True,
-           info="Polar and azimuthal angles in degrees; photon q, polarization e or electron k.")
-         for i in range(11) for name in ("ANGQ", "ANGE", "ANGK")]
-    schema = CLXPSInputParametersDefinition(
-        "clxps",
-        [CONTROL("CLXPS"), TAU, MODE, STRCONST, energy, TASK("CLXPS", values), SITES],
-        validators=_validate_clxps,
-        info="Core-level XPS (ASA, fully relativistic).",
-        description="TASK sets core shell, photon energy and optional angular geometries. "
-                    "Final electron energies are core eigenenergies + EPHOT, not an ENERGY scan. "
-                    "Geometries use index 0 for one overriding geometry, or consecutive indices 1..10. "
-                    "FULLPOT, DMFT and LDA+U are unsupported; numerical output is unverified."
-    )
-    schema._task_definition = TaskDefinition("CLXPS", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
-    return schema
+definition = CLXPSInputParametersDefinition
