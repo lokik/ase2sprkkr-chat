@@ -99,3 +99,42 @@ def test_print_info_formats_the_same_events_as_callback(capsys):
     assert output[1] == ScfOutputParser.format_info(**events[1])
     assert "RMS(V)" in output[1]
     assert "RMS(B)" in output[1]
+
+
+
+def test_native_scf_all_three_iteration_footers_and_qmvec_branch():
+    """scf.f 2321-2372 writes 99011 for converged/continue/exhausted."""
+    headers = [
+        "  1 ERR 0.300E-04 0.200E-04 EF 0.6 0.01 D 12.0 M 1.2 0.3\n",
+        "  2 ERR 0.100E-05 0.200E-05 EF 0.6 0.01 D 12.0 M 1.2 0.3\n",
+        "  3 ERR 0.100E-07 0.200E-07 EF 0.6 0.01 D 12.0 M 1.2 0.3\n",
+    ]
+    footers = [
+        " ETOT    -42.5    SCF - cycle not converged  -  continue\n",
+        " ETOT    -42.6    SCF - cycle not converged - NSCFITER exhausted\n",
+        " ETOT    -42.7    SCF - cycle converged !!!!!!!!!\n",
+    ]
+    events = []
+    parser = ScfProgressParser(on_info=lambda **e: events.append(e))
+    parser.feed(" SCF-tol : 0.0000100000\n")
+    for header, footer in zip(headers, footers):
+        parser.feed(header[:18])
+        parser.feed(header[18:] + footer)
+    parser.feed(" 1 # QMVEC ETOT MSPIN SPIRAL\n")
+    cycles = [e["data"] for e in events if e["kind"] == "scf_iteration"]
+    assert len(cycles) == 3
+    assert [cycle.converged for cycle in cycles] == [False, False, True]
+    assert cycles[0].iteration == 1
+    assert cycles[-1].iteration == 3
+    assert len([e for e in events if e["kind"] == "scf_tolerance"]) == 1
+
+
+def test_native_scf_final_exhausted_is_not_converged():
+    """Native STOP_REGULAR can follow NSCFITER exhaustion without convergence."""
+    parser = ScfProgressParser()
+    parser.feed(
+        " 10 ERR 0.100E-02 0.200E-02 EF 0.7 0.01 D 12 M 1 0\n"
+        " ETOT -42.5 SCF - cycle not converged - NSCFITER exhausted\n"
+    )
+    assert parser.last_iteration["iteration"] == 10
+    assert parser.last_iteration["converged"] is False
