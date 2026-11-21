@@ -52,3 +52,38 @@ def test_invalid(option, value):
     with pytest.raises((DataValidityError, DataValidityErrors, ValueError)):
         p.set({option: value})
         p.validate("save")
+
+
+@pytest.mark.parametrize("initial, points, effective", [
+    ("BSFEK", 1, "BSFKK"),
+    ("BSFKK", 200, "BSFEK"),
+])
+def test_switching_bsf_mode_does_not_warn_about_requested_alias(
+    initial, points, effective
+):
+    import warnings
+
+    p = InputParameters.create(initial)
+    p.CONTROL.POTFIL.set("Fe.pot")
+    p.ENERGY.NE.set([points])
+    if effective == "BSFKK":
+        p.TASK.NK1.set(10)
+        p.TASK.NK2.set(10)
+        p.TASK.K1.set([1., 0., 0.])
+        p.TASK.K2.set([0., 1., 0.])
+    else:
+        p.TASK.KPATH.set(1)
+
+    # The initial alias stays as provenance; only ENERGY.NE selects the task.
+    assert p.requested_task_name == initial
+    assert p.task_name == effective
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        p.validate("set")
+        p.validate("save")
+        p.copy().validate("save")
+
+    assert not any(
+        "ENERGY.NE selects BSF-" in str(warning.message)
+        for warning in caught
+    )
