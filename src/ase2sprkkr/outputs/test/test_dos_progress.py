@@ -109,3 +109,35 @@ def test_dos_total_requires_one_unambiguous_energy_segment():
     assert dos_total_points_from_parameters(params([100, 200])) is None
     assert dos_total_points_from_parameters(params([])) is None
     assert dos_total_points_from_parameters(None) is None
+
+
+
+def test_native_dos_mpi_energy_index_does_not_invent_global_completion():
+    """GEN MPI_ELOOP/MPI_KLOOP may print only one process's energies."""
+    from ase2sprkkr.outputs.readers.dos import DosEnergyInfo
+
+    events = []
+    parser = DosProgressParser(
+        on_info=lambda **event: events.append(event), total_points=200
+    )
+    parser.feed("MPI calculation with NPROCS = 4\n")
+    parser.feed(" 151 E= 0.4101 0.0010 IT= 1 Fe\n")
+    parser.feed(" 152 E= 0.4111 0.0010 IT= 1 Fe\n")
+    assert not any(e["kind"] == "dos_progress" for e in events)
+    assert [e["data"] for e in events if e["kind"] == "dos_energy_index"] == [
+        DosEnergyInfo(151, 200), DosEnergyInfo(152, 200),
+    ]
+    assert parser.format_info("dos_energy_index", DosEnergyInfo(151, 200)) == (
+        "DOS energy index 151 observed (MPI completion unknown)"
+    )
+
+
+def test_native_dos_both_printed_header_variants():
+    """CALCDOS 99006 contains L=, while 99008 omits it (NWRLOG)."""
+    events = []
+    parser = DosProgressParser(on_info=lambda **e: events.append(e), total_points=3)
+    parser.feed(" 1 E= 0.1234 0.0010 L= 2 IT= 1 Fe\n")
+    parser.feed(" 2 E= 0.1235 0.0010          IT= 1 Fe\n")
+    assert [e["data"].completed for e in events if e["kind"] == "dos_progress"] == [1]
+    parser.feed(" 3 E= 0.1236 0.0010 L= 0 IT= 1 Fe\n")
+    assert [e["data"].completed for e in events if e["kind"] == "dos_progress"] == [1, 2]
