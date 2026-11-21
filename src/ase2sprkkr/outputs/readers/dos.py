@@ -35,6 +35,34 @@ class DosProgressInfo:
     total: int | None
 
 
+@dataclass(frozen=True)
+class DosEnergyInfo:
+    """Observed native energy index; no implication about global MPI progress."""
+
+    index: int
+    total: int | None
+
+
+class _DosHeaderStream:
+    """Include MPI metadata consumed by the standard FILES reader."""
+
+    def __init__(self, source, on_line):
+        self.source = source
+        self.on_line = on_line
+
+    async def readline(self):
+        line = await self.source.readline()
+        if line:
+            self.on_line(line.decode("utf8", errors="replace").rstrip())
+        return line
+
+    def __fspath__(self):
+        return os.fspath(self.source)
+
+    def __getattr__(self, name):
+        return getattr(self.source, name)
+
+
 class DosOutputParser(DefaultOutputParser):
     """Parse native DOS progress lines without estimating missing milestones.
 
@@ -44,6 +72,9 @@ class DosOutputParser(DefaultOutputParser):
 
     # Native kkrgen prints one such header for every energy AND atomic
     # component IT. Repeated IT headers must not advance the progress.
+    _nprocs = re.compile(
+        r"\bMPI calculation with NPROCS\s*=\s*(\d+)", re.IGNORECASE
+    )
     _energy_header = re.compile(
         r"^\s*(?P<point>[1-9]\d*)\s+E\s*=\s*\S+.*?\s+IT\s*=\s*\d+\b",
         re.IGNORECASE,
@@ -61,6 +92,8 @@ class DosOutputParser(DefaultOutputParser):
         self.last_progress = None
         self._current_point = None
         self._started = False
+        self._mpi_energy_loop = False
+        self._last_seen = None
 
     def _note_started(self):
         if not self._started:
@@ -73,6 +106,8 @@ class DosOutputParser(DefaultOutputParser):
         if kind == "dos_progress":
             return (f"{data.completed}/{data.total} done." if data.total is not None
                     else f"{data.completed} energy points done.")
+        if kind == "dos_energy_index":
+            return f"DOS energy index {data.index} observed (MPI completion unknown)"
         return None
 
     def _emit_progress(self, completed, total):
@@ -84,6 +119,8 @@ class DosOutputParser(DefaultOutputParser):
             self.emit_info("dos_progress", progress)
 
     def _consume_line(self, line):
+        if match := self._nprocs.search(line):
+            self._mpi_energy_loop = int(match[1]) > 1
         if line.strip():
             self._note_started()
         # An explicitly completed count is authoritative when present.
@@ -99,6 +136,13 @@ class DosOutputParser(DefaultOutputParser):
         if match is None:
             return
         point = int(match.group("point"))
+        if self._mpi_energy_loop:
+            # GEN/SCF can distribute the energy loop over ranks; an observed
+            # IE is not a count of globally completed energies.
+            if self._last_seen != point:
+                self._last_seen = point
+                self.emit_info("dos_energy_index", DosEnergyInfo(point, self.total_points))
+            return
         previous = self._current_point
         if previous is not None and point > previous:
             self._emit_progress(previous, self.total_points)
@@ -106,7 +150,9 @@ class DosOutputParser(DefaultOutputParser):
             self._current_point = point
 
     async def read_output(self, stdout, result):
-        await self.read_commons(stdout, result)
+        await self.read_commons(
+            _DosHeaderStream(stdout, self._consume_line), result
+        )
         if self.total_points is None:
             self.total_points = dos_total_points_from_parameters(getattr(result, "input_parameters", None))
         self._note_started()
