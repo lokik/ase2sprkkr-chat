@@ -43,6 +43,29 @@ def test_dos_progress_prints_the_same_info_as_callback(capsys):
     assert capsys.readouterr().out == "Calculating density of states...\n3/20 done.\n"
 
 
+def test_standalone_dos_output_loads_with_mpi_header(tmp_path):
+    """Importing a saved DOS .out must not confuse the MPI regex with its count."""
+    from ase2sprkkr.outputs.task_result import TaskResult
+
+    output = tmp_path / "Fe_DOS.out"
+    output.write_text(
+        "TASK = DOS\n"
+        "FILES:\n\n"
+        "DOS: Fe_DOS.dos\n\n"
+        "MPI calculation with NPROCS = 4\n"
+        " 151 E= 0.4101 0.0010 IT= 1 Fe\n",
+        encoding="utf-8",
+    )
+
+    result = TaskResult.from_file(output)
+
+    assert result.task_name == "dos"
+    assert result.output_lines == [
+        "MPI calculation with NPROCS = 4",
+        " 151 E= 0.4101 0.0010 IT= 1 Fe",
+    ]
+
+
 def test_full_dos_output_parser_emits_same_events_and_retains_lines(tmp_path):
     class ParserWithoutHeader(DosOutputParser):
         async def read_commons(self, stdout, result):

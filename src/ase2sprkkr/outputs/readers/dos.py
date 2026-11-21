@@ -74,7 +74,7 @@ class DosOutputParser(DefaultOutputParser):
 
     # Native kkrgen prints one such header for every energy AND atomic
     # component IT. Repeated IT headers must not advance the progress.
-    _nprocs = re.compile(
+    _nprocs_pattern = re.compile(
         r"\bMPI calculation with NPROCS\s*=\s*(\d+)", re.IGNORECASE
     )
     _energy_header = re.compile(
@@ -132,7 +132,7 @@ class DosOutputParser(DefaultOutputParser):
             if self.total_points is not None:
                 self._emit_progress(self.total_points, self.total_points)
             return
-        if match := self._nprocs.search(line):
+        if match := self._nprocs_pattern.search(line):
             self._nprocs = int(match[1])
             self._mpi_energy_loop = self._nprocs > 1
         if line.strip():
