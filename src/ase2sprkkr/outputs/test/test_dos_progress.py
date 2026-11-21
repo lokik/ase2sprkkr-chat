@@ -63,3 +63,49 @@ def test_full_dos_output_parser_emits_same_events_and_retains_lines(tmp_path):
     ]
     assert [event["data"].completed for event in events if event["kind"] == "dos_progress"] == [13, 14]
     assert events[0] == {"kind": "dos_started", "data": None}
+
+
+
+def test_native_dos_energy_headers_are_per_energy_not_per_atomic_type():
+    events = []
+    parser = DosProgressParser(
+        on_info=lambda **event: events.append(event), total_points=300
+    )
+    parser.feed(" 13 E= 0.4061 0.0100 IT= 1 Ti\n")
+    parser.feed(" 13 E= 0.4061 0.0100 IT= 2 Co\n")
+    assert [event["kind"] for event in events] == ["dos_started"]
+
+    parser.feed(" 14 E= 0.4081 0.0100 IT= 1 Ti\n")
+    assert events[-1] == {
+        "kind": "dos_progress", "data": DosProgressInfo(13, 300)
+    }
+    parser.feed(" 14 E= 0.4081 0.0100 IT= 2 Co\n")
+    assert sum(event["kind"] == "dos_progress" for event in events) == 1
+    parser.feed(" 15 E= 0.4101 0.0100 IT= 1 Ti\n")
+    assert events[-1] == {
+        "kind": "dos_progress", "data": DosProgressInfo(14, 300)
+    }
+
+
+def test_native_dos_progress_without_known_total_has_no_fake_fraction():
+    events = []
+    parser = DosProgressParser(on_info=lambda **event: events.append(event))
+    parser.feed("34 E= 0.4061 0.0100 IT= 1 Ti\n")
+    parser.feed("35 E= 0.4161 0.0100 IT= 1 Ti\n")
+    assert events[-1] == {
+        "kind": "dos_progress", "data": DosProgressInfo(34, None)
+    }
+    assert parser.format_info(**events[-1]) == "34 energy points done."
+
+
+def test_dos_total_requires_one_unambiguous_energy_segment():
+    from ase2sprkkr.outputs.readers.dos import dos_total_points_from_parameters
+
+    def params(ne):
+        return SimpleNamespace(ENERGY=SimpleNamespace(NE=lambda: ne))
+
+    assert dos_total_points_from_parameters(params([300])) == 300
+    assert dos_total_points_from_parameters(params(300)) == 300
+    assert dos_total_points_from_parameters(params([100, 200])) is None
+    assert dos_total_points_from_parameters(params([])) is None
+    assert dos_total_points_from_parameters(None) is None
