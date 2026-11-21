@@ -128,3 +128,54 @@ def test_bsf_ek_single_process_uses_whole_energy_range():
         BsfRankProgressInfo(1, 3, 1, 1),
         BsfRankProgressInfo(2, 3, 1, 2),
     ]
+
+
+
+def test_native_bsf_photon_shift_two_windows_reset_rank_progress():
+    """BLOCHSF EPHOT>0 writes 99002 energy loop twice."""
+    parser, events = _collect()
+    parser.feed(
+        "MPI calculation with NPROCS = 2\n"
+        "E(k)-relation mode for:\n"
+        "with  NE =  4  NK =  30\n"
+        "energy loop   1\n"
+        "IE= 3 E= 0.2000 0.0010 all matrices set up - enter k-loop\n"
+        "energy loop   2\n"
+        "IE= 3 E= 0.3000 0.0010 all matrices set up - enter k-loop\n"
+    )
+    assert [event["data"] for event in events
+            if event["kind"] == "bsf_energy_window"] == [1, 2]
+    rank = [event["data"] for event in events
+            if event["kind"] == "bsf_rank_progress"]
+    assert rank == [BsfRankProgressInfo(1, 2, 3, 3)] * 2
+    energy = [event["data"] for event in events if event["kind"] == "bsf_energy"]
+    assert len(energy) == 2
+    assert energy[0].real_ry == 0.2
+    assert energy[1].real_ry == 0.3
+    assert not any(event["kind"] == "bsf_finished" for event in events)
+
+
+def test_native_bsf_outer_row_marker_precedes_processing():
+    """BLOCHSF writes 'k-points done' before its inner row is evaluated."""
+    parser, events = _collect()
+    parser.feed(
+        "constant E mode for:\n"
+        "NK1 = 200 K1 = (1.0 0.0 0.0)\n"
+        "NK2 = 100 K2 = (0.0 1.0 0.0)\n"
+        "outer k-loop:   100 k-points done\n"
+        "inner k-loop:     1 k-points done\n"
+    )
+    assert ("bsf_outer_krow", 100) in [
+        (event["kind"], event["data"]) for event in events
+    ]
+    assert "not yet complete" in parser.format_info("bsf_outer_krow", 100)
+    assert not any(event["kind"] == "bsf_rank_progress" for event in events)
+
+
+def test_native_bsf_e_plots_uses_ek_header_when_one_k_vector():
+    """BLOCHSF MODE='E-plots' when NK1=1 and NK2<=2."""
+    parser, events = _collect()
+    parser.feed("E(k)-relation mode for:\nwith  NE =  200  NK =    1\n")
+    assert ("bsf_grid", BsfGridInfo("EK", 200, 1)) in [
+        (event["kind"], event["data"]) for event in events
+    ]
