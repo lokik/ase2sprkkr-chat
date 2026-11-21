@@ -3,6 +3,7 @@
 import os
 import re
 from dataclasses import dataclass
+from numbers import Integral
 
 from ..task_result import TaskResult, KkrOutputReader
 from .default import DefaultOutputParser
@@ -10,12 +11,28 @@ from ...common.decorators import cached_property
 from ...input_parameters.definitions._filenames import dataset_adsi
 
 
+def dos_total_points_from_parameters(parameters):
+    """Use only an unambiguous one-segment ENERGY.NE value."""
+    try:
+        values = parameters.ENERGY.NE()
+        if isinstance(values, Integral):
+            values = (values,)
+        else:
+            values = tuple(values)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if len(values) != 1 or not isinstance(values[0], Integral):
+        return None
+    total = int(values[0])
+    return total if total > 0 else None
+
+
 @dataclass(frozen=True)
 class DosProgressInfo:
     """Number of explicitly reported completed DOS energy points."""
 
     completed: int
-    total: int
+    total: int | None
 
 
 class DosOutputParser(DefaultOutputParser):
@@ -25,6 +42,12 @@ class DosOutputParser(DefaultOutputParser):
     fraction. The same detection is shared with the incremental GUI parser.
     """
 
+    # Native kkrgen prints one such header for every energy AND atomic
+    # component IT. Repeated IT headers must not advance the progress.
+    _energy_header = re.compile(
+        r"^\s*(?P<point>[1-9]\d*)\s+E\s*=\s*\S+.*?\s+IT\s*=\s*\d+\b",
+        re.IGNORECASE,
+    )
     _completed_points = re.compile(
         r"(?<!\d)(?P<completed>\d+)\s*(?:/|\bof\b)\s*"
         r"(?P<total>\d+)\s*(?:energy\s+points?\s*)?"
@@ -32,9 +55,11 @@ class DosOutputParser(DefaultOutputParser):
         re.IGNORECASE,
     )
 
-    def __init__(self, print_info=False, on_info=None):
+    def __init__(self, print_info=False, on_info=None, total_points=None):
         super().__init__(print_info=print_info, on_info=on_info)
+        self.total_points = total_points
         self.last_progress = None
+        self._current_point = None
         self._started = False
 
     def _note_started(self):
@@ -46,26 +71,44 @@ class DosOutputParser(DefaultOutputParser):
         if kind == "dos_started":
             return "Calculating density of states..."
         if kind == "dos_progress":
-            return f"{data.completed}/{data.total} done."
+            return (f"{data.completed}/{data.total} done." if data.total is not None
+                    else f"{data.completed} energy points done.")
         return None
 
-    def _consume_line(self, line):
-        if line.strip():
-            self._note_started()
-        match = self._completed_points.search(line)
-        if match is None:
-            return
-        completed = int(match.group("completed"))
-        total = int(match.group("total"))
-        if not (0 < completed <= total):
+    def _emit_progress(self, completed, total):
+        if completed <= 0 or (total is not None and completed > total):
             return
         progress = DosProgressInfo(completed, total)
         if progress != self.last_progress:
             self.last_progress = progress
             self.emit_info("dos_progress", progress)
 
+    def _consume_line(self, line):
+        if line.strip():
+            self._note_started()
+        # An explicitly completed count is authoritative when present.
+        if match := self._completed_points.search(line):
+            self._emit_progress(
+                int(match.group("completed")), int(match.group("total"))
+            )
+            return
+        # Native DOS prints '34 E= ... IT= 1 Ti' for each atomic component.
+        # When the index changes to a higher energy, only the previous
+        # observed energy is known to have finished. Never count IT blocks.
+        match = self._energy_header.match(line)
+        if match is None:
+            return
+        point = int(match.group("point"))
+        previous = self._current_point
+        if previous is not None and point > previous:
+            self._emit_progress(previous, self.total_points)
+        if previous is None or point != previous:
+            self._current_point = point
+
     async def read_output(self, stdout, result):
         await self.read_commons(stdout, result)
+        if self.total_points is None:
+            self.total_points = dos_total_points_from_parameters(result.input_parameters)
         self._note_started()
         result.output_lines = []
         async for raw_line in stdout:
@@ -78,8 +121,8 @@ class DosOutputParser(DefaultOutputParser):
 class DosProgressParser(DosOutputParser):
     """Incrementally parse DOS output chunks (including attached-job replays)."""
 
-    def __init__(self, on_info=None, print_info=False):
-        super().__init__(print_info=print_info, on_info=on_info)
+    def __init__(self, on_info=None, print_info=False, total_points=None):
+        super().__init__(print_info=print_info, on_info=on_info, total_points=total_points)
         self._partial = ""
 
     def feed(self, text):
@@ -127,8 +170,7 @@ class DosResult(TaskResult):
 
 
 class DosOutputReader(KkrOutputReader):
-    """DOS task has no special parser, it just has a special
-    result, that allow easy acces to spc output file"""
+    """Read DOS output and provide the parsed density-of-states result."""
 
     result_class = DosResult
     parser_class = DosOutputParser
