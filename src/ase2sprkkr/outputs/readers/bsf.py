@@ -109,9 +109,9 @@ class BsfOutputParser(DefaultOutputParser):
         if kind == "bsf_fixed_energy":
             return f"Fixed energy: {data:g} Ry"
         if kind == "bsf_energy":
-            index = f"{data.index}/{data.total}" if data.total else str(data.index)
+            index = f"{data.index} (NE={data.total})" if data.total else str(data.index)
             return (
-                f"Entering k-loop for energy {index}: "
+                f"Entering k-loop for energy index {index}: "
                 f"E = {data.real_ry:g} + {data.imaginary_ry:g}i Ry"
             )
         if kind == "bsf_negative_warnings":
