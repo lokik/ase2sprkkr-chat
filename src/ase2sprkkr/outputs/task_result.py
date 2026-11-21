@@ -132,11 +132,48 @@ class TaskResult:
             return filename
         return None
 
+    @property
+    def is_embedded(self):
+        """Whether the run uses a separate cluster potential."""
+        parameters = self.input_parameters
+        if parameters is None:
+            return False
+        try:
+            return parameters.CONTROL.CLUTYPE() == "embedded"
+        except (AttributeError, KeyError):
+            return False
+
+    @cached_property
+    def host_potential_filename(self):
+        """Host POTFIL referenced by a cluster calculation."""
+        parameters = self.input_parameters
+        filename = parameters.CONTROL.POTFIL() if parameters is not None else None
+        if not filename:
+            raise ValueError("An embedded calculation needs a host POTFIL")
+        return os.path.join(self.directory, os.fspath(filename))
+
+    @cached_property
+    def host_potential(self):
+        """Parse the shared host once for input and converged CLUPOT files."""
+        self.require_current_file(self.host_potential_filename)
+        return Potential.from_file(self.host_potential_filename)
+
+    def _read_potential(self, filename):
+        if not self.is_embedded:
+            return Potential.from_file(filename)
+        from ..potentials.cluster_potentials import ClusterPotential
+
+        return ClusterPotential.from_file(filename, host=self.host_potential)
+
     @cached_property
     def potential_filename(self):
-        """New (output) potential file name"""
+        """Input (or newly produced) periodic/cluster potential file name"""
         parameters = self.input_parameters
         potfil = parameters.CONTROL.POTFIL() if parameters is not None else None
+        if self.is_embedded:
+            potfil = parameters.CONTROL.POTFIL_CLU()
+            if not potfil:
+                raise ValueError("Embedded results require CONTROL.POTFIL_CLU")
         if not potfil:
             potfil = self.files["potential"]() if "potential" in self.files else None
         if not potfil:
@@ -149,7 +186,7 @@ class TaskResult:
     def potential(self):
         """The new (output) potential - that contains the converged charge density etc."""
         self.require_current_file(self.potential_filename)
-        return Potential.from_file(self.potential_filename)
+        return self._read_potential(self.potential_filename)
 
     @property
     def any_potential(self):
@@ -161,15 +198,19 @@ class TaskResult:
 
     def file_is_current(self, path):
         """Whether a path still belongs to this result's captured file version."""
-        if getattr(self, "run_record", None) is None:
+        from .file_provenance import result_file_manifest, result_file_version
+        if result_file_manifest(self) is None and getattr(self, "run_record", None) is None:
             return os.path.isfile(path)
-        from .file_provenance import result_file_version
         version = result_file_version(self, path)
         return version is not None and version.is_current()
 
     def require_current_file(self, path):
         """Refuse to use missing, overwritten or unrecorded historical files."""
-        if getattr(self, "run_record", None) is not None and not self.file_is_current(path):
+        from .file_provenance import result_file_manifest
+        has_provenance = (
+            result_file_manifest(self) is not None or getattr(self, "run_record", None) is not None
+        )
+        if has_provenance and not self.file_is_current(path):
             from kkrunner.runs import HistoricalFileMismatchError
             raise HistoricalFileMismatchError(f"Result file is unavailable or changed: {path}")
 
@@ -204,7 +245,7 @@ class TaskResult:
             )
         )
         return SPRKKR(
-            potential=self.potential_filename,
+            potential=self.potential if self.is_embedded else self.potential_filename,
             input_parameters=parameters,
         )
 
@@ -353,6 +394,7 @@ class KkrOutputReader:
         directory,
         print_info=False,
         task_name=None,
+        on_info=None,
     ):
         self.input_parameters = input_parameters
         self.calculator = calculator
@@ -365,7 +407,7 @@ class KkrOutputReader:
             if task is not None
             else None
         )
-        self.parser = self.parser_class(print_info=print_info)
+        self.parser = self.parser_class(print_info=print_info, on_info=on_info)
 
     @classmethod
     def matches_output(cls, output):

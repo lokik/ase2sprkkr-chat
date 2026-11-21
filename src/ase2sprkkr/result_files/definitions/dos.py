@@ -161,6 +161,13 @@ class DOSResultFile(CommonResultFile):
         dpi=600,
         **kwargs,
     ):
+        # SPR-KKR can emit a complete DOS header without any DOS records
+        # (notably for SPLEED). Parsing its metadata is fine, plotting it is not.
+        raw_data = np.asarray(self.RAW_DATA())
+        if raw_data.size == 0:
+            raise ValueError("DOS file contains no numerical DOS data (header only).")
+        if raw_data.ndim != 2 or raw_data.shape[1] != 8:
+            raise ValueError(f"Invalid DOS data shape {raw_data.shape}; expected eight columns")
         n_types = self.n_types()
         if n_types > 1:
             n_types += 1

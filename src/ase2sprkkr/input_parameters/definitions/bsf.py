@@ -4,9 +4,10 @@ import numpy as np
 from functools import cache
 from typing import Any, List, Optional
 
+from kkrunner.files import TaskFile
 from ...common.generated_configuration_definitions import Length
 from ...common.grammar_types import Keyword, SetOf, Integer
-from ...common.warnings import DataValidityError, DataValidityWarning
+from ...common.warnings import DataValidityError
 from ..input_parameters import InputSection
 from ...physics.lattice_data import bravais_number
 from ..input_parameters_definitions import InputParametersDefinition, InputValueDefinition as V
@@ -104,15 +105,10 @@ def _validate_bsf(
     parameters: Any, _values: Any, why: str
 ) -> Optional[List[DataValidityError]]:
     issues = []
+    # The requested alias selects initial defaults only; the effective
+    # BSF mode is intentionally mutable through ENERGY.NE. Do not report
+    # a mismatch after the user changes modes in the GUI or Python API.
     mode = bsf_mode(parameters)
-    hint = _requested_mode(parameters)
-    if hint and hint != mode:
-        issues.append(
-            DataValidityWarning(
-                f"ENERGY.NE selects BSF-{mode}, but BSF-{hint} was requested"
-            )
-        )
-
 
     task = parameters["TASK"]
     incompatible = KK_TASK_ITEMS if mode == EK else EK_TASK_ITEMS
@@ -412,7 +408,7 @@ class BSFInputParametersDefinition(InputParametersDefinition):
         return "BSFEK" if bsf_mode(parameters) == EK else "BSFKK"
 
     def cache_files(self, parameters, directory):
-        return (tau_file(parameters, directory), *super().cache_files(parameters, directory))
+        return (TaskFile(tau_file(parameters, directory), kind="directory"), *super().cache_files(parameters, directory))
 
 
 @cache

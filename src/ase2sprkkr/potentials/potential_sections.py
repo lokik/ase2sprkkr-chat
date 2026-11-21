@@ -80,12 +80,31 @@ class AtomicTypePotentialSection(PotentialSectionTrait, RepeatedConfigurationSec
 
     def read_data(self, typ, section):
         setattr(typ, self.property_name, section.DATA())
+        if "FULLPOT" in section:
+            # The native non-spherical coefficients belong to the radial
+            # value, not to the mesh definition. Keep their original layout.
+            radial = getattr(typ, self.property_name)
+            radial.fullpot_data = section.FULLPOT()
 
     def write_data(self, typ, section, index):
+        radial = getattr(typ, self.property_name)
         section.TYPE = index
-        section.DATA = getattr(typ, self.property_name).raw_value
+        section.DATA = radial.raw_value
+        if "FULLPOT" in section and radial.fullpot_data:
+            section.FULLPOT = radial.fullpot_data
 
     def _set_from_atoms(self, atoms, write_io_data):
+        # A file marked FULLPOT must not silently lose its non-spherical data
+        # during atom synchronization. Missing *all* radial data is legitimate
+        # for an initial START potential, but partial electronic state is not.
+        if self.property_name in ("potential", "charge") and self._container.SCF_INFO.FULLPOT():
+            for typ, _ in write_io_data.types.unique_items():
+                radial = getattr(typ, self.property_name)
+                if radial is not None and not radial.fullpot_data:
+                    raise ValueError(
+                        f"FULLPOT {self.property_name} data missing for "
+                        f"atomic type {typ!r}; refusing lossy save"
+                    )
         self.clear()
         converged = write_io_data.has_converged_data(self._container)
 

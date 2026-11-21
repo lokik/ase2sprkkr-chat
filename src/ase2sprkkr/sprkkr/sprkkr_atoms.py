@@ -7,6 +7,26 @@ import numpy as np
 from typing import List, Union
 from .sites import Site
 from .spacegroup_info import SpacegroupInfo
+from .embedding import EMBEDDING_ARRAY, EMBEDDING_HOST, embedding_data, host_atoms, repeat_shift
+from contextlib import contextmanager
+
+
+def system_kind_for_atoms(atoms):
+    """Classify the geometry for native task selection, without modifying it."""
+    if atoms is None:
+        return None
+    if EMBEDDING_ARRAY in getattr(atoms, "arrays", {}) and getattr(atoms, "info", {}).get(EMBEDDING_HOST) is not None:
+        return "embedded"
+    periodicity = tuple(bool(axis) for axis in atoms.get_pbc())
+    if all(periodicity):
+        return "3d"
+    if not any(periodicity):
+        return "cluster"
+    if periodicity == (True, True, False) and {"left", "central", "right"}.issubset(
+        getattr(atoms, "regions", {})
+    ):
+        return "2d"
+    return "unknown"
 
 
 def _restore_promoted_ase_atoms(original_class, reconstruct, args):
@@ -271,13 +291,108 @@ class SPRKKRAtoms(Atoms):
     def spacegroup_info(self):
         return self.info["spacegroup_info"]
 
+    @contextmanager
+    def _without_embedding_host_for_copy(self):
+        """Avoid deep-copying a possibly enormous host Potential in ASE info.
+
+        Temporarily substitute a separate dictionary; do not mutate the
+        original info dictionary. Always restore it even if ASE raises.
+        """
+        old_info = self.info
+        host = old_info.get(EMBEDDING_HOST)
+        if EMBEDDING_HOST in old_info:
+            self.info = {k: v for k, v in old_info.items() if k != EMBEDDING_HOST}
+        try:
+            yield host
+        finally:
+            self.info = old_info
+
     def __getitem__(self, i):
-        out = super().__getitem__(i)
-        if isinstance(out, Atoms) and "spacegroup_info" in out.info:
-            out.info["spacegroup_info"] = out.info["spacegroup_info"].copy_for(out)
-            if self.are_sites_inited():
-                out.info["spacegroup_info"].recompute(copy=True)
+        with self._without_embedding_host_for_copy() as host:
+            out = super().__getitem__(i)
+        if isinstance(out, Atoms):
+            if host is not None:
+                out.info[EMBEDDING_HOST] = host
+            if "spacegroup_info" in out.info:
+                out.info["spacegroup_info"] = out.info["spacegroup_info"].copy_for(out)
+                if self.are_sites_inited():
+                    out.info["spacegroup_info"].recompute(copy=True)
         return out
+
+    @property
+    def embedding_host(self):
+        """Embedding host; the stored value lives in Atoms.info."""
+        return self.info.get(EMBEDDING_HOST)
+
+    @embedding_host.setter
+    def embedding_host(self, host):
+        reference = host_atoms(host)
+        if EMBEDDING_ARRAY in self.arrays:
+            rows = embedding_data(self)
+            if np.any(rows[:, 0] < 0) or np.any(rows[:, 0] >= len(reference)):
+                raise ValueError("Some embedded sites are absent from the new host")
+        self.info[EMBEDDING_HOST] = host
+
+    @classmethod
+    def from_embedding(cls, host, sites):
+        """Build explicit cluster atoms from (host_site, cell_index, occupation).
+
+        Host-site indices are zero-based, and cell_index takes 2 or 3
+        integers according to the host dimensionality (or native N5VEC).
+        Set occupation=None to inherit the host site's chemical occupation
+        without sharing its mutable SiteType or radial data.
+        """
+        from .embedding_geometry import HostSite
+        from .occupations import Occupation
+
+        reference = host_atoms(host)
+        entries = list(sites)
+        if not entries:
+            raise ValueError("At least one embedded site is required")
+        if any(len(row) != 3 for row in entries):
+            raise ValueError("Each entry must be (host_site, cell_index, occupation)")
+
+        # Normalize native/short cell indices before duplicate detection.
+        # A missing occupation means inherit the host chemistry (not its
+        # mutable SiteType or radial arrays).
+        normalized = []
+        seen = set()
+        for index, cell_index, occupation in entries:
+            if isinstance(index, bool) or not isinstance(index, (int, np.integer)) or not 0 <= index < len(reference):
+                raise IndexError("Invalid zero-based host-site index")
+            site = HostSite(int(index), cell_index).canonical(host)
+            if site in seen:
+                raise ValueError("A host site and cell translation may only occur once")
+            seen.add(site)
+            if occupation is None:
+                if isinstance(reference, SPRKKRAtoms) and reference.are_sites_inited():
+                    occupation = reference.sites[index].occupation.to_dict(True)
+                else:
+                    occupation = Occupation.for_atom_from_ase_atoms(reference, index).to_dict(True)
+            normalized.append((site.original_site, site.cell_index, occupation))
+        entries = normalized
+        indices = [row[0] for row in entries]
+        symbols = []
+        for _, _, occ in entries:
+            if isinstance(occ, str):
+                symbol = occ
+            elif isinstance(occ, dict) and occ:
+                key = next(iter(occ))
+                symbol = getattr(key, "symbol", key)
+            else:
+                raise TypeError("Occupation must be a symbol or nonempty occupation dictionary")
+            # ASE calls the vacuum pseudo-atom X; SPR-KKR calls it Vc.
+            symbols.append("X" if symbol == "Vc" else symbol)
+        atoms = cls(symbols=symbols, positions=np.asarray(reference.positions)[indices].copy(),
+                    cell=reference.cell.copy(), pbc=False, symmetry=False)
+        atoms.arrays[EMBEDDING_ARRAY] = np.column_stack(
+            (indices, np.zeros((len(entries), 5), dtype=int))
+        )
+        atoms.info[EMBEDDING_HOST] = host
+        for i, (_, cell_index, occupation) in enumerate(entries):
+            atoms.sites[i].embedding.cell_index = cell_index
+            atoms.sites[i].occupation = occupation if isinstance(occupation, dict) else {occupation: 1.0}
+        return atoms
 
     @property
     def potential(self):
@@ -317,12 +432,79 @@ class SPRKKRAtoms(Atoms):
             self._potential.reset(update_atoms=False)
             self._potential.set_from_atoms()
 
-    def copy(self):
-        out = super().copy()
+    def copy(self, *, shallow=False):
+        """Copy the physical structure, including its attached native potential.
+
+        Site/type/mesh sharing is retained within the independent copy. An
+        embedding host remains an external reference shared with the source.
+
+        ``shallow=True`` shares radial NumPy arrays and attached-potential
+        option values. Geometry, sites, atomic-type containers, meshes and
+        regions remain independent, so geometry/occupation edits and value
+        replacement do not change the source. In-place writes to shared value
+        arrays affect both structures; use the default copy for those edits.
+        """
+        with self._without_embedding_host_for_copy() as host:
+            out = super().copy()
+        if host is not None:
+            out.info[EMBEDDING_HOST] = host
         SPRKKRAtoms.promote_ase_atoms(out)
+        spacegroup_info = self.spacegroup_info.copy_for(out)
+        out.info["spacegroup_info"] = spacegroup_info
         if self.are_sites_inited():
-            out.set_sites(Site.copy_sites(out.sites, out), self.spacegroup_info.copy_for(out))
+            out.set_sites(Site.copy_sites(out.sites, out, shallow=shallow), spacegroup_info=True)
+        for name, region in self.regions.items():
+            out._regions[name] = region.copy_for_atoms(out, add=False)
+        if self._potential is not None:
+            potential = self._potential.copy(copy_values=not shallow)
+            potential.atoms = out
+            if hasattr(self._potential, "_complete"):
+                potential._complete = self._potential._complete
+            out._potential = potential
         return out
+
+    def __imul__(self, m):
+        """Repeat Sites and host translations in step with ASE geometry."""
+        if isinstance(m, (int, np.integer)):
+            repeat = (int(m),) * 3
+        else:
+            repeat = tuple(m)
+        if len(repeat) != 3 or any(not isinstance(v, (int, np.integer)) or v < 0 for v in repeat):
+            raise ValueError("repeat requires three non-negative integer multipliers")
+        # ASE permits zero-length repetitions, which produce an empty Atoms
+        # object. Do not attempt to resolve host translations in that case.
+        if 0 in repeat:
+            super().__imul__(repeat)
+            return self
+        sites_before = self.sites.copy() if self.are_sites_inited() else None
+        old_cell = np.asarray(self.cell).copy()
+        mapping = embedding_data(self).copy() if EMBEDDING_ARRAY in self.arrays else None
+        host = self.embedding_host
+        shifts = []
+        if mapping is not None:
+            if host is None:
+                raise ValueError("Cannot repeat a cluster without sprkkr_embedding_host")
+            # Resolve all translations *before* modifying this Atoms.
+            for i in range(repeat[0]):
+                for j in range(repeat[1]):
+                    for k in range(repeat[2]):
+                        shifts.append(repeat_shift(host, np.dot((i, j, k), old_cell)))
+        super().__imul__(repeat)
+        if sites_before is not None and len(sites_before):
+            count = len(sites_before)
+            new_sites = np.empty(len(self), dtype=object)
+            for block in range(len(self) // count):
+                for i, site in enumerate(sites_before):
+                    new_sites[block * count + i] = site if block == 0 else Site(site.site_type)
+            self.set_array(self.sites_array_name, new_sites)
+            self.spacegroup_info._dataset = None
+        if mapping is not None:
+            new_mapping = np.tile(mapping, (len(shifts), 1))
+            for block, shift in enumerate(shifts):
+                n = len(mapping)
+                new_mapping[block * n:(block + 1) * n, 1:6] += shift
+            self.set_array(EMBEDDING_ARRAY, new_mapping)
+        return self
 
     def _promote_if_other(self, other):
         if self.are_sites_inited():
@@ -338,6 +520,11 @@ class SPRKKRAtoms(Atoms):
         return super().__iadd__(other)
 
     def extend(self, other):
+        if EMBEDDING_ARRAY in self.arrays or EMBEDDING_ARRAY in other.arrays:
+            if EMBEDDING_ARRAY not in self.arrays or EMBEDDING_ARRAY not in other.arrays:
+                raise ValueError("Cannot extend an embedded cluster with non-embedded atoms")
+            if self.embedding_host is not other.info.get(EMBEDDING_HOST):
+                raise ValueError("Embedded atoms must reference the same host when extending")
         self._promote_if_other(other)
         ln = len(self)
         super().extend(other)

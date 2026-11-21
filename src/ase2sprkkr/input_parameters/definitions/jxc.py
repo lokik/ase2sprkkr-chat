@@ -25,22 +25,36 @@ class JxcInputParametersDefinition(InputParametersDefinition):
     def output_files(self, parameters, directory):
         files = list(super().output_files(parameters, directory))
         dataset = dataset_adsi(parameters)
-        if parameters.TASK.JXC():
-            if parameters.MODE.MODE() == "SP-SREL":
-                files.extend((
-                    resolve_file(directory, f"{dataset}_J_ij.dat"),
-                    resolve_file(directory, f"{dataset}_Jij_*.agr"),
-                ))
-            else:
-                files.extend((
-                    resolve_file(directory, f"{dataset}_XCPLTEN_Jij.dat"),
-                    resolve_file(directory, f"{dataset}_XCPLTEN_Jij_*.agr"),
-                    resolve_file(directory, f"{dataset}_XCPLTEN_Dij.dat"),
-                    resolve_file(directory, f"{dataset}_XCPLTEN_Dij_[xyz]_*.agr"),
-                ))
-        if parameters.TASK.DMI():
-            files.append(resolve_file(directory, f"{dataset}_DMIVEC_Dij.dat"))
-            files.append(resolve_file(directory, f"{dataset}_DMIVEC_Dij_[xyz]_*.agr"))
+        embedded = parameters.CONTROL.CLUTYPE() == "embedded"
+        if embedded:
+            # CLUXCPLTENSOR writes both exchange and DM-vector outputs even
+            # when only the DMI selector is requested. These are *not* the
+            # XCPLTEN/DMIVEC filenames used by periodic KKRGEN.
+            files.extend((
+                resolve_file(directory, f"{dataset}_JJij.dat"),
+                resolve_file(directory, f"{dataset}_Jij_*.agr"),
+                resolve_file(directory, f"{dataset}_Dij_x.dat"),
+                resolve_file(directory, f"{dataset}_Dij_y.dat"),
+                resolve_file(directory, f"{dataset}_Dij_z.dat"),
+                resolve_file(directory, f"{dataset}_Dij_[xyz]_*.agr"),
+            ))
+        else:
+            if parameters.TASK.JXC():
+                if parameters.MODE.MODE() == "SP-SREL":
+                    files.extend((
+                        resolve_file(directory, f"{dataset}_J_ij.dat"),
+                        resolve_file(directory, f"{dataset}_Jij_*.agr"),
+                    ))
+                else:
+                    files.extend((
+                        resolve_file(directory, f"{dataset}_XCPLTEN_Jij.dat"),
+                        resolve_file(directory, f"{dataset}_XCPLTEN_Jij_*.agr"),
+                        resolve_file(directory, f"{dataset}_XCPLTEN_Dij.dat"),
+                        resolve_file(directory, f"{dataset}_XCPLTEN_Dij_[xyz]_*.agr"),
+                    ))
+            if parameters.TASK.DMI():
+                files.append(resolve_file(directory, f"{dataset}_DMIVEC_Dij.dat"))
+                files.append(resolve_file(directory, f"{dataset}_DMIVEC_Dij_[xyz]_*.agr"))
         return tuple(files)
 
 
@@ -100,14 +114,23 @@ def _validate_jxc(parameters, _values, why):
         issues.append(DataValidityError("At least one of TASK.JXC or TASK.DMI must be enabled."))
     if parameters.CONTROL.NONMAG():
         issues.append(DataValidityError("JXC/DMI requires a magnetic calculation."))
+    embedded = parameters.CONTROL.CLUTYPE() == "embedded"
     if dmi and mode is not None:
         issues.append(DataValidityError("DMI requires magnetic FREL."))
+    elif embedded and mode is not None:
+        # The explicit embedded tensor route (CLUXCPLTENSOR) is FREL-only.
+        # In SP-SREL, GEN chooses XCPLJIJ vs CLUXCPLJIJ using IBZINT,
+        # which is also needed for host TAUIJ setup. Do not claim that
+        # this variant works until its full native workflow is validated.
+        issues.append(DataValidityError(
+            "Embedded JXC/DMI currently requires FREL (unset MODE.MODE)."
+        ))
     elif jxc and mode in ("NREL", "SREL"):
         issues.append(DataValidityError("JXC requires magnetic FREL or SP-SREL."))
     if parameters.ENERGY.GRID().tolist() != ["5"] or len(parameters.ENERGY.NE()) != 1 or parameters.ENERGY.SPLITSS():
         issues.append(DataValidityError("JXC/DMI requires one GRID=5 integration contour."))
     if parameters.TAU.BZINT() != "POINTS":
-        issues.append(DataValidityError("The standard periodic JXC/DMI workflow requires BZINT=POINTS."))
+        issues.append(DataValidityError("JXC/DMI requires BZINT=POINTS for host TAUIJ construction."))
     if parameters.TASK.SELECT() is not None and parameters.TASK.EXCLUDE() is not None:
         issues.append(DataValidityError("SELECT and EXCLUDE are mutually exclusive."))
     return issues or None
@@ -159,8 +182,9 @@ def input_parameters_definition():
         ],
         info="JXC / DMI",
         validators=_validate_jxc,
-        description="Periodic magnetic E-INTEGRAL JXC and DMI task with FREL "
-                    "tensor couplings and DMIVECTOR, or SP-SREL scalar Jij.",
+        description="Magnetic E-INTEGRAL JXC/DMI: periodic FREL tensor and DMIVECTOR "
+                    "or SP-SREL scalar Jij; embedded CLUGEN supports the FREL "
+                    "CLUXCPLTENSOR branch with separate output filenames.",
     )
     schema["CONTROL"]["NONMAG"].warning_condition = _jxc_nonmag_warning_condition
     return schema

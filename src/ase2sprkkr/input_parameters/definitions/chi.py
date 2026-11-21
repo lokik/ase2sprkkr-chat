@@ -46,7 +46,7 @@ def input_parameters_definition():
                     "native magnetization iteration is forcibly disabled. FULLPOT is unavailable in the public version. "
                     "Converge energy and k meshes; this definition does not expose restart, AF signs or manual NEF arrays."
     )
-    schema._task_definition = TaskDefinition("CHI", experimental=True, executable="kkrchi", mpi=False, output_files=(
+    schema._task_definition = TaskDefinition("CHI", supports={"3d", "2d"}, experimental=True, executable="kkrchi", mpi=False, output_files=(
             "{DATASET_ADSI}*_dens.agr",
             "{DATASET_ADSI}*_chifmag.agr",
             "{DATASET_ADSI}_*_GAMMA-OP.dat",

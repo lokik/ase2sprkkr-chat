@@ -39,7 +39,7 @@ def test_builtin_reader_mappings_are_declared_at_the_right_level():
         "ARPES": "ARPES",
         "AIPES": "SPEC",
         "BAND": "SPEC",
-        "SPLEED": "SPEC",
+        "SPLEED": "SPLEED",
         "PHAGEN": "DEFAULT",
         "TORQUE": "DEFAULT",
         "XAS": "DEFAULT",

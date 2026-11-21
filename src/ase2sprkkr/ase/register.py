@@ -5,7 +5,7 @@ try:
         desc="SPRKKR potential file",
         module="ase2sprkkr.ase.io",
         code="+F",  # read & write, file-based
-        ext=["pot", "pot_new"],
+        ext=["pot", "pot_new", "clupot", "pot_clu"],
     )
 except ImportError:
     pass
@@ -54,7 +54,7 @@ try:
                           }""",
             module=io,
             code="+F",  # read & write, file-based
-            extensions=["pot", "pot_new"],
+            extensions=["pot", "pot_new", "clupot", "pot_clu"],
             reader=sprkkr_reader,
             writer=sprkkr_writer
         )

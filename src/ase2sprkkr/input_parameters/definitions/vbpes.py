@@ -1,6 +1,7 @@
 """Angle-integrated valence photoemission in KKRGEN (SPR-KKR 9.7)."""
 import math
 import numpy as np
+from kkrunner.files import TaskFile
 from ._filenames import dataset_adsi
 from ...common.grammar_types import Integer, Keyword, SetOf
 from ...common.warnings import DataValidityError, DataValidityWarning
@@ -36,7 +37,7 @@ class VbpesInputParametersDefinition(RequiredTauInputParametersDefinition):
         files = list(super().cache_files(parameters, directory))
         if self._uses_final_state_tau(parameters):
             label = _final_state_photon_label(parameters)
-            files.append(resolve_file(directory, f"{dataset_adsi(parameters)}.tau.dir.F_{label}"))
+            files.append(TaskFile(resolve_file(directory, f"{dataset_adsi(parameters)}.tau.dir.F_{label}"), kind="directory"))
         return tuple(files)
 
     def output_files(self, parameters, directory):
@@ -107,5 +108,5 @@ def input_parameters_definition():
                     "This is a separate implementation from KKRSPEC ARPES. GRV stops as unimplemented. "
                     "Numerical output and FULLPOT have not been verified."
     )
-    schema._task_definition = TaskDefinition("VBPES", experimental=True, executable="kkrgen", mpi=False, output_files=("arpes.dat", "arpes_spol.dat", "spin.matrix.xps"))
+    schema._task_definition = TaskDefinition("VBPES", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=("arpes.dat", "arpes_spol.dat", "spin.matrix.xps"))
     return schema

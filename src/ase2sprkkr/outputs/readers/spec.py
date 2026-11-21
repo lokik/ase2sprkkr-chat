@@ -181,8 +181,9 @@ class SpecResult(ArpesResult):
 class _CapturedSpecStream:
     """Tee readline-based common-header parsing and the remaining async lines."""
 
-    def __init__(self, source):
+    def __init__(self, source, on_line=None):
         self.source = source
+        self.on_line = on_line
         # Accumulate decoded text directly rather than holding a second list
         # of raw byte lines alongside DefaultOutputParser.output_lines.
         self._text = io.StringIO()
@@ -190,7 +191,10 @@ class _CapturedSpecStream:
     async def readline(self):
         line = await self.source.readline()
         if line:
-            self._text.write(line.decode("utf-8", errors="replace"))
+            decoded = line.decode("utf-8", errors="replace")
+            self._text.write(decoded)
+            if self.on_line is not None:
+                self.on_line(decoded)
         return line
 
     def captured_text(self):
@@ -215,10 +219,13 @@ class _CapturedSpecStream:
 class SpecOutputParser(DefaultOutputParser):
     """Reader for the main text output produced by KKRSPEC."""
 
+    def observe_line(self, line):
+        """Hook for task-specific INFO parsing, including the common header."""
+
     async def read_output(self, stdout, result):
         # read_commons consumes the FILES header before DefaultOutputParser
         # collects output_lines. Capture both parts from the same stream.
-        captured = _CapturedSpecStream(stdout)
+        captured = _CapturedSpecStream(stdout, self.observe_line)
         parsed = await super().read_output(captured, result)
         result._file_content = captured.captured_text()
         return parsed
@@ -230,13 +237,47 @@ class SpecOutputParser(DefaultOutputParser):
     )
     _D_NUMBER = re.compile(r"\s*[+-]?\d\.\d{5}[dD][+-]\d{2}\s*\Z")
 
+    _NATIVE_SPLOUT_NUMBER = re.compile(
+        r"\s*[+-]?\d\.\d{5}[dDeE][+-]\d{2}\s*\Z"
+    )
+
+    @classmethod
+    def parse_spleed_diagram_row(cls, record):
+        """Normalize the native SPLOUT intensity formats to (energy, intensity).
+
+        SPR-KKR 9.7 spec_rslabsub.f SPLOUT formats 99005/99004:
+        TYP=0 or NREL=0: two D12.5 values (energy, intensity).
+        TYP=1/2 and NREL=1: six E12.5 values on stdout, or seven
+        in SPEC.out (the additional second column is theta).
+        """
+        record = record.rstrip("\r\n")
+        width = len(record)
+        if width == 26:
+            count = 2
+        elif width == 82:
+            count = 6
+        elif width == 96:
+            count = 7
+        else:
+            return None
+        parts = []
+        for index in range(count):
+            offset = 14 * index
+            value = record[offset:offset + 12]
+            if not cls._NATIVE_SPLOUT_NUMBER.fullmatch(value):
+                return None
+            parts.append(float(value.replace("D", "E").replace("d", "e")))
+            if index + 1 < count and record[offset + 12:offset + 14] != "  ":
+                return None
+        return (parts[0], parts[2] if count == 7 else parts[1])
+
     @classmethod
     def parse_spleed_intensity(cls, lines):
-        """Extract the first SPLOUT D12.5,2X,D12.5 table from SPEC.out.
+        """Read native SPLOUT from SPEC.out or standard output.
 
-        The diagram is part of NOUT1, not another result file. Stop at the
-        first non-record after data begins; do not collect later diagnostics.
-        Return None when only a seven-column diagram or no table is present.
+        The NOUT1 diagram header is written to SPEC.out, not necessarily
+        stdout (spec_rslab.f sets NOUT1 = IFILSPECOU3). Accept strict
+        formatted numerical rows with or without the header.
         """
         in_diagram = False
         rows = []
@@ -246,20 +287,12 @@ class SpecOutputParser(DefaultOutputParser):
                     break
                 in_diagram = True
                 continue
-            if not in_diagram:
+            row = cls.parse_spleed_diagram_row(line)
+            if row is not None:
+                in_diagram = True
+                rows.append(row)
                 continue
-            record = line.rstrip("\r\n")
-            if len(record) == 26 and record[12:14] == "  ":
-                first, second = record[:12], record[14:]
-                if cls._D_NUMBER.fullmatch(first) and cls._D_NUMBER.fullmatch(second):
-                    rows.append((
-                        float(first.replace("D", "E").replace("d", "e")),
-                        float(second.replace("D", "E").replace("d", "e")),
-                    ))
-                    continue
-            if record.strip():
-                # Blank lines follow SPLOUT's diagram header; a different
-                # nonempty line marks the end of the current diagram.
+            if in_diagram and line.strip():
                 in_diagram = False
                 if rows:
                     break

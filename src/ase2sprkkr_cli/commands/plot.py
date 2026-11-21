@@ -189,6 +189,18 @@ def run(args, global_args):
     from ase2sprkkr.result_files.definitions.sfn import SFNResultFile
     from ase2sprkkr.gui.plot import Multiplot
 
+    # Defer showing until all requested files are plotted. This lets us label
+    # each figure with its source filename before the GUI event loop blocks,
+    # including Grace viewports and plots split into separate figures.
+    if not show_values:
+        import matplotlib.pyplot as plt
+
+        show = kwargs.get("show")
+        show_figures = (filename is None) if show is None else show
+        kwargs["show"] = False
+        basenames = [Path(path).name for path in outputs]
+        duplicate_names = {name for name in basenames if basenames.count(name) > 1}
+
     for output in outputs:
 
         def plot(fn, of, value=None):
@@ -235,6 +247,7 @@ def run(args, global_args):
             if x in kwargs and x not in getattr(of, "plot_parameters", {}):
                 raise ValueError(f"Argument '--{x}' is not valid for {of}")
 
+        figures_before = set(plt.get_fignums())
         if filename:
             if len(outputs) > 1:
                 fn = Path(filename)
@@ -274,3 +287,19 @@ def run(args, global_args):
             if not hasattr(of, "plot"):
                 raise ValueError(f"File '{of}' does not know, how it should be plotted.")
             plot(lambda: of.plot(filename=fn, **kwargs), output)
+
+        # A single result can produce multiple figures (--separate_plots).
+        # Preserve the per-value figure label while adding the source filename.
+        source = Path(output).name
+        if source in duplicate_names:
+            source = str(output)
+        for number in sorted(set(plt.get_fignums()) - figures_before):
+            manager = plt.figure(number).canvas.manager
+            if manager is None:
+                continue
+            current = manager.get_window_title()
+            detail = current if current and current != f"Figure {number}" else ""
+            manager.set_window_title(f"{source} — {detail}" if detail else source)
+
+    if not show_values and show_figures:
+        plt.show()

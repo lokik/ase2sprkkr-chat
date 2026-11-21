@@ -16,6 +16,22 @@ class IP(cd.InputParametersDefinition):
 
 
 class TestRepeatedCountParsing:
+    @pytest.mark.parametrize("repeated,keys", [
+        (Repeated.LIST_SECTION, (None, None, None)),
+        (Repeated.DICT_SECTION, (2, 4, 6)),
+    ])
+    def test_copy_retains_empty_occurrences(self, repeated, keys):
+        definition = IP([S("ITEM", members=[V("VAL", int, 42)], is_repeated=repeated)])
+        source = definition.create_object()
+        for key in keys:
+            source.ITEM.add(key)
+        indices = range(len(keys)) if keys[0] is None else keys
+        source.ITEM[indices[1]].VAL = 10
+
+        copied = source.copy()
+        assert list(copied.ITEM) == list(indices)
+        assert [item.VAL() for item in copied.ITEM.values()] == [42, 10, 42]
+
     def test_container_callbacks_are_deferred_until_first_use(self):
         class CountingValue(V):
             def __init__(self, *args, **kwargs):

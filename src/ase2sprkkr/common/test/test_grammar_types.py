@@ -1,4 +1,5 @@
 import datetime
+import pickle
 import warnings
 
 import numpy as np
@@ -8,6 +9,29 @@ import unyt
 
 from .. import grammar_types as gt
 from ..grammar import generate_grammar
+
+
+@pytest.mark.parametrize("transform,value,expected", [
+    ("upper", "  iterating\t", "ITERATING"),
+    ("lower", "  ITERATING\t", "iterating"),
+    (None, "  Iterating\t", "Iterating"),
+])
+def test_keyword_trim_before_case_conversion(transform, value, expected):
+    keyword = gt.Keyword(expected, transform=transform, trim=True)
+    for restored in (keyword, pickle.loads(pickle.dumps(keyword))):
+        assert restored.convert(value) == expected
+        assert restored.validate(restored.convert(value))
+        assert restored.parse("'" + value + "'") == expected
+    untrimmed = gt.Keyword(expected, transform=transform)
+    with pytest.raises(ValueError):
+        untrimmed.validate(untrimmed.convert(value))
+
+
+def test_keyword_trim_before_alias_lookup():
+    keyword = gt.Keyword("ITERATING", aliases={"ITR": "ITERATING"}, trim=True)
+    assert keyword.convert("  itr\t") == "ITERATING"
+    with pytest.raises(ValueError):
+        keyword.validate(keyword.convert("  UNKNOWN  "))
 
 
 def _assert_equal(actual, expected, message=None):
@@ -189,6 +213,7 @@ class TestGrammar:
             test_invalid(v)
         for v, r in [(1, 1.0 * unyt.Ry), (15, 15.0 * unyt.Ry)]:
             test_warning(v, r)
+        assert type.convert([2.0, str(unyt.eV)]) == 2.0 * unyt.eV
 
         type = gt.SetOf(int)
         for val, res in [("a{}", Error), ("{a}", Error), ("{1,2}", np.array([1, 2])), ("{1,a}", Error)]:

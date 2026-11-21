@@ -22,7 +22,13 @@ class SCFInputParametersDefinition(InputParametersDefinition):
 
     def output_files(self, parameters, directory):
         files = list(super().output_files(parameters, directory))
-        potfil = parameters.CONTROL.POTFIL()
+        embedded = parameters.CONTROL.CLUTYPE() == "embedded"
+        potfil = (
+            parameters.CONTROL.POTFIL_CLU() if embedded
+            else parameters.CONTROL.POTFIL()
+        )
+        if embedded and not potfil:
+            raise ValueError("Embedded SCF requires CONTROL.POTFIL_CLU")
         if potfil:
             files.append(resolve_file(directory, f"{potfil}_new"))
         files.append(TaskFile(resolve_file(directory, "*_SCFSTART.dos"), optional=True))
@@ -68,6 +74,7 @@ def input_parameters_definition():
         "SCF",
         name="SCF",
         executable="kkrscf",
+        supports={"3d", "2d", "embedded"},
         mpi=True,
         output_reader="SCF",
     )

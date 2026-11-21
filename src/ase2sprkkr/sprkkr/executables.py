@@ -1,12 +1,17 @@
 """Declarative metadata for SPR-KKR executables."""
 
+from __future__ import annotations
+
 from collections.abc import Mapping
 from dataclasses import dataclass
 
 from ..common.module_registry import RegistryDefinitionError, RegistryEntryNotFound
 
 
-__all__ = ("ExecutableDefinition", "executables")
+__all__ = (
+    "ExecutableDefinition", "executables", "resolve_task_executable",
+    "task_system_error",
+)
 
 
 def _nonblank_string(value, field):
@@ -28,6 +33,7 @@ class ExecutableDefinition:
     name: str
     default_output_reader: str = "DEFAULT"
     description: str = ""
+    cluster_variant: str | None = None
 
     def __post_init__(self):
         name = _nonblank_string(self.name, "name")
@@ -37,6 +43,29 @@ class ExecutableDefinition:
 
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "default_output_reader", reader)
+        if self.cluster_variant is not None:
+            _nonblank_string(self.cluster_variant, "cluster_variant")
+
+    def resolve(self, input_parameters):
+        """Select the native executable from the prepared CONTROL parameters.
+
+        An absent CLUTYPE retains normal execution, including for older or
+        user-defined input schemas. Unsupported cluster executables fail
+        explicitly rather than running the periodic binary by mistake.
+        """
+        try:
+            cluster_type = input_parameters.CONTROL.CLUTYPE()
+        except (AttributeError, KeyError):
+            cluster_type = None
+        if cluster_type is None or cluster_type == "":
+            return self.name
+        if cluster_type != "embedded":
+            raise ValueError(f"Unsupported SPR-KKR CLUTYPE {cluster_type!r}")
+        if self.cluster_variant is None:
+            raise ValueError(
+                f"Executable {self.name!r} does not support embedded clusters"
+            )
+        return self.cluster_variant
 
 
 class _ExecutableRegistry(Mapping):
@@ -66,15 +95,31 @@ class _ExecutableRegistry(Mapping):
     def __len__(self):
         return len(self._definitions)
 
+    def resolve(self, name, input_parameters):
+        """Resolve a known binary or retain an ordinary custom executable.
 
+        Users may define TaskDefinitions with executable names absent from the
+        built-in metadata registry. Such binaries retain their native names in
+        normal mode; cluster mode remains opt-in and fails without metadata.
+        """
+        definition = self._definitions.get(name)
+        if definition is None:
+            definition = ExecutableDefinition(name)
+        return definition.resolve(input_parameters)
+
+
+# CLUSCF/CLUGEN are Fortran program identifiers; native makefile targets install
+# the corresponding binaries as embscf/embgen (with MPI variants suffixed MPI).
 executables = _ExecutableRegistry(
     (
         ExecutableDefinition(
             "kkrscf",
+            cluster_variant="embscf",
             description="Potential generation and self-consistent calculations.",
         ),
         ExecutableDefinition(
             "kkrgen",
+            cluster_variant="embgen",
             description="Electronic-structure and general property calculations.",
         ),
         ExecutableDefinition(
@@ -88,3 +133,43 @@ executables = _ExecutableRegistry(
         ),
     )
 )
+
+
+def task_system_error(task, system_kind):
+    """Return the reason a task cannot run on the given geometry, if any."""
+    if system_kind is None:
+        return None
+    if system_kind == "unknown":
+        return "The structure is not a native SPR-KKR system."
+    if system_kind not in task.supports:
+        if system_kind == "embedded":
+            return (
+                f"Task {task.name!r} is not enabled for embedded-cluster calculations; "
+                "a CLUGEN/CLUSCF executable alone does not establish task support"
+            )
+        if system_kind == "cluster":
+            return f"Task {task.name!r} does not support free clusters without a host potential."
+        return f"Task {task.name!r} does not support {system_kind.upper()} calculations."
+    if system_kind == "embedded":
+        executable = executables.get(task.executable)
+        if executable is None or executable.cluster_variant is None:
+            return f"Executable {task.executable!r} does not support embedded clusters"
+    return None
+
+
+def resolve_task_executable(task, input_parameters):
+    """Resolve the executable for an enabled *task*, not only its base binary.
+
+    The existence of an embedded variant of KKRGEN is not evidence that every
+    KKRGEN task can be run in an embedded cluster. Keep this opt-in decision in
+    TaskDefinition, and the native program-name mapping in ExecutableDefinition.
+    """
+    try:
+        cluster_type = input_parameters.CONTROL.CLUTYPE()
+    except (AttributeError, KeyError):
+        cluster_type = None
+    if cluster_type == "embedded":
+        error = task_system_error(task, "embedded")
+        if error:
+            raise ValueError(error)
+    return executables.resolve(task.executable, input_parameters)

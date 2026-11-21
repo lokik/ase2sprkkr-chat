@@ -64,6 +64,7 @@ def input_parameters_definition():
     schema["CONTROL"]["NONMAG"].warning_condition = _torque_nonmag_warning_condition
     schema._task_definition = TaskDefinition(
         "TORQUE",
+        supports={"3d", "2d"},
         name="TORQUE",
         executable="kkrgen",
         mpi=True,

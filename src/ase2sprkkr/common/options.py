@@ -10,6 +10,7 @@ from collections.abc import Mapping
 
 from ..common.grammar_types import mixed
 from .configuration import Configuration, UnknownMemberPolicy
+from .native_preset_io import reading_preset
 from ..common.misc import as_integer
 from .dangerous_values import DangerousValue
 from .configuration_transaction import ConfigurationTransaction
@@ -714,7 +715,7 @@ class Option(BaseOption):
                     raise pp.ParseException(message)
                 # The grammar already reported unconditional omissions.
                 # Runtime-dependent presence is resolved only at this stage.
-                if d.condition is not None or callable(d.is_optional):
+                if (d.condition is not None or callable(d.is_optional)) and not reading_preset():
                     DataValidityError.warn(message)
         if not d.allowed(container):
             return

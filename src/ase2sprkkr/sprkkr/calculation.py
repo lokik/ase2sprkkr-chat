@@ -9,17 +9,21 @@ from __future__ import annotations
 
 import os
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+
+from kkrunner.files import TaskFile
 
 from ..common.file_utils import Directory
 from ..common.output_printing import output_listeners
 from kkrunner.runs.base import ExecutionResources
-from .projects import resolve_project_manager
+from .projects import resolve_project_manager, project_execution_manager
 from kkrunner.runs import Run
 from ..input_parameters.input_parameters import InputParameters
+from ..potentials.cluster_potentials import ClusterPotential
 from . import _preparation as preparation
 from ._preparation import FilenameTemplator as FilenameTemplator
 from .profile import SPRKKRProfile, executor_from_profile
+from .executables import resolve_task_executable
 
 
 @dataclass
@@ -49,8 +53,13 @@ class PreparedCalculation:
     _temporary_potential: bool = False
     _temporary_directory: bool = False
     _closed: bool = False
+    cluster_potential_file: str | None = None
+    _temporary_cluster_potential: bool = False
+    clear_cache: bool = False
 
     def __post_init__(self):
+        if type(self.clear_cache) is not bool:
+            raise TypeError("clear_cache must be a bool")
         preparation.require_named_file(self.input_file, "input_file")
         if self.output_file is not None:
             preparation.require_named_file(self.output_file, "output_file")
@@ -60,6 +69,13 @@ class PreparedCalculation:
             except TypeError:
                 raise ValueError(
                     "SPR-KKR potential_file must be backed by a filesystem path"
+                ) from None
+        if self.cluster_potential_file is not None:
+            try:
+                os.fspath(self.cluster_potential_file)
+            except TypeError:
+                raise ValueError(
+                    "SPR-KKR cluster_potential_file must be a filesystem path"
                 ) from None
         self.directory = os.path.abspath(os.fspath(self.directory))
 
@@ -90,6 +106,7 @@ class PreparedCalculation:
         empty_spheres=None,
         allow_temporary_files=False,
         restart_scf=False,
+        clear_cache=False,
     ) -> PreparedCalculation:
         """Materialize all state and files required for one SPR-KKR run.
 
@@ -132,14 +149,25 @@ class PreparedCalculation:
             )
             parameters = resolved_input.parameters
             atoms = resolved_potential.atoms
-            task_name = parameters.task_definition_required().name
+            task = parameters.task_definition_required()
+            preparation.validate_task_system(task, resolved_input, resolved_potential)
+            task_name = task.name
             preparation.validate_restart(resolved_potential.potential, task_name, restart_scf)
-            preparation.resolve_empty_spheres(
-                input_parameters=parameters,
-                atoms=atoms,
-                empty_spheres=empty_spheres,
-                default_empty_spheres=default_empty_spheres,
-            )
+            if isinstance(resolved_potential.potential, ClusterPotential):
+                requested_spheres = (
+                    default_empty_spheres if empty_spheres is None else empty_spheres
+                )
+                if requested_spheres not in (None, False, "auto"):
+                    raise ValueError(
+                        "Empty-sphere generation is not supported for an embedded cluster"
+                    )
+            else:
+                preparation.resolve_empty_spheres(
+                    input_parameters=parameters,
+                    atoms=atoms,
+                    empty_spheres=empty_spheres,
+                    default_empty_spheres=default_empty_spheres,
+                )
 
             templator = preparation.FilenameTemplator(
                 label,
@@ -164,15 +192,36 @@ class PreparedCalculation:
             opened_input = files.open_input(resolved_input, default_input_file)
             reused_input = None if resolved_input.write else preparation.named_file_name(opened_input)
 
-            potential_file, temporary_potential = preparation.write_potential(
-                resolved_potential,
-                resolved_input.potential_file,
-                files,
-                default_filename=default_potential_file,
-                task_name=task_name,
-                restart_scf=restart_scf,
+            cluster_file = None
+            temporary_cluster = False
+            if isinstance(resolved_potential.potential, ClusterPotential):
+                potential_file, cluster_file, temporary_potential, temporary_cluster = (
+                    preparation.write_cluster_potentials(
+                        resolved_potential,
+                        resolved_input.potential_file,
+                        files,
+                        default_filename=default_potential_file,
+                        task_name=task_name,
+                        input_parameters=parameters,
+                        restart_scf=restart_scf,
+                    )
+                )
+            else:
+                potential_file, temporary_potential = preparation.write_potential(
+                    resolved_potential,
+                    resolved_input.potential_file,
+                    files,
+                    default_filename=default_potential_file,
+                    task_name=task_name,
+                    restart_scf=restart_scf,
+                )
+            preparation.write_input(
+                resolved_input, opened_input, potential_file,
+                # In existing-POTFIL mode, explicit atoms are validation-only:
+                # never derive or replace native input settings from them.
+                atoms if resolved_potential.potential is not None else None,
+                cluster_potential_file=cluster_file,
             )
-            preparation.write_input(resolved_input, opened_input, potential_file, atoms)
 
             opened_output = files.open_output(
                 output_file,
@@ -181,6 +230,7 @@ class PreparedCalculation:
             )
 
             return cls(
+                clear_cache=clear_cache,
                 input_parameters=parameters,
                 input_file=opened_input,
                 potential_file=potential_file,
@@ -191,6 +241,8 @@ class PreparedCalculation:
                 _directory_resources=directory_resources,
                 _temporary_potential=temporary_potential,
                 _temporary_directory=directory_context.dir is False,
+                cluster_potential_file=cluster_file,
+                _temporary_cluster_potential=temporary_cluster,
             )
         except BaseException:
             try:
@@ -256,6 +308,11 @@ class PreparedCalculation:
     def temporary_potential(self):
         """Whether POTFIL is a managed temporary pathname."""
         return self._temporary_potential
+
+    @property
+    def temporary_cluster_potential(self):
+        """Whether POTFIL_CLU is a managed temporary pathname."""
+        return self._temporary_cluster_potential
 
     def release_file_ownership(self):
         """Transfer ownership of open input/output files to the caller.
@@ -336,6 +393,23 @@ def _prepare_error_file(error_file, output_file, directory, create_subdirs):
     return opened_error, opened_error is not output_file
 
 
+def _run_cache_files(parameters, directory, *, clear_cache=False):
+    """Return output/cache declarations for one run without mutating task metadata."""
+    outputs = tuple(parameters.output_files(directory))
+    caches = tuple(parameters.cache_files(directory))
+    if not clear_cache:
+        return outputs, caches
+    # An invalidated cache is an optional output: the native executable may
+    # recreate it, but a successful task need not produce it.
+    refreshed = tuple(
+        replace(value, optional=True)
+        if isinstance(value, TaskFile)
+        else TaskFile(value, optional=True)
+        for value in caches
+    )
+    return (*outputs, *refreshed), ()
+
+
 def _create_sprkkr_run(
     prepared: PreparedCalculation,
     *,
@@ -388,6 +462,12 @@ def _create_sprkkr_run(
         if executor is None:
             executor = executor_from_profile(profile)
         manager = resolve_project_manager(project)
+        if manager is None and getattr(prepared, "clear_cache", False):
+            # An untracked run has no conflict reservation. A clean-cache run
+            # must use the same persistent run store as ordinary project runs,
+            # even when the caller has not assigned a specific project.
+            from kkrunner.runs.manager import RunManager
+            manager = RunManager(project_execution_manager().store)
         if metadata is not None and manager is None:
             raise ValueError("Run metadata requires a persistent project")
         if metadata is not None and "ase2sprkkr" in metadata:
@@ -407,23 +487,19 @@ def _create_sprkkr_run(
             )
             if file is not None
         )
+        auxiliary_outputs, cache_files = _run_cache_files(
+            input_parameters, prepared.directory, clear_cache=getattr(prepared, "clear_cache", False),
+        )
         output_files = tuple(
-            file
-            for file in (
+            file for file in (
                 prepared.output_file,
                 opened_error if opened_error is not prepared.output_file else None,
-                *input_parameters.output_files(prepared.directory),
-            )
-            if file is not None
-        )
-        cache_files = tuple(
-            file
-            for file in input_parameters.cache_files(prepared.directory)
-            if file is not None
+                *auxiliary_outputs,
+            ) if file is not None
         )
 
         spec = profile.create_execution(
-            task.executable,
+            resolve_task_executable(task, input_parameters),
             prepared.input_file,
             prepared.output_file,
             prepared.directory,
@@ -451,8 +527,11 @@ def _create_sprkkr_run(
             )
 
         def finalized(out):
-            if manager is not None and out is not None:
-                out.run_record = manager.store.get(runner.id)
+            if out is not None:
+                if manager is not None:
+                    out.run_record = manager.store.get(runner.id)
+                else:
+                    out.file_manifest = runner.files
             flush_listeners()
             # Run owns and releases ExecutionResources after completion.
             if callback:

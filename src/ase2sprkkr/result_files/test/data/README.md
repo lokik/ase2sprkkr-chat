@@ -8,6 +8,11 @@ not intended to replace the full-resolution numerical reference data.
   updating both NE headers, both NK declarations, INDKDIR, the K grid,
   and the interleaved spin/channel RAW_DATA blocks in their native ordering.
   The source EMIN/EMAX and nonuniform interior samples are retained.
+- Fe KK_BLOCHSF (2026 native CONST-E): extracted from a user-supplied 60×60
+  Fe BSFKK output. The fixture keeps the header, including the optional
+  `VECKA` origin, and the four k-plane corners (indices 0 and 59) for each
+  spin/site spectral block. Both NK1/NK2 declarations are reduced to 2.
+  The regression also checks the same header without `VECKA`.
 - Mo2Se4 energy SPC: seven selected rows from original 300 energies,
   with header NE=7, NT=NP=1 and all eight native columns retained.
 - Mo2Se4 kx_ky SPC: synthetic orthogonal 5x7 mesh derived from the

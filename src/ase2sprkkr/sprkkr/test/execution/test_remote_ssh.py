@@ -49,7 +49,7 @@ def test_remote_executor_over_ssh(docker_execution_image):
     from ase.build import bulk
     from kkrunner.client import EndpointClient
     from kkrunner.client.pool import ClientPool
-    from kkrunner.client.transports import SshTransport
+    from kkrunner.transports import SshTransport
     from kkrunner.projects import ProjectRunManager, ProjectRepository
 
     from ase2sprkkr.outputs.project_results import load_project_result

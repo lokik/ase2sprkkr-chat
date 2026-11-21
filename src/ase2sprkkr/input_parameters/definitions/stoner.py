@@ -39,10 +39,16 @@ def input_parameters_definition():
         description="No task-specific input options. Uses the VWN susceptibility kernel. "
                     "Native STONER enables reading a TAU directory and falls back to the normal KKRGEN calculation when no reusable TAU cache is available. "
                     "The final STONER branch is skipped by SPR-KKR in MPI mode. "
+                    "Embedded clusters are unsupported: native SUSC_GAMMA loops over "
+                    "host atom types, substitutes artificial host DOS and can read "
+                    "unwritten host wave-function records (SPR-KKR 9.7 audit). "
                     "Only the fully relativistic, single-energy workflow is exposed; "
                     "numerical results and FULLPOT have not been verified."
     )
-    schema._task_definition = TaskDefinition("STONER", experimental=True, executable="kkrgen", mpi=False, output_files=(
+    # Native SUSC_GAMMA is not cluster-safe (host-type loops and missing WF).
+    schema._task_definition = TaskDefinition(
+        "STONER", experimental=True, executable="kkrgen", mpi=False,
+        supports={"3d", "2d"}, output_files=(
             "{DATASET_ADSI}_*_g-spin.dat",
             "{DATASET_ADSI}_*_g-orb.dat",
             "{DATASET_ADSI}_*_VWN_A-xc.dat",

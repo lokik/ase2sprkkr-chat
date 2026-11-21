@@ -16,19 +16,25 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from pyparsing import ParseBaseException
+
 from ..ase.symbols import filename_from_symbols
 from ..bindings.empty_spheres import add_empty_spheres
 from ..common.temporary import temporary_option_value
 from ..input_parameters.input_parameters import InputParameters
 from ..potentials.potentials import Potential
-from .sprkkr_atoms import SPRKKRAtoms
+from ..potentials.cluster_potentials import ClusterPotential
+from .executables import resolve_task_executable, task_system_error
+from .sprkkr_atoms import SPRKKRAtoms, system_kind_for_atoms
+
 
 
 class FilenameTemplator:
     """Render filename templates consistently for one prepared calculation.
 
-    Placeholder values are evaluated lazily and cached, so all filenames
-    created by one instance use the same date, task, symbols and counter value.
+    ``%%`` represents a literal percent sign. Placeholder values are evaluated
+    lazily and cached, so all filenames created by one instance use the same
+    date, task, symbols and counter value.
     """
 
     def __init__(self, label, counter, task, symbols):
@@ -57,12 +63,19 @@ class FilenameTemplator:
     }
 
     def __call__(self, template):
+        return "%".join(
+            self._render(part, leading=index == 0)
+            for index, part in enumerate(template.split("%%"))
+        )
+
+    def _render(self, template, *, leading):
         for placeholder, value in self.replacements.items():
             if placeholder in template:
                 template = template.replace(
                     placeholder, self._get(placeholder, value)
                 )
-        template = re.sub("^%_", "", template)
+        if leading:
+            template = re.sub("^%_", "", template)
         template = re.sub("%_(%_)*", "_", template)
         return template.replace("%_", "_")
 
@@ -194,7 +207,7 @@ class ResolvedPotential:
     POTFIL from the input parameters. Otherwise it selects the output file.
     """
 
-    potential: Potential | None
+    potential: Potential | ClusterPotential | None
     atoms: SPRKKRAtoms | None
     filename: object
 
@@ -225,7 +238,9 @@ def resolve_potential_and_atoms(
     if potential is None:
         potential = atoms is not None or default_atoms is not None
 
-    potential_specified = potential is not None and potential is not True
+    # With potential=False, atoms are optional geometry metadata for native
+    # task validation; they never cause a potential to be generated or rewritten.
+    potential_specified = potential is not None and potential is not True and potential is not False
     if atoms is not None and potential_specified:
         raise ValueError(
             "You can not provide both a potential and atoms object to the SPRKKR "
@@ -261,7 +276,7 @@ def resolve_potential_and_atoms(
             potential_file = source
             potential = None
 
-    if isinstance(potential, Potential):
+    if isinstance(potential, (Potential, ClusterPotential)):
         atoms = potential.atoms
     elif atoms is not None:
         atoms = SPRKKRAtoms.promote_ase_atoms(atoms)
@@ -329,6 +344,14 @@ def resolve_input_parameters(
     if options:
         input_parameters.set(options, unknown="find")
 
+    if isinstance(potential.potential, ClusterPotential):
+        cluster_type = input_parameters.CONTROL.CLUTYPE()
+        if cluster_type not in (None, "embedded"):
+            raise ValueError(
+                "ClusterPotential requires CONTROL.CLUTYPE=embedded"
+            )
+        input_parameters.CONTROL.CLUTYPE = "embedded"
+
     if potential_missing and potential_file is None:
         potential_file = potential_from_parameters(input_parameters, directory)
 
@@ -343,6 +366,37 @@ def resolve_input_parameters(
         )
 
     return ResolvedInput(input_parameters, input_file, potential_file, write_input)
+
+
+def validate_task_system(task, resolved_input, resolved_potential):
+    """Check known geometry before opening any calculation files."""
+    parameters = resolved_input.parameters
+    resolve_task_executable(task, parameters)
+    kind = system_kind_for_atoms(resolved_potential.atoms)
+    # For a path-only embedded calculation the host POTFIL is not itself
+    # an embedded structure; the complete pair is checked during source loading.
+    if kind is None and getattr(parameters.CONTROL, "CLUTYPE", lambda: None)() == "embedded":
+        kind = "embedded"
+    # When a task does not support both periodic geometries, inspect an
+    # available potential to reject a known unsupported system before creating
+    # output files. A parser failure means the geometry remains unknown:
+    # path-only native execution must not require full Python parsing.
+    filename = resolved_input.potential_file
+    if kind is None and filename and not {"2d", "3d"}.issubset(task.supports):
+        try:
+            potential = Potential.from_file(filename, atoms=False)
+        except (FileNotFoundError, ParseBaseException):
+            pass
+        else:
+            if isinstance(potential, ClusterPotential):
+                kind = "embedded"
+            else:
+                kind = potential.LATTICE.SYSDIM().lower()
+                if kind == "0d":
+                    kind = "cluster"
+    error = task_system_error(task, kind)
+    if error:
+        raise ValueError(error)
 
 
 def resolve_empty_spheres(
@@ -472,10 +526,10 @@ def validate_restart(potential, task_name, restart_scf):
         return
     if task_name != "SCF":
         raise ValueError("restart_scf=True is only valid for an SCF calculation.")
-    if not isinstance(potential, Potential):
+    if not isinstance(potential, (Potential, ClusterPotential)):
         raise ValueError(
-            "restart_scf=True requires a writable Potential or atoms "
-            "from which one can be generated."
+            "restart_scf=True requires a writable Potential/ClusterPotential "
+            "or atoms from which one can be generated."
         )
 
 
@@ -520,7 +574,62 @@ def write_potential(
     return name, filename is False
 
 
-def write_input(resolved, handle, potential_file, atoms):
+
+def write_cluster_potentials(
+    resolved, host_filename, files, *, default_filename, task_name,
+    input_parameters, restart_scf=False,
+):
+    """Write an embedded cluster and its host as separate native POTFILs."""
+    cluster = resolved.potential
+    host = cluster.host
+    if not isinstance(host, Potential):
+        raise ValueError(
+            "A ClusterPotential calculation requires a host Potential"
+        )
+
+    host_file, temporary_host = write_potential(
+        ResolvedPotential(host, host.atoms, host_filename),
+        host_filename,
+        files,
+        default_filename=default_filename,
+        task_name=task_name,
+        restart_scf=False,
+    )
+    cluster_target = input_parameters.CONTROL.POTFIL_CLU.result
+    if not cluster_target:
+        if temporary_host:
+            cluster_target = False
+        else:
+            cluster_target = str(Path(host_file).with_suffix(".clu.pot"))
+    if cluster_target is not False:
+        intended = calculation_path(cluster_target, files.directory)
+        if os.path.abspath(host_file) == intended:
+            raise ValueError("POTFIL and POTFIL_CLU must be different files")
+
+    handle = files.open(cluster_target, "cluster_potential_file")
+    # Restart is a serialization intent; do not mutate the canonical
+    # converged cluster potential retained by the calling Atoms.
+    if restart_scf:
+        cluster_to_write = ClusterPotential.from_atoms(
+            resolved.atoms, scf_status="START"
+        )
+    else:
+        cluster_to_write = cluster
+    cluster_to_write.save_to_file(handle)
+    flush = getattr(handle, "flush", None)
+    if flush is not None:
+        flush()
+    if isinstance(handle, TemporaryNamedFile):
+        handle.close_file()
+    else:
+        handle.close()
+    cluster_file = named_file_name(handle)
+    if not os.path.isabs(cluster_file):
+        cluster_file = os.path.abspath(cluster_file)
+    return host_file, cluster_file, temporary_host, cluster_target is False
+
+
+def write_input(resolved, handle, potential_file, atoms, *, cluster_potential_file=None):
     """Serialize the snapshot, letting filename mappings render relative paths."""
     if not resolved.write:
         return
@@ -528,6 +637,8 @@ def write_input(resolved, handle, potential_file, atoms):
     parameters = resolved.parameters
     if potential_file:
         parameters.CONTROL.POTFIL = potential_file
+    if cluster_potential_file:
+        parameters.CONTROL.POTFIL_CLU = cluster_potential_file
     if not parameters.CONTROL.DATASET.is_set():
         parameters.CONTROL.DATASET.result = Path(named_file_name(handle)).stem
     parameters.save_to_file(handle, atoms)

@@ -31,11 +31,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y graphviz pandoc
-      - name: Install KKRunner beta3 candidate for this coordinated prerelease
-        # Remove this temporary source bootstrap after kkrunner 0.2.0b3 is on PyPI.
-        run: >-
-          python -m pip install
-          git+https://github.com/lokik/kkrunner-chat.git@1985f3c7f59bc98518cd6f108652efb952c2d96f
+      - name: Checkout matching KKRunner implementation
+        uses: actions/checkout@v6
+        with:
+          repository: lokik/kkrunner-chat
+          ref: 9f6e027051979a655fce2cb17d009657b8509670
+          path: .ci/kkrunner
+      - name: Install KKRunner from the matching source revision
+        run: python -m pip install './.ci/kkrunner[psij]'
       - name: Install ASE2SPRKKR and documentation tools
         run: |
           python -m pip install -e '.[plot]'

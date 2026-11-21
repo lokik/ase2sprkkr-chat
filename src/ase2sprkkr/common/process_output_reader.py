@@ -16,8 +16,22 @@ class ProcessOutputParser:
     to the execution backend. Descendants only interpret the supplied streams.
     """
 
-    def __init__(self, print_info=False):
+    def __init__(self, print_info=False, on_info=None):
         self.print_info = print_info
+        self.on_info = on_info
+
+    def format_info(self, kind, data):
+        """Return a printable INFO line for an event, or None."""
+        return None
+
+    def emit_info(self, kind, data):
+        """Send structured INFO to clients; text printing shares this path."""
+        if self.on_info is not None:
+            self.on_info(kind=kind, data=data)
+        if self.print_info:
+            line = self.format_info(kind, data)
+            if line is not None:
+                print(line)
 
     def result(self, output, error, return_code):
         """Postprocess parsed stdout/stderr after execution completes."""

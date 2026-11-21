@@ -1,0 +1,94 @@
+*******************************************************************************
+HEADER      	'SPR-KKR cluster dataset created by ASE2SPRKKR'
+*******************************************************************************
+TITLE       	'Embedded cluster'
+SYSTEM      	'Embedded cluster in a host potential'
+*******************************************************************************
+GLOBAL SYSTEM PARAMETER
+NQCLU       	7
+NTCLU       	7
+NMCLU       	0
+*******************************************************************************
+SCF-INFO
+INFO        	'Initial embedded cluster'
+SCFSTATUS   	START
+FULLPOT     	F
+SPHERCELL   	F
+BREITINT    	F
+NONMAG      	F
+ORBPOL      	NONE
+EXTFIELD    	F
+BLCOUPL     	F
+BEXT        	0.0
+SEMICORE    	F
+LLOYD       	F
+NE          	0
+IBZINT      	2
+NKTAB       	936
+XC-POT      	VWN
+SCF-ALG     	BROYDEN2
+SCF-ITER    	0
+SCF-MIX     	0.2
+SCF-TOL     	1e-05
+RMSAVV      	999999.0
+RMSAVB      	999999.0
+EF          	0.735438975493277
+VMTZ        	-0.784757926406298
+*******************************************************************************
+LATTICE
+SYSDIM      	3D
+SYSTYPE     	BULK
+*******************************************************************************
+SITES
+positions of cluster sites (QX,QY,QZ) include SHIFTS
+IQCLU           N5VEC1           N5VEC2           N5VEC3           N5VEC4           N5VEC5               IQ                     QX                     QY                     QZ
+1                  -1                0                0                0                0                1                   -1.0                    0.0                    0.0
+2                   0               -1                0                0                0                1                    0.0                   -1.0                    0.0
+3                   0                0               -1                0                0                1                    0.0                    0.0                   -1.0
+4                   0                0                0                0                0                1                    0.0                    0.0                    0.0
+5                   0                0                1                0                0                1                    0.0                    0.0                    1.0
+6                   0                1                0                0                0                1                    0.0                    1.0                    0.0
+7                   1                0                0                0                0                1                    1.0                    0.0                    0.0
+*******************************************************************************
+SHIFTS
+shift from original lattice site positions
+SHIFT       	F
+IQCLU                    DQX                    DQY                    DQZ
+1                       0.0                    0.0                    0.0
+2                       0.0                    0.0                    0.0
+3                       0.0                    0.0                    0.0
+4                       0.0                    0.0                    0.0
+5                       0.0                    0.0                    0.0
+6                       0.0                    0.0                    0.0
+7                       0.0                    0.0                    0.0
+*******************************************************************************
+OCCUPATION
+IQCLU           IMQCLU           NOQCLU       ITCLU CONC
+1                   1                1            1 1.0
+2                   1                1            2 1.0
+3                   1                1            3 1.0
+4                   1                1            4 1.0
+5                   1                1            5 1.0
+6                   1                1            6 1.0
+7                   1                1            7 1.0
+*******************************************************************************
+MAGNETISATION DIRECTION
+Initial cluster magnetisation directions
+              IQ                  QMTET                  QMPHI
+                3                    0.0                    0.0
+                4                    0.0                    0.0
+                5                    0.0                    0.0
+                6                    0.0                    0.0
+                7                    0.0                    0.0
+                8                    0.0                    0.0
+                9                    0.0                    0.0
+*******************************************************************************
+TYPES
+IT                TXT               ZT            NCORT            NVALT      NSEMCORSHLT
+1                  Fe               26               18                8                0
+2                  Fe               26               18                8                0
+3                  Fe               26               18                8                0
+4                  Co               27               18                9                0
+5                  Fe               26               18                8                0
+6                  Fe               26               18                8                0
+7                  Fe               26               18                8                0

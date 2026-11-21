@@ -65,8 +65,13 @@ class OccupationSection(PotentialSection):
         atoms.info["occupancy"] = occ_dict
 
 
+def occupation_count_matches(count, occupations, *, field):
+    """Validate native occupation-count declarations in either POTFIL format."""
+    return count == len(occupations) or f"Number of occupations differs from {field}"
+
+
 def _validate_row(result):
-    return result[2] == len(result[3]) or "Number of occupations differs from NOQ"
+    return occupation_count_matches(result[2], result[3], field="NOQ")
 
 
 class OccupationSectionDefinition(PotSectionDefinition):

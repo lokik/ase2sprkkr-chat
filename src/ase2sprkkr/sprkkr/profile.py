@@ -18,7 +18,7 @@ from kkrunner.backends.config import BackendConfig
 from kkrunner.client import EndpointClient
 from kkrunner.client.pool import default_client_pool
 from kkrunner.client.staging import StagingSpec
-from kkrunner.client.transports import LocalTransport, SshTransport
+from kkrunner.transports import LocalTransport, SshTransport
 from kkrunner.execution import MpiSpec
 from ..profiles import ase_command_profile_values
 

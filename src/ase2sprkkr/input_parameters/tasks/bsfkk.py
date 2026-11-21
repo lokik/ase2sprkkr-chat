@@ -4,6 +4,7 @@ from ..task_definition import TaskDefinition, TaskFile
 def task_definition():
     return TaskDefinition(
         "BSF",
+        supports={"3d", "2d"},
         name="BSFKK",
         executable="kkrgen",
         mpi=True,

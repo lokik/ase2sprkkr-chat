@@ -118,7 +118,8 @@ class OutputFileOption(OutputOption):
         return ResultFile.definitions[self.file_type]
 
     def value_label(self):
-        return f"<{self.file_type} file>" if self.file_type else str(self())
+        # The user-facing value is the actual filename, not a format placeholder.
+        return os.path.basename(self.path())
 
     def actions(self):
         # Parsed paths can describe missing optional or mandatory outputs.

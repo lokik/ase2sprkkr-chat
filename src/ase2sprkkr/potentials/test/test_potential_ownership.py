@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
-from unittest.mock import Mock
 
 import pytest
 from ase import Atoms
-
 from kkrunner.files.fingerprints import file_fingerprint
+
+from ase2sprkkr.potentials import potential_base
 from ase2sprkkr.potentials import potentials as potentials_module
-from ase2sprkkr.potentials.potentials import Potential, PotentialFileChanged
+from ase2sprkkr.potentials.potentials import PeriodicPotential, Potential, PotentialFileChanged
 from ase2sprkkr.sprkkr.configuration import ConfigurationFile
 
 
@@ -39,7 +39,9 @@ def test_potential_attachment_sharing_and_reassignment():
     assert standalone.atoms is new_atoms
     assert attached.atoms is atoms
     assert atoms.potential is attached
-    assert not new_atoms.has_potential()
+    assert new_atoms.has_potential()
+    assert new_atoms.potential is not attached
+    assert new_atoms.potential.atoms is new_atoms
 
 
 def test_empty_atoms_are_explicit_set_from_atoms_input(monkeypatch):
@@ -67,7 +69,7 @@ def test_save_to_file_synchronizes_atoms_once(monkeypatch):
     calls = []
 
     monkeypatch.setattr(
-        Potential,
+        PeriodicPotential,
         "set_from_atoms",
         lambda self, atoms=None, io_data=None: calls.append(atoms),
     )
@@ -91,36 +93,29 @@ def test_save_to_file_synchronizes_atoms_once(monkeypatch):
 
 
 def test_file_unchanged_check_is_opt_in(monkeypatch, tmp_path):
-    # No real potential parsing is needed to test the provenance policy.
-    path = tmp_path / "not-parsed.pot"
-    parsed = object()
-    reader = Mock(return_value=parsed)
-    monkeypatch.setattr(Potential.potential_definition, "read_from_file", reader)
+    path = tmp_path / "potential.pot"
+    path.write_bytes(_example_potential().read_bytes())
     monkeypatch.setattr(
-        potentials_module,
+        potential_base,
         "file_fingerprint",
         lambda _path: pytest.fail("fingerprinting must be disabled by default"),
     )
 
-    assert Potential.from_file(path) is parsed
-    reader.assert_called_once_with(path, atoms=None, allow_dangerous=False)
+    assert isinstance(Potential.from_file(path), PeriodicPotential)
 
 
 def test_file_unchanged_check_rejects_rewrite(monkeypatch, tmp_path):
     # Fingerprint mismatch is checked around the parser, not by the parser.
-    path = tmp_path / "not-parsed.pot"
-    path.write_bytes(b"fake potential")
+    path = tmp_path / "potential.pot"
+    path.write_bytes(_example_potential().read_bytes())
     original = file_fingerprint(path)
     changed = original._replace(size=original.size + 1)
     fingerprints = iter((original, changed))
-    reader = Mock(return_value=object())
-    monkeypatch.setattr(Potential.potential_definition, "read_from_file", reader)
     monkeypatch.setattr(
-        potentials_module,
+        potential_base,
         "file_fingerprint",
         lambda _path: next(fingerprints),
     )
 
     with pytest.raises(PotentialFileChanged, match="changed while it was being read"):
         Potential.from_file(path, check_file_unchanged=True)
-    reader.assert_called_once_with(path, atoms=None, allow_dangerous=False)

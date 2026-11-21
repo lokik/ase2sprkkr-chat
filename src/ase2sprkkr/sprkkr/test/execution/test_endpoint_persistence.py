@@ -1,5 +1,5 @@
 from kkrunner.backends.config import BackendConfig
-from kkrunner.client.transports import SshTransport
+from kkrunner.transports import SshTransport
 
 from ase2sprkkr.sprkkr.profile import SPRKKRProfile
 

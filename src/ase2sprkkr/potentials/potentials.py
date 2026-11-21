@@ -1,23 +1,14 @@
 """Potential is object that holds data form SPR-KKR potential file"""
 
-from os import PathLike
-from pathlib import Path
-from io import StringIO
 from typing import Union
 
-from ..sprkkr.configuration import ConfigurationFile
 from ..sprkkr.io_data import ReadIoData, WriteIoData
-from ..common.decorators import class_property, cache
-from kkrunner.files.fingerprints import file_fingerprint
 from ..common.temporary import temporary_option_value
 from ..sprkkr.sprkkr_atoms import SPRKKRAtoms
+from .potential_base import Potential, PotentialFileChanged
 
 
-class PotentialFileChanged(RuntimeError):
-    """A potential file changed while it was being parsed."""
-
-
-class Potential(ConfigurationFile):
+class PeriodicPotential(Potential):
     """It holds data form SPR-KKR potential file
 
     It, in addition to being a containers for their sections, can read/write
@@ -108,88 +99,6 @@ class Potential(ConfigurationFile):
         super().set_from_atoms(atoms, io_data)
         self.make_complete()
 
-    def is_scf_converged(self, atoms=None):
-        """Return whether this potential represents a converged SCF state."""
-        status = self.SCF_INFO.SCFSTATUS()
-        if status == "CONVERGED":
-            return True
-        if status != "START":
-            return False
-
-        if atoms is None:
-            atoms = self._atoms
-        return atoms is not None and atoms.sprkkr_has_converged_data()
-
-    @class_property
-    @cache
-    def potential_definition(cls):
-        # import here to avoid circular import issues
-        from .definitions import potential as definition
-
-        return definition.potential_definition
-
-    @staticmethod
-    def from_file(
-        filename,
-        atoms=None,
-        allow_dangerous=False,
-        *,
-        check_file_unchanged=False,
-    ):
-        """Create a potential from a given potential file.
-
-        Parameters
-        ----------
-        check_file_unchanged
-          If True, require ``filename`` to be a filesystem path and verify with
-          cheap filesystem fingerprints that it was not replaced or rewritten
-          while being parsed. The check is opt-in because normal potential
-          loading does not require this provenance guarantee.
-        """
-        fingerprint = None
-        path = None
-        if check_file_unchanged:
-            if not isinstance(filename, (str, bytes, PathLike)):
-                raise TypeError(
-                    "check_file_unchanged=True requires a filesystem path"
-                )
-            path = Path(filename)
-            fingerprint = file_fingerprint(path)
-
-        pd = Potential.potential_definition
-        potential = pd.read_from_file(
-            filename,
-            atoms=atoms,
-            allow_dangerous=allow_dangerous,
-        )
-
-        if check_file_unchanged:
-            try:
-                current = file_fingerprint(path)
-            except OSError as exc:
-                raise PotentialFileChanged(
-                    f"Potential file changed while it was being read: {path}"
-                ) from exc
-            if current != fingerprint:
-                raise PotentialFileChanged(
-                    f"Potential file changed while it was being read: {path}"
-                )
-        return potential
-
-    @classmethod
-    def from_string(cls, string: str, atoms=None, allow_dangerous=False):
-        """Create a potential from a string containing a content of a potential file."""
-        return cls.from_file(StringIO(string), atoms, allow_dangerous)
-
-    @classmethod
-    def from_atoms(cls, atoms):
-        """Create a potential, that describes the given atoms object."""
-        SPRKKRAtoms.promote_ase_atoms(atoms)
-        if atoms.has_potential():
-            return atoms.potential
-        pd = Potential.potential_definition
-        return cls(atoms=atoms, definition=pd)
-
     def reset(self, update_atoms=True):
         copy = [i for i in self]
         for i in copy:
@@ -204,6 +113,17 @@ class Potential(ConfigurationFile):
 
     def __str__(self):
         return "SPRKKR POTENTIAL"
+
+    def is_scf_converged(self, atoms=None):
+        """Whether the host contains a converged, restartable SCF state."""
+        status = self.SCF_INFO.SCFSTATUS()
+        if status == "CONVERGED":
+            return True
+        if status != "START":
+            return False
+        if atoms is None:
+            atoms = self._atoms
+        return atoms is not None and atoms.sprkkr_has_converged_data()
 
     def save_to_file(
         self,

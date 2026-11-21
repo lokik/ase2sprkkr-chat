@@ -318,25 +318,18 @@ class RepeatedConfigurationContainer(BaseConfigurationContainer):
     def values(self):
         return self._raw_values()
 
-    def _as_dict(self, only_changed: Union[bool, str] = "basic", generated: bool = False, copy=False):
+    def _as_dict(self, get):
         """
         Return the content of the container as a dictionary.
         Nested containers will be transformed to dictionaries as well.
         """
         if self._definition.is_repeated == BaseDefinition.Repeated.LIST_SECTION:
-            out = [v.as_dict(only_changed, generated, copy) for v in self._raw_values()]
-            if out and out[-1] is not None:
-                for i in range(len(out) - 1, 0, -1):
-                    if out[i] is not None:
-                        out = out[: i + 1]
-                    else:
-                        out = None
+            # An empty occurrence still carries its position and defaults.
+            out = [v._as_dict(get) or {} for v in self._raw_values()]
         else:
             out = {}
             for k, v in self._raw_items():
-                value = v.as_dict(only_changed, generated, copy)
-                if value is not None:
-                    out[k] = value
+                out[k] = v._as_dict(get) or {}
         return out or None
 
     def is_changed(self):

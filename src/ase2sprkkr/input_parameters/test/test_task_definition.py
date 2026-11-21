@@ -159,11 +159,12 @@ def test_task_definition_reader_alias_and_canonical_field_are_unambiguous():
 
 
 def test_task_definition_dataclass_replace_uses_canonical_reader_field():
-    task = TaskDefinition("SCF", output_reader="SCF")
+    task = TaskDefinition("SCF", output_reader="SCF", supports={"3d", "2d", "embedded"})
 
     replaced = replace(task, output_reader_name="DOS")
 
     assert replaced.output_reader_name == "DOS"
+    assert replaced.supports == frozenset({"3d", "2d", "embedded"})
     assert replace(task) == task
 
 
@@ -190,6 +191,9 @@ def test_task_definition_normalizes_identifiers_but_preserves_executable_name():
         ({"executable": "   "}, ValueError, "executable must not be empty"),
         ({"mpi": "banana"}, TypeError, "mpi must be a bool"),
         ({"mpi": 1}, TypeError, "mpi must be a bool"),
+        ({"supports": "3d"}, TypeError, "supports must be an iterable"),
+        ({"supports": 1}, TypeError, "supports must be an iterable"),
+        ({"supports": {"0d"}}, ValueError, "Unknown system kind"),
         ({"output_reader": "   "}, ValueError, "output_reader must not be empty"),
         ({"output_reader_name": "   "}, ValueError, "output_reader must not be empty"),
     ],
@@ -262,6 +266,13 @@ def test_builtin_task_definitions_are_metadata_objects():
         "execution_task_name",
     ):
         assert not hasattr(TaskDefinition, name)
+
+
+def test_embedded_cluster_support_is_explicit_task_metadata():
+    assert TaskDefinition("CUSTOM", executable="kkrgen").supports == frozenset({"3d"})
+    supported = {task.name for task in InputParameters.task_registry.values()
+                 if "embedded" in task.supports}
+    assert supported == {"SCF", "DOS", "JXC", "DMI"}
 
 
 def test_input_parameters_use_generic_save_contract():
@@ -384,3 +395,37 @@ def test_unset_required_file_template_is_not_silently_dropped(tmp_path):
         parameters, str(tmp_path),
         (TaskFile("{dataset}.dos", optional=True), TaskFile(lambda _: None)),
     ) == ()
+
+
+def test_only_validated_tasks_declare_embedded_cluster_support():
+    """Sharing embgen does not make a periodic task meaningful for 0D."""
+    supported = {
+        task.name for task in InputParameters.task_registry.values()
+        if "embedded" in task.supports
+    }
+    assert supported == {"SCF", "DOS", "JXC", "DMI"}
+    assert "embedded" not in TaskDefinition("CUSTOM", executable="kkrgen").supports
+    assert "embedded" in replace(TaskDefinition("SCF"), supports={"3d", "embedded"}).supports
+
+
+def test_supports_are_frozen_and_enumerate_periodicity_explicitly():
+    task = TaskDefinition("CUSTOM", supports={"3d", "2d", "cluster"})
+    assert task.supports == frozenset({"3d", "2d", "cluster"})
+    assert isinstance(task.supports, frozenset)
+    assert "embedded" not in task.supports
+    assert replace(task).supports == task.supports
+
+
+def test_registered_task_geometry_support_matches_native_source_audit():
+    no_2d = {"CHILANDAU", "POSANI", "POSANIPREP", "POSANITAU"}
+    broken = {"BONDING", "BSDOSIJ", "FSCAT", "NRAES", "NUCSSCPL",
+              "PLOT2DRHO", "PLOTRHO", "T1", "TDOBS", "XES", "XRS"}
+    tasks = InputParameters.task_registry.values()
+    for task in tasks:
+        if task.name in broken:
+            assert task.supports == frozenset(), task.name
+        elif task.name in no_2d:
+            assert task.supports == frozenset({"3d"}), task.name
+        else:
+            assert {"3d", "2d"} <= task.supports, task.name
+        assert "cluster" not in task.supports, task.name

@@ -6,7 +6,7 @@ import io
 import os
 from collections.abc import Mapping
 from . import definitions, tasks
-from .task_definition import InputParametersRegistry, TaskRegistry
+from .task_definition import InputParametersRegistry, TaskRegistry, TaskFile
 from ..sprkkr.configuration import (
     ConfigurationFile,
     ConfigurationSection,
@@ -15,7 +15,6 @@ from ..sprkkr.configuration import (
 from ..common.configuration_containers import BaseConfigurationContainer
 from ..common.repeated_configuration_containers import RepeatedConfigurationContainer
 from ..common.decorators import cached_class_property
-from ..common.module_registry import RegistryEntryNotFound
 from ..potentials.potentials import Potential
 
 class _LazyInputParametersDefinitions(Mapping):
@@ -157,6 +156,22 @@ class InputParameters(ConfigurationFile):
         self._potential = potfil, out
         return out
 
+    def set_from_atoms(self, atoms, io_data=None):
+        """Derive native input settings from periodic atoms or an embedding host."""
+        host = getattr(atoms, "embedding_host", None)
+        if host is not None:
+            from ..sprkkr.sprkkr_atoms import host_atoms
+
+            if io_data is not None:
+                raise ValueError("Embedded atoms require IO data derived from their host")
+            if self.CONTROL.CLUTYPE() not in (None, "embedded"):
+                raise ValueError("Embedded atoms require CONTROL.CLUTYPE=embedded")
+            self.CONTROL.CLUTYPE = "embedded"
+            atoms = host_atoms(host)
+        elif atoms is not None and getattr(self.CONTROL, "CLUTYPE", lambda: None)() == "embedded":
+            raise ValueError("CONTROL.CLUTYPE=embedded requires embedded atoms")
+        return super().set_from_atoms(atoms, io_data)
+
     @staticmethod
     def _has_instance_defaults(source):
         if isinstance(source, InputValue):
@@ -223,6 +238,29 @@ class InputParameters(ConfigurationFile):
         self._copy_instance_defaults(self, out, copy_values)
         return out
 
+    def save_preset(self, name, *, overwrite=False, store=None):
+        """Save explicitly assigned values as a YAML preset."""
+        from .presets import PresetStore
+        return (store if store is not None else PresetStore()).save(self, name, overwrite=overwrite)
+
+    def load_preset(
+        self, name, clear_first: bool = True,
+        load_structural_info: bool = False, *,
+        required_task=None, store=None,
+    ):
+        """Apply a preset; replace settings by default but keep structural paths.
+
+        With ``clear_first=False``, only values present in the preset are
+        merged. Structural/dataset fields are preserved unless explicitly
+        requested using ``load_structural_info=True``.
+        """
+        from .presets import PresetStore
+        return (store if store is not None else PresetStore()).load_into(
+            self, name, clear_first=clear_first,
+            load_structural_info=load_structural_info,
+            required_task=required_task,
+        )
+
     def uses_separate_single_site_contour(self):
         switches = (
             ("ENERGY", "SPLITSS"),
@@ -245,7 +283,23 @@ class InputParameters(ConfigurationFile):
         )
 
     def input_files(self, directory):
-        return self._task_files(directory, "input")
+        files = self._task_files(directory, "input")
+        try:
+            embedded = self.CONTROL.CLUTYPE() == "embedded"
+        except (AttributeError, KeyError):
+            embedded = False
+        if not embedded:
+            return files
+        cluster_file = self.CONTROL.POTFIL_CLU()
+        if not cluster_file:
+            raise ValueError(
+                "Embedded calculation requires CONTROL.POTFIL_CLU"
+            )
+        cluster_path = (
+            cluster_file if os.path.isabs(cluster_file)
+            else os.path.join(directory, cluster_file)
+        )
+        return (*files, TaskFile(cluster_path))
 
     def output_files(self, directory):
         return self._task_files(directory, "output")

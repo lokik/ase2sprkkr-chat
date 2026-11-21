@@ -82,7 +82,7 @@ class BSFResultFile(CommonResultFile, Arithmetic):
             for name in ("NK1", "NK2"):
                 if self[name]() != other[name]():
                     raise ValueError(f"BSF {name} differs between operands")
-            for name in ("VECK_START", "VECK1", "VECK2", "ERYD"):
+            for name in ("VECKA", "VECK1", "VECK2", "ERYD"):
                 if not np.array_equal(self[name](), other[name]()):
                     raise ValueError(f"BSF {name} grids are different")
 
@@ -158,7 +158,7 @@ def create_definition():
                 kw.update(
                     {
                         "xticks": [0.0, 1.0],
-                        "xticklabels": ["" if c.VECK_START() is None else v(c.VECK_START()), ticks(c.VECK1())],
+                        "xticklabels": ["" if c.VECKA() is None else ticks(c.VECKA()), ticks(c.VECK1())],
                         "xlabel": r"Kx",
                         "ylabel": r"Ky",
                         "yticks": [1.0],
@@ -282,11 +282,11 @@ def create_definition():
                         V("NK2", int, info="Number of K points (the second axis)"),
                         V("ERYD", Array(float, length=2)),
                         Separator(),
-                        V("VECK_START", Array(float, length=3), is_stored=False, is_optional=True),
                         V("NK1_a", int, written_name="NK1", is_hidden=True),
                         V("VECK1", Array(float, length=3)),
                         V("NK2_a", int, written_name="NK2", is_hidden=True),
                         V("VECK2", Array(float, length=3)),
+                        V("VECKA", Array(float, length=3), is_optional=True),
                         Separator(),
                         V(
                             "K1",

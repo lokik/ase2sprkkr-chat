@@ -57,11 +57,16 @@ class WriteIoData(BaseIoData):
     def has_converged_data(self, potential):
 
         def compute():
-            if potential.SCF_INFO.FULLPOT():
-                return False
+            fullpot = potential.SCF_INFO.FULLPOT()
             for site_type, i in self.site_types.unique_items():
                 for atom in site_type.occupation.atomic_types():
                     if not atom.charge or not atom.potential or not atom.moments:
+                        return False
+                    if fullpot and (
+                        not atom.charge.fullpot_data or not atom.potential.fullpot_data
+                    ):
+                        # An incomplete FULLPOT state must not be represented
+                        # as a restartable converged radial potential.
                         return False
 
             return True

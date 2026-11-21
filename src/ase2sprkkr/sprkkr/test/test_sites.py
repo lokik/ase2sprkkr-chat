@@ -30,12 +30,13 @@ class TestSites:
         site0 = atoms.sites[0]
         site1 = atoms.sites[1]
 
+        # Remeshing includes floating-point interpolation: compare with tolerance.
         site0.potential = RadialPotential(mesh1.coors, mesh1, 2)
         site1.potential = site0.potential.copy()
-        assert site0.potential(2.0) == 2.0
-        assert site0.potential(1.0) == 1.0
-        assert site0.potential(1.5) == 1.5
-        assert site1.potential(2.0) == 2.0
+        assert site0.potential(2.0) == pytest.approx(2.0)
+        assert site0.potential(1.0) == pytest.approx(1.0)
+        assert site0.potential(1.5) == pytest.approx(1.5)
+        assert site1.potential(2.0) == pytest.approx(2.0)
 
         site1.potential = site0.potential.copy()
         assert site0.mesh != site1.mesh
@@ -43,16 +44,16 @@ class TestSites:
         assert site0.mesh == site1.mesh
 
         site0.potential = potential2 = RadialPotential(mesh2.coors * 2, mesh2, 2)
-        assert site0.potential(2.0) == 4.0
+        assert site0.potential(2.0) == pytest.approx(4.0)
         assert site0.mesh == site1.mesh
 
         site0.mesh = mesh1
         assert site0.mesh == mesh1
         assert site0.potential.mesh == mesh1
         assert site0.potential.mesh == site0.mesh
-        assert site0.potential(2.0) == 4.0
-        assert site0.potential(1.0) == 2.0
-        assert site0.potential(1.5) == 3.0
+        assert site0.potential(2.0) == pytest.approx(4.0)
+        assert site0.potential(1.0) == pytest.approx(2.0)
+        assert site0.potential(1.5) == pytest.approx(3.0)
 
         assert site0.mesh != site1.mesh
         assert site0.potential.mesh != site1.mesh
@@ -61,14 +62,14 @@ class TestSites:
         assert site0.potential.mesh == site1.mesh
         site0.charge = mesh1.coors * 3
         assert site0.mesh == site1.mesh
-        assert site0.charge(2.0) == 6.0
-        assert site0.charge(1.0) == 3.0
+        assert site0.charge(2.0) == pytest.approx(6.0)
+        assert site0.charge(1.0) == pytest.approx(3.0)
         site0.potential = potential2
         assert site0.mesh != mesh2
         assert site0.potential.mesh != mesh2
         assert site0.charge.mesh != mesh2
-        assert site0.charge(2.0) == 6.0
-        assert site0.charge(1.0) == 3.0
+        assert site0.charge(2.0) == pytest.approx(6.0)
+        assert site0.charge(1.0) == pytest.approx(3.0)
         site0.charge = RadialCharge(site1.potential._value, mesh1)
         assert site0.mesh == mesh1
         assert site0.potential.mesh == mesh1

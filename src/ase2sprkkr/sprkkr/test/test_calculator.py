@@ -32,6 +32,11 @@ def _input_for_atoms(parameters, atoms):
 
 
 class TestCalculator:
+    def test_filename_template_literal_percent(self):
+        templator = FilenameTemplator(SPRKKR(), lambda: "SCF", lambda: "Fe")
+        assert templator("runs/Fe%%T%%c_%T.inp") == "runs/Fe%T%c_SCF.inp"
+        assert templator("%%%_%T") == "%_SCF"
+
     def test_filename_template_date(self):
         calculator = SPRKKR()
         templator = FilenameTemplator(calculator, lambda: "SCF", lambda: "Fe")

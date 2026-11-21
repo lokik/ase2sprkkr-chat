@@ -36,6 +36,10 @@ def parser(parser):
 
     parser.add_argument("--print-output", "-O", help="Print the output of SPRKKR.", default="None", action=bool_arg)
     parser.add_argument("--output-file", "-o", help="Output file", type=str)
+    parser.add_argument("--preset", metavar="[IPD.]NAME",
+                        help="Replace calculation settings with a saved preset before NAME=VALUE overrides.")
+    parser.add_argument("--load-structural-info", action="store_true",
+                        help="Also load dataset and potential paths from --preset.")
     parser.add_argument(
         "--empty-spheres",
         "-e",
@@ -119,6 +123,43 @@ def run(args, global_args):
         calc.input_parameters = args.input_file
     elif args.task:
         calc.input_parameters = args.task
+    if args.preset:
+        from ase2sprkkr.input_parameters.presets import PresetStore
+        from ase2sprkkr.common.warnings import DataValidityError
+
+        try:
+            store = PresetStore()
+            if args.task is not None or args.input_file:
+                selected = calc.input_parameters.copy(copy_values=True)
+            elif ip is not None:
+                selected = ip.copy(copy_values=True)
+            else:
+                # Without a selected schema an unqualified name must be unique.
+                path = store.resolve(args.preset)
+                scope, owner, bare = store._describe_path(path)
+                if scope == "task":
+                    selected = InputParameters.for_task(owner)
+                else:
+                    definition = InputParameters.input_parameters_registry[owner]
+                    family = store._tasks_for_definition(
+                        definition.derived_from_name,
+                    )
+                    if len(family) > 1:
+                        raise ValueError(
+                            f"Preset {args.preset!r} is task-neutral for a "
+                            f"shared input definition; select --task "
+                            f"({' or '.join(task.upper() for task in family)})"
+                        )
+                    selected = InputParameters.for_definition(owner)
+            selected.load_preset(
+                args.preset, store=store,
+                load_structural_info=args.load_structural_info,
+                required_task=args.task,
+            )
+        except (OSError, ValueError, KeyError, pyparsing.ParseBaseException,
+                DataValidityError) as exc:
+            raise CLIUsageError(f"Cannot load preset {args.preset!r}: {exc}") from None
+        calc.input_parameters = ip = selected
     kwargs = {}
     for i in "empty_spheres", "print_output", "output_file":
         o = getattr(args, i)

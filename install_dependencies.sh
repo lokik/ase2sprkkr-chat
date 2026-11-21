@@ -10,4 +10,10 @@ if (( PYTHON_MINOR >= 14 )); then
     python3 -m pip install git+https://github.com/lokik/spglib.git
 fi
 
+# Integration and prerelease CI use the matching KKRunner source tree.
+# Production installs retain the declared PyPI dependency.
+if [[ -n "${ASE2SPRKKR_KKRUNNER_SOURCE:-}" ]]; then
+    python3 -m pip install "${ASE2SPRKKR_KKRUNNER_SOURCE}[psij]"
+fi
+
 python3 -m pip install .

@@ -30,7 +30,16 @@ jobs:
     - run: |
          mkdir -p ~/.config/matplotlib
          echo "text.usetex : False" >> ~/.config/matplotlib/matplotlibrc
-    - run: ./install_dependencies.sh
+    - name: Checkout matching KKRunner implementation
+      uses: actions/checkout@v6
+      with:
+        repository: lokik/kkrunner-chat
+        ref: 9f6e027051979a655fce2cb17d009657b8509670
+        path: .ci/kkrunner
+    - name: Install matching KKRunner and ASE2SPRKKR
+      env:
+        ASE2SPRKKR_KKRUNNER_SOURCE: ${{ github.workspace }}/.ci/kkrunner
+      run: ./install_dependencies.sh
     - name: Test installed wheel
       # Profile slow cases without an extra test run or separate CI job.
       run: DO_NOT_RUN_SPRKKR=1 "$GITHUB_WORKSPACE/run_tests" --durations=20
@@ -45,7 +54,16 @@ jobs:
     - run: |
          mkdir -p ~/.config/matplotlib
          echo "text.usetex : False" >> ~/.config/matplotlib/matplotlibrc
-    - run: ./install_dependencies.sh
+    - name: Checkout matching KKRunner implementation
+      uses: actions/checkout@v6
+      with:
+        repository: lokik/kkrunner-chat
+        ref: 9f6e027051979a655fce2cb17d009657b8509670
+        path: .ci/kkrunner
+    - name: Install matching KKRunner and ASE2SPRKKR
+      env:
+        ASE2SPRKKR_KKRUNNER_SOURCE: ${{ github.workspace }}/.ci/kkrunner
+      run: ./install_dependencies.sh
     - name: Test SSH and PSI/J Slurm execution
       env:
         ASE2SPRKKR_RUN_DOCKER_TESTS: '1'
@@ -72,7 +90,16 @@ jobs:
     - run: |
         mkdir -p ~/.config/matplotlib
         echo "text.usetex : False" >> ~/.config/matplotlib/matplotlibrc
-    - run: ./install_dependencies.sh
+    - name: Checkout matching KKRunner implementation
+      uses: actions/checkout@v6
+      with:
+        repository: lokik/kkrunner-chat
+        ref: 9f6e027051979a655fce2cb17d009657b8509670
+        path: .ci/kkrunner
+    - name: Install matching KKRunner and ASE2SPRKKR
+      env:
+        ASE2SPRKKR_KKRUNNER_SOURCE: ${{ github.workspace }}/.ci/kkrunner
+      run: ./install_dependencies.sh
     - name: Install NeXus writers and independent reader
       run: |
         python -m pip install "h5py>=3.8" "nexusformat>=2.0"

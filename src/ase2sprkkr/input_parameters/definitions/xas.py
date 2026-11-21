@@ -57,5 +57,5 @@ def input_parameters_definition():
                     "MECHECK is a separate task, not an XAS option; MESPLIT is forced true. "
                     "The DYNAMICAL alternative workflow is not covered by this definition."
     )
-    schema._task_definition = TaskDefinition("XAS", executable="kkrgen", mpi=False)
+    schema._task_definition = TaskDefinition("XAS", supports={"3d", "2d"}, executable="kkrgen", mpi=False)
     return schema

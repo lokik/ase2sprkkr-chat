@@ -12,6 +12,7 @@ import pyparsing as pp
 from typing import Iterable, Optional, Union
 
 from .warnings import DataValidityError
+from .native_preset_io import reading_preset
 import re
 import inspect
 from io import StringIO
@@ -450,7 +451,8 @@ class ContainerDefinition(RealItemDefinition):
                     ):
                         message = f"Missing non-optional input item {member.get_path()}"
                         if allow_incomplete:
-                            DataValidityError.warn(message)
+                            if not reading_preset():
+                                DataValidityError.warn(message)
                         else:
                             raise pp.ParseException(message)
             return parsed
@@ -643,14 +645,13 @@ class ContainerDefinition(RealItemDefinition):
             file.write(self.formated_name)
             file.write(str(self.delimiter))
 
-        members = iter(value)
         if self.write_last_delimiter:
-            for o in members:
+            for o in value:
                 if o._save_to_file(file, always):
                     file.write(str(self.delimiter))
         else:
             delimiter = ""
-            for o in members:
+            for o in value:
                 if o._save_to_file(file, always, delimiter=delimiter):
                     delimiter = self.delimiter
 

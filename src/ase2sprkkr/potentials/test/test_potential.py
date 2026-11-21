@@ -82,9 +82,10 @@ class TestPotential:
         assert atoms.sprkkr_is_scf_converged()
 
         copied = atoms.copy()
-        assert not copied.has_potential()
+        assert copied.has_potential()
+        assert copied.potential is not potential
         assert copied.sprkkr_is_scf_converged()
-        assert not copied.has_potential()
+        assert copied.has_potential()
 
         for status in ("ITR", "ITR-BULK", "ITR-L-BULK", "ITR-R-BULK", "ITR-I-ZONE"):
             potential.SCF_INFO.SCFSTATUS = status
@@ -157,9 +158,14 @@ class TestPotential:
     def test_examples(self):
         potential_files = list(EXAMPLES.glob("*.pot"))
         assert len(potential_files) >= 2
+        host = Potential.from_file(EXAMPLES / "Fe3CoFe3.host.pot")
 
         for path in potential_files:
-            potential = Potential.from_file(path)
+            potential = (
+                Potential.from_file(path, host=host)
+                if Potential.is_cluster_file(path)
+                else Potential.from_file(path)
+            )
             assert isinstance(potential, Potential)
             assert potential.atoms.positions.shape[0] > 0
 

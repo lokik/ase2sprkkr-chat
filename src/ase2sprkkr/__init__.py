@@ -10,6 +10,9 @@ __all__ = (
     "SPRKKR",
     "InputParameters",
     "Potential",
+    "PeriodicPotential",
+    "EmbeddedPotential",
+    "ClusterPotential",
     "SPRKKRAtoms",
     "promote_ase_atoms",
     "ResultFile",
@@ -25,7 +28,9 @@ from .sprkkr.calculator import SPRKKR  # NOQA: F401, E402
 from .input_parameters.input_parameters import InputParameters  # NOQA: F401, E402
 
 """ Potential file object and its stable runtime exception contract """
-from .potentials.potentials import Potential  # NOQA: F401, E402
+from .potentials.potential_base import Potential  # NOQA: F401, E402
+from .potentials.potentials import PeriodicPotential  # NOQA: F401, E402
+from .potentials.cluster_potentials import EmbeddedPotential, ClusterPotential  # NOQA: F401, E402
 
 """ An extension of ASE atoms object """
 from .sprkkr.sprkkr_atoms import SPRKKRAtoms  # NOQA: F401, E402

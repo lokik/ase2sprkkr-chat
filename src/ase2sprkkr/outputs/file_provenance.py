@@ -12,16 +12,21 @@ import os
 from kkrunner.files import FileEntry, FileManifest, FileVersion
 
 
+def result_file_manifest(result: Any) -> FileManifest | None:
+    """Return the recorded manifest for either a persistent or a live run."""
+    record = getattr(result, "run_record", None)
+    return record.files if record is not None else getattr(result, "file_manifest", None)
+
+
 def result_file_version(result: Any, path, *, require_digest=False) -> FileVersion | None:
-    """Use persisted provenance for tracked results; capture only new imports.
+    """Use the run's recorded provenance and capture only new imports.
 
     An absent version in a historical manifest is not permission to adopt the
     bytes currently at that pathname as an output of the old calculation.
     """
-    record = getattr(result, "run_record", None)
-    if record is None:
+    files = result_file_manifest(result)
+    if files is None and getattr(result, "run_record", None) is None:
         return FileVersion.capture(path, require_digest=require_digest)
-    files = record.files
     if files is None or files.captured_at is None:
         return None
     path = os.path.abspath(os.fspath(path))

@@ -1,11 +1,210 @@
 """Density of states (DOS) reader and result."""
 
 import os
+import re
+from dataclasses import dataclass
+from numbers import Integral
 
 from ..task_result import TaskResult, KkrOutputReader
 from .default import DefaultOutputParser
 from ...common.decorators import cached_property
 from ...input_parameters.definitions._filenames import dataset_adsi
+
+
+def dos_total_points_from_parameters(parameters):
+    """Use only an unambiguous one-segment ENERGY.NE value."""
+    try:
+        values = parameters.ENERGY.NE()
+        if isinstance(values, Integral):
+            values = (values,)
+        else:
+            values = tuple(values)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if len(values) != 1 or not isinstance(values[0], Integral):
+        return None
+    total = int(values[0])
+    return total if total > 0 else None
+
+
+@dataclass(frozen=True)
+class DosProgressInfo:
+    """Energy progress; estimated=True denotes an MPI rank-0 proxy."""
+
+    completed: int
+    total: int | None
+    estimated: bool = False
+
+
+@dataclass(frozen=True)
+class DosEnergyInfo:
+    """Observed native energy index; no implication about global MPI progress."""
+
+    index: int
+    total: int | None
+
+
+class _DosHeaderStream:
+    """Include MPI metadata consumed by the standard FILES reader."""
+
+    def __init__(self, source, on_line):
+        self.source = source
+        self.on_line = on_line
+
+    async def readline(self):
+        line = await self.source.readline()
+        if line:
+            self.on_line(line.decode("utf8", errors="replace").rstrip())
+        return line
+
+    def __fspath__(self):
+        return os.fspath(self.source)
+
+    def __getattr__(self, name):
+        return getattr(self.source, name)
+
+
+class DosOutputParser(DefaultOutputParser):
+    """Parse native DOS progress lines without estimating missing milestones.
+
+    Progress uses native energy-block transitions or explicit completed counts.
+    The same detection is shared with the incremental GUI parser.
+    """
+
+    # Native kkrgen prints one such header for every energy AND atomic
+    # component IT. Repeated IT headers must not advance the progress.
+    _nprocs = re.compile(
+        r"\bMPI calculation with NPROCS\s*=\s*(\d+)", re.IGNORECASE
+    )
+    _energy_header = re.compile(
+        r"^\s*(?P<point>[1-9]\d*)\s+E\s*=\s*\S+.*?\s+IT\s*=\s*\d+\b",
+        re.IGNORECASE,
+    )
+    _completed_points = re.compile(
+        r"(?<!\d)(?P<completed>\d+)\s*(?:/|\bof\b)\s*"
+        r"(?P<total>\d+)\s*(?:energy\s+points?\s*)?"
+        r"(?:done|completed|processed)\b",
+        re.IGNORECASE,
+    )
+
+    def __init__(self, print_info=False, on_info=None, total_points=None):
+        super().__init__(print_info=print_info, on_info=on_info)
+        self.total_points = total_points
+        self.last_progress = None
+        self._current_point = None
+        self._started = False
+        self._mpi_energy_loop = False
+        self._nprocs = None
+        self._last_seen = None
+
+    def _note_started(self):
+        if not self._started:
+            self._started = True
+            self.emit_info("dos_started", None)
+
+    def format_info(self, kind, data):
+        if kind == "dos_started":
+            return "Calculating density of states..."
+        if kind == "dos_progress":
+            if data.estimated:
+                return (f"~{100 * data.completed // data.total}% done "
+                        f"(estimated from MPI rank 0).")
+            return (f"{data.completed}/{data.total} done." if data.total is not None
+                    else f"{data.completed} energy points done.")
+        if kind == "dos_energy_index":
+            return f"DOS energy index {data.index} observed (MPI completion unknown)"
+        return None
+
+    def _emit_progress(self, completed, total, *, estimated=False):
+        if completed < 0 or (completed == 0 and not estimated):
+            return
+        if total is not None and (total <= 0 or completed > total):
+            return
+        progress = DosProgressInfo(completed, total, estimated)
+        if progress != self.last_progress:
+            self.last_progress = progress
+            self.emit_info("dos_progress", progress)
+
+    def _consume_line(self, line):
+        if "program stopped regularly via STOP_REGULAR" in line:
+            if self.total_points is not None:
+                self._emit_progress(self.total_points, self.total_points)
+            return
+        if match := self._nprocs.search(line):
+            self._nprocs = int(match[1])
+            self._mpi_energy_loop = self._nprocs > 1
+        if line.strip():
+            self._note_started()
+        # An explicitly completed count is authoritative when present.
+        if match := self._completed_points.search(line):
+            self._emit_progress(
+                int(match.group("completed")), int(match.group("total"))
+            )
+            return
+        # Native DOS prints '34 E= ... IT= 1 Ti' for each atomic component.
+        # When the index changes to a higher energy, only the previous
+        # observed energy is known to have finished. Never count IT blocks.
+        match = self._energy_header.match(line)
+        if match is None:
+            return
+        point = int(match.group("point"))
+        if self._mpi_energy_loop:
+            if self._last_seen == point:
+                return
+            self._last_seen = point
+            # Native GEN uses MPI_SET_IPROCE: rank 0 owns the highest
+            # ceil(NE/NPROCS) consecutive energies. Other ranks' stdout
+            # is masked, so use rank 0's local completed fraction as an
+            # *approximation* of global progress, never raw IE / NE.
+            if self.total_points is not None and self._nprocs:
+                rank_size = (self.total_points + self._nprocs - 1) // self._nprocs
+                first = self.total_points - rank_size + 1
+                if first <= point <= self.total_points:
+                    completed_local = point - first  # current energy has started
+                    approximate_completed = completed_local * self.total_points // rank_size
+                    self._emit_progress(approximate_completed, self.total_points,
+                                        estimated=True)
+                    return
+            # Unsupported/unknown mapping: report the index, not a fake %.
+            self.emit_info("dos_energy_index", DosEnergyInfo(point, self.total_points))
+            return
+        previous = self._current_point
+        if previous is not None and point > previous:
+            self._emit_progress(previous, self.total_points)
+        if previous is None or point != previous:
+            self._current_point = point
+
+    async def read_output(self, stdout, result):
+        await self.read_commons(
+            _DosHeaderStream(stdout, self._consume_line), result
+        )
+        if self.total_points is None:
+            self.total_points = dos_total_points_from_parameters(getattr(result, "input_parameters", None))
+        self._note_started()
+        result.output_lines = []
+        async for raw_line in stdout:
+            line = raw_line.decode("utf8", errors="replace").rstrip()
+            result.output_lines.append(line)
+            self._consume_line(line)
+        return result
+
+
+class DosProgressParser(DosOutputParser):
+    """Incrementally parse DOS output chunks (including attached-job replays)."""
+
+    def __init__(self, on_info=None, print_info=False, total_points=None):
+        super().__init__(print_info=print_info, on_info=on_info, total_points=total_points)
+        self._partial = ""
+
+    def feed(self, text):
+        *lines, self._partial = (self._partial + text).split("\n")
+        for line in lines:
+            self._consume_line(line)
+
+    def finish(self):
+        if self._partial:
+            self._consume_line(self._partial)
+            self._partial = ""
 
 
 class DosResult(TaskResult):
@@ -42,11 +241,10 @@ class DosResult(TaskResult):
 
 
 class DosOutputReader(KkrOutputReader):
-    """DOS task has no special parser, it just has a special
-    result, that allow easy acces to spc output file"""
+    """Read DOS output and provide the parsed density-of-states result."""
 
     result_class = DosResult
-    parser_class = DefaultOutputParser
+    parser_class = DosOutputParser
 
     @classmethod
     def matches_output(cls, output):
