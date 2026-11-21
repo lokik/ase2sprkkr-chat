@@ -1,4 +1,4 @@
-"""SPLEED INFO parser for native KKRSPEC I(E) diagrams.
+"""SPLEED INFO parser for native KKRSPEC two-column diagrams.
 
 The numerical spectrum remains owned by SpecResult; this parser reports
 observed milestones only and never guesses a percentage from ENERGY.NE.
@@ -16,16 +16,25 @@ class SpleedPointInfo:
     """A parsed, complete record of the first two-column SPLOUT diagram."""
 
     count: int
-    energy_ev: float
+    coordinate: float
     intensity: float
+    diagram: str
+
+
+@dataclass(frozen=True)
+class SpleedDiagramInfo:
+    """Type and number of two-column records observed in the native output."""
+
+    diagram: str
+    points: int
 
 
 class SpleedOutputParser(SpecOutputParser):
-    """Observe the first native I(E) diagram, including streamed common lines.
+    """Observe the first native two-column diagram, including common lines.
 
     SPLOUT uses two 12-character Fortran D12.5 fields separated by two spaces.
     Other tables, including seven-column diagrams, are not mistaken for
-    I(E) data. The existing SpecResult parser retains the complete spectrum.
+    numerical data. The existing SpecResult parser retains the complete output.
     """
 
     def __init__(self, print_info=False, on_info=None):
@@ -35,8 +44,7 @@ class SpleedOutputParser(SpecOutputParser):
         self._diagram_seen = False
         self._diagram_complete = False
         self._points = 0
-        self._last_point = None
-        self._last_reported = 0
+        self._diagram_name = None
         self._finished = False
 
     @staticmethod
@@ -46,9 +54,14 @@ class SpleedOutputParser(SpecOutputParser):
         if kind == "spleed_diagram":
             return f"SPLEED diagram: {data}"
         if kind == "spleed_point":
-            return f"SPLEED I(E): {data.count} points read (E = {data.energy_ev:g} eV)"
+            is_energy = data.diagram.lower().startswith("i(e)")
+            coordinate = (f"E = {data.coordinate:g} eV" if is_energy
+                          else f"x = {data.coordinate:g}")
+            quantity = "point" if data.count == 1 else "points"
+            return (f"SPLEED {data.diagram}: {data.count} {quantity} read "
+                    f"({coordinate}, I = {data.intensity:g})")
         if kind == "spleed_diagram_complete":
-            return f"SPLEED I(E) diagram: {data} points read"
+            return f"SPLEED {data.diagram}: {data.points} points read"
         if kind == "spleed_finished":
             return "SPLEED calculation finished"
         return None
@@ -57,7 +70,8 @@ class SpleedOutputParser(SpecOutputParser):
         if not self._diagram_complete and self._points:
             self._diagram_complete = True
             self._in_diagram = False
-            self.emit_info("spleed_diagram_complete", self._points)
+            self.emit_info("spleed_diagram_complete",
+                           SpleedDiagramInfo(self._diagram_name, self._points))
 
     def observe_line(self, line):
         text = line.rstrip("\r\n")
@@ -81,9 +95,10 @@ class SpleedOutputParser(SpecOutputParser):
                 self._complete_diagram()
                 return
             self._in_diagram = True
+            self._diagram_name = text.strip()
             if not self._diagram_seen:
                 self._diagram_seen = True
-                self.emit_info("spleed_diagram", text.strip())
+                self.emit_info("spleed_diagram", self._diagram_name)
             return
 
         if not self._in_diagram:
@@ -92,11 +107,10 @@ class SpleedOutputParser(SpecOutputParser):
         row = self.parse_spleed_diagram_row(text)
         if row is not None:
             self._points += 1
-            self._last_point = SpleedPointInfo(self._points, *row)
             # Milestones rather than one GUI event per numerical record.
             if self._points == 1 or self._points % 25 == 0:
-                self._last_reported = self._points
-                self.emit_info("spleed_point", self._last_point)
+                self.emit_info("spleed_point",
+                               SpleedPointInfo(self._points, *row, self._diagram_name))
         elif text.strip():
             self._complete_diagram()
 
