@@ -474,9 +474,10 @@ class ScfOutputParser(SprKkrOutputParser):
     @staticmethod
     def iteration_info(out):
         """The compact summary produced by the complete SCF parser."""
-        error = fortran_format(out.error, ":>12e")
+        v_error = fortran_format(out.error, ":>12e")
+        b_error = fortran_format(out.b_error, ":>12e")
         return (
-            f"Iteration {out.iteration:>5} error {error} "
+            f"Iteration {out.iteration:>5} RMS(V) {v_error} RMS(B) {b_error} "
             f"spin moment: {out.spin_moment:>13.6e} "
             f"orbital moment: {out.orbital_moment:>13.6e} "
         )
