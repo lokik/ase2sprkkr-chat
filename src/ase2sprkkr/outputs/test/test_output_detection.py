@@ -1,4 +1,6 @@
-"""A quick SCF banner probe must not trigger a full output parse."""
+"""The SCF prefilter must avoid parsing unrelated outputs."""
+
+from pathlib import Path
 
 import pytest
 
@@ -8,18 +10,25 @@ from ase2sprkkr.outputs.output_detection import (
 )
 
 
+EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
+
+
+def _banner(executable="KKRSCF", version="9.7"):
+    return (
+        b"**************************************************************\n"
+        + f"  *       {executable}  VERSION  {version}     (C) H. Ebert    *\n".encode()
+        + b"**************************************************************\n"
+    )
+
+
 def test_scf_header_probe_is_public():
     assert looks_like_scf_output is implementation
 
 
-@pytest.mark.parametrize("version", ["9.7", "10.0", "2026.1"])
+@pytest.mark.parametrize("version", ["9.7", "10.0", "2026.1", "8.5.aug08"])
 def test_scf_header_probe_accepts_multiple_versions(tmp_path, version):
     output = tmp_path / "calculation.out"
-    output.write_bytes(
-        b"**************************************************************\n"
-        + f"  *       KKRSCF  VERSION  {version}     (C) H. Ebert    *\n".encode()
-        + b"**************************************************************\n"
-    )
+    output.write_bytes(_banner(version=version) + b"  TASK = SCF\n")
     assert looks_like_scf_output(output)
 
 
@@ -36,12 +45,73 @@ def test_scf_header_probe_rejects_unrelated_outputs(tmp_path, banner):
     assert not looks_like_scf_output(output)
 
 
+def test_scf_header_probe_rejects_kkrgen_even_with_scf_mentions(tmp_path):
+    output = tmp_path / "bsf.out"
+    output.write_bytes(
+        _banner("KKRGEN")
+        + b" Previous executable: KKRSCF\n"
+        + b"  *       KKRSCF VERSION 9.7       *\n"
+        + b" TASK = BSF\n"
+    )
+    assert not looks_like_scf_output(output)
+
+
+@pytest.mark.parametrize("task", ["BSF", "DOS", "JXC", "ARPES"])
+def test_scf_header_probe_rejects_other_task_under_scf_banner(tmp_path, task):
+    output = tmp_path / "not_scf.out"
+    output.write_bytes(_banner() + f" TASK = {task}\n".encode())
+    assert not looks_like_scf_output(output)
+
+
+def test_scf_header_probe_finds_task_after_eight_kib(tmp_path):
+    output = tmp_path / "scf.out"
+    output.write_bytes(_banner() + b" preceding native output\n" * 700
+                       + b" TASK       = SCF   \n")
+    assert output.stat().st_size > 8192
+    assert looks_like_scf_output(output)
+
+
+def test_scf_header_probe_finds_non_scf_task_after_eight_kib(tmp_path):
+    output = tmp_path / "not_scf.out"
+    output.write_bytes(_banner() + b" preceding native output\n" * 700
+                       + b" TASK       = BSF   \n")
+    assert output.stat().st_size > 8192
+    assert not looks_like_scf_output(output)
+
+
+@pytest.mark.parametrize("suffix", [
+    b"",
+    b"  FILES:\n potential: Fe.pot\n",
+    b"  TASK = NONE\n  FILES:\n",
+])
+def test_scf_header_probe_legacy_fallback_without_explicit_task(tmp_path, suffix):
+    output = tmp_path / "legacy.out"
+    output.write_bytes(_banner() + suffix)
+    assert looks_like_scf_output(output)
+
+
+def test_scf_header_probe_uses_first_task(tmp_path):
+    output = tmp_path / "first.out"
+    output.write_bytes(_banner() + b" TASK = BSF\n TASK = SCF\n")
+    assert not looks_like_scf_output(output)
+
+
 def test_scf_header_probe_does_not_read_entire_output(tmp_path):
     output = tmp_path / "large.out"
-    output.write_bytes(b" " * 8192 + b" KKRSCF VERSION 9.7\n")
+    output.write_bytes(b" " * 8192 + _banner() + b" TASK = SCF\n")
     assert not looks_like_scf_output(output)
 
 
 def test_scf_header_probe_treats_unreadable_paths_as_non_matches(tmp_path):
     assert not looks_like_scf_output(tmp_path / "missing.out")
     assert not looks_like_scf_output(tmp_path)
+
+
+@pytest.mark.parametrize(("filename", "expected"), [
+    ("Al_SCF.out", True),
+    ("Fe2Al_SCF.out", True),
+    ("scf.out", True),
+    ("Fe_jxc.out", False),
+])
+def test_scf_header_probe_on_real_sprkkr_examples(filename, expected):
+    assert looks_like_scf_output(EXAMPLES / filename) is expected
