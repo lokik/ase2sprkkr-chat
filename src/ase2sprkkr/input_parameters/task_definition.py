@@ -262,7 +262,15 @@ class InputParametersRegistry(ModuleRegistry):
             # Validation is shared with metadata discovery. The ModuleRegistry
             # _values cache guarantees create_definition() runs at most once.
             definition = self.definition_class(name)
-            return definition.create_definition()
+            value = definition.create_definition()
+            # Class-level selectors are authoritative discovery metadata.
+            # Factories that copy an existing IPD can return an instance of a
+            # different class, so propagate explicitly declared selectors.
+            if definition.task_selectors is not None:
+                from .input_parameters_definitions import InputParametersDefinition
+                if isinstance(value, InputParametersDefinition):
+                    value.task_selectors = definition.task_selectors
+            return value
         # Keep older user-provided input_parameters_definition factories working.
         return super().value_from_module(name, module)
 

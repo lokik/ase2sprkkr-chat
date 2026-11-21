@@ -238,7 +238,6 @@ def test_class_autodetection_tries_all_interleaved_candidates(monkeypatch):
     expected = object()
     second = Candidate("JXC-IPD", expected)
     unrelated = Candidate("SCF-IPD", object())
-    monkeypatch.setattr(mod, "_direct_definition_for_input", lambda *_a, **_kw: None)
     monkeypatch.setattr(mod, "_task_selector_map", lambda: {
         "DMI": (first,), "JXC": (second,), "SCF": (unrelated,),
     })
@@ -262,7 +261,6 @@ def test_all_candidate_failures_keep_each_diagnostic(monkeypatch):
         def read_from_file(self, stream, allow_dangerous=False, *, filename=None):
             raise pp.ParseException(self.error)
 
-    monkeypatch.setattr(mod, "_direct_definition_for_input", lambda *_a, **_kw: None)
     monkeypatch.setattr(mod, "_task_selector_map", lambda: {
         "DMI": (Failed("IPD-DMI", "missing parameter DMI"),),
         "JXC": (Failed("IPD-JXC", "bad ENERGY grid"),),

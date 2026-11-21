@@ -41,7 +41,7 @@ assert 'DOS' in selectors
 assert 'DMI' in selectors
 assert 'JXC' in selectors
 assert selectors['DMI'] == selectors['JXC']
-assert 'JXC' in registry._values
+assert set(registry._values) == {'JXC'}
 assert 'DOS' not in registry._values
 """, tmp_path,
     )
@@ -61,8 +61,11 @@ reg = InputParameters.input_parameters_registry
 assert not reg._values
 parameters = InputParametersDefinition.from_file({str(path)!r})
 assert parameters.definition_name == 'DOS'
-assert _task_selector_map.cache_info().currsize == 0
+assert _task_selector_map.cache_info().currsize == 1
 assert 'DOS' in reg._values
+assert set(reg._values) == {'DOS'}
+assert 'JXC' not in reg._modules
+assert 'ARPES' not in reg._modules
 assert 'JXC' not in reg._values
 assert 'ARPES' not in reg._values
 """, tmp_path,
@@ -89,5 +92,27 @@ one = reg['DOS']
 two = reg['DOS']
 assert one is two
 assert calls == [cls], calls
+""", tmp_path,
+    )
+
+
+@pytest.mark.smoke
+def test_builtin_selector_aliases_agree_with_declared_classes(tmp_path):
+    _run_cold(
+        """
+from ase2sprkkr.input_parameters.input_parameters import InputParameters
+from ase2sprkkr.input_parameters.input_parameters_definitions import (
+    _builtin_ipd_names, _BUILTIN_TASK_SELECTOR_ALIASES, _normalized_task_selectors,
+)
+
+reg = InputParameters.input_parameters_registry
+aliases = _BUILTIN_TASK_SELECTOR_ALIASES
+assert aliases == {'DMI': 'JXC'}
+for name in _builtin_ipd_names():
+    cls = reg.definition_class(name)
+    expected = {name, *(alias for alias, target in aliases.items() if target == name)}
+    declared = set(_normalized_task_selectors(cls.task_selectors, name))
+    assert declared == expected, (name, declared, expected)
+assert not reg._values
 """, tmp_path,
     )

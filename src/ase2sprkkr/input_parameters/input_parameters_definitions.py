@@ -2,7 +2,6 @@
 
 import os
 import pkgutil
-import re
 from io import StringIO
 
 import pyparsing as pp
@@ -79,21 +78,100 @@ def _normalized_task_selectors(declared, name):
     return tuple(normalized)
 
 
-class _TaskSelectorMap(dict):
-    """Map TASK selectors to cached IPDs, without materializing non-candidates."""
+# A native TASK value normally matches the basename of its built-in IPD
+# module. DMI is a second native selector belonging to the shared JXC IPD.
+# BSFEK and BSFKK are task identities, not native TASK selectors: both use BSF.
+_BUILTIN_TASK_SELECTOR_ALIASES = {"DMI": "JXC"}
 
-    def __init__(self, values, registry=None):
+
+def _builtin_ipd_names():
+    """Discover built-in IPD names without importing their modules."""
+    package = InputParameters.input_parameters_registry.package
+    return tuple(sorted(
+        entry.name.upper()
+        for entry in pkgutil.iter_modules(tuple(package.__path__)[:1])
+        if not entry.name.startswith("_") and entry.name != "sections"
+    ))
+
+
+@cache
+def _user_task_selectors():
+    """Discover only user IPD modules, importing classes but not building IPDs.
+
+    Legacy user factories without a definition class are materialized once
+    through the existing InputParametersRegistry cache. An unrelated invalid
+    user module is reported and skipped, just as with registry enumeration.
+    """
+    import warnings
+
+    from ..common.module_registry import RegistryLoadWarning
+
+    registry = InputParameters.input_parameters_registry
+    package_paths = tuple(registry.package.__path__)
+    builtin_names = set(_builtin_ipd_names())
+    available = set(registry.names(include_aliases=False))
+    selectors = {}
+    for entry in pkgutil.iter_modules(package_paths[1:]):
+        name = entry.name.upper()
+        if (entry.name.startswith("_") or entry.name == "sections"
+                or name in builtin_names or name not in available):
+            continue
+        try:
+            cls = registry.definition_class(name)
+            if cls is None:
+                # Backward-compatible user factory. Do not offer presets as
+                # alternative definitions, even if their selectors collide.
+                definition = registry[name]
+                if definition.is_derived_definition():
+                    continue
+                tokens = definition.accepted_task_selectors()
+            else:
+                tokens = _normalized_task_selectors(cls.task_selectors, name)
+            for selector in tokens:
+                selectors.setdefault(selector, []).append(name)
+        except Exception as exc:
+            warnings.warn(
+                f"Skipping invalid user IPD {name}: "
+                f"{type(exc).__name__}: {exc}",
+                RegistryLoadWarning,
+                stacklevel=2,
+            )
+    return {selector: tuple(names) for selector, names in selectors.items()}
+
+
+class _TaskSelectorMap(dict):
+    """Select user IPDs first, falling back to a built-in when none qualifies.
+
+    Materialize only selected candidates. A user preset copied from another
+    schema is not an override; two canonical user IPDs for one native TASK
+    are an error, regardless of whether their parsers could both succeed.
+    """
+
+    def __init__(self, values, registry=None, *, user=None):
         super().__init__(values)
         self._registry = registry
+        self._user = user or {}
 
     def __getitem__(self, selector):
-        values = super().__getitem__(selector)
+        builtins = super().__getitem__(selector)
         if self._registry is None:
-            return values
-        return tuple(
-            self._registry[value] if isinstance(value, str) else value
-            for value in values
-        )
+            return builtins
+
+        users = []
+        for name in self._user.get(selector, ()):
+            definition = self._registry[name]
+            if not definition.is_derived_definition():
+                users.append(definition)
+        if len(users) > 1:
+            names = ", ".join(definition.name for definition in users)
+            raise ValueError(
+                f"Multiple user-defined IPDs claim TASK {selector}: {names}"
+            )
+        if users:
+            # A user's schema overrides the built-in. Never retry the built-in
+            # if this chosen definition subsequently fails to parse.
+            return (users[0],)
+        return tuple(self._registry[name] for name in builtins)
 
     def definitions(self, selector, *, user_defined=None):
         candidates = self[selector]
@@ -109,55 +187,22 @@ class _TaskSelectorMap(dict):
 
 @cache
 def _task_selector_map():
-    """Discover TASK selectors by importing classes, not building their IPDs."""
+    """Map native TASK selectors without importing any unrelated built-in IPD."""
     registry = InputParameters.input_parameters_registry
-    selectors = {}
-    for name in registry.names(include_aliases=False):
-        try:
-            definition_class = registry.definition_class(name)
-            if definition_class is None:
-                # Backwards compatibility for old user modules that export an
-                # already materialized definition or a legacy factory.
-                definition = next(registry.iter_valid_values(
-                    names=(name,), condition=lambda item: not item.is_derived_definition(),
-                ), None)
-                if definition is None:
-                    continue
-                tokens = definition.accepted_task_selectors()
-                candidate = definition
-            else:
-                tokens = _normalized_task_selectors(
-                    definition_class.task_selectors, name,
-                )
-                candidate = name
-            for token in tokens:
-                members = selectors.setdefault(token, [])
-                if candidate not in members:
-                    members.append(candidate)
-        except Exception:
-            # Match existing registry enumeration policy: a broken unrelated
-            # user definition must not block reading a valid native input.
-            # The registry emits a warning once for the offending module.
-            list(registry.iter_valid_values(names=(name,)))
-    return _TaskSelectorMap(
-        {key: tuple(value) for key, value in selectors.items()},
-        registry=registry,
-    )
+    builtin = {name: (name,) for name in _builtin_ipd_names()}
+    for selector, schema in _BUILTIN_TASK_SELECTOR_ALIASES.items():
+        builtin[selector] = (schema,)
+    user = _user_task_selectors()
+    # Custom-only selectors must be included in the TASK preview grammar.
+    for selector in user:
+        builtin.setdefault(selector, ())
+    return _TaskSelectorMap(builtin, registry, user=user)
 
 
 @cache
 def _task_preparse_definition():
-    """Build the complete TASK-selector preview, including custom aliases."""
+    """Build the minimal TASK preview from names and user class metadata."""
     return _build_task_preparse_definition(tuple(sorted(_task_selector_map())))
-
-
-@cache
-def _fast_task_preparse_definition():
-    """Build the preview from names only: no definition module is imported."""
-    registry = InputParameters.input_parameters_registry
-    return _build_task_preparse_definition(
-        tuple(sorted(registry.names(include_aliases=False)))
-    )
 
 
 def _build_task_preparse_definition(values):
@@ -196,46 +241,6 @@ def _build_task_preparse_definition(values):
     )
     ipd.grammar()
     return ipd
-
-
-def _has_external_input_definitions():
-    """A user module might claim an existing TASK selector; disable fast lookup."""
-    paths = tuple(InputParameters.input_parameters_registry.package.__path__)
-    return any(
-        info.name != "sections" and not info.name.startswith("_")
-        for info in pkgutil.iter_modules(paths[1:])
-    )
-
-
-def _direct_definition_for_input(text, *, allow_incomplete=False):
-    """Try a same-named IPD before importing any unrelated definition module.
-
-    Full discovery remains authoritative for aliases, multiple selectors and
-    installations with user modules that might claim built-in TASK values.
-    """
-    if _has_external_input_definitions():
-        return None
-
-    preview = _fast_task_preparse_definition().read_from_string(
-        text, allow_dangerous=False
-    )
-    selected = preview.TASK.TASK()
-    names = (tuple(dict.fromkeys(str(token).upper() for token in selected))
-             if selected is not None else ())
-    if len(names) == 1:
-        name = names[0]
-    elif not names and not allow_incomplete and not re.search(r"(?m)^[ \t]*TASK\b", text):
-        name = "SCF"
-    else:
-        return None
-
-    registry = InputParameters.input_parameters_registry
-    if name not in registry.names(include_aliases=False):
-        return None
-    definition = registry[name]
-    if definition.is_derived_definition() or name not in definition.accepted_task_selectors():
-        return None
-    return definition
 
 
 def _read_selected_definitions(text, selectors, *, filename=None,
@@ -385,18 +390,6 @@ class InputParametersDefinition(ConfigurationFileDefinition):
                 allow_incomplete=allow_incomplete,
                 filename = filename,
                 report_invalid=report_invalid,
-            )
-
-        direct = _direct_definition_for_input(
-            text, allow_incomplete=allow_incomplete,
-        )
-        if direct is not None:
-            return direct.read_from_file(
-                _snapshot_stream(text, filename),
-                allow_dangerous=allow_dangerous,
-                allow_incomplete=allow_incomplete,
-                filename=filename,
-                **({"report_invalid": report_invalid} if report_invalid is not None else {}),
             )
 
         preview = _task_preparse_definition().read_from_string(
