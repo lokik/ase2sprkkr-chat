@@ -69,7 +69,7 @@ def test_spleed_full_parser_preserves_spectrum_and_emits_same_events(monkeypatch
     ]
 
 
-def test_spleed_ignores_seven_column_diagram_and_does_not_invent_finish():
+def test_spleed_rejects_unformatted_numeric_tables_and_does_not_invent_finish():
     events = []
     parser = SpleedProgressParser(on_info=lambda **event: events.append(event))
     parser.feed("i(e)-diagram\n\n")
@@ -97,7 +97,7 @@ def test_spleed_print_info_matches_callback(capsys):
     assert lines == [parser.format_info(**event) for event in events]
 
 
-def test_rotation_diagram_does_not_claim_angles_are_energies():
+def test_native_rotation_diagram_first_column_is_energy():
     events = []
     parser = SpleedProgressParser(on_info=lambda **event: events.append(event))
     parser.feed(diagram([(45., 0.5)]).replace("i(e)-diagram", "rotation diagram"))
