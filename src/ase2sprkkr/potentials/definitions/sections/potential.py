@@ -30,6 +30,8 @@ class PotentialSectionDefinition(PotSectionDefinition):
             V(
                 "DATA",
                 NumpyArray(
+                    dtype=float,
+                    trivial_parsing=True,
                     line_length=100,
                     shape=(2, -1),
                     ends_with=re.compile("\n?(={79}|-{79}|NFP)"),
