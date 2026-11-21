@@ -54,7 +54,7 @@ class SpleedOutputParser(SpecOutputParser):
         if kind == "spleed_diagram":
             return f"SPLEED diagram: {data}"
         if kind == "spleed_point":
-            is_energy = data.diagram.lower().startswith("i(e)")
+            is_energy = data.diagram.lower().replace(" ", "").startswith("i(e)")
             coordinate = (f"E = {data.coordinate:g} eV" if is_energy
                           else f"x = {data.coordinate:g}")
             quantity = "point" if data.count == 1 else "points"
