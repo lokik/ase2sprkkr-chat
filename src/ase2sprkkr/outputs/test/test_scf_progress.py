@@ -6,6 +6,7 @@ from ase2sprkkr.outputs.readers.scf import (
     ScfOutputParser, ScfProgressParser, ScfIterationInfo, ScfToleranceInfo, ScfResult
 )
 from ase2sprkkr.outputs.task_result import TaskResult
+from ase2sprkkr.common.formats import fortran_format
 
 
 EXAMPLE = Path(__file__).parent.parent / "examples" / "scf.out"
@@ -41,7 +42,8 @@ def test_scf_progress_ignores_incomplete_iteration():
     formatted = ScfOutputParser.format_info(**output[0])
     assert formatted.startswith("Iteration")
     assert "RMS(V)" in formatted and "RMS(B)" in formatted
-    assert "1.23e-05" in formatted and "4.56e-07" in formatted
+    assert f"RMS(V) {fortran_format(0.0000123, ':>12e')}" in formatted
+    assert f"RMS(B) {fortran_format(0.000000456, ':>12e')}" in formatted
     parser.feed("  9 ERR 0.111E-05 0.000E+00 EF 0.6 0.0 D 11 M 1.2 0.3\n")
     assert parser.last_iteration["iteration"] == 8
 
