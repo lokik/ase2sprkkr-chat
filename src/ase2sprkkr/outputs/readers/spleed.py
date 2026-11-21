@@ -16,7 +16,7 @@ class SpleedPointInfo:
     """A parsed, complete record of the first two-column SPLOUT diagram."""
 
     count: int
-    coordinate: float
+    energy_ev: float
     intensity: float
     diagram: str
 
@@ -54,9 +54,7 @@ class SpleedOutputParser(SpecOutputParser):
         if kind == "spleed_diagram":
             return f"SPLEED diagram: {data}"
         if kind == "spleed_point":
-            is_energy = data.diagram.lower().replace(" ", "").startswith("i(e)")
-            coordinate = (f"E = {data.coordinate:g} eV" if is_energy
-                          else f"x = {data.coordinate:g}")
+            coordinate = f"E = {data.energy_ev:g} eV"
             quantity = "point" if data.count == 1 else "points"
             return (f"SPLEED {data.diagram}: {data.count} {quantity} read "
                     f"({coordinate}, I = {data.intensity:g})")
@@ -101,10 +99,17 @@ class SpleedOutputParser(SpecOutputParser):
                 self.emit_info("spleed_diagram", self._diagram_name)
             return
 
-        if not self._in_diagram:
-            return
-
         row = self.parse_spleed_diagram_row(text)
+        if not self._in_diagram:
+            if row is None:
+                return
+            # Native WRITE(*,99004/99005) has no preceding diagram header;
+            # the header is written to NOUT1 = IFILSPECOU3 (SPEC.out).
+            self._in_diagram = True
+            self._diagram_name = "spectral output"
+            self._diagram_seen = True
+            self.emit_info("spleed_diagram", self._diagram_name)
+
         if row is not None:
             self._points += 1
             # Milestones rather than one GUI event per numerical record.
