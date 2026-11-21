@@ -2,6 +2,8 @@
 
 import os
 import re
+from dataclasses import dataclass
+from math import isfinite
 import pyparsing as pp
 import unyt
 
@@ -345,10 +347,108 @@ scf_section = Section(
 del PV
 
 
+@dataclass(frozen=True)
+class ScfToleranceInfo:
+    """Convergence threshold reported by native SPR-KKR."""
+
+    tolerance: float
+
+
+@dataclass(frozen=True)
+class ScfIterationInfo:
+    """Completed SCF cycle (fermi_energy in Ry, total_energy in eV)."""
+
+    iteration: int
+    error: float
+    b_error: float
+    fermi_energy: float
+    spin_moment: float
+    orbital_moment: float
+    total_energy: float
+    converged: bool
+
+    @property
+    def convergence_error(self):
+        return max(abs(self.error), abs(self.b_error))
+
+    @classmethod
+    def from_output(cls, value):
+        return cls(
+            iteration=value["iteration"],
+            error=value["error"],
+            b_error=value["b_error"],
+            fermi_energy=value["energy"]["EF"],
+            spin_moment=value["moment"]["spin"],
+            orbital_moment=value["moment"]["orbital"],
+            total_energy=value["energy"]["ETOT"],
+            converged=value["converged"],
+        )
+
+
+class _ScfInfoStream:
+    """Observe lines discarded by the full SCF parser's section readers."""
+
+    def __init__(self, source, on_line):
+        self.source = source
+        self.on_line = on_line
+
+    async def readline(self):
+        line = await self.source.readline()
+        if line:
+            self.on_line(line.decode("utf8", errors="replace"))
+        return line
+
+    def __fspath__(self):
+        return os.fspath(self.source)
+
+    def __getattr__(self, name):
+        return getattr(self.source, name)
+
+
 class ScfOutputParser(SprKkrOutputParser):
     """
     This class reads and parses the output of the SCF task of the SPR-KKR.
     """
+
+    _tolerance_line = re.compile(r"^\s*SCF-tol\s*:\s*(\S+)", re.IGNORECASE)
+
+    def __init__(self, print_info=False, on_info=None):
+        super().__init__(print_info=print_info, on_info=on_info)
+        self.tolerance = None
+
+    def _note_tolerance(self, line, result=None):
+        match = self._tolerance_line.match(line)
+        if match is None:
+            return False
+        try:
+            value = float(match.group(1).replace("D", "E").replace("d", "e"))
+        except ValueError:
+            return False
+        if not isfinite(value) or value <= 0:
+            return False
+        if result is not None:
+            result.scf_tolerance = value
+        if self.tolerance != value:
+            self.tolerance = value
+            self.emit_info("scf_tolerance", ScfToleranceInfo(value))
+        return True
+
+    @classmethod
+    def format_info(cls, kind, data):
+        """Keep all INFO text formatting in ase2sprkkr."""
+        if kind == "scf_tolerance":
+            return f"SCF tolerance: {data.tolerance:g}"
+        if kind == "scf_started":
+            return f"SPRKKR-run for: {data}"
+        if kind == "scf_iteration":
+            return cls.iteration_info(data)
+        if kind == "scf_finished":
+            if data is None:
+                return ("ERROR: No iteration has been finished. There is probably an "
+                        "error in the input files, please, examine the SPR-KKR output file.")
+            return ("OK: The computation converged." if data
+                    else "WARNING: The computation does not converged!!!")
+        return None
 
     @staticmethod
     def iteration_header(line):
@@ -356,26 +456,29 @@ class ScfOutputParser(SprKkrOutputParser):
         items = line.split()
         return {
             "iteration": int(items[0]),
-            "error": float(items[2]),
-            "b_error": float(items[3]),
-            "energy": {"EF": float(items[5])},
-            "moment": {"spin": float(items[10]), "orbital": float(items[11])},
+            "error": float(items[2].replace("D", "E").replace("d", "e")),
+            "b_error": float(items[3].replace("D", "E").replace("d", "e")),
+            "energy": {"EF": float(items[5].replace("D", "E").replace("d", "e"))},
+            "moment": {
+                "spin": float(items[10].replace("D", "E").replace("d", "e")),
+                "orbital": float(items[11].replace("D", "E").replace("d", "e")),
+            },
         }
 
     @staticmethod
     def iteration_footer(line):
         """Extract total energy and convergence from the ETOT/SCF line."""
         items = line.split()
-        return float((float(items[1]) * unyt.Ry).to(unyt.eV)), items[5] == "converged"
+        return float((float(items[1].replace("D", "E")) * unyt.Ry).to(unyt.eV)), items[5] == "converged"
 
     @staticmethod
     def iteration_info(out):
         """The compact summary produced by the complete SCF parser."""
-        error = fortran_format(out["error"], ":>12e")
+        error = fortran_format(out.error, ":>12e")
         return (
-            f"Iteration {out['iteration']:>5} error {error} "
-            f"spin moment: {out['moment']['spin']:>13.6e} "
-            f"orbital moment: {out['moment']['orbital']:>13.6e} "
+            f"Iteration {out.iteration:>5} error {error} "
+            f"spin moment: {out.spin_moment:>13.6e} "
+            f"orbital moment: {out.orbital_moment:>13.6e} "
         )
 
 
@@ -385,6 +488,8 @@ class ScfOutputParser(SprKkrOutputParser):
     )
 
     async def read_output(self, stdout, result):
+        result.scf_tolerance = None
+        stdout = _ScfInfoStream(stdout, lambda line: self._note_tolerance(line, result))
         await self.read_commons(stdout, result)
         # For embedded calculations the converged file belongs to
         # POTFIL_CLU, not the host POTFIL reported in the FILES header.
@@ -426,8 +531,8 @@ class ScfOutputParser(SprKkrOutputParser):
                         can_end=False,
                     )
                 line = line.strip()
-                if first and self.print_info:
-                    print(line)
+                if first:
+                    self.emit_info("scf_started", line.replace("SPRKKR-run for:", "").strip())
                     first = False
                 run = line.replace("SPRKKR-run for:", "")
                 out["system_name"] = run.strip()
@@ -476,18 +581,12 @@ class ScfOutputParser(SprKkrOutputParser):
                 section = iterations.add()
                 section.set(out)
 
-                if self.print_info:
-                    print(self.iteration_info(out))
+                self.emit_info("scf_iteration", ScfIterationInfo.from_output(out))
 
-            if self.print_info:
-                if len(iterations) == 0:
-                    print(
-                        "ERROR: No iteration has been finished. There is probably an error in the input files, please, examine the SPR-KKR output file."
-                    )
-                elif iterations[-1]["converged"]():
-                    print("OK: The computation converged.")
-                else:
-                    print("WARNING: The computation does not converged!!!")
+            self.emit_info(
+                "scf_finished",
+                iterations[-1]["converged"]() if iterations else None,
+            )
 
             result.iterations = iterations
 
@@ -504,10 +603,10 @@ class ScfProgressParser(ScfOutputParser):
 
     _iteration_summary = re.compile(r"^\s*\d+\s+ERR\s+")
 
-    def __init__(self, on_info=None):
-        super().__init__(print_info=False)
-        self.on_info = on_info
+    def __init__(self, on_info=None, print_info=False):
+        super().__init__(print_info=print_info, on_info=on_info)
         self.last_iteration = None
+        self._started = False
         self._pending = None
         self._line_buffer = ""
 
@@ -524,6 +623,11 @@ class ScfProgressParser(ScfOutputParser):
             self._line_buffer = ""
 
     def _consume(self, line):
+        if self._note_tolerance(line):
+            return
+        if not self._started and "SPRKKR-run for:" in line:
+            self._started = True
+            self.emit_info("scf_started", line.partition("SPRKKR-run for:")[2].strip())
         if self._iteration_summary.match(line):
             try:
                 self._pending = self.iteration_header(line)
@@ -538,8 +642,7 @@ class ScfProgressParser(ScfOutputParser):
             self._pending["converged"] = converged
             self.last_iteration = self._pending
             self._pending = None
-            if self.on_info is not None:
-                self.on_info(self.iteration_info(self.last_iteration) + "\n")
+            self.emit_info("scf_iteration", ScfIterationInfo.from_output(self.last_iteration))
 
     @classmethod
     def latest_from_file(cls, path):

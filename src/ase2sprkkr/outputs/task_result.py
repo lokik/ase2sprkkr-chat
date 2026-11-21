@@ -394,6 +394,7 @@ class KkrOutputReader:
         directory,
         print_info=False,
         task_name=None,
+        on_info=None,
     ):
         self.input_parameters = input_parameters
         self.calculator = calculator
@@ -406,7 +407,7 @@ class KkrOutputReader:
             if task is not None
             else None
         )
-        self.parser = self.parser_class(print_info=print_info)
+        self.parser = self.parser_class(print_info=print_info, on_info=on_info)
 
     @classmethod
     def matches_output(cls, output):
