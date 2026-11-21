@@ -20,7 +20,7 @@ _TASK_LINE = re.compile(
 _FILES_LINE = re.compile(rb"^[ \t]*FILES:[ \t]*(?:\r?\n)?$", re.IGNORECASE)
 # The SCF-cycle "pot-file:" entry names the produced potential; FILES/potential
 # instead refers to the input POTFIL.
-_SCF_POT_FILE = re.compile(rb"^[ \\t]*pot-file[ \\t]*:[ \\t]*(.+?)[ \\t]*\\r?\\n?$", re.IGNORECASE)
+_SCF_POT_FILE = re.compile(rb"^[ \t]*pot-file[ \t]*:[ \t]*(.+?)[ \t]*(?:\r?\n)?$", re.IGNORECASE)
 _HEADER_BYTES = 8192
 _TASK_SEARCH_BYTES = 256 * 1024
 

@@ -154,3 +154,21 @@ def test_scf_header_probe_matches_native_scf_pot_file(example, produced):
     out = EXAMPLES / example
     assert looks_like_scf_output(out, out.parent / produced)
     assert not looks_like_scf_output(out, out.parent / "unrelated.pot_new")
+
+
+@pytest.mark.parametrize("line", [
+    b"          pot-file  :  Al.pot_new_new\n",
+    b"\tpot-file\t: Fe.pot_new\r\n",
+    b"pot-file : Fe.pot_new\n",
+])
+def test_scf_header_probe_reads_pot_file_with_native_whitespace(tmp_path, line):
+    output = tmp_path / "sample.out"
+    output.write_bytes(
+        _banner()
+        + b"TASK = SCF\nFILES:\npotential : original.pot\n"
+        + b"parameters for SCF-cycle\n"
+        + line
+    )
+    name = line.split(b":", 1)[1].strip().decode()
+    assert looks_like_scf_output(output, tmp_path / name)
+    assert not looks_like_scf_output(output, tmp_path / "unrelated.pot_new")
