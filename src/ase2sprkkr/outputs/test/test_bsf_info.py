@@ -30,7 +30,7 @@ def test_bsf_ek_native_energy_indices_are_milestones_not_completion_counts():
         "kind": "bsf_energy",
         "data": BsfEnergyInfo(151, -0.8079, 0.001, 200),
     }
-    assert parser.format_info(**events[-1]).startswith("Entering k-loop for energy 151/200")
+    assert parser.format_info(**events[-1]).startswith("Entering k-loop for energy index 151 (NE=200)")
     assert "completed" not in parser.format_info(**events[-1]).lower()
     assert not any(event["kind"] == "bsf_finished" for event in events)
 
