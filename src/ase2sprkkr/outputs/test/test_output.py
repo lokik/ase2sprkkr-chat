@@ -50,6 +50,7 @@ class TestOutput:
             assert str(result.files["output"]()) == "result.out"
             assert os.fspath(result.files["output"]()) == str(filename)
             assert result.files["output"].path() == str(filename)
+            assert result.files["output"].value_label() == "result.out"
             assert "open" in result.files["output"].actions()
 
         relative = TaskResult(None, None, str(tmp_path), output_file="result.out")
@@ -274,6 +275,7 @@ dipole moment   1      0.0000000000000000      0.0000000000000000      0.0000000
         assert dos_file.display_name == "Density of states (DOS)"
         assert dos_file.file_type == "dos"
         assert dos_file.info == "Density-of-states data produced by the calculation."
+        assert dos_file.value_label() == "result.dos"
         assert "plot" in dos_file.actions()
         assert list(dos.files.items()) == ["DOS"]
         assert next(iter(dos.output_values)) == "DOS"
@@ -287,6 +289,7 @@ dipole moment   1      0.0000000000000000      0.0000000000000000      0.0000000
         bsf_file = bsf.files.add_file("Bloch-SF", "result.bsf")
         assert bsf.output_values["Bloch-SF"] is bsf_file
         assert bsf_file.file_type == "bsf"
+        assert bsf_file.value_label() == "result.bsf"
         assert "plot" in bsf_file.actions()
         assert list(bsf.files.items()) == ["Bloch-SF"]
         assert next(iter(bsf.output_values)) == "Bloch-SF"
