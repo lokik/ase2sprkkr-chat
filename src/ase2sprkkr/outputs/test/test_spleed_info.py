@@ -1,14 +1,13 @@
 """SPLEED structured INFO uses exactly the native two-column SPLOUT format."""
 
 import asyncio
-from types import SimpleNamespace
 
 import numpy as np
 
 from ase2sprkkr.outputs.reader_registry import reader_registry
 from ase2sprkkr.outputs.readers.spec import SpecResult
 from ase2sprkkr.outputs.readers.spleed import (
-    SpleedOutputParser, SpleedOutputReader, SpleedPointInfo,
+    SpleedOutputParser, SpleedOutputReader, SpleedPointInfo, SpleedDiagramInfo,
     SpleedProgressParser,
 )
 
@@ -36,9 +35,9 @@ def test_spooled_progress_chunk_safe_and_no_fabricated_percent():
         "spleed_started", "spleed_diagram", "spleed_point",
         "spleed_diagram_complete", "spleed_finished",
     ]
-    assert events[2]["data"] == SpleedPointInfo(1, 11., 2.)
-    assert events[3]["data"] == 2
-    assert parser.format_info(**events[3]) == "SPLEED I(E) diagram: 2 points read"
+    assert events[2]["data"] == SpleedPointInfo(1, 11., 2., "i(e)-diagram")
+    assert events[3]["data"] == SpleedDiagramInfo("i(e)-diagram", 2)
+    assert parser.format_info(**events[3]) == "SPLEED i(e)-diagram: 2 points read"
     assert not any("%" in (parser.format_info(**e) or "") for e in events)
 
 
@@ -96,3 +95,15 @@ def test_spleed_print_info_matches_callback(capsys):
     parser.feed("end of table\n")
     lines = capsys.readouterr().out.splitlines()
     assert lines == [parser.format_info(**event) for event in events]
+
+
+def test_rotation_diagram_does_not_claim_angles_are_energies():
+    events = []
+    parser = SpleedProgressParser(on_info=lambda **event: events.append(event))
+    parser.feed(diagram([(45., 0.5)]).replace("i(e)-diagram", "rotation diagram"))
+    point = next(e for e in events if e["kind"] == "spleed_point")
+    assert point["data"].diagram == "rotation diagram"
+    description = parser.format_info(**point)
+    assert "rotation diagram" in description
+    assert "x = 45" in description
+    assert "eV" not in description
