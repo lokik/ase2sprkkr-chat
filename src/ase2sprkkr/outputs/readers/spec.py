@@ -181,8 +181,9 @@ class SpecResult(ArpesResult):
 class _CapturedSpecStream:
     """Tee readline-based common-header parsing and the remaining async lines."""
 
-    def __init__(self, source):
+    def __init__(self, source, on_line=None):
         self.source = source
+        self.on_line = on_line
         # Accumulate decoded text directly rather than holding a second list
         # of raw byte lines alongside DefaultOutputParser.output_lines.
         self._text = io.StringIO()
@@ -190,7 +191,10 @@ class _CapturedSpecStream:
     async def readline(self):
         line = await self.source.readline()
         if line:
-            self._text.write(line.decode("utf-8", errors="replace"))
+            decoded = line.decode("utf-8", errors="replace")
+            self._text.write(decoded)
+            if self.on_line is not None:
+                self.on_line(decoded)
         return line
 
     def captured_text(self):
@@ -215,10 +219,13 @@ class _CapturedSpecStream:
 class SpecOutputParser(DefaultOutputParser):
     """Reader for the main text output produced by KKRSPEC."""
 
+    def observe_line(self, line):
+        """Hook for task-specific INFO parsing, including the common header."""
+
     async def read_output(self, stdout, result):
         # read_commons consumes the FILES header before DefaultOutputParser
         # collects output_lines. Capture both parts from the same stream.
-        captured = _CapturedSpecStream(stdout)
+        captured = _CapturedSpecStream(stdout, self.observe_line)
         parsed = await super().read_output(captured, result)
         result._file_content = captured.captured_text()
         return parsed
