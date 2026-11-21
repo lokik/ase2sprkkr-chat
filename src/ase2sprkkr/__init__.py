@@ -1,10 +1,16 @@
-"""
-ase2sprkkr - ASE interface to SPR-KKR electron structure calculation.
+"""ASE interface to SPR-KKR, with lazy public class exports.
 
-This root package import a few most used objects to provide shortcuts to them.
+Keep the user configuration initialized on import as before. Importing the
+package must not construct calculators, potential grammars, result parsers, or
+ASE 4 plugins until they are actually requested.
 """
 
+import os
 import warnings
+from importlib import import_module
+from importlib.util import find_spec
+
+from .version import __version__
 
 __all__ = (
     "SPRKKR",
@@ -21,52 +27,54 @@ __all__ = (
     "config",
 )
 
-""" SPRKKR calculator to be used to calculate electronic structure using ASE """
-from .sprkkr.calculator import SPRKKR  # NOQA: F401, E402
-
-""" Input parameters object for SPRKKR calculation tasks """
-from .input_parameters.input_parameters import InputParameters  # NOQA: F401, E402
-
-""" Potential file object and its stable runtime exception contract """
-from .potentials.potential_base import Potential  # NOQA: F401, E402
-from .potentials.potentials import PeriodicPotential  # NOQA: F401, E402
-from .potentials.cluster_potentials import EmbeddedPotential, ClusterPotential  # NOQA: F401, E402
-
-""" An extension of ASE atoms object """
-from .sprkkr.sprkkr_atoms import SPRKKRAtoms  # NOQA: F401, E402
-
-""" For promoting ASE atoms to use ASE2SPRKKR extensions"""
-promote_ase_atoms = SPRKKRAtoms.promote_ase_atoms
-
-""" Structured SPR-KKR result file """
-from .result_files import ResultFile  # NOQA: F401, E402
+# Import only the requested object, and cache its identity in module globals.
+# __getattr__ also preserves the deprecated OutputFile spelling.
+_LAZY_EXPORTS = {
+    "SPRKKR": (".sprkkr.calculator", "SPRKKR"),
+    "InputParameters": (".input_parameters.input_parameters", "InputParameters"),
+    "Potential": (".potentials.potential_base", "Potential"),
+    "PeriodicPotential": (".potentials.potentials", "PeriodicPotential"),
+    "EmbeddedPotential": (".potentials.cluster_potentials", "EmbeddedPotential"),
+    "ClusterPotential": (".potentials.cluster_potentials", "ClusterPotential"),
+    "SPRKKRAtoms": (".sprkkr.sprkkr_atoms", "SPRKKRAtoms"),
+    "ResultFile": (".result_files", "ResultFile"),
+    "TaskResult": (".outputs.task_result", "TaskResult"),
+}
 
 
 def __getattr__(name):
     if name == "OutputFile":
         warnings.warn(
-            "ase2sprkkr.OutputFile is deprecated (the class have been renamed); use ase2sprkkr.ResultFile instead.",
+            "ase2sprkkr.OutputFile is deprecated (the class have been renamed); "
+            "use ase2sprkkr.ResultFile instead.",
             DeprecationWarning,
             stacklevel=2,
         )
-        return ResultFile
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        return __getattr__("ResultFile")
+    if name == "promote_ase_atoms":
+        value = __getattr__("SPRKKRAtoms").promote_ase_atoms
+    elif name in _LAZY_EXPORTS:
+        module_name, attribute = _LAZY_EXPORTS[name]
+        value = getattr(import_module(module_name, __name__), attribute)
+    else:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    globals()[name] = value
+    return value
 
 
-""" Task results """
-from .outputs.task_result import TaskResult  # NOQA E402
-
-""" Version of the package """
-from .version import __version__  # NOQA: F401, E402
+def __dir__():
+    return sorted(set(globals()) | set(__all__) | {"OutputFile"})
 
 
 def _init():
-    import ase  # NOQA: F401
-    from .ase.register import register
-    from .configuration import load_user_preferences  # noqa: F401
+    from .configuration import load_user_preferences
 
-    register()
-    import os
+    # ASE 4 discovers our plugins through the 'ase.plugins' entry point.
+    # Importing ase._4.plugins here pulls in ASE I/O and viewers (~650 ms).
+    # Older ASE versions have no such discovery and need our legacy registration.
+    if find_spec("ase._4") is None:
+        from .ase.register import register
+        register()
 
     if not os.environ.get("ASE2SPRKKR_NO_USER_PROFILE", False):
         load_user_preferences()
@@ -75,4 +83,5 @@ def _init():
 _init()
 del _init
 
+# Retain the established global configuration identity and initialization order.
 from .configuration import config as config
