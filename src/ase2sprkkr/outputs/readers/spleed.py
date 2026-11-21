@@ -59,7 +59,7 @@ class SpleedOutputParser(SpecOutputParser):
             return (f"SPLEED {data.diagram}: {data.count} {quantity} read "
                     f"({coordinate}, I = {data.intensity:g})")
         if kind == "spleed_diagram_complete":
-            return f"SPLEED {data.diagram}: {data.points} points read"
+            return f"SPLEED {data.diagram}: {data.points} {'point' if data.points == 1 else 'points'} read"
         if kind == "spleed_finished":
             return "SPLEED calculation finished"
         return None
