@@ -383,6 +383,28 @@ def test_result_loader_embedded_interpretation_does_not_mutate_shared_clupot(
     assert other.get_atoms(loader=loader) is cached_atoms
 
 
+@pytest.mark.parametrize("embedded", [False, True])
+def test_registered_scf_output_never_replaces_start_potential(
+    tmp_path, embedded,
+):
+    """Converged output attribution cannot modify the SCF input reference."""
+    parameters = InputParameters.create("SCF")
+    parameters.CONTROL.POTFIL = "host.pot" if embedded else "Fe.pot"
+    if embedded:
+        parameters.CONTROL.CLUTYPE = "embedded"
+        parameters.CONTROL.POTFIL_CLU = "cluster.pot"
+
+    result = ScfResult(parameters, None, tmp_path)
+    start = result.start_potential_filename
+    output = tmp_path / ("cluster.pot_new" if embedded else "Fe.pot_new")
+    result.files.add_file("converged", output)
+
+    assert result.start_potential_filename == start
+    assert result.potential_filename == str(output)
+    assert start == str(tmp_path / ("cluster.pot" if embedded else "Fe.pot"))
+    assert start != result.potential_filename
+
+
 def test_scf_uses_explicit_converged_file_when_input_is_unavailable(tmp_path):
     """The output file association, not GUI-specific fallback, chooses POTFIL."""
     recorded = tmp_path / "recorded.pot_new"
