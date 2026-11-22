@@ -44,7 +44,10 @@ def test_task_names_are_cached_without_materializing_ipds(tmp_path):
         assert tasks["DMI"].input_parameters_definition_name == "JXC"
         assert schemas._values == {}, sorted(schemas._values)
 
-        assert tasks.names(name_contains="DO") == ("DOS",)
+        filtered = tasks.names(name_contains="DO")
+        assert filtered == tuple(name for name in names if "DO" in name)
+        assert {"BSDOSIJ", "DOS", "TDOBS"} <= set(filtered)
+        assert tasks.names(name_contains="DO") is filtered
         assert schemas._values == {}
         assert tasks.names.cache_info().hits >= 1
     """)
