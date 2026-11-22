@@ -93,6 +93,7 @@ def test_numpy_array():
     }
     assert_parse(data, expected, definition.grammar())
     definition["ENERGY"].force_order = True
+    definition["ENERGY"].clear_grammar_cache()
     assert_parse(data, expected, definition.grammar())
 
     definition = cd.InputParametersDefinition.definition_from_dict(
@@ -428,6 +429,76 @@ def test_parse_validation_sees_keyword_assignments():
     assert not hasattr(parameters.CONTROL, "_parsed_values")
 
 
+def test_compiled_grammar_is_reused_per_definition_and_parse_policy():
+    def make_definition():
+        return cd.InputParametersDefinition.definition_from_dict(
+            {"CONTROL": [V("REQUIRED", int, is_optional=False), V("MODE", 1)]}
+        )
+
+    definition = make_definition()
+    strict = definition.grammar()
+    incomplete = definition.grammar(allow_incomplete=True)
+    dangerous = definition.grammar(allow_dangerous=True)
+
+    assert definition.grammar() is strict
+    assert definition.grammar(allow_incomplete=True) is incomplete
+    assert definition.grammar(allow_dangerous=True) is dangerous
+    assert len({id(strict), id(incomplete), id(dangerous)}) == 3
+    assert make_definition().grammar() is not strict
+
+    for _ in range(3):
+        parsed = definition.read_from_string("CONTROL REQUIRED=2 MODE=3")
+        assert parsed.CONTROL.REQUIRED() == 2
+        assert parsed.CONTROL.MODE() == 3
+
+
+def test_grammar_hook_changes_invalidate_compiled_ancestors():
+    definition = cd.InputParametersDefinition.definition_from_dict(
+        {"CONTROL": [V("MODE", int)]}
+    )
+    before = definition.grammar()
+    hits = []
+
+    def record(grammar):
+        grammar.add_parse_action(lambda *_args: hits.append(True))
+
+    option = definition["CONTROL"]["MODE"]
+    option.add_grammar_hook(record)
+    with_hook = definition.grammar()
+    assert with_hook is not before
+    definition.parse("CONTROL MODE=2")
+    assert hits
+    observed = len(hits)
+
+    option.remove_grammar_hook(record)
+    without_hook = definition.grammar()
+    assert without_hook is not with_hook
+    definition.parse("CONTROL MODE=3")
+    assert len(hits) == observed
+
+
+def test_clear_grammar_cache_after_schema_edit():
+    definition = cd.InputParametersDefinition.definition_from_dict(
+        {"CONTROL": [V("REQUIRED", int, is_optional=True), V("MODE", 1)]}
+    )
+    root_grammar = definition.grammar()
+    section_grammar = definition["CONTROL"].grammar()
+    assert definition.parse("CONTROL MODE=2").to_dict() == {
+        "CONTROL": {"MODE": 2}
+    }
+
+    # Structural changes are explicit: the cached parser remains unchanged
+    # until the caller invalidates it.
+    definition["CONTROL"]["REQUIRED"].is_optional = False
+    assert definition.grammar() is root_grammar
+    definition.clear_grammar_cache()
+
+    assert definition.grammar() is not root_grammar
+    assert definition["CONTROL"].grammar() is not section_grammar
+    with pytest.raises(pp.ParseBaseException):
+        definition.parse("CONTROL MODE=2")
+
+
 @pytest.mark.parametrize("force_order", [False, True])
 def test_strict_and_incomplete_grammars_can_be_reused_independently(force_order):
     definition = cd.InputParametersDefinition.definition_from_dict(
@@ -663,6 +734,7 @@ def test_switch():
     assert_parse("ENERGY A=2", {"ENERGY": {"A": 2}}, grammar)
 
     definition["ENERGY"]["C"].is_optional = False
+    definition["ENERGY"]["C"].clear_grammar_cache()
     assert_not_valid("ENERGY A=2", definition.grammar())
 
     definition = cd.InputParametersDefinition.definition_from_dict(
@@ -710,6 +782,7 @@ def test_switch():
 
     for name in ("B", "C", "D", "E"):
         definition["ENERGY"][name].is_optional = False
+    definition.clear_grammar_cache()
     grammar = definition.grammar()
     for text in (
         "ENERGY A=2 B=2",
