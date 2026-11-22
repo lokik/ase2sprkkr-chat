@@ -90,8 +90,24 @@ Inspect and follow a run
 .. code-block:: console
 
    ase2sprkkr remote status RUN_ID
+   ase2sprkkr remote status RUN_ID --status-only
    ase2sprkkr remote follow RUN_ID --info --from-start
+   ase2sprkkr remote snapshot RUN_ID scf.out --destination /tmp/scf.partial.out
    ase2sprkkr remote cancel RUN_ID
 
-These commands use the saved project run ID. See :doc:`cli`
-for other options, or :doc:`remote` for backend requirements.
+These commands use the saved project run ID. The ``status`` command
+includes the latest completed SCF iteration when available;
+``--status-only`` skips that observational snapshot.
+
+The ``snapshot`` command copies one concrete declared output, saved
+stdout/stderr stream, or cache file into a separate destination.
+The file name is resolved in the run's local directory namespace.
+Snapshotting does not modify the original calculation, its canonical
+results, or persistent run history. A running calculation may keep writing
+while the copy is made, so the snapshot is not guaranteed to contain a
+consistent completed result. The destination must not overlap any of the
+run's declared files. The command uses KKRunner's ``RunManager.snapshot_file``.
+
+See :doc:`cli` for other options, or :doc:`remote` for backend
+requirements. Direct backend handles can be supplied explicitly with
+``--remote-id`` for status, follow and cancel, but not snapshot.
