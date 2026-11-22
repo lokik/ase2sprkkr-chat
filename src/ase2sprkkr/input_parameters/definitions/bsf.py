@@ -7,8 +7,8 @@ from typing import Any, List, Optional
 from kkrunner.files import TaskFile
 from ...common.generated_configuration_definitions import Length
 from ...common.grammar_types import Keyword, SetOf, Integer
-from ...common.warnings import DataValidityError
-from ..input_parameters import InputSection
+from ...common.warnings import DataValidityError, DataValidityWarning
+from ..input_parameters import InputSection, InputValue
 from ...physics.lattice_data import bravais_number
 from ..input_parameters_definitions import InputParametersDefinition, InputValueDefinition as V
 from ._file_manifests import tau_file
@@ -46,6 +46,37 @@ def bsf_mode(parameters):
 def _root(container):
     return container._get_root_container()
 
+
+class _BSFEnergyPoints(InputValue):
+    """Notify when a user's explicit NE change leaves the requested BSF mode."""
+
+    def _before_change(self, transaction):
+        if transaction.policy.why != "set":
+            return None
+        parameters = _root(self)
+        requested = _requested_mode(parameters)
+        if requested is None:
+            return None
+        return parameters, requested, bsf_mode(parameters)
+
+    @staticmethod
+    def _after_change(transaction, previous):
+        if previous is None:
+            return
+        parameters, requested, old_mode = previous
+        new_mode = bsf_mode(parameters)
+        if old_mode == requested and new_mode != requested:
+            transaction.policy.add(DataValidityWarning(
+                f"ENERGY.NE selects BSF-{new_mode}, although BSF-{requested} was requested"
+            ))
+            transaction._finish_stage()
+
+    def stage(self, transaction, value, **kwargs):
+        previous = self._before_change(transaction)
+        changed = super().stage(transaction, value, **kwargs)
+        if changed:
+            self._after_change(transaction, previous)
+        return changed
 
 def _ek_item(_definition, container):
     return bsf_mode(_root(container)) != KK
@@ -105,9 +136,8 @@ def _validate_bsf(
     parameters: Any, _values: Any, why: str
 ) -> Optional[List[DataValidityError]]:
     issues = []
-    # The requested alias selects initial defaults only; the effective
-    # BSF mode is intentionally mutable through ENERGY.NE. Do not report
-    # a mismatch after the user changes modes in the GUI or Python API.
+    # The effective mode follows NE. The option setter reports a *transition*
+    # away from the requested mode; validation must not repeat that warning.
     mode = bsf_mode(parameters)
 
     task = parameters["TASK"]
@@ -387,6 +417,7 @@ def _energy_definition():
         defaults={"GRID": _grid_default, "NE": _ne_default, "ImE": 0.001},
     )
     energy.copy_member("NE", type=SetOf(Integer(min=1), min_length=1, max_length=2))
+    energy["NE"].result_class = _BSFEnergyPoints
     energy["EMIN"].default_value = energy_absolute_default('EMIN', _emin_default)
     energy["EMAX"].default_value = energy_absolute_default('EMAX', _emax_default)
     energy["EMAXEV"].default_value = energy_relative_default('EMAX', _emaxev_default)

@@ -186,24 +186,47 @@ class TestDefinitions:
         assert bsfkk.name == "bsf"
         assert bsfkk.task_name == "BSFKK"
         assert bsfkk.ENERGY.NE().tolist() == [1]
-        # The requested task selects defaults, but NE selects the effective
-        # BSF mode; changing it deliberately does not emit a warning.
-        with catch_warnings_of(DataValidityWarning) as warnings:
+        with pytest.warns(DataValidityWarning, match="ENERGY.NE selects BSF-EK"):
             bsfkk.ENERGY.NE = 2
-        assert not warnings
         assert bsfkk.ENERGY.NE().tolist() == [2]
         assert bsfkk.task_name == "BSFEK"
         assert bsfkk.requested_task_name == "BSFKK"
 
+        # Warn only when crossing away from the requested mode, not on
+        # subsequent edits, validation, or a return to the requested mode.
+        with catch_warnings_of(DataValidityWarning) as found:
+            bsfkk.ENERGY.NE = 3
+            bsfkk.CONTROL.DATASET = "Fe"
+            bsfkk.validate("set")
+            bsfkk.ENERGY.NE = 1
+        assert not found
+        assert bsfkk.task_name == "BSFKK"
+
+        # Clearing NE is implemented through stage(), too; it must not
+        # cause any duplicate mode-switch notification.
+        with pytest.warns(DataValidityWarning, match="ENERGY.NE selects BSF-EK"):
+            bsfkk.ENERGY.NE = 2
+        with catch_warnings_of(DataValidityWarning) as found:
+            bsfkk.ENERGY.NE.set(None)
+        assert not found
+        assert bsfkk.task_name == "BSFKK"
+
         bsfek = InputParameters.create("BSFEK")
         assert bsfek.task_name == "BSFEK"
         assert bsfek.ENERGY.NE().tolist() == [200]
-        with catch_warnings_of(DataValidityWarning) as warnings:
+        with pytest.warns(DataValidityWarning, match="ENERGY.NE selects BSF-KK"):
             bsfek.ENERGY.NE = 1
-        assert not warnings
         assert bsfek.ENERGY.NE().tolist() == [1]
         assert bsfek.task_name == "BSFKK"
         assert bsfek.requested_task_name == "BSFEK"
+
+        # Without an explicit requested task, NE may select either mode
+        # without a mismatch warning.
+        detached = InputParameters.for_definition("BSF")
+        with catch_warnings_of(DataValidityWarning) as found:
+            detached.ENERGY.NE = 2
+        assert not found
+        assert detached.task_name == "BSFEK"
 
     def test_bsf_modes_cannot_be_mixed(self):
         ip = InputParameters.create("BSFEK")
