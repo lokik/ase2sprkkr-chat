@@ -294,3 +294,50 @@ def test_scf_result_does_not_reinterpret_periodic_status(tmp_path):
     result.iterations = [{"converged": lambda: True}]
     copyfile(POTENTIAL_EXAMPLES / "GeTeX5.pot", result.potential_filename)
     assert result.potential.SCF_INFO.SCFSTATUS() == "ITR-BULK"
+
+
+
+@pytest.mark.parametrize(
+    ("converged", "return_code", "expected"),
+    [
+        (True, 0, "CONVERGED"),
+        (False, 0, "ITERATING"),
+        (None, 0, "ITERATING"),
+        (True, 139, "ITERATING"),
+    ],
+)
+def test_result_loader_embedded_interpretation_does_not_mutate_shared_clupot(
+    embedded_scf_result, converged, return_code, expected,
+):
+    """A parsed CLUPOT belongs to the batch; SCF status belongs to the result."""
+    from ..result_loader import ResultLoader
+
+    result = embedded_scf_result
+    result.return_code = return_code
+    if converged is not None:
+        result.iterations = [{"converged": lambda: converged}]
+
+    loader = ResultLoader()
+    raw = loader.potential(
+        result.potential_filename, host=result.host_potential_filename
+    )
+    cached_atoms = raw.atoms
+    assert raw.SCF_INFO.SCFSTATUS() == "ITERATING"
+
+    selected = loader.embedded_atoms(result)
+    assert selected.potential.SCF_INFO.SCFSTATUS() == expected
+    assert selected.info["sprkkr_embedding_scf_status"] == expected
+    assert raw.SCF_INFO.SCFSTATUS() == "ITERATING"
+    assert raw.atoms is cached_atoms
+    assert raw.host.SCF_INFO.SCFSTATUS() == "CONVERGED"
+
+    if expected == "CONVERGED":
+        assert selected is not cached_atoms
+        assert selected.potential is not raw
+        assert selected.embedding_host is cached_atoms.embedding_host
+    else:
+        assert selected is cached_atoms
+
+    # A second result sees the original file interpretation from the same cache.
+    other = ScfResult(result.input_parameters, None, result.directory)
+    assert loader.embedded_atoms(other) is cached_atoms
