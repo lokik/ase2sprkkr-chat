@@ -106,6 +106,19 @@ def test_native_rat_fixture_is_parsed_with_bulk_table():
     from pathlib import Path
 
     filename = Path(__file__).parents[2] / "result_files" / "examples" / "Cu_XAS_Cu_L23.rat"
-    result = RATResultFile.from_file(filename)
+    # A failed RAT grammar must raise instead of silently returning UNKNOWN.
+    result = RATResultFile.from_file(filename, try_only="RAT", unknown=False)
     assert result.GROUPS[0].DATA[0].DATA().shape == (6, 3)
     assert result.GROUPS[0].DATA[0].DATA()["ADD"][0].tolist() == ["(+)", "(-)", "(z)"]
+
+
+def test_fast_table_rejects_constrained_special_indices():
+    from ase2sprkkr.common.grammar_types import Unsigned
+
+    # Numeric bounds in custom index grammars must not be silently ignored.
+    for special in ("grouping", "numbering"):
+        options = dict(grouping=True, numbering=True, header=False, groups_as_list=False)
+        options[special] = Unsigned(min=2)
+        with generate_grammar():
+            with pytest.raises(ValueError, match="plain integer group/row numbers"):
+                Table({"VALUE": float}, fast_numeric=True, **options).grammar()
