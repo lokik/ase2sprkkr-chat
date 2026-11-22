@@ -578,6 +578,8 @@ class Table(GrammarType):
         group_size_format="{:<12}{}",
         groups_as_list=None,
         repeat_sparse=None,
+        fast_numeric=False,
+        value_codes=None,
         **kwargs,
     ):
         """Configure the table grammar and its storage representation.
@@ -628,6 +630,12 @@ class Table(GrammarType):
             Store groups in a list instead of a multidimensional array.
         repeat_sparse : object, optional
             Define how incomplete rows repeat values from preceding rows.
+        fast_numeric : bool, optional
+            Use the bulk regex/NumPy reader for regular numeric table rows.
+            Unsupported table features are rejected rather than silently changed.
+        value_codes : mapping, optional
+            Map enumerated text tokens to numeric codes during bulk parsing;
+            the original tokens are restored in the returned structured array.
         kwargs : mapping
             Column names and grammar types, when ``columns`` is omitted.
         """
@@ -670,6 +678,8 @@ class Table(GrammarType):
 
         self.named_result = named_result
         self.length = length
+        self.fast_numeric = fast_numeric
+        self.value_codes = value_codes or {}
         self.numbering = SpecialColumn(self, numbering, numbering_label, numbering_format)
         self.free_numbering = free_numbering
         self.grouping = SpecialColumn(self, grouping, grouping_label, grouping_format)
@@ -682,6 +692,10 @@ class Table(GrammarType):
             yield self.numbering
 
     def _grammar(self, param_name=False):
+        if self.fast_numeric:
+            from .regex_table import RegexNumericTable
+            return RegexNumericTable(self)
+
         line = self.sequence.grammar(param_name)
 
         for i in self.special_columns():
