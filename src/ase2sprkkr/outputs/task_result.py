@@ -126,11 +126,8 @@ class TaskResult:
 
         return ClusterPotential.from_file(filename, host=self.host_potential)
 
-    @cached_property
-    def potential_filename(self):
-        """Potential representing this result, not necessarily its input."""
-        if self.produces_potential and "converged" in self.files:
-            return self.path_to("converged")
+    def _input_potential_filename(self):
+        """Native POTFIL used as input, independent of any produced file."""
         parameters = self.input_parameters
         potfil = parameters.CONTROL.POTFIL() if parameters is not None else None
         if self.is_embedded:
@@ -144,6 +141,13 @@ class TaskResult:
         if self.directory:
             potfil = os.path.join(self.directory, potfil)
         return potfil
+
+    @cached_property
+    def potential_filename(self):
+        """Potential representing this result, not necessarily its input."""
+        if self.produces_potential and "converged" in self.files:
+            return self.path_to("converged")
+        return self._input_potential_filename()
 
     @property
     def potential_dependencies(self):
