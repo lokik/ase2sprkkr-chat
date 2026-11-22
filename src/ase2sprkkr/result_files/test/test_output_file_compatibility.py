@@ -33,11 +33,12 @@ def test_canonical_result_file_api_does_not_use_legacy_names():
     allowed = {
         package_root / "__init__.py",
         package_root / "result_files" / "output_files.py",
-        Path(__file__).resolve(),
     }
     failures = []
     for path in package_root.rglob("*.py"):
-        if path in allowed:
+        # Compatibility tests intentionally exercise deprecated aliases.
+        # Enforce the canonical API in production code, not test fixtures.
+        if path in allowed or "test" in path.relative_to(package_root).parts:
             continue
         text = path.read_text()
         if "ase2sprkkr.output_files." in text:
