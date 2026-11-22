@@ -153,7 +153,7 @@ def test_output_action_rechecks_saved_version(saved_run, monkeypatch):
     fail_read(monkeypatch, EOFError("Truncated OUT"))
     result = project_results.load_project_result(manager, record.id, allow_unparsed=True)
     output.write_text("overwritten")
-    assert result.output_values["output"].actions() == ()
+    assert result.output_values["output"].actions() == ("open_directory",)
 
 
 def test_process_exit_error_remains_a_value_error():
@@ -192,4 +192,4 @@ def test_real_truncated_scf_output_is_inspectable_from_run_store(tmp_path):
     assert result.parse_error.startswith("EOFError:")
     assert "open" in result.output_values["output"].actions()
     output.write_text("different bytes")
-    assert result.output_values["output"].actions() == ()
+    assert result.output_values["output"].actions() == ("open_directory",)
