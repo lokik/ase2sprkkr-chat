@@ -230,34 +230,24 @@ def test_embedded_result_requires_clupot_and_validates_host_file(tmp_path, monke
     assert verified == [str(tmp_path / "host.pot")]
 
 
-def test_input_parameters_load_existing_embedded_potentials(tmp_path, embedded_scf_result):
+def test_saving_existing_embedded_result_derives_native_settings(tmp_path, embedded_scf_result):
+    # The SCF result now resolves the cluster and host itself; preparation no
+    # longer exposes a separate load_existing_potential_input helper.
+    potential = embedded_scf_result.start_potential
+    assert potential.atoms.embedding_host is potential.host
+
     parameters = InputParameters.for_task("SCF")
     parameters.CONTROL.POTFIL = "host.pot"
     parameters.CONTROL.POTFIL_CLU = "cluster.pot"
-    from ...sprkkr._preparation import load_existing_potential_input
-
-    with pytest.raises(ValueError, match="requires CONTROL.CLUTYPE=embedded"):
-        load_existing_potential_input(parameters, tmp_path)
-
-    parameters.CONTROL.CLUTYPE = "embedded"
-    source = load_existing_potential_input(parameters, tmp_path)
-    potential, snapshot = source.potential, source.parameters
-    assert len(source.versions) == 2
-    assert potential.atoms.embedding_host is potential.host
-    assert snapshot.CONTROL.POTFIL() == str(tmp_path / "host.pot")
-    assert snapshot.CONTROL.POTFIL_CLU() == str(tmp_path / "cluster.pot")
-    assert snapshot.CONTROL.DATASET() == "CoFe6"
-    assert parameters.CONTROL.POTFIL() == "host.pot"
-
-    # Saving an embedded structure directly derives the same native settings
-    # as calculator preparation.
-    exported = parameters.copy()
-    exported.CONTROL.CLUTYPE.clear()
+    parameters.CONTROL.CLUTYPE.clear()
     path = tmp_path / "embedded.inp"
-    exported.save_to_file(path, atoms=potential.atoms)
+    parameters.save_to_file(path, atoms=potential.atoms)
+
     reread = InputParameters.from_file(path)
     assert reread.CONTROL.CLUTYPE() == "embedded"
     assert reread.TAU.NKTAB.is_set()
+    assert parameters.CONTROL.POTFIL() == "host.pot"
+
 
 def test_embedded_scf_parser_registers_converged_cluster_not_host(tmp_path, embedded_scf_result):
     """The parsed FILES table must not redirect embedded SCF to host.pot_new."""
