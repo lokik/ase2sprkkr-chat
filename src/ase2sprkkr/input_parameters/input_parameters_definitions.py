@@ -201,7 +201,7 @@ def _task_selector_map():
 
 _TASK_SECTION_START = re.compile(r"^TASK(?=[ \t=]|$)", re.IGNORECASE)
 _TASK_ASSIGNMENT = re.compile(
-    r"(?<!\S)[A-Z_][A-Z0-9_]*\s*=\s*"
+    r"(?<!\S)[A-Z_][A-Z0-9_-]*\s*=\s*"
     r"(?:\{(?:[^{}]|\{[^{}]*\})*\}"
     r"|\[(?:[^\[\]]|\[[^\[\]]*\])*\]"
     r"|\([^()]*\)|[^\s,;]+)",
