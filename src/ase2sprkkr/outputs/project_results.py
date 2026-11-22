@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import os
+import logging
 
+import pyparsing as pp
+
+from ..common.process_output_reader import ProcessExitError
+from ..common.warnings import DataValidityError
 from ..common.module_registry import RegistryEntryNotFound
 from kkrunner.files import ArtifactAvailabilityState, FileState
 from kkrunner.runs import FailurePhase, HistoricalFileMismatchError
@@ -11,6 +16,16 @@ from kkrunner import RunState
 from ..input_parameters.input_parameters import InputParameters
 from ..input_parameters.task_definition import TaskMismatchError
 from .reader_registry import reader_registry
+from .output_only_result import OutputOnlyResult
+
+
+logger = logging.getLogger(__name__)
+# Only recognized native output errors are recoverable; arbitrary ValueError,
+# TypeError, KeyError and AttributeError still indicate a possible defect.
+_UNPARSABLE_OUTPUT_ERRORS = (
+    EOFError, UnicodeError, pp.ParseBaseException, DataValidityError,
+    ProcessExitError,
+)
 
 
 class ProjectResultUnavailableError(RuntimeError):
@@ -173,8 +188,13 @@ def retry_project_postprocessing(manager, run):
     return result
 
 
-def load_project_result(manager, run):
-    """Reconstruct the historical TaskResult of one terminal project run."""
+def load_project_result(manager, run, *, allow_unparsed=False):
+    """Reconstruct a historical TaskResult from a terminal project run.
+
+    With allow_unparsed=True, a verified OUT remains inspectable when a
+    recognized native-output error prevents parsing. Unverified or replaced
+    historical files and unrelated programming errors never fall back.
+    """
     record = _record(manager, run)
     if record.state not in (RunState.FINISHED, RunState.FAILED, RunState.CANCELLED):
         raise ProjectResultUnavailableError(
@@ -237,12 +257,26 @@ def load_project_result(manager, run):
     ):
         input_file = result_files.input_file
 
-    result = reader.read_from_file(
-        output_file,
-        return_code=return_code,
-        input_file=input_file,
-        directory=record.execution.directory.local,
-        run_record=record,
-    )
+    try:
+        result = reader.read_from_file(
+            output_file,
+            return_code=return_code,
+            input_file=input_file,
+            directory=record.execution.directory.local,
+            run_record=record,
+        )
+    except _UNPARSABLE_OUTPUT_ERRORS as exc:
+        if not allow_unparsed:
+            raise
+        # A file may be replaced while the parser is running.
+        if not os.path.isfile(output_file) or not manager.output_file_is_current(record):
+            raise ProjectResultUnavailableError(
+                record, "historical output disappeared or changed during parsing"
+            ) from exc
+        logger.warning(
+            "Cannot parse historical run %s; exposing verified OUT only",
+            record.id, exc_info=True,
+        )
+        return OutputOnlyResult(record, exc)
     result.run_record = record
     return result

@@ -9,6 +9,10 @@ from .decorators import maybeclassmethod
 from .file_utils import filename_from_file
 
 
+class ProcessExitError(ValueError):
+    """The executable exited with a nonzero status, rather than a parser bug."""
+
+
 class ProcessOutputParser:
     """Parse asynchronous stdout/stderr streams.
 
@@ -36,7 +40,7 @@ class ProcessOutputParser:
     def result(self, output, error, return_code):
         """Postprocess parsed stdout/stderr after execution completes."""
         if return_code != 0:
-            exc = ValueError(f"The process ended with return value {return_code}")
+            exc = ProcessExitError(f"The process ended with return value {return_code}")
             exc.output = output
             exc.error = error
             raise exc

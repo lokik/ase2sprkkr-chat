@@ -2,7 +2,7 @@
 
 def test_project_result_helpers_are_public():
     from ase2sprkkr.outputs import (
-        ProjectResultUnavailableError, TaskResult,
+        OutputOnlyResult, ProjectResultUnavailableError, TaskResult,
         UnrecoverableProjectResultError, attach_project_run,
         load_project_result,
     )
@@ -17,6 +17,7 @@ def test_project_result_helpers_are_public():
     assert ProjectResultUnavailableError is implementation_error
     assert UnrecoverableProjectResultError is implementation_unrecoverable
     assert issubclass(UnrecoverableProjectResultError, ProjectResultUnavailableError)
+    assert issubclass(OutputOnlyResult, TaskResult)
     assert TaskResult is implementation_result
     assert attach_project_run is implementation_attach
     assert load_project_result is implementation_load

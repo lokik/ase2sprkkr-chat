@@ -6,6 +6,7 @@ from .file_provenance import (
     result_file_version,
 )
 from .output_detection import looks_like_scf_output
+from .output_only_result import OutputOnlyResult
 from .project_results import (
     ProjectResultUnavailableError,
     UnrecoverableProjectResultError,
@@ -16,6 +17,7 @@ from .project_results import (
 from .task_result import TaskResult
 
 __all__ = [
+    "OutputOnlyResult",
     "ProjectResultUnavailableError",
     "UnrecoverableProjectResultError",
     "TaskResult",

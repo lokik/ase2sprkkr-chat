@@ -398,7 +398,7 @@ class TaskResult:
         return reader.read_from_file(filename, input_cache=input_cache)
 
     @classmethod
-    def from_run(cls, run, manager=None):
+    def from_run(cls, run, manager=None, *, allow_unparsed=False):
         """Load a persisted run using an execution manager.
 
         With no manager, use the shared default project-run store. The
@@ -409,7 +409,7 @@ class TaskResult:
 
             manager = project_execution_manager()
         from .project_results import load_project_result
-        return load_project_result(manager, run)
+        return load_project_result(manager, run, allow_unparsed=allow_unparsed)
 
     @classmethod
     def from_run_record(
