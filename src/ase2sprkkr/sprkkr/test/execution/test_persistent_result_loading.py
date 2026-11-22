@@ -34,7 +34,7 @@ def test_live_record_and_history_use_same_reader_factory(monkeypatch, tmp_path):
 
         def read_from_file(self, filename, error=None, **kwargs):
             calls.append(str(filename))
-            return SimpleNamespace()
+            return TaskResult(None, None, output.parent, output_file=filename, task_name='DOS')
 
     def reader_factory(owner, current):
         assert current.id == record.id
@@ -56,12 +56,16 @@ def test_history_rejects_modified_output(tmp_path):
 
 def test_from_run_uses_application_adapter(monkeypatch):
     expected, manager = object(), object()
-    monkeypatch.setattr(
-        project_results,
-        "load_project_result",
-        lambda owner, run: expected if owner is manager and run == "run-id" else None,
-    )
+    calls = []
+
+    def load(owner, run, *, allow_unparsed=False):
+        calls.append((owner, run, allow_unparsed))
+        return expected
+
+    monkeypatch.setattr(project_results, "load_project_result", load)
     assert TaskResult.from_run("run-id", manager) is expected
+    assert TaskResult.from_run("run-id", manager, allow_unparsed=True) is expected
+    assert calls == [(manager, "run-id", False), (manager, "run-id", True)]
 
 
 def test_attach_builds_processor_in_application_layer(monkeypatch, tmp_path):
