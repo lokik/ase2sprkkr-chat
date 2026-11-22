@@ -121,3 +121,66 @@ def test_invalid_guessed_input_is_nonfatal_but_explicit_input_error_propagates(
     explicit = TaskResult(None, None, str(tmp_path), input_file=str(path))
     with pytest.raises(ValueError, match="invalid historical input"):
         _ = explicit.input_parameters
+
+
+def test_batch_input_cache_parses_once_and_returns_independent_parameters(
+    tmp_path, monkeypatch,
+):
+    from ase2sprkkr.outputs.task_result import InputFileCache
+
+    source = tmp_path / "shared.inp"
+    parameters = InputParameters.create("ARPES")
+    parameters.CONTROL.DATASET = "shared"
+    source.write_text(parameters.to_string(validate=False))
+    original = InputParameters.from_file
+    calls = []
+
+    def read(_cls, filename):
+        calls.append(filename)
+        return original(filename)
+
+    monkeypatch.setattr(InputParameters, "from_file", classmethod(read))
+    cache = InputFileCache()
+    first = TaskResult(None, None, str(tmp_path), output_file="one.out", task_name="ARPES")
+    second = TaskResult(None, None, str(tmp_path), output_file="two.out", task_name="ARPES")
+    first._input_cache = second._input_cache = cache
+
+    a, b = first.input_parameters, second.input_parameters
+    assert len(calls) == 1
+    assert a is not b
+    assert a.task_name == b.task_name == "ARPES"
+    a.CONTROL.DATASET = "changed"
+    assert b.CONTROL.DATASET() == "shared"
+
+    # A new version cannot inherit parsed parameters from an earlier file.
+    parameters.CONTROL.DATASET = "replaced-by-new-content"
+    source.write_text(parameters.to_string(validate=False))
+    third = TaskResult(None, None, str(tmp_path), output_file="three.out", task_name="ARPES")
+    third._input_cache = cache
+    assert third.input_parameters.CONTROL.DATASET() == "replaced-by-new-content"
+    assert len(calls) == 2
+
+
+def test_batch_input_cache_preserves_error_semantics(tmp_path, monkeypatch):
+    import pytest
+    from ase2sprkkr.outputs.task_result import InputFileCache
+
+    path = tmp_path / "bad.inp"
+    path.write_text("invalid")
+    count = []
+
+    def fail(_cls, _filename):
+        count.append(True)
+        raise ValueError("invalid input")
+
+    monkeypatch.setattr(InputParameters, "from_file", classmethod(fail))
+    cache = InputFileCache()
+    for _ in range(2):
+        guessed = TaskResult(None, None, str(tmp_path), task_name="SCF")
+        guessed._input_cache = cache
+        assert guessed.input_parameters is None
+        explicit = TaskResult(None, None, str(tmp_path), input_file=str(path))
+        explicit._input_cache = cache
+        with pytest.raises(ValueError, match="invalid input"):
+            _ = explicit.input_parameters
+    assert len(count) == 1
