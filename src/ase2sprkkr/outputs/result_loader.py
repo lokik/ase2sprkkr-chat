@@ -353,26 +353,6 @@ class ResultLoader:
                 continue
         return None
 
-    def embedded_atoms(self, result, *, potential_path=None, host_path=None):
-        """Reconstruct and interpret embedded atoms for one calculation result.
-
-        Raw CLUPOT and host potentials are cached per file version. Any
-        result-specific SCF convergence correction is applied to a detached
-        structure by the result, not written into this shared cache.
-        """
-        if not result.is_embedded:
-            raise ValueError("Expected an embedded SPR-KKR result")
-        cluster = potential_path if potential_path is not None else result.potential_filename
-        host = host_path if host_path is not None else result.host_potential_filename
-        result.require_current_file(cluster)
-        result.require_current_file(host)
-        potential = self.potential(cluster, host=host)
-        interpreted = result.interpret_potential(potential)
-        atoms = interpreted.atoms
-        if atoms is None:
-            raise ValueError(f"Cluster potential contains no structure: {cluster}")
-        return atoms
-
     def potential(self, filename, *, host=None):
         """Cache raw potentials without mutating shared SCF convergence state."""
         from ..potentials.potentials import Potential
