@@ -226,7 +226,9 @@ class ResultLoader:
             if self._discover_input(result):
                 # The output parser may have completed before the native input
                 # was discovered. Add declarations now that it is available.
-                result.enrich_declared_output_files(warn_missing=False)
+                result.enrich_declared_output_files(
+                    warn_missing=getattr(result, "return_code", None) == 0
+                )
         except Exception:
             # Optional input discovery must not make a parsed OUT unusable.
             pass
