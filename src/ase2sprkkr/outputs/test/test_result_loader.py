@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from kkrunner.files import FileVersion
+from kkrunner.files import FileOperations, FileVersion
 from ase2sprkkr.outputs import FileAssociation, ResultLoader
 from ase2sprkkr.outputs.task_result import TaskResult
 from kkrunner.runs import HistoricalFileMismatchError
@@ -161,6 +161,7 @@ def test_reuse_invalidated_when_input_changes_without_output_change(tmp_path, mo
     assert loader.load_file(output) is original
     assert len(reads) == 1
     inp.write_text("newer input parameters")
+    loader.file_operations.invalidate()
     changed = loader.load_file(output)
     assert changed is not original
     assert len(reads) == 2
@@ -349,6 +350,7 @@ def test_cached_unmatched_input_is_rediscovered_after_repair(tmp_path, monkeypat
     assert loader.load_file(output) is first
 
     inp.write_text("repaired native input")
+    loader.file_operations.invalidate()
     second = loader.load_file(output)
     assert second is not first
     assert Path(second.path_to("input")) == inp
@@ -372,6 +374,7 @@ def test_reparse_after_potential_rewrite_drops_cached_task_result(tmp_path, monk
     assert loader.load_file(output) is first
     assert len(reads) == 1
     potential.write_text("after rewrite")
+    loader.file_operations.invalidate()
     second = loader.load_file(output)
     assert second is not first
     assert len(reads) == 2
@@ -458,3 +461,167 @@ def test_native_input_is_available_after_files_header(tmp_path, monkeypatch):
     result = ResultLoader().load_file(output)
     assert observed == ["prepared"]
     assert result.input_parameters_file == str(native_input)
+
+
+def test_file_operations_cache_is_shared_by_nested_import(tmp_path, monkeypatch):
+    first = _output(tmp_path / "one.out", scf=False)
+    second = _output(tmp_path / "two.out", scf=False)
+    operations = FileOperations()
+    loader = ResultLoader(file_operations=operations)
+    assert loader.file_operations is operations
+    assert loader.inputs._file_operations is operations
+
+    def parse(_cls, path, *, on_files_parsed=None):
+        return _DOS(None, None, tmp_path, output_file=path, task_name="DOS")
+
+    monkeypatch.setattr(TaskResult, "_parse_file", classmethod(parse))
+    invalidations = []
+    original_invalidate = operations.invalidate
+
+    def invalidate():
+        invalidations.append(1)
+        original_invalidate()
+
+    monkeypatch.setattr(operations, "invalidate", invalidate)
+    batch = loader.load_files((first, second))
+    assert len(batch.results) == 2
+    assert not batch.failures
+    # Neither nested nor independent calls may discard a supplied cache.
+    assert len(invalidations) == 0
+
+    assert loader.load_file(first) is batch.results[0]
+    assert len(invalidations) == 0
+
+
+def test_file_operations_loader_preserves_cache_until_explicit_invalidation(tmp_path):
+    loader = ResultLoader()
+    first = _output(tmp_path / "first.out", scf=False)
+    assert loader.find_outputs(tmp_path) == (first,)
+    (tmp_path / "artifact.pot").write_bytes(b"ignore")
+    second = _output(tmp_path / "second.out", scf=False)
+    assert loader.find_outputs(tmp_path) == (first,)
+    loader.file_operations.invalidate()
+    assert loader.find_outputs(tmp_path) == (first, second)
+
+
+def test_directory_scan_stats_only_candidate_files(tmp_path, monkeypatch):
+    loader = ResultLoader()
+    _output(tmp_path / "task.out", scf=False)
+    (tmp_path / "task.inp").write_text("control")
+    (tmp_path / "bulk.dat").write_bytes(b"unrelated")
+    (tmp_path / "large.pot").write_bytes(b"unrelated")
+    examined = []
+    real_is_file = loader.file_operations.is_file
+
+    def observe(path, *, refresh=False):
+        examined.append(Path(path).name)
+        return real_is_file(path, refresh=refresh)
+
+    monkeypatch.setattr(loader.file_operations, "is_file", observe)
+    assert [path.name for path in loader.find_outputs(tmp_path)] == ["task.out"]
+    assert set(examined) == {"task.out", "task.inp"}
+
+
+def test_loader_rejects_stdout_rewritten_while_parsing(tmp_path, monkeypatch):
+    path = _output(tmp_path / "task.out", scf=False)
+
+    def parse(_cls, output, *, on_files_parsed=None):
+        Path(output).write_text("changed during parsing")
+        return _DOS(None, None, tmp_path, output_file=output, task_name="DOS")
+
+    monkeypatch.setattr(TaskResult, "_parse_file", classmethod(parse))
+    with pytest.raises(RuntimeError, match="Output changed during parsing"):
+        ResultLoader().load_file(path)
+
+
+def test_native_input_changed_during_parse_is_not_cached(tmp_path, monkeypatch):
+    from ase2sprkkr.outputs import result_loader as module
+
+    native_input = tmp_path / "calculation.inp"
+    native_input.write_text("old")
+    loader = ResultLoader()
+
+    def mutate(_cls, path):
+        native_input.write_text("changed during read")
+        return SimpleNamespace(task_name="SCF")
+
+    monkeypatch.setattr(module.input_parameters.InputParameters, "from_file", classmethod(mutate))
+    with pytest.raises(RuntimeError, match="Native input changed during parsing"):
+        loader.inputs.parse(native_input)
+
+    # The old fingerprint's failed parse must not conceal a repaired input.
+    monkeypatch.setattr(
+        module.input_parameters.InputParameters,
+        "from_file",
+        classmethod(lambda _cls, path: SimpleNamespace(task_name="SCF")),
+    )
+    assert loader.inputs.parse(native_input).task_name == "SCF"
+
+
+def test_file_index_refreshes_symlink_target_without_parent_change(tmp_path):
+    root = tmp_path / "results"
+    root.mkdir()
+    target = tmp_path / "target"
+    target.mkdir()
+    link = root / "linked.out"
+    try:
+        link.symlink_to(target / "linked.out")
+    except OSError:
+        pytest.skip("Symlinks not supported")
+    loader = ResultLoader()
+    assert loader.find_outputs(root) == ()
+    before = root.stat()
+
+    _output(target / "linked.out", scf=False)
+    assert root.stat().st_mtime_ns == before.st_mtime_ns
+    assert loader.find_outputs(root) == (link,)
+
+
+def test_load_directory_scans_candidates_once_across_nested_calls(tmp_path, monkeypatch):
+    from kkrunner.files import FileOperations
+
+    first = _output(tmp_path / "first.out", scf=False)
+    second = _output(tmp_path / "second.out", scf=False)
+    (tmp_path / "irrelevant.dat").write_bytes(b"skip")
+    scans = []
+    original_listdir = FileOperations.listdir
+
+    def listdir(self, directory, *, refresh=False):
+        scans.append(Path(directory))
+        return original_listdir(self, directory, refresh=refresh)
+
+    monkeypatch.setattr(FileOperations, "listdir", listdir)
+    monkeypatch.setattr(
+        TaskResult,
+        "_parse_file",
+        classmethod(lambda _cls, path, *, on_files_parsed=None:
+                    _DOS(None, None, tmp_path, output_file=path, task_name="DOS"))
+    )
+    batch = ResultLoader.load_directory(tmp_path)
+    assert len(batch.results) == 2
+    assert not batch.failures
+    assert scans == [tmp_path]
+
+def test_native_input_cache_is_caller_scoped(tmp_path, monkeypatch):
+    from ase2sprkkr.outputs import result_loader as module
+
+    native_input = tmp_path / "native.inp"
+    native_input.write_text("initial")
+    loader = ResultLoader()
+    parsed = []
+
+    def parse(_cls, path):
+        value = Path(path).read_text()
+        parsed.append(value)
+        return SimpleNamespace(task_name="DOS", value=value)
+
+    monkeypatch.setattr(module.input_parameters.InputParameters, "from_file", classmethod(parse))
+    assert loader.inputs.parse(native_input).value == "initial"
+    native_input.write_text("modified")
+    # This is an intentional cache: no automatic stat or parse on repeat.
+    assert loader.inputs.parse(native_input).value == "initial"
+    assert parsed == ["initial"]
+
+    loader.file_operations.invalidate()
+    assert loader.inputs.parse(native_input).value == "modified"
+    assert parsed == ["initial", "modified"]
