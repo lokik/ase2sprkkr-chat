@@ -64,7 +64,7 @@ plot = [
     "scikit-image",
 ]
 psij = [
-    "kkrunner[psij]>=0.2.0b6,<0.3",
+    "kkrunner[psij]>=0.3.0b1,<0.4",
 ]
 
 [project.urls]
