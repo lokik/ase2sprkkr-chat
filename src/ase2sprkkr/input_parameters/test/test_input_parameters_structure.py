@@ -64,17 +64,22 @@ def test_numpy_array():
         definition.grammar(),
     )
 
-    definition = cd.InputParametersDefinition.definition_from_dict(
-        {
-            "ENERGY": [
-                V("A", 1),
-                V("B", 2),
-                V("C", gt.NumpyArray(lines=3), name_in_grammar=False),
-                V("D", gt.NumpyArray(lines=2), name_in_grammar=False),
-                V("E", 3),
-            ]
-        }
-    )
+    def fixed_array_definition(force_order=False):
+        definition = cd.InputParametersDefinition.definition_from_dict(
+            {
+                "ENERGY": [
+                    V("A", 1),
+                    V("B", 2),
+                    V("C", gt.NumpyArray(lines=3), name_in_grammar=False),
+                    V("D", gt.NumpyArray(lines=2), name_in_grammar=False),
+                    V("E", 3),
+                ]
+            }
+        )
+        definition["ENERGY"].force_order = force_order
+        return definition
+
+    definition = fixed_array_definition()
     data = """ENERGY A=3 B=2
     1 1
     2 2
@@ -92,8 +97,7 @@ def test_numpy_array():
         }
     }
     assert_parse(data, expected, definition.grammar())
-    definition["ENERGY"].force_order = True
-    assert_parse(data, expected, definition.grammar())
+    assert_parse(data, expected, fixed_array_definition(force_order=True).grammar())
 
     definition = cd.InputParametersDefinition.definition_from_dict(
         {
