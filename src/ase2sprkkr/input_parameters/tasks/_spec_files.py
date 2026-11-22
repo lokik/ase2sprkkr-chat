@@ -44,17 +44,10 @@ def data_pol2_spc(parameters):
 SPEC_INPUT_FILES = (input_inp, struc_inp)
 SPEC_RESULT_FILES = (data_spc, data_pol1_spc, data_pol2_spc)
 
-# Native logs and reserved-but-uncollectable generic DOS headers are not
-# user-facing spectra. They still participate in the ordinary output manifest.
-SPEC_AUX_OUTPUT_FILES = (
-    "{DATASET_ADSI}_SPEC.out",
-    TaskFile("{DATASET_ADSI}.dos", collect=False),
-)
-
-# Historical combined declaration retained for consumers that need all files.
-# It is assembled from the same objects rather than independently maintained.
+# Historical output declaration and ordering remain unchanged. Scientific
+# results are a presentation subset, not an additional file contract.
 SPEC_OUTPUT_FILES = (
-    SPEC_AUX_OUTPUT_FILES[0],
+    "{DATASET_ADSI}_SPEC.out",
     *SPEC_RESULT_FILES,
-    SPEC_AUX_OUTPUT_FILES[1],
+    TaskFile("{DATASET_ADSI}.dos", collect=False),
 )

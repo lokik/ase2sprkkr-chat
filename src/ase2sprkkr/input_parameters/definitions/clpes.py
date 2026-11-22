@@ -2,7 +2,7 @@
 import numpy as np
 
 from ..task_definition import TaskDefinition
-from ..tasks._spec_files import SPEC_INPUT_FILES, SPEC_AUX_OUTPUT_FILES, SPEC_RESULT_FILES
+from ..tasks._spec_files import SPEC_INPUT_FILES, SPEC_OUTPUT_FILES, SPEC_RESULT_FILES
 from ._sections import CONTROL
 from ...common.grammar_types import Integer, Keyword, SetOf
 from ...common.warnings import DataValidityError
@@ -46,7 +46,7 @@ from ..input_parameters_definitions import InputParametersDefinition as _BaseInp
 class CLPESInputParametersDefinition(_BaseInputParametersDefinition):
     _task_definition = TaskDefinition("CLPES", supports={"3d", "2d"}, experimental=True, executable="kkrspec", mpi=False, output_reader="ARPES",
         input_files=SPEC_INPUT_FILES,
-        output_files=(*SPEC_AUX_OUTPUT_FILES, "{DATASET_ADSI}_corewf"), result_files=SPEC_RESULT_FILES
+        output_files=(*SPEC_OUTPUT_FILES, "{DATASET_ADSI}_corewf"), result_files=SPEC_RESULT_FILES
     )
 
     @classmethod

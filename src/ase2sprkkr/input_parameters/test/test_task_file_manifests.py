@@ -114,11 +114,11 @@ def test_spec_outputs_follow_polarization_and_task(tmp_path):
         )
         if task == "CLPES":
             outputs += (str(tmp_path / "Fe_CLPES_corewf"),)
-        assert parameters.output_files(str(tmp_path)) == outputs
+        assert tuple(file for file in parameters.output_files(str(tmp_path)) if file.collect) == outputs
 
         # Selecting S polarization does not itself enable two output channels.
         parameters.SPEC_PH.POL_P = "S"
-        assert parameters.output_files(str(tmp_path)) == outputs
+        assert tuple(file for file in parameters.output_files(str(tmp_path)) if file.collect) == outputs
 
         if task != "CLPES":
             for npol in (0, 3):
@@ -129,11 +129,11 @@ def test_spec_outputs_follow_polarization_and_task(tmp_path):
                     str(tmp_path / f"Fe_{task}_data_pol1.spc"),
                     str(tmp_path / f"Fe_{task}_data_pol2.spc"),
                 )
-                assert output_files == expected
+                assert tuple(file for file in output_files if file.collect) == expected
 
     parameters = InputParameters.create("BAND")
     parameters.CONTROL.DATASET = "Fe"
-    assert parameters.output_files(str(tmp_path)) == (
+    assert tuple(file for file in parameters.output_files(str(tmp_path)) if file.collect) == (
         str(tmp_path / "Fe_BAND_SPEC.out"), str(tmp_path / "Fe_BAND_data.spc"),
     )
 
@@ -142,10 +142,11 @@ def test_spec_outputs_follow_polarization_and_task(tmp_path):
     for diagram in (0, 1, 2):
         parameters.SPEC_EL.TYP = diagram
         declared = parameters.output_files(str(tmp_path))
-        assert tuple(map(str, declared)) == (
+        assert tuple(map(str, (f for f in declared if f.collect))) == (
             str(tmp_path / "Fe_SPLEED_SPEC.out"), str(tmp_path / "Fe_SPLEED_data.spc"),
         )
         assert all(not f.optional for f in declared)
+        assert (str(declared[-1]), declared[-1].collect) == (str(tmp_path / "Fe_SPLEED.dos"), False)
 
 
 def test_scf_invalid_grid_and_mixing_are_rejected():
@@ -281,4 +282,19 @@ def test_spec_result_declarations_obey_polarization(tmp_path):
     assert tuple(map(str, parameters.result_files(str(tmp_path)))) == (
         str(tmp_path / "Fe_ARPES_data_pol1.spc"),
         str(tmp_path / "Fe_ARPES_data_pol2.spc"),
+    )
+
+
+def test_spec_output_manifest_retains_native_order_and_collision_only_dos(tmp_path):
+    p = InputParameters.create("ARPES")
+    p.CONTROL.DATASET = "Fe"
+    outputs = p.output_files(str(tmp_path))
+    assert tuple(str(f) for f in outputs) == (
+        str(tmp_path / "Fe_ARPES_SPEC.out"),
+        str(tmp_path / "Fe_ARPES_data.spc"),
+        str(tmp_path / "Fe_ARPES.dos"),
+    )
+    assert tuple(f.collect for f in outputs) == (True, True, False)
+    assert tuple(str(f) for f in p.result_files(str(tmp_path))) == (
+        str(tmp_path / "Fe_ARPES_data.spc"),
     )

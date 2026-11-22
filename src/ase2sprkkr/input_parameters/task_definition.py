@@ -460,9 +460,14 @@ class InputParametersRegistry(ModuleRegistry):
         )
         files = (*declared, *schema_files)
         if kind == "output":
-            # Scientific results remain ordinary collected output files.
-            # The separate 'result' role is only presentation metadata.
-            return (*files, *self.files_for_task(task, parameters, directory, "result"))
+            # Scientific-result declarations are also ordinary outputs.
+            # If an output was already declared explicitly, do not add a
+            # duplicate (and retain its original ordering and metadata).
+            # Duplicate declarations within one role remain validation errors.
+            result_files = self.files_for_task(task, parameters, directory, "result")
+            explicit_paths = {os.fspath(file) for file in files}
+            return (*files, *(file for file in result_files
+                              if os.fspath(file) not in explicit_paths))
         return files
 
 
