@@ -31,17 +31,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y graphviz pandoc
-      - name: Checkout matching KKRunner implementation
-        uses: actions/checkout@v6
-        with:
-          repository: lokik/kkrunner-chat
-          ref: c173e518efb8adfc8ca77ecf099a4a3a97ed19a0
-          path: .ci/kkrunner
-      - name: Install KKRunner from the matching source revision
-        run: python -m pip install './.ci/kkrunner[psij]'
       - name: Install ASE2SPRKKR and documentation tools
         run: |
-          python -m pip install -e '.[plot]'
+          python -m pip install -e '.[plot,psij]'
           python -m pip install 'sphinx>=8,<9' sphinx-toolbox sphinx-rtd-theme
       - name: Build complete Sphinx HTML with warnings as errors
         env:

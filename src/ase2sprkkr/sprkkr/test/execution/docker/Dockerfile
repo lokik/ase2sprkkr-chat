@@ -22,10 +22,13 @@ RUN apt-get update \
         util-linux \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m venv "$VIRTUAL_ENV" \
+ARG KKRUNNER_REQUIREMENT
+
+RUN test -n "$KKRUNNER_REQUIREMENT" \
+    && python3 -m venv "$VIRTUAL_ENV" \
     && pip install --upgrade pip \
     && pip install \
-        "git+https://github.com/lokik/kkrunner-chat.git@b48050d51d8198e8b4b6263f6b0aff994290f989" \
+        "$KKRUNNER_REQUIREMENT" \
         "psij-python==0.9.11" \
         "ase>=3.22.0" \
         colorama \

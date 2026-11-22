@@ -4,9 +4,11 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from importlib.metadata import requires as distribution_requires
 from pathlib import Path
 
 import pytest
+from packaging.requirements import Requirement
 from kkrunner.client import pool as execution_pool
 
 
@@ -42,6 +44,24 @@ def isolated_default_client_pool():
         execution_pool._DEFAULT_CLIENT_POOL = previous
 
 
+def _declared_kkrunner_requirement():
+    """Install precisely the KKRunner range declared by ASE2SPRKKR.
+
+    The remote Docker container needs PSI/J, so enable the declared
+    optional extra without pinning a separate KKRunner checkout.
+    """
+    requirements = (
+        Requirement(value) for value in distribution_requires("ase2sprkkr") or ()
+    )
+    matching = [
+        dependency for dependency in requirements
+        if dependency.name.lower() == "kkrunner" and dependency.marker is None
+    ]
+    if len(matching) != 1:
+        raise RuntimeError("Expected one unconditional KKRunner runtime requirement")
+    return f"kkrunner[psij]{matching[0].specifier}"
+
+
 @pytest.fixture(scope="session")
 def docker_execution_image():
     """Build the common execution-test image once per pytest session."""
@@ -57,7 +77,11 @@ def docker_execution_image():
         shutil.copytree(source_context, context, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns("__pycache__"))
         subprocess.run(
-            [docker, "build", "-t", image, str(context)],
+            [
+                docker, "build", "--build-arg",
+                f"KKRUNNER_REQUIREMENT={_declared_kkrunner_requirement()}",
+                "-t", image, str(context),
+            ],
             check=True,
         )
     return DockerExecutionImage(docker=docker, repository=repository, image=image)
