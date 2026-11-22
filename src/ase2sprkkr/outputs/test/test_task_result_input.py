@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from ase2sprkkr import InputParameters
+from ase2sprkkr.outputs import ResultLoader
 from ase2sprkkr.outputs.task_result import KkrOutputReader, TaskResult
 
 
@@ -72,6 +73,8 @@ def test_autodetect_single_matching_native_input_file(tmp_path):
     source = tmp_path / "sample_SPEC.inp"
     source.write_text(parameters.to_string(validate=False))
     result = TaskResult(None, None, str(tmp_path), output_file="sample_SPEC.out", task_name="ARPES")
+    assert result.input_parameters_file is None
+    ResultLoader().associate_result(result)
     assert result.input_parameters_file == str(source)
     assert result.input_parameters.task_name == "ARPES"
 
@@ -79,7 +82,8 @@ def test_autodetect_single_matching_native_input_file(tmp_path):
 def test_autodetect_is_not_ambiguous_or_cross_task(tmp_path):
     for name in ("first.inp", "second.inp"):
         (tmp_path / name).write_text("invalid")
-    result = TaskResult(None, None, str(tmp_path), task_name="ARPES")
+    result = TaskResult(None, None, str(tmp_path), output_file="unknown.out", task_name="ARPES")
+    ResultLoader().associate_result(result)
     assert result.input_parameters is None
 
 def test_no_result_task_identity_raises_clear_error(tmp_path):
@@ -98,6 +102,8 @@ def test_historical_input_autodetect_accepts_in_suffix(tmp_path):
     source = tmp_path / "sample_SPEC.in"
     source.write_text(params.to_string(validate=False))
     result = TaskResult(None, None, str(tmp_path), output_file="sample_SPEC.out", task_name="ARPES")
+    assert result.input_parameters_file is None
+    ResultLoader().associate_result(result)
     assert result.input_parameters_file == str(source)
     assert result.input_parameters.task_name == "ARPES"
 
@@ -114,7 +120,8 @@ def test_invalid_guessed_input_is_nonfatal_but_explicit_input_error_propagates(
         raise ValueError("invalid historical input")
 
     monkeypatch.setattr(InputParameters, "from_file", classmethod(invalid_input))
-    guessed = TaskResult(None, None, str(tmp_path), task_name="SCF")
+    guessed = TaskResult(None, None, str(tmp_path), output_file="legacy.out", task_name="SCF")
+    ResultLoader().associate_result(guessed)
     assert guessed.input_parameters is None
     assert guessed.input_parameters_file is None
 
@@ -123,11 +130,9 @@ def test_invalid_guessed_input_is_nonfatal_but_explicit_input_error_propagates(
         _ = explicit.input_parameters
 
 
-def test_batch_input_cache_parses_once_and_returns_independent_parameters(
+def test_loader_input_cache_parses_once_and_returns_detached_parameters(
     tmp_path, monkeypatch,
 ):
-    from ase2sprkkr.outputs.task_result import InputFileCache
-
     source = tmp_path / "shared.inp"
     parameters = InputParameters.create("ARPES")
     parameters.CONTROL.DATASET = "shared"
@@ -140,47 +145,57 @@ def test_batch_input_cache_parses_once_and_returns_independent_parameters(
         return original(filename)
 
     monkeypatch.setattr(InputParameters, "from_file", classmethod(read))
-    cache = InputFileCache()
+    loader = ResultLoader()
     first = TaskResult(None, None, str(tmp_path), output_file="one.out", task_name="ARPES")
     second = TaskResult(None, None, str(tmp_path), output_file="two.out", task_name="ARPES")
-    first._input_cache = second._input_cache = cache
+    loader.associate_result(first)
+    loader.associate_result(second)
 
     a, b = first.input_parameters, second.input_parameters
     assert len(calls) == 1
     assert a is not b
     assert a.task_name == b.task_name == "ARPES"
+    assert "_input_cache" not in vars(first)
     a.CONTROL.DATASET = "changed"
     assert b.CONTROL.DATASET() == "shared"
 
-    # A new version cannot inherit parsed parameters from an earlier file.
+    # A changed file must never inherit the earlier parsed input.
     parameters.CONTROL.DATASET = "replaced-by-new-content"
     source.write_text(parameters.to_string(validate=False))
     third = TaskResult(None, None, str(tmp_path), output_file="three.out", task_name="ARPES")
-    third._input_cache = cache
+    loader.associate_result(third)
     assert third.input_parameters.CONTROL.DATASET() == "replaced-by-new-content"
     assert len(calls) == 2
 
+    # An explicit re-import starts a fresh batch, not a retained cache.
+    fresh = TaskResult(None, None, str(tmp_path), output_file="four.out", task_name="ARPES")
+    ResultLoader().associate_result(fresh)
+    assert fresh.input_parameters.CONTROL.DATASET() == "replaced-by-new-content"
+    assert len(calls) == 3
 
-def test_batch_input_cache_preserves_error_semantics(tmp_path, monkeypatch):
+
+def test_loader_caches_invalid_guessed_input_but_explicit_error_propagates(
+    tmp_path, monkeypatch,
+):
     import pytest
-    from ase2sprkkr.outputs.task_result import InputFileCache
 
     path = tmp_path / "bad.inp"
     path.write_text("invalid")
-    count = []
+    calls = []
 
     def fail(_cls, _filename):
-        count.append(True)
+        calls.append(True)
         raise ValueError("invalid input")
 
     monkeypatch.setattr(InputParameters, "from_file", classmethod(fail))
-    cache = InputFileCache()
-    for _ in range(2):
-        guessed = TaskResult(None, None, str(tmp_path), task_name="SCF")
-        guessed._input_cache = cache
+    loader = ResultLoader()
+    for index in range(2):
+        guessed = TaskResult(None, None, str(tmp_path), output_file=f"guess-{index}.out", task_name="SCF")
+        loader.associate_result(guessed)
         assert guessed.input_parameters is None
-        explicit = TaskResult(None, None, str(tmp_path), input_file=str(path))
-        explicit._input_cache = cache
-        with pytest.raises(ValueError, match="invalid input"):
-            _ = explicit.input_parameters
-    assert len(count) == 1
+    # Repeated speculative guesses reuse the one cached parse failure.
+    assert len(calls) == 1
+
+    explicit = TaskResult(None, None, str(tmp_path), input_file=str(path))
+    with pytest.raises(ValueError, match="invalid input"):
+        _ = explicit.input_parameters
