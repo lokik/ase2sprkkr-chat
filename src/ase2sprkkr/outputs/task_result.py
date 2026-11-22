@@ -244,6 +244,15 @@ class TaskResult:
             potfil = os.path.join(self.directory, potfil)
         return potfil
 
+    @property
+    def potential_dependencies(self):
+        """Other source potentials required to reconstruct this result.
+
+        The primary potential is :attr:`potential_filename`. An embedded
+        calculation also depends on its separate periodic host.
+        """
+        return (self.host_potential_filename,) if self.is_embedded else ()
+
     def _load_result_potential(self, loader=None):
         """Read the potential belonging to this result, optionally using a cache.
 
