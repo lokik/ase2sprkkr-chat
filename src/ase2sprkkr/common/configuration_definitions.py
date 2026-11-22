@@ -151,17 +151,23 @@ class BaseDefinition:
         return bool(optional(item)) if callable(optional) else bool(optional)
 
     def clear_grammar_cache(self):
-        """Discard cached grammars for this definition and its ancestors.
+        """Invalidate compiled grammars for this node, its subtree and ancestors.
 
-        Configure a schema before its first parse. If a caller deliberately
-        edits an already-used definition, it must explicitly clear the cache
-        (or construct a separate definition). Grammar hooks are the exception:
-        their public add/remove methods handle invalidation automatically.
+        Configure a schema before first use. Call this explicitly after any
+        intentional structural edit to an already-used definition, or simply
+        build an independent definition. Hook registration handles invalidation
+        automatically.
         """
-        definition = self
-        while definition is not None:
+        def clear_subtree(definition):
             definition.__dict__.pop("_grammar_cache", None)
-            definition = definition.container
+            for member in getattr(definition, "_members", {}).values():
+                clear_subtree(member)
+
+        clear_subtree(self)
+        parent = self.container
+        while parent is not None:
+            parent.__dict__.pop("_grammar_cache", None)
+            parent = parent.container
 
     def add_grammar_hook(self, hook):
         """Register a grammar hook and invalidate affected compiled grammars."""
