@@ -15,12 +15,12 @@ from .project_results import (
     retry_project_postprocessing,
 )
 from .task_result import OutputMatch, TaskResult
-from .result_options import FileAssociation
+from .result_options import FileAttribution
 from .result_loader import ResultLoader, ResultBatch, LoadFailure
 
 __all__ = [
     "OutputOnlyResult",
-    "FileAssociation",
+    "FileAttribution",
     "ResultLoader",
     "ResultBatch",
     "LoadFailure",

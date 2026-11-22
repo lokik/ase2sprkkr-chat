@@ -60,7 +60,7 @@ class DataOutputOption(OutputOption):
         return self()
 
 
-class FileAssociation(Enum):
+class FileAttribution(Enum):
     """How confidently these bytes belong to this particular calculation.
 
     Capturing a current file during import is not evidence of its original
@@ -149,50 +149,93 @@ class OutputFileOption(OutputOption):
             previous is not None and current is not None
             and os.fspath(previous) != os.fspath(current)
         ):
-            self.clear_association()
+            self.clear_attribution()
 
-    @property
-    def association(self):
-        """Latest assessed association, invalidated when known bytes change."""
-        original = getattr(self, "_file_association", FileAssociation.UNKNOWN)
+    def _assess_file(self):
+        """Return (attribution, evidence, usable) from one currentness check.
+
+        Only the version/attribution evidence held by this file option decides
+        whether its bytes may be used. TaskResult does not make a second
+        decision for registered paths, and no filesystem state is retained.
+        """
+        original = getattr(self, "_file_attribution", FileAttribution.UNKNOWN)
+        evidence = getattr(self, "_file_attribution_evidence", None)
         recorded = self.recorded_version
-        if recorded is not None and recorded.available:
-            state = recorded.state()
-            if state is FileState.CURRENT:
-                return FileAssociation.VERIFIED
-            if state is FileState.OVERWRITTEN:
-                return FileAssociation.NOT_THIS_RESULT
-            return FileAssociation.UNKNOWN  # missing or unavailable, not overwritten
         observed = self.observed_version
-        if (original is FileAssociation.LIKELY and observed is not None
-                and not observed.is_current()):
-            return FileAssociation.UNKNOWN
-        return original
+        owner = getattr(self._container, "result", None)
+
+        # Historical outputs may be used without a ResultLoader. Find their
+        # recorded version without adopting today's contents as new history.
+        historical = False
+        if owner is not None:
+            from .file_provenance import result_file_manifest, result_file_version
+            historical = (result_file_manifest(owner) is not None
+                          or getattr(owner, "run_record", None) is not None)
+            if historical and recorded is None:
+                recorded = result_file_version(owner, self.path())
+
+        if recorded is not None:
+            if recorded.kind != "file":
+                return FileAttribution.UNKNOWN, "not_regular_file", False
+            state = recorded.state()
+            if recorded.available:
+                return {
+                    FileState.CURRENT: (FileAttribution.VERIFIED, "run_manifest_digest", True),
+                    FileState.OVERWRITTEN: (FileAttribution.NOT_THIS_RESULT,
+                                            "recorded_version_changed", False),
+                    FileState.MISSING: (FileAttribution.UNKNOWN, "recorded_file_missing", False),
+                    FileState.UNAVAILABLE: (FileAttribution.UNKNOWN,
+                                            "recorded_file_unavailable", False),
+                }[state]
+            # Metadata-only history has weaker evidence, but a changed or
+            # missing file must still be refused.
+            if state is not FileState.CURRENT:
+                return FileAttribution.UNKNOWN, "run_manifest_metadata_only", False
+            if original is FileAttribution.NOT_THIS_RESULT:
+                return original, evidence, False
+            if evidence == "scf_mtime_tie_or_unreadable":
+                return FileAttribution.UNKNOWN, evidence, False
+            return FileAttribution.LIKELY, evidence or "run_manifest_metadata_only", True
+
+        if historical:
+            return FileAttribution.UNKNOWN, "not_in_manifest", False
+        if original is FileAttribution.NOT_THIS_RESULT:
+            return original, evidence, False
+        if evidence == "scf_mtime_tie_or_unreadable":
+            return FileAttribution.UNKNOWN, evidence, False
+
+        if observed is not None and observed.kind != "file":
+            return FileAttribution.UNKNOWN, "not_regular_file", False
+        if observed is not None and observed.state() is not FileState.CURRENT:
+            return FileAttribution.UNKNOWN, "observed_version_changed", False
+        if observed is not None:
+            # Observation alone is not a run-time digest-based proof.
+            return (FileAttribution.LIKELY if original is FileAttribution.VERIFIED else original,
+                    evidence, True)
+        if not os.path.isfile(self.path()):
+            return FileAttribution.UNKNOWN, "missing", False
+        # A manually supplied label without an identity cannot prove bytes.
+        return (FileAttribution.LIKELY if original is FileAttribution.VERIFIED else original,
+                evidence, True)
 
     @property
-    def association_evidence(self):
-        recorded = self.recorded_version
-        if recorded is not None and recorded.available:
-            state = recorded.state()
-            if state is FileState.CURRENT:
-                return "run_manifest_digest"
-            if state is FileState.OVERWRITTEN:
-                return "recorded_version_changed"
-            if state is FileState.MISSING:
-                return "recorded_file_missing"
-            if state is FileState.UNAVAILABLE:
-                return "recorded_file_unavailable"
-        observed = self.observed_version
-        if (getattr(self, "_file_association", FileAssociation.UNKNOWN)
-                is FileAssociation.LIKELY and observed is not None
-                and not observed.is_current()):
-            return "observed_version_changed"
-        return getattr(self, "_file_association_evidence", None)
+    def attribution(self):
+        """Current relationship between this pathname's bytes and the result."""
+        return self._assess_file()[0]
 
     @property
-    def associated_with(self):
-        """Other output file indicated by the association heuristic."""
-        return getattr(self, "_file_associated_with", None)
+    def attribution_evidence(self):
+        return self._assess_file()[1]
+
+    def attribution_details(self):
+        """Return attribution and evidence from one filesystem observation."""
+        attribution, evidence, _ = self._assess_file()
+        return attribution, evidence
+
+    @property
+    def attributed_to(self):
+        """Other SCF output identified as the likely source of these bytes."""
+        return getattr(self, "_file_attributed_to", None)
 
     @property
     def recorded_version(self):
@@ -204,35 +247,38 @@ class OutputFileOption(OutputOption):
         """Version captured at import, not proof of original-run identity."""
         return getattr(self, "_file_observed_version", None)
 
-    def set_association(
-        self, association, *, evidence=None, recorded_version=None,
-        observed_version=None, associated_with=None,
+    def set_attribution(
+        self, attribution, *, evidence=None, recorded_version=None,
+        observed_version=None, attributed_to=None,
     ):
-        if not isinstance(association, FileAssociation):
-            raise TypeError("association must be a FileAssociation")
-        self._file_association = association
-        self._file_association_evidence = evidence
+        if not isinstance(attribution, FileAttribution):
+            raise TypeError("attribution must be a FileAttribution")
+        self._file_attribution = attribution
+        self._file_attribution_evidence = evidence
         self._file_recorded_version = recorded_version
         self._file_observed_version = observed_version
-        self._file_associated_with = associated_with
+        self._file_attributed_to = attributed_to
         return self
 
-    def clear_association(self):
-        return self.set_association(FileAssociation.UNKNOWN)
+    def clear_attribution(self):
+        return self.set_attribution(FileAttribution.UNKNOWN)
 
     def exists(self):
-        """Whether the registered path exists, independent of attribution."""
+        """Whether the registered pathname exists, regardless of attribution."""
         return os.path.exists(self.path())
 
     def is_current(self):
-        """Whether the assigned file still exists with its accepted version."""
-        if self.association is FileAssociation.NOT_THIS_RESULT:
-            return False
-        owner = getattr(self._container, "result", None)
-        if owner is not None and not owner.file_is_current(self.path()):
-            return False
-        version = self.recorded_version or self.observed_version
-        return version.is_current() if version is not None else os.path.isfile(self.path())
+        """Can this file's *current bytes* be used by its owning result?"""
+        return self._assess_file()[2]
+
+    def require_current(self):
+        """Validate this file once, raising for missing or wrong bytes."""
+        if not self._assess_file()[2]:
+            from kkrunner.runs import HistoricalFileMismatchError
+            raise HistoricalFileMismatchError(
+                f"Result file is missing, overwritten, or not attributed: {self.path()}"
+            )
+        return self.path()
 
     def path(self):
         owner = getattr(self._container, "result", None)
@@ -306,6 +352,7 @@ class OutputFileOption(OutputOption):
         owner = self._container.result
         if owner is not None:
             return owner.parse_result_file(self, potential=potential)
+        self.require_current()
         return read_plottable_file(
             self.path(),
             try_only=self.file_type,
@@ -318,7 +365,6 @@ class OutputFileOption(OutputOption):
         The parsed result owns the scientific writer; callers (including GUIs)
         choose the destination and handle presentation of errors.
         """
-        self._checked_path()
         spectrum = self.parsed_file()
         exporter = getattr(spectrum, "to_nexus", None)
         if not callable(exporter):
@@ -346,25 +392,13 @@ class OutputFileOption(OutputOption):
         """Plot scientific data, forwarding options to the native plotter."""
         return self.parsed_file().plot(*args, **kwargs)
 
-    def _checked_path(self):
-        path = self.path()
-        owner = getattr(self._container, "result", None)
-        if owner is not None:
-            owner.require_current_file(path)
-        if not self.is_current():
-            from kkrunner.runs import HistoricalFileMismatchError
-            raise HistoricalFileMismatchError(
-                f"Result file is missing, overwritten, or not associated: {path}"
-            )
-        return path
-
     def copy_to(self, destination):
         """Copy an existing result file after verifying its historical identity."""
-        return shutil.copy2(self._checked_path(), destination)
+        return shutil.copy2(self.require_current(), destination)
 
     def open(self):
         """Open this verified result file in its default external application."""
-        _open_system_path(self._checked_path())
+        _open_system_path(self.require_current())
 
     def open_directory(self):
         """Open the containing folder, even if the historical file has changed."""
