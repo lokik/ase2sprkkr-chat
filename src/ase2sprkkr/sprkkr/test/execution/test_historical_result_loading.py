@@ -1,4 +1,4 @@
-from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 from kkrunner import ExecutionSpec, RunState, RunStore
@@ -7,6 +7,7 @@ from kkrunner.runs.manager import RunManager
 from kkrunner.client.pool import ClientPool
 
 from ase2sprkkr.outputs import project_results
+from ase2sprkkr.outputs.task_result import TaskResult
 from ase2sprkkr.outputs.project_results import ProjectResultUnavailableError, load_project_result
 
 
@@ -65,7 +66,9 @@ def _patch_reader(monkeypatch, parsed):
 
         def read_from_file(self, output, **kwargs):
             parsed.append((output, kwargs))
-            return SimpleNamespace(return_code=kwargs['return_code'])
+            result = TaskResult(None, None, Path(output).parent, output_file=output, task_name='DOS')
+            result.return_code = kwargs['return_code']
+            return result
     monkeypatch.setattr(project_results, '_reader_for_record', lambda manager, record: Reader())
 
 
