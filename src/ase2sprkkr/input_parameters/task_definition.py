@@ -178,6 +178,15 @@ class TaskDefinition:
                 _normalize_task_files(values, f"{kind}_files"),
             )
 
+        # Preserve TaskDefinition.output_files as the *complete* public file
+        # contract, including scientific results. result_files is additional
+        # semantic metadata, not a replacement for the existing field.
+        outputs = list(self.output_files)
+        for result_file in self.result_files:
+            if not any(file.pathname == result_file.pathname for file in outputs):
+                outputs.append(result_file)
+        object.__setattr__(self, "output_files", tuple(outputs))
+
     def output_reader(
         self,
         input_parameters=None,

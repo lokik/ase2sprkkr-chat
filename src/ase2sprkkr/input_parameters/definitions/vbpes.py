@@ -30,7 +30,7 @@ def _final_state_photon_label(parameters):
 class VbpesInputParametersDefinition(RequiredTauInputParametersDefinition):
     """VBPES definition with optional reusable final-state TAU data."""
 
-    _task_definition = TaskDefinition("VBPES", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=("spin.matrix.xps",), result_files=("arpes.dat", "arpes_spol.dat"))
+    _task_definition = TaskDefinition("VBPES", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=("arpes.dat", "arpes_spol.dat", "spin.matrix.xps"), result_files=("arpes.dat", "arpes_spol.dat"))
 
     def _uses_final_state_tau(self, parameters):
         return parameters.TASK.USETAUNN() and not parameters.TASK.USETFIN()

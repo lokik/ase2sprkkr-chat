@@ -324,3 +324,21 @@ def test_phagen_export_is_a_result_not_a_temporary_cache(tmp_path):
     )
     assert tuple(map(str, p.result_files(str(tmp_path)))) == expected
     assert tuple(map(str, p.output_files(str(tmp_path)))) == expected
+
+
+def test_direct_task_definition_output_contract_includes_results_without_duplicates():
+    from ase2sprkkr.input_parameters.task_definition import TaskDefinition, TaskFile
+
+    task = TaskDefinition(
+        "DOS",
+        output_files=("data.dos", "log.out"),
+        result_files=(TaskFile("data.dos", type="DOS"),),
+    )
+    assert tuple(map(str, task.output_files)) == ("data.dos", "log.out")
+    assert tuple(map(str, task.result_files)) == ("data.dos",)
+
+    # A scientific declaration not explicitly listed in output_files must
+    # still remain visible in the full legacy TaskDefinition.output_files API.
+    dos = InputParameters.create("DOS").task_definition
+    assert tuple(map(str, dos.output_files)) == ("{DATASET_ADSI}.dos",)
+    assert tuple(map(str, dos.result_files)) == ("{DATASET_ADSI}.dos",)
