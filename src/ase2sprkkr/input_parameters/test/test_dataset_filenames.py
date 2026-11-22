@@ -119,11 +119,15 @@ def test_spec_polarized_output_names(tmp_path, npol, adsi, prefix):
     parameters.CONTROL.DATASET = "Fe"
     parameters.CONTROL.ADSI = adsi
     parameters.SPEC_PH.NPOL = npol
-    assert tuple(map(str, parameters.output_files(tmp_path))) == (
+    declared = parameters.output_files(tmp_path)
+    assert tuple(map(str, declared)) == (
         str(tmp_path / f"{prefix}_SPEC.out"),
         str(tmp_path / f"{prefix}_data_pol1.spc"),
         str(tmp_path / f"{prefix}_data_pol2.spc"),
+        str(tmp_path / f"{prefix}.dos"),
     )
+    # The native DOS side effect reserves its name, but is not collected.
+    assert tuple(file.collect for file in declared) == (True, True, True, False)
 
 
 @pytest.mark.parametrize("adsi, filename", [(None, "Fe_DOS.dos"), ("", "Fe.dos"), ("CUSTOM", "Fe_CUSTOM.dos")])
