@@ -13,6 +13,7 @@ from . import readers
 
 
 _TASK_PATTERN = re.compile(rb"(?m)^\s*TASK\s*=\s*([A-Z][A-Z0-9_]*)\s*$")
+_TASK_HEADER_BYTES = 256 * 1024
 
 
 class OutputReaderRegistry(ModuleRegistry):
@@ -152,7 +153,15 @@ class OutputReaderRegistry(ModuleRegistry):
         legacy format knowledge beside the reader that understands it.
         """
         with open(os.fspath(file), "rb") as output:
-            raw_output = output.read()
+            # Native TASK is emitted near the top. Avoid rereading a large
+            # stdout only to select its reader before parsing it once more.
+            prefix = output.read(_TASK_HEADER_BYTES)
+            match = _TASK_PATTERN.search(prefix)
+            if match is not None and match.group(1) != b"NONE":
+                return match.group(1).decode("ascii")
+
+            # Legacy output readers still require the complete stream.
+            raw_output = prefix + output.read()
 
         match = _TASK_PATTERN.search(raw_output)
         if match is not None:
