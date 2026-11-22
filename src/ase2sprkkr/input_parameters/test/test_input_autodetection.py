@@ -74,13 +74,15 @@ def test_from_file_jxc_example_with_preceding_dmi_flag():
 
 
 def test_jxc_combined_selectors_separated_by_other_task_options():
-    # The unordered TASK section must recognize both native keywords, even
-    # when a non-selector parameter appears between them.
-    from ..input_parameters_definitions import _task_preparse_definition
+    # The native TASK scanner recognizes independent selectors around values.
+    from ..input_parameters_definitions import _scan_task_selectors, _task_selector_map
 
-    preview = _task_preparse_definition()
-    parsed = preview.read_from_string("TASK DMI CLURAD=4.0 JXC")
-    assert list(parsed.TASK.TASK()) == ["DMI", "JXC"]
+    selected = _scan_task_selectors(
+        "TASK DMI CLURAD=4.0 JXC", _task_selector_map()
+    )
+    assert selected == ("DMI", "JXC")
+
+
 
 def test_jxc_and_dmi_default_flags_and_secondary_switch():
     jxc = InputParameters.create("JXC")
