@@ -1,3 +1,5 @@
+import pytest
+
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 
 
@@ -20,30 +22,25 @@ def test_scf_declares_new_potential_as_output(tmp_path):
     assert not files[0].optional
     assert files[1].optional
 
-
-def test_scf_fullpot_shape_function_is_optional_cache(tmp_path):
-    parameters = InputParameters.create("SCF")
+    # FULLPOT adds an optional shape-function cache for the same SCF task.
     parameters.SCF.FULLPOT = True
     parameters.CONTROL.SFNFIL = "Fe.sfn"
-
     assert parameters.cache_files(str(tmp_path)) == (str(tmp_path / "Fe.sfn"),)
 
 
-def test_xas_reuses_dataset_tau_directory_as_optional_cache(tmp_path):
-    parameters = InputParameters.create("XAS")
+@pytest.mark.parametrize(
+    ("task", "cache_name"),
+    (
+        pytest.param("XAS", "Fe_XAS.tau.dir", id="xas"),
+        pytest.param("BSFEK", "Fe_BLOCHSF.tau.dir", id="bsfek"),
+    ),
+)
+def test_task_reuses_dataset_tau_directory_as_optional_cache(tmp_path, task, cache_name):
+    parameters = InputParameters.create(task)
     parameters.CONTROL.DATASET = "Fe"
 
     caches = parameters.cache_files(str(tmp_path))
-    assert tuple(map(str, caches)) == (str(tmp_path / "Fe_XAS.tau.dir"),)
-    assert caches[0].kind == "directory"
-
-
-def test_bsfek_reuses_dataset_tau_directory_as_optional_cache(tmp_path):
-    parameters = InputParameters.create("BSFEK")
-    parameters.CONTROL.DATASET = "Fe"
-
-    caches = parameters.cache_files(str(tmp_path))
-    assert tuple(map(str, caches)) == (str(tmp_path / "Fe_BLOCHSF.tau.dir"),)
+    assert tuple(map(str, caches)) == (str(tmp_path / cache_name),)
     assert caches[0].kind == "directory"
 
 
@@ -147,7 +144,6 @@ def test_spec_outputs_follow_polarization_and_task(tmp_path):
 
 
 def test_scf_invalid_grid_and_mixing_are_rejected():
-    import pytest
     from ase2sprkkr.common.warnings import DataValidityError
 
     parameters = InputParameters.create("SCF")
@@ -163,7 +159,6 @@ def test_scf_invalid_grid_and_mixing_are_rejected():
         parameters.validate("save")
 
 def test_dos_native_energy_constraints():
-    import pytest
     from ase2sprkkr.common.warnings import DataValidityError, DataValidityWarning
 
     parameters = InputParameters.create("DOS")
@@ -178,7 +173,6 @@ def test_dos_native_energy_constraints():
 
 
 def test_manifest_rejects_duplicate_output_declarations(tmp_path):
-    import pytest
     from kkrunner.runs.base import ExecutionSpec
     from kkrunner.files.manifest import FileManifest
     from ase2sprkkr.input_parameters.task_definition import TaskFile
@@ -214,7 +208,6 @@ def test_embedded_jxc_and_dmi_use_cluster_tensor_filenames(tmp_path):
 
 
 def test_embedded_jxc_requires_frel_in_current_native_audit():
-    import pytest
     from ase2sprkkr.common.warnings import DataValidityError
 
     parameters = InputParameters.create("JXC")
