@@ -225,3 +225,34 @@ def test_export_nexus_real_spc_contains_owned_task_parameters(tmp_path):
         text = exported["entry/calculation/parameters/sprkkr_input"].asstr()[()]
         assert text == params.to_string(validate=False)
         assert "original_input" in exported["entry/calculation"]
+
+
+def test_export_nexus_reuses_cached_verified_input_after_file_is_removed(
+    tmp_path, monkeypatch,
+):
+    from ase2sprkkr.input_parameters.input_parameters import InputParameters
+
+    source = tmp_path / "spectrum.spc"
+    source.write_text("SPC data", encoding="utf-8")
+    input_path = tmp_path / "spectrum.inp"
+    input_path.write_text("old input", encoding="utf-8")
+    result = TaskResult(
+        None, None, str(tmp_path), task_name="ARPES", input_file=str(input_path),
+    )
+    known = InputParameters.create("ARPES")
+    # Simulate previous lazy parsing of the verified registered input.
+    result.input_parameters = known
+    input_path.unlink()
+    option = result.files.add_file("SPC", str(source), "spc")
+    calls = []
+    monkeypatch.setattr(
+        OutputFileOption, "parsed_file",
+        lambda self: SimpleNamespace(
+            to_nexus=lambda filename, **kwargs: calls.append(kwargs)
+        ),
+    )
+
+    option.export_nexus(tmp_path / "export.nxs")
+    assert calls == [{
+        "input_parameters": known, "discover_input": False,
+    }]

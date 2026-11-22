@@ -329,8 +329,13 @@ class OutputFileOption(OutputOption):
             # possibly unrelated neighboring .inp from the SPC filename.
             kwargs.setdefault("discover_input", False)
             if "input_parameters" not in kwargs and "input_file" not in kwargs:
-                if getattr(owner, "_input_parameters", None) is not None:
-                    kwargs["input_parameters"] = owner.input_parameters
+                known_parameters = getattr(owner, "_input_parameters", None)
+                if known_parameters is None:
+                    # The lazy input accessor may already have parsed a
+                    # verified source before it was subsequently removed.
+                    known_parameters = vars(owner).get("input_parameters")
+                if known_parameters is not None:
+                    kwargs["input_parameters"] = known_parameters
                 else:
                     recorded_input = owner.input_parameters_file
                     if recorded_input is not None:
