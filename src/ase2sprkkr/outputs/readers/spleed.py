@@ -7,6 +7,7 @@ observed milestones only and never guesses a percentage from ENERGY.NE.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 from .spec import SpecOutputParser, SpecOutputReader
 
@@ -147,3 +148,14 @@ class SpleedOutputReader(SpecOutputReader):
     """Keep the SPEC result and dedicated SPLEED INFO parsing together."""
 
     parser_class = SpleedOutputParser
+
+    # Native KKRSPEC prints this task-specific section after the FILES block,
+    # even for outputs whose earlier generic task selector is TASK = NONE.
+    _LEED_HEADER = re.compile(
+        rb"(?im)^[ \t]*Spin[ \t]+polaris(?:ed|zed)[ \t]+LEED[ \t]*\r?$"
+    )
+
+    @classmethod
+    def matches_output(cls, output):
+        """Identify native SPLEED by its dedicated calculation section."""
+        return cls._LEED_HEADER.search(output) is not None

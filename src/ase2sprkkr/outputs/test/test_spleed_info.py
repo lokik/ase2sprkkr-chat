@@ -80,6 +80,18 @@ def test_spleed_rejects_unformatted_numeric_tables_and_does_not_invent_finish():
                    for e in events)
 
 
+def test_spleed_legacy_fingerprint_is_decisive():
+    # The identifying section is printed *after* FILES in real KKRSPEC stdout.
+    native = (b" * KKRSPEC VERSION 9.7 *\nTASK = NONE\n"
+              b"FILES:\n potential : Fe2.pot\n DOS : Fe2_SPLEED_SPLEED.dos\n\n"
+              b"************************\n  Spin polarised LEED  \n"
+              b"************************\n")
+    assert SpleedOutputReader.matches_output(native) is True
+    assert SpleedOutputReader.matches_output(
+        b" * KKRSPEC VERSION 9.7 *\nTASK = NONE\n"
+    ) is False
+
+
 def test_spleed_registered_to_dedicated_reader():
     reader = reader_registry.class_for_task_name("SPLEED")
     assert reader is SpleedOutputReader

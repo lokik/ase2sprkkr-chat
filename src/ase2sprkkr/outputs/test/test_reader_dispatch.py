@@ -115,6 +115,119 @@ def test_ambiguous_legacy_output_detection_is_rejected(tmp_path, monkeypatch):
         registry.detect(output)
 
 
+def test_possible_legacy_match_yields_to_definite_match(tmp_path, monkeypatch):
+    package = _reader_package(
+        tmp_path, monkeypatch, "_ase2sprkkr_reader_confidence",
+        {
+            "alpha": (
+                "from ase2sprkkr.outputs.task_result import KkrOutputReader, OutputMatch\n"
+                "class AlphaOutputReader(KkrOutputReader):\n"
+                "    @classmethod\n"
+                "    def matches_output(cls, output):\n"
+                "        return OutputMatch.MAYBE if b'weak' in output else False\n"
+            ),
+            "beta": (
+                "from ase2sprkkr.outputs.task_result import KkrOutputReader\n"
+                "class BetaOutputReader(KkrOutputReader):\n"
+                "    @classmethod\n"
+                "    def matches_output(cls, output):\n"
+                "        return b'strong' in output\n"
+            ),
+        },
+    )
+    registry = OutputReaderRegistry(package)
+
+    output = tmp_path / "legacy.out"
+    output.write_bytes(b"TASK = NONE\nweak\n")
+    assert registry.detect(output) == "ALPHA"
+
+    output.write_bytes(b"TASK = NONE\nweak\nstrong\n")
+    assert registry.detect(output) == "BETA"
+
+    output.write_bytes(b"TASK = BETA\nweak\n")
+    assert registry.detect(output) == "BETA"
+
+
+def test_ambiguous_possible_legacy_matches_are_rejected(tmp_path, monkeypatch):
+    package = _reader_package(
+        tmp_path, monkeypatch, "_ase2sprkkr_reader_weak_ambiguity",
+        {
+            name: (
+                "from ase2sprkkr.outputs.task_result import KkrOutputReader, OutputMatch\n"
+                f"class {name.title()}OutputReader(KkrOutputReader):\n"
+                "    @classmethod\n"
+                "    def matches_output(cls, output):\n"
+                "        return OutputMatch.MAYBE\n"
+            )
+            for name in ("alpha", "beta")
+        },
+    )
+    registry = OutputReaderRegistry(package)
+    output = tmp_path / "legacy.out"
+    output.write_bytes(b"TASK = NONE\n")
+
+    with pytest.raises(RegistryDefinitionError, match="multiple task-specific readers"):
+        registry.detect(output)
+
+
+def test_tentative_dos_can_be_overridden_by_matching_native_inp(tmp_path):
+    """Reading a reliable sibling INP is stronger than DOS output artifacts."""
+    from ase2sprkkr import InputParameters
+
+    output = tmp_path / "Fe2_SPLEED.out"
+    inp = tmp_path / "Fe2_SPLEED.inp"
+    inp.write_text(InputParameters.create("SPLEED").to_string(validate=False))
+    output.write_bytes(
+        b"TASK = NONE\nFILES:\n\n potential : Fe2.pot\n"
+        b" DOS : Fe2_SPLEED_SPLEED.dos\n\n"
+    )
+
+    assert reader_registry.detect(output) == "SPLEED"
+
+    # A definite native fingerprint wins even if the paired INP disagrees.
+    output.write_bytes(
+        b"TASK = NONE\nFILES:\n\n DOS : x.dos\n\n"
+        b"Components of Dzyaloshinski-Moriya vector Dij\n"
+    )
+    assert reader_registry.detect(output) == "JXC"
+    output.write_bytes(
+        b"TASK = DOS\nFILES:\n\n DOS : x.dos\n\n"
+    )
+    assert reader_registry.detect(output) == "DOS"
+
+
+def test_only_explicitly_task_marked_matching_input_is_considered(tmp_path):
+    from ase2sprkkr import InputParameters
+
+    output = tmp_path / "run.out"
+    output.write_bytes(b"TASK = NONE\nFILES:\n\n DOS : x.dos\n\n")
+    unrelated = tmp_path / "other.inp"
+    unrelated.write_text(InputParameters.create("SPLEED").to_string(validate=False))
+    assert reader_registry.detect(output) == "DOS"
+
+    # Invalid or task-less INP cannot silently become an SCF match.
+    matched = tmp_path / "run.inp"
+    matched.write_text("CONTROL\n  DATASET = example\n")
+    assert reader_registry.detect(output) == "DOS"
+    matched.write_text("not a valid SPR-KKR input")
+    assert reader_registry.detect(output) == "DOS"
+
+    # Both suffixes existing is ambiguous even when one looks plausible.
+    matched.write_text(InputParameters.create("SPLEED").to_string(validate=False))
+    (tmp_path / "run.in").write_text(InputParameters.create("SCF").to_string(validate=False))
+    assert reader_registry.detect(output) == "DOS"
+
+
+def test_task_from_paired_input_when_stdout_has_no_fingerprint(tmp_path):
+    from ase2sprkkr import InputParameters
+
+    output = tmp_path / "spectroscopy.out"
+    inp = tmp_path / "spectroscopy.inp"
+    inp.write_text(InputParameters.create("SPLEED").to_string(validate=False))
+    output.write_bytes(b"TASK = NONE\nunrecognized legacy output\n")
+    assert reader_registry.detect(output) == "SPLEED"
+
+
 def test_builtin_legacy_output_fingerprints(tmp_path):
     jxc = tmp_path / "jxc.out"
     jxc.write_bytes(
@@ -125,6 +238,16 @@ def test_builtin_legacy_output_fingerprints(tmp_path):
     dos = tmp_path / "dos.out"
     dos.write_bytes(b" TASK = NONE\nFILES:\n\n  DOS: dataset_DOS.dos\n")
     assert reader_registry.detect(dos) == "DOS"
+
+    # Native SPLEED also lists a DOS artifact in FILES, but its task-specific
+    # section is decisive even when the generic TASK marker says NONE.
+    spleed = tmp_path / "spleed.out"
+    spleed.write_bytes(
+        b" * KKRSPEC VERSION 9.7 *\nTASK = NONE\n"
+        b"FILES:\n potential : Fe2.pot\n DOS : Fe2_SPLEED_SPLEED.dos\n\n"
+        b"********************\nSpin polarised LEED\n********************\n"
+    )
+    assert reader_registry.detect(spleed) == "SPLEED"
 
     unrelated = tmp_path / "unrelated.out"
     unrelated.write_bytes(b"DOS: not part of a FILES section\n")
