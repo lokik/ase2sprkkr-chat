@@ -222,7 +222,7 @@ def _scan_task_selectors(text, known_selectors):
     parts = []
     in_task = False
     for raw_line in text.splitlines():
-        line = raw_line.expandtabs(8)[:80]
+        line = raw_line.replace("\t", " ")[:80]
         if not in_task:
             match = _TASK_SECTION_START.match(line)
             if match is None:
