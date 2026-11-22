@@ -137,7 +137,8 @@ def test_native_info_print_uses_same_formatter_as_callbacks(capsys):
     )
     parser.feed("RATE-FILE :  ( 7) Fe_L23.rat\n" + loop(1))
     assert capsys.readouterr().out.splitlines() == [
-        parser.format_info(**event) for event in events
+        line for event in events
+        if (line := parser.format_info(**event)) is not None
     ]
 
 
