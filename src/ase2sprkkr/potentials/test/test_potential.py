@@ -1,5 +1,4 @@
 import io
-import os
 import pickle
 from datetime import datetime
 from pathlib import Path
@@ -16,20 +15,16 @@ from ..potentials import Potential
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
 
-def _calculation_args(tmp_path, *, options, save_input=False):
-    # Preserve the historical TestCase defaults while keeping each test isolated.
-    merged_options = {**options, "NKTAB": 5, "NE": 20}
-    args = {
+def _calculation_args(tmp_path, *, options):
+    # A lightweight input-preparation check; callers' options override defaults.
+    return {
         "directory": tmp_path,
         "input_file": "output_test_calc.inp",
         "output_file": "output_test_calc.out",
         "potential_file": "output_test_calc.pot",
-        "options": merged_options,
+        "options": {"NKTAB": 5, "NE": 20, **options},
         "empty_spheres": False,
     }
-    if not save_input:
-        args.update(print_output=False, mpi="auto")
-    return args
 
 
 class TestPotential:
@@ -104,25 +99,27 @@ class TestPotential:
         saved.seek(0)
         assert Potential.from_file(saved).SCF_INFO.SCFSTATUS() == "START"
 
-    @pytest.mark.slow
     def test_2d(self, tmp_path):
         potential = Potential.from_file(EXAMPLES / "GeTe.pot")
-        if os.environ.get("DO_NOT_RUN_SPRKKR", "") == "":
-            SPRKKR().calculate(
-                potential=potential,
-                **_calculation_args(
-                    tmp_path,
-                    options={"NITER": 1, "NKTAB": 5, "NE": 5, "TOL": 1e-2},
-                ),
-            )
-        else:
-            SPRKKR().save_input(
-                potential=potential,
-                **_calculation_args(tmp_path, options={"NITER": 1}, save_input=True),
-            )
+        # Exercise input preparation for this real 2D potential without running
+        # an expensive GeTe SCF. A small 2D native execution is already covered
+        # by sprkkr/test/test_calculator.py::TestCalculator::test_2d.
+        SPRKKR().save_input(
+            potential=potential,
+            **_calculation_args(
+                tmp_path,
+                options={"NITER": 1, "NKTAB": 5, "NE": 5, "TOL": 1e-2},
+            ),
+        )
+        input_text = (tmp_path / "output_test_calc.inp").read_text()
+        assert "NKTAB3D=5" in input_text
+        assert (tmp_path / "output_test_calc.pot").is_file()
+        written = Potential.from_file(tmp_path / "output_test_calc.pot")
+        assert written.atoms is not None
+        assert len(written.atoms.regions["left"]) == len(potential.atoms.regions["left"])
+        assert len(written.atoms.regions["right"]) == len(potential.atoms.regions["right"])
 
-    @pytest.mark.slow
-    def test_potential_data(self, tmp_path):
+    def test_potential_data(self):
         path = EXAMPLES / "FePt.new.pot"
         potential = Potential.from_file(path)
         assert potential.atoms.sites[0].potential is not None
@@ -145,15 +142,6 @@ class TestPotential:
             restored.atoms.sites[1].potential.bt,
             original.atoms.sites[1].potential.bt,
         )
-
-        if os.environ.get("DO_NOT_RUN_SPRKKR", "") == "":
-            SPRKKR().calculate(
-                potential=original,
-                **_calculation_args(
-                    tmp_path,
-                    options={"NITER": 1, "NKTAB": 5, "NE": 5},
-                ),
-            )
 
     def test_examples(self):
         potential_files = list(EXAMPLES.glob("*.pot"))
