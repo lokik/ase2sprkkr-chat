@@ -181,7 +181,7 @@ dipole moment   1      0.0000000000000000      0.0000000000000000      0.0000000
         assert fullpot.files["SFN"].actions() == (
             "open",
             "open_directory",
-            "save",
+            "copy_to",
             "plot",
             "plot_cell",
             "plot_periodic",
