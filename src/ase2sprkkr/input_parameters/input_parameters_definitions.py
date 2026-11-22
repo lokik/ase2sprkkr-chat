@@ -2,10 +2,10 @@
 
 import os
 import pkgutil
+import re
 from io import StringIO
 
 import pyparsing as pp
-from ..common.grammar_types import Keyword
 from ..common.warnings import DataValidityError
 from ..common.native_preset_io import reading_preset
 from ..common.container_definitions import dict_from_parsed
@@ -193,54 +193,61 @@ def _task_selector_map():
     for selector, schema in _BUILTIN_TASK_SELECTOR_ALIASES.items():
         builtin[selector] = (schema,)
     user = _user_task_selectors()
-    # Custom-only selectors must be included in the TASK preview grammar.
+    # Include custom-only native selectors without constructing their IPDs.
     for selector in user:
         builtin.setdefault(selector, ())
     return _TaskSelectorMap(builtin, registry, user=user)
 
 
-@cache
-def _task_preparse_definition():
-    """Build the minimal TASK preview from names and user class metadata."""
-    return _build_task_preparse_definition(tuple(sorted(_task_selector_map())))
+_TASK_SECTION_START = re.compile(r"^TASK(?=[ \t=]|$)", re.IGNORECASE)
+_TASK_ASSIGNMENT = re.compile(
+    r"(?<!\S)[A-Z_][A-Z0-9_]*\s*=\s*"
+    r"(?:\{(?:[^{}]|\{[^{}]*\})*\}"
+    r"|\[(?:[^\[\]]|\[[^\[\]]*\])*\]"
+    r"|\([^()]*\)|[^\s,;]+)",
+    re.IGNORECASE,
+)
+_TASK_FLAG = re.compile(r"(?<!\S)[A-Z_][A-Z0-9_]*(?!\S)", re.IGNORECASE)
 
 
-def _build_task_preparse_definition(values):
-    """Build a tiny grammar that finds known selectors in an unordered TASK."""
-    from .definitions._identifiers import _FilenameString
+def _scan_task_selectors(text, known_selectors):
+    """Preview native TASK switches without constructing a parsing grammar.
 
-    if not values:
-        raise ValueError("No registered input-parameter TASK selectors")
-    preview_value = mixed.copy()
-    preview_value.types = (*mixed.types, _FilenameString())
+    SPR-KKR's INPUT_FIND_SECTION reads 80 columns, starts sections in column
+    one, and appends indented continuation lines. Comments start at '#'.
+    SECTION_FIND_KEYWORD searches for whitespace-delimited flags; here,
+    assignment values are additionally excluded to avoid false task matches.
+    The selected IPD still performs the full, authoritative parse.
+    """
+    parts = []
+    in_task = False
+    for raw_line in text.splitlines():
+        line = raw_line.expandtabs(8)[:80]
+        if not in_task:
+            match = _TASK_SECTION_START.match(line)
+            if match is None:
+                continue
+            in_task = True
+            part = line[match.end():]
+            # INPUT_FIND_SECTION accepts TASK=JXC (the '=' becomes a space).
+            if part.lstrip().startswith("="):
+                part = part.replace("=", " ", 1)
+        else:
+            if line and not line[0].isspace() and line[0] != "#":
+                break
+            part = line
+        parts.append(part.split("#", 1)[0])
 
-    class _PreparseSection(InputSectionDefinition):
-        custom_class = staticmethod(
-            CustomConfigurationValue.factory(InputValueDefinition, preview_value)
-        )
+    if not in_task:
+        return ()
 
-    class _PreparseIPD(_CachedPreparseIPD):
-        child_class = _PreparseSection
-        custom_class = staticmethod(CustomConfigurationSection.factory(_PreparseSection))
-
-    ipd = _PreparseIPD(
-        "_TASK_PREPARSE",
-        [InputSectionDefinition(
-            "TASK",
-            [InputValueDefinition(
-                "TASK",
-                Keyword(*values),
-                name_in_grammar=False,
-                is_optional=True,
-                is_required=False,
-                is_repeated=True,
-                repeated_delimiter=pp.Empty(),
-            )],
-            is_optional=True,
-        )],
+    section = " ".join(parts)
+    section = _TASK_ASSIGNMENT.sub(" ", section)
+    return tuple(
+        match.group().upper()
+        for match in _TASK_FLAG.finditer(section)
+        if match.group().upper() in known_selectors
     )
-    ipd.grammar()
-    return ipd
 
 
 def _read_selected_definitions(text, selectors, *, filename=None,
@@ -391,11 +398,7 @@ class InputParametersDefinition(ConfigurationFileDefinition):
                 report_invalid=report_invalid,
             )
 
-        preview = _task_preparse_definition().read_from_string(
-            text, allow_dangerous=False
-        )
-        selected = preview.TASK.TASK()
-        selectors = tuple(selected) if selected is not None else ()
+        selectors = _scan_task_selectors(text, _task_selector_map())
         if not selectors:
             if allow_incomplete:
                 raise ValueError("Cannot autodetect incomplete input without TASK selector; supply an explicit definition or task")
@@ -515,12 +518,3 @@ class InputParametersDefinition(ConfigurationFileDefinition):
             f"{self.display_name} - {description}"
             if description else self.display_name
         )
-
-
-
-class _CachedPreparseIPD(InputParametersDefinition):
-    """Preparser only: no mutations after grammar compilation."""
-
-    @cache
-    def grammar(self, allow_dangerous=False, *, allow_incomplete=False):
-        return super().grammar(allow_dangerous, allow_incomplete=allow_incomplete)
