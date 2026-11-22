@@ -328,12 +328,15 @@ def test_result_loader_embedded_interpretation_does_not_mutate_shared_clupot(
     cached_atoms = raw.atoms
     assert raw.SCF_INFO.SCFSTATUS() == "ITERATING"
 
-    selected = loader.embedded_atoms(result)
+    selected = result.get_atoms(loader=loader)
     assert selected.potential.SCF_INFO.SCFSTATUS() == expected
     assert selected.info["sprkkr_embedding_scf_status"] == expected
     assert raw.SCF_INFO.SCFSTATUS() == "ITERATING"
     assert raw.atoms is cached_atoms
     assert raw.host.SCF_INFO.SCFSTATUS() == "CONVERGED"
+    assert result.get_atoms(loader=loader).potential.SCF_INFO.SCFSTATUS() == expected
+    assert result.atoms.potential.SCF_INFO.SCFSTATUS() == expected
+    assert result.get_atoms().potential is result.potential
 
     if expected == "CONVERGED":
         assert selected is not cached_atoms
@@ -344,4 +347,30 @@ def test_result_loader_embedded_interpretation_does_not_mutate_shared_clupot(
 
     # A second result sees the original file interpretation from the same cache.
     other = ScfResult(result.input_parameters, None, result.directory)
-    assert loader.embedded_atoms(other) is cached_atoms
+    assert other.get_atoms(loader=loader) is cached_atoms
+
+
+def test_scf_uses_explicit_converged_file_when_input_is_unavailable(tmp_path):
+    """The output file association, not GUI-specific fallback, chooses POTFIL."""
+    recorded = tmp_path / "recorded.pot_new"
+    result = ScfResult(None, None, tmp_path, task_name="SCF")
+    result.files.add_file("converged", recorded)
+    assert result.potential_filename == str(recorded)
+
+
+def test_periodic_result_atoms_work_with_or_without_shared_loader(tmp_path):
+    """The loader changes only parse reuse, not the reconstructed structure."""
+    from ..result_loader import ResultLoader
+
+    potential = tmp_path / "FePt.pot"
+    copyfile(POTENTIAL_EXAMPLES / "FePt.new.pot", potential)
+    result = TaskResult(None, None, tmp_path, task_name="DOS")
+    result.files.add_file("potential", potential)
+
+    standalone = result.atoms
+    loader = ResultLoader()
+    cached = result.get_atoms(loader=loader)
+    assert len(cached) == len(standalone)
+    assert str(cached.symbols) == str(standalone.symbols)
+    assert result.get_atoms(loader=loader) is cached
+    assert result.potential.atoms is standalone
