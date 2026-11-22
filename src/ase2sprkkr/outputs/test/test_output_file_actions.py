@@ -104,7 +104,9 @@ def test_nexus_export_delegates_destination_and_metadata(tmp_path, monkeypatch):
     )
     destination = tmp_path / "data.nxs"
     assert option.export_nexus(destination, metadata={"source": "test"}) == destination
-    assert calls == [(destination, {"metadata": {"source": "test"}})]
+    assert calls == [(destination, {
+        "metadata": {"source": "test"}, "discover_input": False,
+    })]
 
     monkeypatch.setattr(
         OutputFileOption, "parsed_file", lambda self: SimpleNamespace(),
