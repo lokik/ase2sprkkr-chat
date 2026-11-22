@@ -277,6 +277,8 @@ def load_project_result(manager, run, *, allow_unparsed=False):
             "Cannot parse historical run %s; exposing verified OUT only",
             record.id, exc_info=True,
         )
-        return OutputOnlyResult(record, exc)
+        from .result_loader import ResultLoader
+        return ResultLoader().associate_result(OutputOnlyResult(record, exc))
     result.run_record = record
-    return result
+    from .result_loader import ResultLoader
+    return ResultLoader().associate_result(result)

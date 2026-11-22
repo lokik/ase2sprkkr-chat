@@ -5,7 +5,10 @@ import platform
 import shutil
 import subprocess
 import functools
+from enum import Enum, auto
 from typing import Any, Tuple
+
+from kkrunner.files import FileState
 
 from ..common.container_definitions import SectionDefinition
 from ..common.generated_configuration_definitions import GeneratedValueDefinition
@@ -38,6 +41,19 @@ class DataOutputOption(OutputOption):
 
     def data(self):
         return self()
+
+
+class FileAssociation(Enum):
+    """How confidently these bytes belong to this particular calculation.
+
+    Capturing a current file during import is not evidence of its original
+    contents. This relation is owned by each result-file item.
+    """
+
+    UNKNOWN = auto()
+    NOT_THIS_RESULT = auto()
+    LIKELY = auto()
+    VERIFIED = auto()
 
 
 class OutputFileOption(OutputOption):
@@ -99,6 +115,108 @@ class OutputFileOption(OutputOption):
             or super().display_name
         )
 
+    def set(self, value, **kwargs):
+        """Clear attribution when the underlying file is changed directly.
+
+        Direct `result.files[name].set(...)` must have the same semantics as
+        `result.files.add_file(name, ...)`; provenance belongs to the file
+        identity, not to the option's name.
+        """
+        try:
+            previous = self()
+        except (AttributeError, ValueError, TypeError):
+            previous = None
+        super().set(value, **kwargs)
+        current = self()
+        if (previous is None) != (current is None) or (
+            previous is not None and current is not None
+            and os.fspath(previous) != os.fspath(current)
+        ):
+            self.clear_association()
+
+    @property
+    def association(self):
+        """Latest assessed association, invalidated when known bytes change."""
+        original = getattr(self, "_file_association", FileAssociation.UNKNOWN)
+        recorded = self.recorded_version
+        if recorded is not None and recorded.available:
+            state = recorded.state()
+            if state is FileState.CURRENT:
+                return FileAssociation.VERIFIED
+            if state is FileState.OVERWRITTEN:
+                return FileAssociation.NOT_THIS_RESULT
+            return FileAssociation.UNKNOWN  # missing or unavailable, not overwritten
+        observed = self.observed_version
+        if (original is FileAssociation.LIKELY and observed is not None
+                and not observed.is_current()):
+            return FileAssociation.UNKNOWN
+        return original
+
+    @property
+    def association_evidence(self):
+        recorded = self.recorded_version
+        if recorded is not None and recorded.available:
+            state = recorded.state()
+            if state is FileState.CURRENT:
+                return "run_manifest_digest"
+            if state is FileState.OVERWRITTEN:
+                return "recorded_version_changed"
+            if state is FileState.MISSING:
+                return "recorded_file_missing"
+            if state is FileState.UNAVAILABLE:
+                return "recorded_file_unavailable"
+        observed = self.observed_version
+        if (getattr(self, "_file_association", FileAssociation.UNKNOWN)
+                is FileAssociation.LIKELY and observed is not None
+                and not observed.is_current()):
+            return "observed_version_changed"
+        return getattr(self, "_file_association_evidence", None)
+
+    @property
+    def associated_with(self):
+        """Other output file indicated by the association heuristic."""
+        return getattr(self, "_file_associated_with", None)
+
+    @property
+    def recorded_version(self):
+        """Version recorded by the calculation, if any."""
+        return getattr(self, "_file_recorded_version", None)
+
+    @property
+    def observed_version(self):
+        """Version captured at import, not proof of original-run identity."""
+        return getattr(self, "_file_observed_version", None)
+
+    def set_association(
+        self, association, *, evidence=None, recorded_version=None,
+        observed_version=None, associated_with=None,
+    ):
+        if not isinstance(association, FileAssociation):
+            raise TypeError("association must be a FileAssociation")
+        self._file_association = association
+        self._file_association_evidence = evidence
+        self._file_recorded_version = recorded_version
+        self._file_observed_version = observed_version
+        self._file_associated_with = associated_with
+        return self
+
+    def clear_association(self):
+        return self.set_association(FileAssociation.UNKNOWN)
+
+    def exists(self):
+        """Whether the registered path exists, independent of attribution."""
+        return os.path.exists(self.path())
+
+    def is_current(self):
+        """Whether the assigned file still exists with its accepted version."""
+        if self.association is FileAssociation.NOT_THIS_RESULT:
+            return False
+        owner = getattr(self._container, "result", None)
+        if owner is not None and not owner.file_is_current(self.path()):
+            return False
+        version = self.recorded_version or self.observed_version
+        return version.is_current() if version is not None else os.path.isfile(self.path())
+
     def path(self):
         owner = getattr(self._container, "result", None)
         return owner.path_to(self.name) if owner is not None else os.fspath(self())
@@ -127,7 +245,7 @@ class OutputFileOption(OutputOption):
         if not os.path.isfile(self.path()):
             return ()
         owner = getattr(self._container, "result", None)
-        if owner is not None and not owner.file_is_current(self.path()):
+        if not self.is_current():
             return ()
         out = ["open", "open_directory", "save"]
         if self.file_type == "agr":
@@ -195,6 +313,11 @@ class OutputFileOption(OutputOption):
         owner = getattr(self._container, "result", None)
         if owner is not None:
             owner.require_current_file(path)
+        if not self.is_current():
+            from kkrunner.runs import HistoricalFileMismatchError
+            raise HistoricalFileMismatchError(
+                f"Result file is missing, overwritten, or not associated: {path}"
+            )
         return path
 
     def save(self, parent=None):

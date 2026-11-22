@@ -150,19 +150,15 @@ class TaskResult:
                 else input_parameters.InputParameters.from_file(source))
 
     def _candidate_input_files(self):
-        """Use an unambiguous native input file; never guess between runs."""
-        import glob
-
+        """Select a native input from the discovery cache, not from a glob."""
         directory = self.directory
         if not os.path.isdir(directory):
             return ()
-        candidates = (
-            self._input_cache.candidates(directory)
-            if self._input_cache is not None else sorted(
-                {path for suffix in (".inp", ".in")
-                 for path in glob.glob(os.path.join(directory, "*" + suffix))}
-            )
-        )
+        if self._input_cache is None:
+            # Standalone TaskResult.from_file remains supported. Its discovery
+            # goes through the same cache interface used by ResultLoader.
+            self._input_cache = InputFileCache()
+        candidates = self._input_cache.candidates(directory)
         # A paired input name is authoritative even if the directory contains
         # unrelated calculations.
         if self.output_file is not None:
@@ -263,6 +259,30 @@ class TaskResult:
     def file_is_current(self, path):
         """Whether a path still belongs to this result's captured file version."""
         from .file_provenance import result_file_manifest, result_file_version
+        from .result_options import FileAssociation
+        # A loader can identify this pathname as a newer SCF's output.
+        # Do not let the mere presence of the file bypass that evidence.
+        for option in self.files.items().values():
+            if option.path() != os.fspath(path):
+                continue
+            if option.association is FileAssociation.NOT_THIS_RESULT:
+                return False
+            if (option.association is FileAssociation.UNKNOWN
+                    and option.association_evidence == "scf_mtime_tie_or_unreadable"):
+                # A tie between competing SCFs cannot justify using today's
+                # POTFIL as the historical result of either calculation.
+                return False
+            # An observed import version is a fence against later rewrites,
+            # even when there was no authoritative run manifest. Historical
+            # digest evidence takes priority if it still matches.
+            recorded = option.recorded_version
+            if recorded is not None and recorded.available:
+                if not recorded.is_current():
+                    return False
+            else:
+                observed = option.observed_version
+                if observed is not None and not observed.is_current():
+                    return False
         if result_file_manifest(self) is None and getattr(self, "run_record", None) is None:
             return os.path.isfile(path)
         version = result_file_version(self, path)
@@ -274,7 +294,18 @@ class TaskResult:
         has_provenance = (
             result_file_manifest(self) is not None or getattr(self, "run_record", None) is not None
         )
-        if has_provenance and not self.file_is_current(path):
+        if not self.file_is_current(path) and (
+            has_provenance or any(
+                item.path() == os.fspath(path)
+                and (
+                    item.recorded_version is not None
+                    or item.observed_version is not None
+                    or item.association.name == "NOT_THIS_RESULT"
+                    or item.association_evidence == "scf_mtime_tie_or_unreadable"
+                )
+                for item in self.files.items().values()
+            )
+        ):
             from kkrunner.runs import HistoricalFileMismatchError
             raise HistoricalFileMismatchError(f"Result file is unavailable or changed: {path}")
 
@@ -474,7 +505,8 @@ class TaskResult:
             run_record=record,
         )
         result.run_record = record
-        return result
+        from .result_loader import ResultLoader
+        return ResultLoader().associate_result(result)
 
 
 class KkrOutputReader:

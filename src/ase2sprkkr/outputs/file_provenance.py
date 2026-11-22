@@ -58,6 +58,20 @@ def capture_result_file_versions(result: Any) -> Mapping[str, FileVersion]:
             continue
         if not path:
             continue
+        # Do not turn today's bytes of a known competing SCF potential into
+        # a seemingly historical version of the older calculation. Genuine
+        # run-manifest snapshots must be retained, including if now missing
+        # or overwritten, so that history can report their actual state.
+        from .result_options import FileAssociation
+        recorded = getattr(value, "recorded_version", None)
+        if recorded is None:
+            if getattr(value, "association", None) is FileAssociation.NOT_THIS_RESULT:
+                continue
+            if getattr(value, "association_evidence", None) == "scf_mtime_tie_or_unreadable":
+                continue
+            observed = getattr(value, "observed_version", None)
+            if observed is not None and not observed.is_current():
+                continue
         try:
             version = result_file_version(result, path, require_digest=True)
             if version is not None:
