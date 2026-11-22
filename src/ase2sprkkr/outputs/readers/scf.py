@@ -134,11 +134,12 @@ class ScfResult(TaskResult):
         # when the original input is no longer available.
         if "converged" in self.files:
             return self.path_to("converged")
-        return super().potential_filename + "_new"
+        return self.start_potential_filename + "_new"
 
     @property
     def start_potential_filename(self):
-        return super().potential_filename
+        """The SCF input, never its registered converged output."""
+        return self._input_potential_filename()
 
     @cached_property
     def start_potential(self):
