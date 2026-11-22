@@ -235,7 +235,11 @@ class SPRKKR(BaseCalculator):
         prepared = PreparedCalculation.prepare(
             default_atoms=self._atoms,
             default_potential=self._potential,
-            default_input_parameters=self.input_parameters,
+            # Explicit per-call parameters override calculator defaults. Do not
+            # instantiate the lazy SCF defaults merely to discard them.
+            default_input_parameters=(
+                self.input_parameters if input_parameters is None else None
+            ),
             default_input_file=self.input_file,
             default_potential_file=self.potential_file,
             default_output_file=self.output_file,
