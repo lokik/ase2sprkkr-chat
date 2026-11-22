@@ -186,6 +186,6 @@ def test_missing_mandatory_output_reported_but_remains_in_manifest(tmp_path):
 def test_missing_parsed_result_file_has_no_actions(tmp_path):
     result = TaskResult(None, None, str(tmp_path), output_file="run.out", task_name="DOS")
     file = result.files.add_file("DOS", "missing.dos", "dos")
-    assert file.actions() == ()
+    assert file.actions() == ("open_directory",)
     (tmp_path / "missing.dos").write_text("some data", encoding="utf-8")
     assert "open" in file.actions()
