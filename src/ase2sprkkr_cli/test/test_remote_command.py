@@ -165,7 +165,7 @@ def test_follow_info_is_additive_with_regex(monkeypatch, capsys):
     ))
     remote.run(_parse("follow", "run-123", "--info", "--regex", "ERROR"), None)
     output = capsys.readouterr().out
-    assert "Iteration     8 error" in output
+    assert "Iteration     8 RMS(V)" in output
     assert "ERROR: supplemental" in output
     assert "ETOT" not in output
 
