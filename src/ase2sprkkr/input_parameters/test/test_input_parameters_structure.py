@@ -630,23 +630,29 @@ def test_cross_section_conditional_length():
 
 
 def test_switch():
-    definition = cd.InputParametersDefinition.definition_from_dict(
-        {
-            "ENERGY": [
-                V("A", 1),
-                *switch(
-                    "A",
-                    {
-                        1: [V("B", 2, is_optional=True)],
-                        2: V("C", 3, is_optional=True),
-                    },
-                ),
-            ]
-        }
-    )
-    definition.custom_class = None
-    definition["ENERGY"].custom_class = None
-    definition["ENERGY"].force_order = True
+    def simple_switch_definition(required_c=False):
+        definition = cd.InputParametersDefinition.definition_from_dict(
+            {
+                "ENERGY": [
+                    V("A", 1),
+                    *switch(
+                        "A",
+                        {
+                            1: [V("B", 2, is_optional=True)],
+                            2: V("C", 3, is_optional=True),
+                        },
+                    ),
+                ]
+            }
+        )
+        definition.custom_class = None
+        definition["ENERGY"].custom_class = None
+        definition["ENERGY"].force_order = True
+        if required_c:
+            definition["ENERGY"]["C"].is_optional = False
+        return definition
+
+    definition = simple_switch_definition()
     grammar = definition.grammar()
 
     assert_parse("ENERGY A=2 C=4", {"ENERGY": {"A": 2, "C": 4}}, grammar)
@@ -666,32 +672,38 @@ def test_switch():
         assert_not_valid(text, grammar)
     assert_parse("ENERGY A=2", {"ENERGY": {"A": 2}}, grammar)
 
-    definition["ENERGY"]["C"].is_optional = False
-    assert_not_valid("ENERGY A=2", definition.grammar())
+    assert_not_valid("ENERGY A=2", simple_switch_definition(required_c=True).grammar())
 
-    definition = cd.InputParametersDefinition.definition_from_dict(
-        {
-            "ENERGY": [
-                V("A", 1),
-                *switch(
-                    "A",
-                    {
-                        1: [
-                            V("B", 2, is_optional=True),
-                            V("D", 3, is_optional=True),
-                            V("C", 1, is_optional=True),
-                        ],
-                        2: [
-                            V("C", 3, is_optional=True),
-                            V("E", 1, is_optional=True),
-                            V("B", 2, is_optional=True),
-                        ],
-                    },
-                ),
-            ]
-        }
-    )
-    definition["ENERGY"].force_order = True
+    def expanded_switch_definition(required_members=False):
+        definition = cd.InputParametersDefinition.definition_from_dict(
+            {
+                "ENERGY": [
+                    V("A", 1),
+                    *switch(
+                        "A",
+                        {
+                            1: [
+                                V("B", 2, is_optional=True),
+                                V("D", 3, is_optional=True),
+                                V("C", 1, is_optional=True),
+                            ],
+                            2: [
+                                V("C", 3, is_optional=True),
+                                V("E", 1, is_optional=True),
+                                V("B", 2, is_optional=True),
+                            ],
+                        },
+                    ),
+                ]
+            }
+        )
+        definition["ENERGY"].force_order = True
+        if required_members:
+            for name in ("B", "C", "D", "E"):
+                definition["ENERGY"][name].is_optional = False
+        return definition
+
+    definition = expanded_switch_definition()
     grammar = definition.grammar()
 
     cases = (
@@ -712,9 +724,8 @@ def test_switch():
     ):
         assert_not_valid(text, grammar)
 
-    for name in ("B", "C", "D", "E"):
-        definition["ENERGY"][name].is_optional = False
-    grammar = definition.grammar()
+    strict_definition = expanded_switch_definition(required_members=True)
+    grammar = strict_definition.grammar()
     for text in (
         "ENERGY A=2 B=2",
         "ENERGY A=1 B=2",
@@ -726,6 +737,6 @@ def test_switch():
     ):
         assert_not_valid(text, grammar)
 
-    out = definition.read_from_string("ENERGY A=2 C=4 E=2 B=6")
+    out = strict_definition.read_from_string("ENERGY A=2 C=4 E=2 B=6")
     assert out["ENERGY"].to_dict() == {"A": 2, "C": 4, "E": 2, "B": 6}
     assert out["ENERGY"].to_string() == "ENERGY\n\tA=2\n\tC=4\n\tE=2\n\tB=6\n"
