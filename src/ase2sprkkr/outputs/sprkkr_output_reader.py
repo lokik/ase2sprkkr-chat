@@ -72,5 +72,13 @@ class SprKkrOutputParser(ProcessOutputParser):
                     if filename.endswith(".out") and os.path.exists(filename[:-4] + ".inp"):
                         result.files.add_file("input", filename[:-4] + ".inp")
 
+            # The loader may prepare detached native parameters now, after
+            # stdout's authoritative FILES entries and before task-specific
+            # parsing (SCF needs POTFIL here). The callback lives only on
+            # this one-shot parser, never on TaskResult.
+            on_files_parsed = getattr(self, "_on_files_parsed", None)
+            if on_files_parsed is not None:
+                on_files_parsed(result)
+
         except EOFError as e:
             raise EOFError("Unexpected end of output -- the program exited prematurely.") from e

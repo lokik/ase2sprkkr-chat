@@ -5,18 +5,22 @@ Results own the resulting per-file association metadata.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 import os
-import weakref
 from pathlib import Path
 from typing import Iterable
 
+import pyparsing as pp
+
 from kkrunner.files import FileState, FileVersion
 
+from ..common.warnings import DataValidityError
+from ..input_parameters import input_parameters as input_parameters
 from .file_provenance import result_file_manifest, result_file_version
 from .output_detection import looks_like_scf_output
 from .result_options import FileAssociation
-from .task_result import InputFileCache, TaskResult
+from .task_result import TaskResult
 
 
 def _identity(path):
@@ -47,20 +51,31 @@ class ResultBatch:
         return tuple(result for _, result in self.entries)
 
 
-class _InputCache(InputFileCache):
-    def __init__(self, loader):
-        super().__init__()
-        # TaskResult retains this cache after import. A strong reference to the
-        # loader would retain *all* results and large parsed potentials from the
-        # entire batch as long as any one result stays in GUI history.
-        self._loader_ref = weakref.ref(loader)
+class _NativeInputCache:
+    """Parsed native inputs scoped to one ResultLoader (never to TaskResult)."""
 
-    def candidates(self, directory):
-        loader = self._loader_ref()
-        if loader is None:
-            # Lazy input access must still work after the batch has finished.
-            return super().candidates(directory)
-        return loader._directory(Path(directory)).inputs
+    def __init__(self):
+        self._parameters = {}
+
+    def parse(self, filename):
+        path = os.path.realpath(os.fspath(filename))
+        identity = _identity(path)
+        entry = self._parameters.get(path)
+        if entry is None or entry[0] != identity:
+            try:
+                parameters = input_parameters.InputParameters.from_file(path)
+            except Exception as exc:
+                self._parameters[path] = (identity, exc)
+                raise
+            self._parameters[path] = (identity, parameters)
+        else:
+            parameters = entry[1]
+            if isinstance(parameters, Exception):
+                raise parameters
+        # Parameters are mutable; every result receives its own detached copy.
+        if isinstance(parameters, input_parameters.InputParameters):
+            return parameters.copy(copy_values=True)
+        return deepcopy(parameters)
 
 
 class ResultLoader:
@@ -71,7 +86,7 @@ class ResultLoader:
     """
 
     def __init__(self):
-        self.inputs = _InputCache(self)
+        self.inputs = _NativeInputCache()
         self._directories = {}
         self._outputs = {}
         self._scf_probes = {}
@@ -144,6 +159,69 @@ class ResultLoader:
         matches = [p for t, p in versions if t == newest]
         return matches[0] if len(matches) == 1 else None
 
+    def _discover_input(self, result):
+        """Attach the native input and its own parsed data to a result.
+
+        Directory traversal and parsed-input reuse belong to this loader.
+        The result retains only a registered file and independent parameters,
+        never a reference back to the loader or its caches.
+        """
+        if "input" in result.files:
+            # A file named by the stdout or by the run is authoritative.
+            filename = result.path_to("input")
+            if (result._input_parameters is None
+                    and result.__dict__.get("input_parameters") is None
+                    and result.file_is_current(filename)):
+                try:
+                    result.input_parameters = self.inputs.parse(filename)
+                    return True
+                except Exception:
+                    # The explicit file remains registered. A later request
+                    # for input_parameters must still report its parse error.
+                    pass
+            return
+        if result._input_parameters is not None:
+            return
+        try:
+            candidates = self._directory(Path(result.directory)).inputs
+        except (OSError, ValueError):
+            return
+        if result.output_file is not None:
+            stem = Path(os.fspath(result.output_file)).stem
+            paired = None
+            for suffix in (".inp", ".in"):
+                name = str(Path(result.directory) / (stem + suffix))
+                if name in candidates:
+                    paired = name
+                    break
+            if paired:
+                candidates = (paired,)
+            elif len(candidates) != 1:
+                candidates = ()
+        elif len(candidates) != 1:
+            candidates = ()
+        for filename in candidates:
+            if not result.file_is_current(filename):
+                continue
+            try:
+                parameters = self.inputs.parse(filename)
+            except (OSError, UnicodeError, ValueError, pp.ParseBaseException, DataValidityError):
+                continue
+            if (result._task_name is not None
+                    and parameters.task_name != result._task_name.upper()):
+                continue
+            result.input_parameters = parameters
+            result.files.add_file("input", filename)
+            return True
+
+    def _prepare_input(self, result):
+        """Resolve native inputs once the stdout FILES table has been parsed."""
+        try:
+            self._discover_input(result)
+        except Exception:
+            # Unrelated or invalid INP files must not break OUT parsing.
+            pass
+
     def _expected_files(self, result):
         """Add named inputs/outputs even if a physical file is missing."""
         from .output_only_result import OutputOnlyResult
@@ -153,9 +231,12 @@ class ResultLoader:
         if isinstance(result, OutputOnlyResult):
             return
         try:
-            input_path = result.input_parameters_file
-            if input_path and "input" not in result.files:
-                result.files.add_file("input", input_path)
+            if self._discover_input(result):
+                # The output parser may have completed before the native input
+                # was discovered. Add declarations now that it is available.
+                result.enrich_declared_output_files(
+                    warn_missing=getattr(result, "return_code", None) == 0
+                )
         except Exception:
             # Optional input discovery must not make a parsed OUT unusable.
             pass
@@ -291,7 +372,7 @@ class ResultLoader:
                         break
 
         if not same_sources:
-            result = TaskResult.from_file(path, input_cache=self.inputs)
+            result = TaskResult._parse_file(path, on_files_parsed=self._prepare_input)
             if _identity(path) != version:
                 raise RuntimeError(f"Output changed during parsing: {path}")
         self._associate(result, path)
