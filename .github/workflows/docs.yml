@@ -35,7 +35,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: lokik/kkrunner-chat
-          ref: 726d71c906f1e85459ac3c806f3bb1c46b22eac1
+          ref: c173e518efb8adfc8ca77ecf099a4a3a97ed19a0
           path: .ci/kkrunner
       - name: Install KKRunner from the matching source revision
         run: python -m pip install './.ci/kkrunner[psij]'
