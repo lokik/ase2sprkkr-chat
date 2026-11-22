@@ -67,7 +67,7 @@ class ScfResult(TaskResult):
 
     produces_potential = True
 
-    def interpret_potential(self, potential):
+    def _with_output_scf_status(self, potential):
         """Project the final SCF convergence onto this result's embedded state.
 
         Native CLUPOT can retain SCFSTATUS=ITERATING after its OUT converges.
@@ -100,10 +100,9 @@ class ScfResult(TaskResult):
         selected.info["sprkkr_embedding_scf_status"] = "CONVERGED"
         return selected.potential
 
-    @cached_property
-    def potential(self):
-        """Result-specific potential, not the unmodified parsed CLUPOT."""
-        return self.interpret_potential(super().potential)
+    def _load_result_potential(self, loader=None):
+        """Return the SCF potential with result-specific convergence applied."""
+        return self._with_output_scf_status(super()._load_result_potential(loader))
 
     @cached_property
     def calculator(self):
@@ -131,8 +130,11 @@ class ScfResult(TaskResult):
 
     @property
     def potential_filename(self):
-        fname = super().potential_filename + "_new"
-        return fname
+        # The parsed output's explicit converged file takes precedence, even
+        # when the original input is no longer available.
+        if "converged" in self.files:
+            return self.path_to("converged")
+        return super().potential_filename + "_new"
 
     @property
     def start_potential_filename(self):
