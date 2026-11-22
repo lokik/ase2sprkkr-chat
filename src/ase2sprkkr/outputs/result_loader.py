@@ -17,13 +17,13 @@ from typing import Iterable
 
 import pyparsing as pp
 
-from kkrunner.files import FileFingerprint, FileOperations, FileState
+from kkrunner.files import FileFingerprint, FileOperations
 
 from ..common.warnings import DataValidityError
 from ..input_parameters import input_parameters as input_parameters
 from .file_provenance import result_file_manifest, result_file_version
 from .output_detection import looks_like_scf_output
-from .result_options import FileAssociation
+from .result_options import FileAttribution
 from .task_result import TaskResult
 
 
@@ -303,12 +303,13 @@ class ResultLoader:
 
     def _associate(self, result, output):
         self._expected_files(result)
-        historical = result_file_manifest(result) is not None
+        historical = (result_file_manifest(result) is not None
+                      or getattr(result, "run_record", None) is not None)
         file_entries = result.files.items()
         if hasattr(file_entries, "items"):
             file_entries = file_entries.items()
         for name, item in file_entries:
-            if not hasattr(item, "set_association"):
+            if not hasattr(item, "set_attribution"):
                 continue
             try:
                 path = Path(item.path()).expanduser().resolve()
@@ -323,31 +324,17 @@ class ResultLoader:
             except OSError:
                 pass
             if recorded is not None:
-                if recorded.available:
-                    state = recorded.state()
-                    status = {
-                        FileState.CURRENT: FileAssociation.VERIFIED,
-                        FileState.OVERWRITTEN: FileAssociation.NOT_THIS_RESULT,
-                        FileState.MISSING: FileAssociation.UNKNOWN,
-                        FileState.UNAVAILABLE: FileAssociation.UNKNOWN,
-                    }[state]
-                    evidence = {
-                        FileState.CURRENT: "run_manifest_digest",
-                        FileState.OVERWRITTEN: "recorded_version_changed",
-                        FileState.MISSING: "recorded_file_missing",
-                        FileState.UNAVAILABLE: "recorded_file_unavailable",
-                    }[state]
-                else:
-                    status = (FileAssociation.LIKELY if recorded.state() is FileState.CURRENT
-                              else FileAssociation.UNKNOWN)
-                    evidence = "run_manifest_metadata_only"
+                # Record evidence only; OutputFileOption evaluates its state
+                # once at the point where it is needed.
+                status = FileAttribution.UNKNOWN
+                evidence = "run_manifest_digest" if recorded.available else "run_manifest_metadata_only"
             elif historical:
-                status, evidence = FileAssociation.UNKNOWN, "not_in_manifest"
+                status, evidence = FileAttribution.UNKNOWN, "not_in_manifest"
             elif observed is not None:
-                status, evidence = FileAssociation.LIKELY, "output_or_input_reference"
+                status, evidence = FileAttribution.LIKELY, "output_or_input_reference"
             else:
-                status, evidence = FileAssociation.UNKNOWN, "missing"
-            item.set_association(status, recorded_version=recorded,
+                status, evidence = FileAttribution.UNKNOWN, "missing"
+            item.set_attribution(status, recorded_version=recorded,
                                  observed_version=observed, evidence=evidence)
 
         if not result.produces_potential or "converged" not in result.files:
@@ -355,7 +342,10 @@ class ResultLoader:
         item = result.files["converged"]
         if not hasattr(item, "association"):
             return
-        if item.recorded_version is not None or item.association is FileAssociation.UNKNOWN:
+        if historical or item.observed_version is None:
+            # Historical run evidence is authoritative; standalone SCF
+            # heuristics need an observed physical potential. Do not compute
+            # a redundant FileVersion.state() to make this decision.
             return
         target = Path(item.path()).resolve()
         candidates = set(self.scf_claims(output.parent, target))
@@ -364,15 +354,15 @@ class ResultLoader:
             return
         newest = self._newest(candidates)
         if newest is None:
-            item.set_association(FileAssociation.UNKNOWN,
+            item.set_attribution(FileAttribution.UNKNOWN,
                                  observed_version=item.observed_version,
                                  evidence="scf_mtime_tie_or_unreadable")
         elif newest != output:
-            item.set_association(FileAssociation.NOT_THIS_RESULT,
+            item.set_attribution(FileAttribution.NOT_THIS_RESULT,
                                  observed_version=item.observed_version,
-                                 evidence="newer_scf_stdout", associated_with=newest)
+                                 evidence="newer_scf_stdout", attributed_to=newest)
         else:
-            item.set_association(FileAssociation.LIKELY,
+            item.set_attribution(FileAttribution.LIKELY,
                                  observed_version=item.observed_version,
                                  evidence="newest_scf_stdout")
 

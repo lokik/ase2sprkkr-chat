@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from kkrunner.files import FileOperations, FileVersion
-from ase2sprkkr.outputs import FileAssociation, ResultLoader
+from ase2sprkkr.outputs import FileAttribution, ResultLoader
 from ase2sprkkr.outputs.task_result import TaskResult
 from kkrunner.runs import HistoricalFileMismatchError
 
@@ -61,10 +61,10 @@ def test_loader_indexes_only_out_and_identifies_overwritten_scf(tmp_path, monkey
     batch = loader.load_files((first, second, tmp_path / "dos.out"))
     assert not batch.failures
     older, newer, dos = batch.results
-    assert older.files["converged"].association is FileAssociation.NOT_THIS_RESULT
-    assert older.files["converged"].associated_with == second.resolve()
-    assert newer.files["converged"].association is FileAssociation.LIKELY
-    assert dos.files["potential"].association is FileAssociation.LIKELY
+    assert older.files["converged"].attribution is FileAttribution.NOT_THIS_RESULT
+    assert older.files["converged"].attributed_to == second.resolve()
+    assert newer.files["converged"].attribution is FileAttribution.LIKELY
+    assert dos.files["potential"].attribution is FileAttribution.LIKELY
     with pytest.raises(HistoricalFileMismatchError):
         older.require_current_file(potential)
     assert loader.companion_scf(dos) is newer
@@ -86,7 +86,7 @@ def test_tied_scf_mtimes_are_unknown(tmp_path, monkeypatch):
     )
     results = ResultLoader.load_directory(tmp_path).results
     assert len(results) == 2
-    assert all(r.files["converged"].association is FileAssociation.UNKNOWN
+    assert all(r.files["converged"].attribution is FileAttribution.UNKNOWN
                for r in results)
 
 
@@ -112,36 +112,38 @@ def test_historical_hash_is_stronger_than_mtime_heuristic(tmp_path, monkeypatch)
     loader = ResultLoader()
     old_result = loader.load_file(old)
     option = old_result.files["converged"]
-    assert option.association is FileAssociation.VERIFIED
+    assert option.attribution is FileAttribution.VERIFIED
     assert option.recorded_version == version
     potential.write_text("overwritten")
     # Querying the existing result must not keep claiming VERIFIED bytes.
-    assert option.association is FileAssociation.NOT_THIS_RESULT
-    assert option.association_evidence == "recorded_version_changed"
+    assert option.attribution is FileAttribution.NOT_THIS_RESULT
+    assert option.attribution_evidence == "recorded_version_changed"
     loader.load_file(old)
-    assert option.association is FileAssociation.NOT_THIS_RESULT
+    assert option.attribution is FileAttribution.NOT_THIS_RESULT
     potential.write_text("original")
-    assert option.association is FileAssociation.VERIFIED
+    assert option.attribution is FileAttribution.VERIFIED
 
 
-def test_file_association_reset_when_repointed(tmp_path):
+def test_file_attribution_reset_when_repointed(tmp_path):
+    (tmp_path / "old.pot").write_text("old")
+    (tmp_path / "other.pot").write_text("other")
     result = TaskResult(None, None, tmp_path, task_name="DOS")
     file = result.files.add_file("potential", "old.pot")
-    file.set_association(FileAssociation.LIKELY, evidence="native_input")
+    file.set_attribution(FileAttribution.LIKELY, evidence="native_input")
     assert result.files.add_file("potential", "old.pot") is file
-    assert file.association is FileAssociation.LIKELY
+    assert file.attribution is FileAttribution.LIKELY
     # The option already stores a canonical absolute FilePath. A second
     # registration with a different spelling of the *same* path is not a
     # change of file identity and must preserve the association.
     result.files.add_file("potential", str(tmp_path / "old.pot"))
-    assert file.association is FileAssociation.LIKELY
+    assert file.attribution is FileAttribution.LIKELY
     result.files.add_file("potential", "other.pot")
-    assert file.association is FileAssociation.UNKNOWN
-    file.set_association(FileAssociation.LIKELY, evidence="repointed")
+    assert file.attribution is FileAttribution.UNKNOWN
+    file.set_attribution(FileAttribution.LIKELY, evidence="repointed")
     file.set(str(tmp_path / "other.pot"))
-    assert file.association is FileAssociation.LIKELY
+    assert file.attribution is FileAttribution.LIKELY
     file.set("third.pot")
-    assert file.association is FileAssociation.UNKNOWN
+    assert file.attribution is FileAttribution.UNKNOWN
 
 
 def test_reuse_invalidated_when_input_changes_without_output_change(tmp_path, monkeypatch):
@@ -253,15 +255,15 @@ def test_historical_missing_file_is_unknown_not_wrong_result(tmp_path, monkeypat
     monkeypatch.setattr(TaskResult, "_parse_file", classmethod(parse))
     result = ResultLoader().load_file(output)
     entry = result.files["converged"]
-    assert entry.association is FileAssociation.VERIFIED
+    assert entry.attribution is FileAttribution.VERIFIED
 
     potential.unlink()
-    assert entry.association is FileAssociation.UNKNOWN
-    assert entry.association_evidence == "recorded_file_missing"
+    assert entry.attribution is FileAttribution.UNKNOWN
+    assert entry.attribution_evidence == "recorded_file_missing"
     assert not entry.is_current()
 
     potential.write_text("overwritten")
-    assert entry.association is FileAssociation.NOT_THIS_RESULT
+    assert entry.attribution is FileAttribution.NOT_THIS_RESULT
 
 
 def test_imported_result_refuses_potential_modified_after_loading(tmp_path, monkeypatch):
@@ -275,11 +277,11 @@ def test_imported_result_refuses_potential_modified_after_loading(tmp_path, monk
     )
     result = ResultLoader().load_file(output)
     file = result.files["converged"]
-    assert file.association is FileAssociation.LIKELY
+    assert file.attribution is FileAttribution.LIKELY
     assert result.file_is_current(potential)
 
     potential.write_text("later modification")
-    assert file.association is FileAssociation.UNKNOWN
+    assert file.attribution is FileAttribution.UNKNOWN
     assert not file.is_current()
     assert not result.file_is_current(potential)
     with pytest.raises(HistoricalFileMismatchError):
@@ -301,7 +303,7 @@ def test_overwritten_scf_does_not_capture_wrong_potential_as_history(tmp_path, m
                     _SCF(None, None, tmp_path, output_file=path, task_name="SCF")),
     )
     old_result = ResultLoader().load_file(older)
-    assert old_result.files["converged"].association is FileAssociation.NOT_THIS_RESULT
+    assert old_result.files["converged"].attribution is FileAttribution.NOT_THIS_RESULT
     assert "converged" not in capture_result_file_versions(old_result)
 
 
@@ -378,7 +380,7 @@ def test_reparse_after_potential_rewrite_drops_cached_task_result(tmp_path, monk
     second = loader.load_file(output)
     assert second is not first
     assert len(reads) == 2
-    assert second.files["converged"].association is FileAssociation.LIKELY
+    assert second.files["converged"].attribution is FileAttribution.LIKELY
 
 
 def test_retained_result_does_not_keep_entire_loader_alive(tmp_path, monkeypatch):
@@ -625,3 +627,20 @@ def test_native_input_cache_is_caller_scoped(tmp_path, monkeypatch):
     loader.file_operations.invalidate()
     assert loader.inputs.parse(native_input).value == "modified"
     assert parsed == ["initial", "modified"]
+
+
+def test_run_record_without_available_manifest_never_adopts_scf_potential(tmp_path, monkeypatch):
+    potential = tmp_path / "Fe.pot_new"
+    potential.write_text("potential")
+    output = _output(tmp_path / "historical.out")
+
+    def parse(_cls, path, *, on_files_parsed=None):
+        result = _SCF(None, None, tmp_path, output_file=path, task_name="SCF")
+        result.run_record = SimpleNamespace(files=None)
+        return result
+
+    monkeypatch.setattr(TaskResult, "_parse_file", classmethod(parse))
+    result = ResultLoader().load_file(output)
+    option = result.files["converged"]
+    assert option.attribution is FileAttribution.UNKNOWN
+    assert not result.file_is_current(potential)
