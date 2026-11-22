@@ -56,7 +56,11 @@ def test_fast_table_accepts_fortran_d_exponents():
 
 
 def test_fast_table_preserves_group_shape_and_separator():
-    sample = SPHERICAL + "\n" + SPHERICAL.replace(" 1 ", " 2 ", 1)
+    sample = SPHERICAL + "
+" + "
+".join(
+        line.replace(" 1 ", " 2 ", 1) for line in SPHERICAL.splitlines()
+    )
     with generate_grammar():
         expected = _table(fast=False).parse(sample)
         fast = _table(fast=True)
@@ -94,5 +98,5 @@ def test_native_rat_fixture_is_parsed_with_bulk_table():
 
     filename = Path(__file__).parents[2] / "result_files" / "examples" / "Cu_XAS_Cu_L23.rat"
     result = RATResultFile.from_file(filename)
-    assert result.GROUPS[0].DATA[0].DATA.shape == (6, 3)
-    assert result.GROUPS[0].DATA[0].DATA["ADD"][0].tolist() == ["(+)", "(-)", "(z)"]
+    assert result.GROUPS[0].DATA[0].DATA().shape == (6, 3)
+    assert result.GROUPS[0].DATA[0].DATA()["ADD"][0].tolist() == ["(+)", "(-)", "(z)"]
