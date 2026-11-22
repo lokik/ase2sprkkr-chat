@@ -81,8 +81,8 @@ class TauCacheInputParametersDefinition(InputParametersDefinition):
 class XrayRateInputParametersDefinition(TauCacheInputParametersDefinition):
     """XRAYSPEC definition with its native atom/core-shell rate filename."""
 
-    def output_files(self, parameters, directory):
-        files = list(super().output_files(parameters, directory))
+    def result_files(self, parameters, directory):
+        files = list(super().result_files(parameters, directory))
         name = core_level_output_name(
             parameters, "rat", type_separator="_", shell_separator="_"
         )
