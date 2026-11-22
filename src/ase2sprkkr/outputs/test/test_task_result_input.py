@@ -6,8 +6,11 @@ from ase2sprkkr.outputs.task_result import KkrOutputReader, TaskResult
 
 
 class _Parser:
-    def __init__(self, print_info):
+    def __init__(self, print_info, on_info=None):
         self.print_info = print_info
+
+    def read_from_file(self, output, error, read_args, return_code):
+        return None, error, return_code
 
 
 class _Reader(KkrOutputReader):
@@ -199,3 +202,25 @@ def test_loader_caches_invalid_guessed_input_but_explicit_error_propagates(
     explicit = TaskResult(None, None, str(tmp_path), input_file=str(path))
     with pytest.raises(ValueError, match="invalid input"):
         _ = explicit.input_parameters
+
+
+def test_reader_before_complete_hook_is_ephemeral_and_ordered(tmp_path, monkeypatch):
+    reader = _Reader(None, None, str(tmp_path), task_name="DOS")
+    observed = []
+
+    def prepare(result):
+        observed.append("prepare")
+        assert result.input_parameters is None
+        result.input_parameters = InputParameters.create("DOS")
+
+    def complete(self, error, return_code):
+        assert self.input_parameters.task_name == "DOS"
+        observed.append("complete")
+
+    monkeypatch.setattr(TaskResult, "complete", complete)
+    result = reader.read_from_file(
+        str(tmp_path / "example.out"), before_complete=prepare
+    )
+    assert observed == ["prepare", "complete"]
+    assert result.input_parameters.task_name == "DOS"
+    assert "before_complete" not in vars(result)
