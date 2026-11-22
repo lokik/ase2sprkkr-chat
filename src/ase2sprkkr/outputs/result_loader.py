@@ -340,7 +340,7 @@ class ResultLoader:
         if not result.produces_potential or "converged" not in result.files:
             return
         item = result.files["converged"]
-        if not hasattr(item, "association"):
+        if not hasattr(item, "set_attribution"):
             return
         if historical or item.observed_version is None:
             # Historical run evidence is authoritative; standalone SCF
