@@ -217,6 +217,8 @@ dipole moment   1      0.0000000000000000      0.0000000000000000      0.0000000
         assert result.any_potential is potential
 
         output = result.files.add_file("JXC", "Fe_JXC.dat", "jxc")
+        # File currentness is validated before the scientific parser is called.
+        (tmp_path / "Fe_JXC.dat").write_text("fixture")
         parsed = object()
 
         def parse_output(filename, **kwargs):

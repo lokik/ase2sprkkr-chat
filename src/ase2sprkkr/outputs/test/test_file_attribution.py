@@ -282,7 +282,8 @@ def test_directory_snapshot_cannot_validate_a_file_option(tmp_path):
     assert option.attribution is FileAttribution.UNKNOWN
     assert option.attribution_evidence == "not_regular_file"
     assert not option.is_current()
-    assert option.actions() == ()
+    # Directory navigation does not read or validate the rejected file bytes.
+    assert option.actions() == ("open_directory",)
 
 
 def test_parse_result_file_rejects_foreign_file_option(tmp_path):
@@ -305,10 +306,15 @@ def test_nexus_export_checks_file_state_once(tmp_path, monkeypatch):
     version = FileVersion.capture(path, digest=False)
     option.set_attribution(FileAttribution.LIKELY, observed_version=version)
 
-    from types import SimpleNamespace
+    exports = []
+
+    def export(destination, **kwargs):
+        exports.append((destination, kwargs))
+        return destination
+
     monkeypatch.setattr(
         result_files, "read_plottable_file",
-        lambda *_args, **_kwargs: SimpleNamespace(to_nexus=lambda destination: destination),
+        lambda *_args, **_kwargs: SimpleNamespace(to_nexus=export),
     )
     original_state = FileVersion.state
     checks = []
@@ -321,4 +327,5 @@ def test_nexus_export_checks_file_state_once(tmp_path, monkeypatch):
     monkeypatch.setattr(FileVersion, "state", counted_state)
     destination = tmp_path / "saved.nxs"
     assert option.export_nexus(destination) == destination
+    assert exports == [(destination, {"discover_input": False})]
     assert len(checks) == 1
