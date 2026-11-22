@@ -67,29 +67,43 @@ class ScfResult(TaskResult):
 
     produces_potential = True
 
+    def interpret_potential(self, potential):
+        """Project the final SCF convergence onto this result's embedded state.
+
+        Native CLUPOT can retain SCFSTATUS=ITERATING after its OUT converges.
+        The CLUPOT and host may be shared with other results by ResultLoader;
+        neither the cached native potential nor its atoms may be modified.
+        This interpretation belongs only to a successful, parsed SCF result.
+        """
+        if (
+            not self.is_embedded
+            or getattr(self, "return_code", 0) != 0
+            or not getattr(self, "iterations", None)
+            or not self.converged
+            or str(potential.SCF_INFO.SCFSTATUS()).strip().upper() != "ITERATING"
+        ):
+            return potential
+        atoms = potential.atoms
+        if atoms is None:
+            return potential
+
+        from ...sprkkr.sprkkr_atoms import SPRKKRAtoms
+
+        # Detach option containers and site metadata without duplicating the
+        # large radial arrays. The periodic embedding host remains shared.
+        selected = (
+            atoms.copy(shallow=True)
+            if isinstance(atoms, SPRKKRAtoms)
+            else atoms.copy()
+        )
+        selected.potential.SCF_INFO.SCFSTATUS = "CONVERGED"
+        selected.info["sprkkr_embedding_scf_status"] = "CONVERGED"
+        return selected.potential
+
     @cached_property
     def potential(self):
-        """Use the final SCF iteration to interpret an embedded result potential.
-
-        Native CLUPOT can retain SCFSTATUS=ITERATING even when its corresponding
-        OUT reports convergence. For a *parsed* converged SCF result, promote
-        only that in-memory cluster potential to CONVERGED. Never rewrite the
-        historical output file, infer convergence from radial data, or change
-        the separate periodic host.
-        """
-        potential = super().potential
-        if (
-            self.is_embedded
-            and getattr(self, "return_code", 0) == 0
-            and getattr(self, "iterations", None)
-            and self.converged
-            and str(potential.SCF_INFO.SCFSTATUS()).strip().upper() == "ITERATING"
-        ):
-            potential.SCF_INFO.SCFSTATUS = "CONVERGED"
-            atoms = getattr(potential, "_atoms", None)
-            if atoms is not None:
-                atoms.info["sprkkr_embedding_scf_status"] = "CONVERGED"
-        return potential
+        """Result-specific potential, not the unmodified parsed CLUPOT."""
+        return self.interpret_potential(super().potential)
 
     @cached_property
     def calculator(self):
