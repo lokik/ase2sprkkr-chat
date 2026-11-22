@@ -33,20 +33,31 @@ class RegexNumericTable(pp.Token):
             table.header or table.free_header or table.repeat_sparse
             or table.group_size or table.groups_as_list or table.flatten
             or table.free_numbering or table.sequence.condition is not None
-            or not table.names
+            or table.sequence.default_values or not table.names
         ):
             raise ValueError("fast_numeric requires a regular named, unheaded table")
 
         # Custom column grammars and custom index formats belong to the
         # existing, fully general Table parser.
         for special in (table.grouping, table.numbering):
-            if special and not isinstance(special.column, Integer):
-                raise ValueError("fast_numeric requires integer group/row numbers")
+            if special and (
+                not isinstance(special.column, Integer)
+                or special.column.prefix or special.column.postfix
+            ):
+                raise ValueError("fast_numeric requires plain integer group/row numbers")
 
         self.table = table
         self.fields = []
         row_columns = []
         for name, item in zip(table.names, table.sequence.types):
+            if item.prefix or item.postfix or item.condition:
+                raise ValueError(f"fast_numeric requires plain column tokens: {name}")
+            if isinstance(item, (Integer, Real)) and (
+                item.min is not None or item.max is not None
+            ):
+                raise ValueError(f"fast_numeric does not support numeric constraints: {name}")
+            if isinstance(item, Real) and item.nan is not None:
+                raise ValueError(f"fast_numeric does not support alternate NaN tokens: {name}")
             if isinstance(item, Complex):
                 kind, pattern = "complex", _REAL + r"[ \t]*" + _REAL
             elif isinstance(item, Integer):
@@ -149,21 +160,29 @@ class RegexNumericTable(pp.Token):
             if not np.array_equal(numbers, expected):
                 raise pp.ParseException(text, loc, "Invalid row numbering", self)
 
-        result = np.empty(nrows, dtype=self.table._numpy_type)
-        for name, kind in self.fields:
+        dtype_spec = self.table._numpy_type
+        structured = isinstance(dtype_spec, list)
+        result = np.empty(
+            nrows if structured else (nrows, len(self.fields)), dtype=dtype_spec
+        )
+        inverse = {code: label for label, code in self._codes.items()}
+        for column, (name, kind) in enumerate(self.fields):
             if kind == "complex":
-                result[name] = raw[:, offset] + 1j * raw[:, offset + 1]
+                value = raw[:, offset] + 1j * raw[:, offset + 1]
                 offset += 2
             elif kind == "label":
                 codes = raw[:, offset].astype(np.int64)
-                inverse = {value: label for label, value in self._codes.items()}
                 if any(int(code) not in inverse for code in codes):
                     raise pp.ParseException(text, loc, "Invalid text column", self)
-                result[name] = [inverse[int(code)] for code in codes]
+                value = [inverse[int(code)] for code in codes]
                 offset += 1
             else:
-                result[name] = raw[:, offset]
+                value = raw[:, offset]
                 offset += 1
+            if structured:
+                result[name] = value
+            else:
+                result[:, column] = value
 
         if self.table.grouping:
             if np.any(counts != counts[0]):
