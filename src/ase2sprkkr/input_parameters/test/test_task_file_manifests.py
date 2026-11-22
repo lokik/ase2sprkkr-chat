@@ -13,9 +13,12 @@ def test_scf_declares_new_potential_as_output(tmp_path):
     parameters = InputParameters.create("SCF")
     parameters.CONTROL.POTFIL = "Fe.pot"
 
-    assert tuple(map(str, parameters.output_files(str(tmp_path)))) == (
+    files = parameters.output_files(str(tmp_path))
+    assert tuple(map(str, files)) == (
         str(tmp_path / "Fe.pot_new"), str(tmp_path / "*_SCFSTART.dos"),
     )
+    assert not files[0].optional
+    assert files[1].optional
 
 
 def test_scf_fullpot_shape_function_is_optional_cache(tmp_path):
@@ -65,7 +68,7 @@ def test_phagen_outputs_follow_explicit_potential_name(tmp_path):
     )
 
 
-def test_jxc_frel_declares_tensor_and_plot_outputs(tmp_path):
+def test_jxc_output_files_change_with_relativistic_mode(tmp_path):
     parameters = InputParameters.create("JXC")
     parameters.CONTROL.DATASET = "Fe"
     parameters.MODE.MODE = "FREL"
@@ -77,12 +80,7 @@ def test_jxc_frel_declares_tensor_and_plot_outputs(tmp_path):
         str(tmp_path / "Fe_JXC_XCPLTEN_Dij_[xyz]_*.agr"),
     )
 
-
-def test_jxc_sp_srel_declares_scalar_and_plot_outputs(tmp_path):
-    parameters = InputParameters.create("JXC")
-    parameters.CONTROL.DATASET = "Fe"
     parameters.MODE.MODE = "SP-SREL"
-
     assert parameters.output_files(str(tmp_path)) == (
         str(tmp_path / "Fe_JXC_J_ij.dat"),
         str(tmp_path / "Fe_JXC_Jij_*.agr"),
@@ -177,29 +175,6 @@ def test_dos_native_energy_constraints():
     parameters.ENERGY.ImE = 0.0
     with pytest.warns(DataValidityWarning, match="real axis"):
         parameters.validate("save")
-
-
-def test_scf_startup_dos_is_optional(tmp_path):
-    parameters = InputParameters.create("SCF")
-    parameters.CONTROL.POTFIL = "Fe.pot"
-    files = parameters.output_files(str(tmp_path))
-    assert next(f for f in files if str(f).endswith("_SCFSTART.dos")).optional
-    assert not next(f for f in files if str(f).endswith("Fe.pot_new")).optional
-
-
-def test_bsf_output_file_declarations(tmp_path):
-    for task in ("BSFEK", "BSFKK"):
-        parameters = InputParameters.create(task)
-        parameters.CONTROL.DATASET = "Fe"
-        assert tuple(map(str, parameters.output_files(str(tmp_path)))) == (
-            str(tmp_path / "Fe_BLOCHSF.bsf"),
-            str(tmp_path / "Fe_BLOCHSF_spol.bsf"),
-        )
-
-def test_clpes_core_wavefunction_is_a_declared_output(tmp_path):
-    parameters = InputParameters.create("CLPES")
-    parameters.CONTROL.DATASET = "Fe"
-    assert str(tmp_path / "Fe_CLPES_corewf") in parameters.output_files(str(tmp_path))
 
 
 def test_manifest_rejects_duplicate_output_declarations(tmp_path):

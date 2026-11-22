@@ -10,15 +10,10 @@ def test_bsf_aliases_share_native_output_manifest(task, tmp_path):
     parameters = InputParameters.create(task)
     parameters.CONTROL.DATASET = "manifest_test"
 
-    names = {
-        os.path.basename(os.fspath(path))
-        for path in parameters.output_files(tmp_path)
-    }
-
-    assert names == {
+    assert tuple(os.path.basename(os.fspath(path)) for path in parameters.output_files(tmp_path)) == (
         "manifest_test_BLOCHSF.bsf",
         "manifest_test_BLOCHSF_spol.bsf",
-    }
+    )
 
 def test_bsf_schema_access_is_distinct_from_task_creation():
     from ase2sprkkr.common.module_registry import RegistryEntryNotFound

@@ -25,10 +25,8 @@ def test_chixas_output_families(tmp_path):
     assert "manifest_test_*_GG.dat" not in names
 
 
-def test_chixas_shell_and_print_dependent_outputs(tmp_path):
-    parameters = InputParameters.create("CHIXAS")
-    parameters.CONTROL.DATASET = "manifest_test"
-    parameters.CONTROL.ADSI = ""
+
+    # The same task adds shells and diagnostics when configured for 3D output.
     parameters.TASK.CL = "3D"
     parameters.TASK.PRINT = 1
     names = _names(parameters, tmp_path)

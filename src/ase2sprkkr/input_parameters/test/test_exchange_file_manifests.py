@@ -30,27 +30,6 @@ def test_jalf_and_jorb_native_names(tmp_path):
     assert f"{DATASET}0_JORB.dat" not in jorb
 
 
-def test_jxc_frel_outputs(tmp_path):
-    _, names = _names("JXC", tmp_path)
-    assert {
-        f"{DATASET}_XCPLTEN_Jij.dat",
-        f"{DATASET}_XCPLTEN_Jij_*.agr",
-        f"{DATASET}_XCPLTEN_Dij.dat",
-        f"{DATASET}_XCPLTEN_Dij_[xyz]_*.agr",
-    } <= names
-
-
-def test_jxc_sp_srel_outputs(tmp_path):
-    parameters, _ = _names("JXC", tmp_path)
-    parameters.MODE.MODE = "SP-SREL"
-    names = {
-        os.path.basename(os.fspath(path))
-        for path in parameters.output_files(tmp_path)
-    }
-    assert {f"{DATASET}_J_ij.dat", f"{DATASET}_Jij_*.agr"} <= names
-    assert f"{DATASET}_XCPLTEN_Jij.dat" not in names
-
-
 def test_dmi_outputs(tmp_path):
     _, names = _names("DMI", tmp_path)
     assert {
