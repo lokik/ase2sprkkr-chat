@@ -2,11 +2,24 @@
 
 import asyncio
 import os
+from enum import Enum
 from ..common.decorators import cached_property, maybeclassmethod
 from ..common.file_utils import FilePath, filename_from_file
 from ..potentials.potentials import Potential
 from ..input_parameters import input_parameters as input_parameters
 from .result_options import create_files_section
+
+
+class OutputMatch(Enum):
+    """Strength of a reader's legacy fingerprint (when TASK is not explicit).
+
+    Readers may also return bool for backward compatibility: True means YES,
+    False means NO. MAYBE is a weaker hint used only when no YES is found.
+    """
+
+    NO = "no"
+    MAYBE = "maybe"
+    YES = "yes"
 
 
 class TaskResult:
@@ -494,7 +507,7 @@ class KkrOutputReader:
 
     @classmethod
     def matches_output(cls, output):
-        """Return whether legacy output without a task marker belongs to this reader."""
+        """Return True/False or OutputMatch.MAYBE for a legacy stdout fingerprint."""
         return False
 
     def create_result(self, output_file, input_file=None):
