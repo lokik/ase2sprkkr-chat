@@ -268,16 +268,21 @@ def test_parsed_embedded_scf_result_updates_in_memory_convergence_only(
         result.iterations = [{"converged": lambda: converged}]
 
     read_potential = result._read_potential
+    raw_potentials = []
 
     def read_with_atoms(filename):
         cluster = read_potential(filename)
         assert cluster.atoms.info["sprkkr_embedding_scf_status"] == "ITERATING"
+        raw_potentials.append(cluster)
         return cluster
 
     monkeypatch.setattr(result, "_read_potential", read_with_atoms)
     cluster = result.potential
     assert result.potential is cluster
     assert cluster.SCF_INFO.SCFSTATUS() == expected_status
+    # Even standalone ScfResult must leave its raw parsed CLUPOT untouched.
+    assert raw_potentials[0].SCF_INFO.SCFSTATUS() == "ITERATING"
+    assert raw_potentials[0].atoms.info["sprkkr_embedding_scf_status"] == "ITERATING"
     assert cluster.atoms.info["sprkkr_embedding_scf_status"] == expected_status
     assert cluster.host.SCF_INFO.SCFSTATUS() == "CONVERGED"
     assert (tmp_path / "cluster.pot_new").read_bytes() == (
