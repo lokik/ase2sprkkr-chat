@@ -165,19 +165,22 @@ def test_loader_input_cache_parses_once_and_returns_detached_parameters(
     a.CONTROL.DATASET = "changed"
     assert b.CONTROL.DATASET() == "shared"
 
-    # A changed file must never inherit the earlier parsed input.
+    # Reusing the same loader deliberately reuses FileOperations observations.
+    # A changed file need not invalidate an existing cache automatically.
     parameters.CONTROL.DATASET = "replaced-by-new-content"
     source.write_text(parameters.to_string(validate=False))
     third = TaskResult(None, None, str(tmp_path), output_file="three.out", task_name="ARPES")
     loader.associate_result(third)
-    assert third.input_parameters.CONTROL.DATASET() == "replaced-by-new-content"
-    assert len(calls) == 2
+    assert third.input_parameters.CONTROL.DATASET() == "shared"
+    assert third.input_parameters is not a
+    assert third.input_parameters is not b
+    assert len(calls) == 1
 
-    # An explicit re-import starts a fresh batch, not a retained cache.
+    # A fresh loader owns fresh observations and reads the updated file.
     fresh = TaskResult(None, None, str(tmp_path), output_file="four.out", task_name="ARPES")
     ResultLoader().associate_result(fresh)
     assert fresh.input_parameters.CONTROL.DATASET() == "replaced-by-new-content"
-    assert len(calls) == 3
+    assert len(calls) == 2
 
 
 def test_loader_caches_invalid_guessed_input_but_explicit_error_propagates(
