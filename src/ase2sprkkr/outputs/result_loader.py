@@ -9,9 +9,9 @@ from copy import deepcopy
 from dataclasses import dataclass
 import os
 from pathlib import Path
+from typing import Iterable
 
 import pyparsing as pp
-from typing import Iterable
 
 from kkrunner.files import FileState, FileVersion
 
@@ -194,7 +194,10 @@ class ResultLoader:
                 if name in candidates:
                     paired = name
                     break
-            candidates = (paired,) if paired else (candidates if len(candidates) == 1 else ())
+            if paired:
+                candidates = (paired,)
+            elif len(candidates) != 1:
+                candidates = ()
         elif len(candidates) != 1:
             candidates = ()
         for filename in candidates:
@@ -204,7 +207,8 @@ class ResultLoader:
                 parameters = self.inputs.parse(filename)
             except (OSError, UnicodeError, ValueError, pp.ParseBaseException, DataValidityError):
                 continue
-            if result._task_name is not None and parameters.task_name != result._task_name.upper():
+            if (result._task_name is not None
+                    and parameters.task_name != result._task_name.upper()):
                 continue
             result.input_parameters = parameters
             result.files.add_file("input", filename)
