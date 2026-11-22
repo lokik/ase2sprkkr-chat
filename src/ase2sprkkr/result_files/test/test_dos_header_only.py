@@ -1,5 +1,7 @@
 """Regression for header-only DOS produced alongside SPLEED runs."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -39,3 +41,15 @@ def test_header_only_dos_has_clear_plot_error(tmp_path):
     with pytest.raises(ValueError, match="no numerical DOS data"):
         result.plot(filename=str(tmp_path / "invalid_dos.png"), show=False)
 
+
+
+def test_multitype_dos_plot_accepts_all_orbital_columns(tmp_path):
+    source = Path(__file__).resolve().parent.parent / "examples" / "TaAs_DOS.dos"
+    result = ResultFile.from_file(source, try_only="dos", unknown=False)
+    # 2 energy columns + 3 atom types * 3 orbitals * 2 spins.
+    assert result.RAW_DATA().shape == (1200, 20)
+
+    destination = tmp_path / "dos.png"
+    result.plot(filename=str(destination), show=False, dpi=72)
+    assert destination.is_file()
+    assert destination.stat().st_size > 0
