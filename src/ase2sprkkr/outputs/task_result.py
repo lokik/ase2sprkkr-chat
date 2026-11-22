@@ -227,7 +227,9 @@ class TaskResult:
 
     @cached_property
     def potential_filename(self):
-        """Input (or newly produced) periodic/cluster potential file name"""
+        """Potential representing this result, not necessarily its input."""
+        if self.produces_potential and "converged" in self.files:
+            return self.path_to("converged")
         parameters = self.input_parameters
         potfil = parameters.CONTROL.POTFIL() if parameters is not None else None
         if self.is_embedded:
@@ -242,20 +244,42 @@ class TaskResult:
             potfil = os.path.join(self.directory, potfil)
         return potfil
 
+    def _load_result_potential(self, loader=None):
+        """Read the potential belonging to this result, optionally using a cache.
+
+        The result is responsible for choosing its own native files and
+        verifying their provenance. A ResultLoader merely shares unmodified
+        parsed file data; it does not interpret the calculation.
+        """
+        filename = self.potential_filename
+        self.require_current_file(filename)
+        if loader is None:
+            return self._read_potential(filename)
+
+        if self.is_embedded:
+            host = self.host_potential_filename
+            self.require_current_file(host)
+            potential = loader.potential(filename, host=host)
+            self.require_current_file(host)
+        else:
+            potential = loader.potential(filename)
+        self.require_current_file(filename)
+        return potential
+
     @cached_property
     def potential(self):
-        """The new (output) potential - that contains the converged charge density etc."""
-        self.require_current_file(self.potential_filename)
-        return self._read_potential(self.potential_filename)
+        """Scientifically interpreted potential belonging to this result."""
+        return self._load_result_potential()
 
-    def interpret_potential(self, potential):
-        """Interpret a parsed potential in the context of this result.
+    def get_atoms(self, *, loader=None):
+        """Return this result's atoms, optionally sharing raw parses via loader.
 
-        This is deliberately separate from file parsing: ResultLoader may share
-        an unmodified potential between multiple outputs, while individual
-        results may need a different scientific interpretation of its state.
+        Passing a loader changes performance, never scientific interpretation.
+        The loader is not retained on the result.
         """
-        return potential
+        if loader is None:
+            return self.potential.atoms
+        return self._load_result_potential(loader).atoms
 
     @property
     def any_potential(self):
@@ -369,7 +393,7 @@ class TaskResult:
 
     @property
     def atoms(self):
-        return self.potential.atoms
+        return self.get_atoms()
 
     @property
     def output_values(self):
