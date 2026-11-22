@@ -222,6 +222,7 @@ def test_unordered_scanner_recognizes_interleaved_selectors():
     ("TASKER JXC\nCONTROL JXC", ()),
     ("CONTROL TEST=JXC\n  DMI", ()),
     ("TASK " + " " * 80 + "DMI", ()),
+    ("TASK\t" + " " * 70 + "JXC", ("JXC",)),
 ))
 def test_scanner_ignores_values_comments_and_other_sections(source, expected):
     assert _scan_task_selectors(source, {"DMI", "JXC"}) == expected
