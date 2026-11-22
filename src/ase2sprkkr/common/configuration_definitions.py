@@ -122,6 +122,16 @@ class BaseDefinition:
         self.container = None
         self._tree_state = _TreeState.UNFINALIZED
 
+    def __getstate__(self):
+        """Exclude compiled pyparsing grammars from serialized definitions.
+
+        Grammars contain local parse-action closures that cannot be pickled.
+        They are derived from the definition and rebuilt lazily after loading.
+        """
+        state = self.__dict__.copy()
+        state.pop("_grammar_cache", None)
+        return state
+
     is_repeated = Repeated.NO
     """ By default, the configuration items are not repeated """
 
