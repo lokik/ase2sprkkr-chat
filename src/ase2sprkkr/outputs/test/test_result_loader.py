@@ -409,3 +409,28 @@ def test_retained_result_does_not_keep_entire_loader_alive(tmp_path, monkeypatch
     # The parsed parameters are detached and remain usable without a loader.
     inp.write_text("overwritten after import")
     assert result.input_parameters.CONTROL.DATASET() == "original"
+
+
+def test_standalone_from_file_uses_a_new_loader_each_time(tmp_path, monkeypatch):
+    from ase2sprkkr import InputParameters
+
+    output = _output(tmp_path / "dos.out", scf=False)
+    native_input = tmp_path / "dos.inp"
+    parameters = InputParameters.create("DOS")
+    parameters.CONTROL.DATASET = "fresh"
+    native_input.write_text(parameters.to_string(validate=False))
+
+    monkeypatch.setattr(
+        TaskResult, "_parse_file",
+        classmethod(lambda _cls, path: _DOS(
+            None, None, tmp_path, output_file=path, task_name="DOS"
+        )),
+    )
+    first = TaskResult.from_file(output)
+    second = TaskResult.from_file(output)
+
+    assert first is not second
+    assert first.input_parameters is not second.input_parameters
+    assert first.input_parameters_file == second.input_parameters_file == str(native_input)
+    assert first.input_parameters.CONTROL.DATASET() == "fresh"
+    assert "_input_cache" not in vars(first)
