@@ -213,6 +213,8 @@ def test_unordered_scanner_recognizes_interleaved_selectors():
     ("TASK SELECT=[DMI,JXC] DMI", ("DMI",)),
     ("TASK SELECT=(DMI JXC) DMI", ("DMI",)),
     ("TASK SELECT=JXC DMI", ("DMI",)),
+    ("TASK TUT-TASK=ARPES DMI", ("DMI",)),
+    ("TASK TUT-TASK = ARPES DMI", ("DMI",)),
     ("TASK SELECT = JXC", ()),
     ("TASK DMI=1 JXC", ("JXC",)),
     ("TASK JXC # DMI", ("JXC",)),
