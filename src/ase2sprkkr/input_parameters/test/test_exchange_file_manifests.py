@@ -30,6 +30,26 @@ def test_jalf_and_jorb_native_names(tmp_path):
     assert f"{DATASET}0_JORB.dat" not in jorb
 
 
+def test_jxc_outputs_without_adsi_follow_relativistic_mode(tmp_path):
+    # An explicitly empty ADSI produces different paths from the default
+    # JXC names. Keep this independent contract while reusing the setup.
+    parameters, names = _names("JXC", tmp_path)
+    assert {
+        f"{DATASET}_XCPLTEN_Jij.dat",
+        f"{DATASET}_XCPLTEN_Jij_*.agr",
+        f"{DATASET}_XCPLTEN_Dij.dat",
+        f"{DATASET}_XCPLTEN_Dij_[xyz]_*.agr",
+    } <= names
+
+    parameters.MODE.MODE = "SP-SREL"
+    names = {
+        os.path.basename(os.fspath(path))
+        for path in parameters.output_files(tmp_path)
+    }
+    assert {f"{DATASET}_J_ij.dat", f"{DATASET}_Jij_*.agr"} <= names
+    assert f"{DATASET}_XCPLTEN_Jij.dat" not in names
+
+
 def test_dmi_outputs(tmp_path):
     _, names = _names("DMI", tmp_path)
     assert {
