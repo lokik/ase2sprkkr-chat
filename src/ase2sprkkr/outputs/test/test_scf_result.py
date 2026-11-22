@@ -296,7 +296,6 @@ def test_scf_result_does_not_reinterpret_periodic_status(tmp_path):
     assert result.potential.SCF_INFO.SCFSTATUS() == "ITR-BULK"
 
 
-
 @pytest.mark.parametrize(
     ("converged", "return_code", "expected"),
     [
