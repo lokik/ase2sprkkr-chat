@@ -20,6 +20,22 @@ from ..common.warnings import ValidationResult
 from ..result_files import ResultFile, read_plottable_file
 
 
+def _open_system_path(path):
+    """Open a local path with the OS default application, without blocking."""
+    path = os.fspath(path)
+    system = platform.system()
+    if system == "Windows":
+        os.startfile(path)
+    else:
+        command = ["open" if system == "Darwin" else "xdg-open", path]
+        subprocess.Popen(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+
 class OutputOption(Option):
     @property
     def display_name(self):
@@ -244,10 +260,9 @@ class OutputFileOption(OutputOption):
         # Do not offer file operations before the actual file is accessible.
         if not os.path.isfile(self.path()):
             return ()
-        owner = getattr(self._container, "result", None)
         if not self.is_current():
             return ()
-        out = ["open", "open_directory", "save"]
+        out = ["open", "open_directory", "copy_to"]
         if self.file_type == "agr":
             out.append("plot")
         elif self.file_type:
@@ -272,8 +287,8 @@ class OutputFileOption(OutputOption):
                 return functools.partial(self._run_file_action, name)
         raise AttributeError(f"{type(self).__name__!s} has no attribute {name!r}")
 
-    def _run_file_action(self, action, parent=None, **kwargs):
-        return getattr(self.parsed_file(), action)(**kwargs)
+    def _run_file_action(self, action, *args, **kwargs):
+        return getattr(self.parsed_file(), action)(*args, **kwargs)
 
     def parsed_file(self, potential=None):
         """Parse the file, using its task result as context when available."""
@@ -286,27 +301,22 @@ class OutputFileOption(OutputOption):
             potential=potential,
         )
 
-    def export_nexus(self, parent=None):
-        """Export an eligible ARPES spectrum using the canonical NeXus writer."""
-        import h5py  # noqa: F401 - check optional dependency before file dialog
-        from PyQt6.QtWidgets import QFileDialog
+    def export_nexus(self, destination, **kwargs):
+        """Export an ARPES spectrum to a caller-selected NeXus file.
 
+        The parsed result owns the scientific writer; callers (including GUIs)
+        choose the destination and handle presentation of errors.
+        """
+        self._checked_path()
         spectrum = self.parsed_file()
         exporter = getattr(spectrum, "to_nexus", None)
         if not callable(exporter):
             raise ValueError(f"NeXus export is unavailable for {self.path()}")
+        return exporter(destination, **kwargs)
 
-        proposed = os.path.splitext(os.fspath(self.path()))[0] + ".nxs"
-        filename, _ = QFileDialog.getSaveFileName(
-            parent, "Export ARPES Spectrum to NeXus", proposed,
-            "NeXus files (*.nxs);;All files (*)",
-        )
-        if not filename:
-            return None
-        return exporter(filename)
-
-    def plot(self, parent=None):
-        self.parsed_file().plot()
+    def plot(self, *args, **kwargs):
+        """Plot scientific data, forwarding options to the native plotter."""
+        return self.parsed_file().plot(*args, **kwargs)
 
     def _checked_path(self):
         path = self.path()
@@ -320,36 +330,20 @@ class OutputFileOption(OutputOption):
             )
         return path
 
-    def save(self, parent=None):
-        self._checked_path()
-        from PyQt6.QtWidgets import QFileDialog
+    def copy_to(self, destination):
+        """Copy an existing result file after verifying its historical identity."""
+        return shutil.copy2(self._checked_path(), destination)
 
-        extension = (
-            self.definition().extension
-            if self.file_type and self.file_type != "agr"
-            else os.path.splitext(self.path())[1].lstrip(".") or "*"
-        )
-        filename, _ = QFileDialog.getSaveFileName(parent, "Save File", "", f"(*.{extension});;All Files (*)")
-        if filename:
-            shutil.copy(self._checked_path(), filename)
+    def open(self):
+        """Open this verified result file in its default external application."""
+        _open_system_path(self._checked_path())
 
-    def open(self, parent=None):
-        path = self._checked_path()
-        if platform.system() == "Windows":
-            os.startfile(path)
-        elif platform.system() == "Darwin":
-            subprocess.run(["open", path])
-        else:
-            subprocess.run(["xdg-open", path])
-
-    def open_directory(self, parent=None):
+    def open_directory(self):
+        """Open the containing folder, even if the historical file has changed."""
         directory = os.path.dirname(os.path.abspath(self.path()))
-        if platform.system() == "Windows":
-            subprocess.run(["explorer", directory])
-        elif platform.system() == "Darwin":
-            subprocess.run(["open", directory])
-        else:
-            subprocess.run(["xdg-open", directory])
+        if not os.path.isdir(directory):
+            raise FileNotFoundError(directory)
+        _open_system_path(directory)
 
 
 class ResultFileDefinition(ValueDefinition):
