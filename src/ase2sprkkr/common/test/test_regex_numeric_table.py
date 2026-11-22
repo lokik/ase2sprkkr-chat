@@ -56,9 +56,7 @@ def test_fast_table_accepts_fortran_d_exponents():
 
 
 def test_fast_table_preserves_group_shape_and_separator():
-    sample = SPHERICAL + "
-" + "
-".join(
+    sample = SPHERICAL + "\n" + "\n".join(
         line.replace(" 1 ", " 2 ", 1) for line in SPHERICAL.splitlines()
     )
     with generate_grammar():
