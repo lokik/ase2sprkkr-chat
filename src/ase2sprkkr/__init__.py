@@ -24,7 +24,7 @@ __all__ = (
     "ResultFile",
     "TaskResult",
     "ResultLoader",
-    "FileAssociation",
+    "FileAttribution",
     "__version__",
     "config",
 )
@@ -42,7 +42,7 @@ _LAZY_EXPORTS = {
     "ResultFile": (".result_files", "ResultFile"),
     "TaskResult": (".outputs.task_result", "TaskResult"),
     "ResultLoader": (".outputs.result_loader", "ResultLoader"),
-    "FileAssociation": (".outputs.result_options", "FileAssociation"),
+    "FileAttribution": (".outputs.result_options", "FileAttribution"),
 }
 
 
