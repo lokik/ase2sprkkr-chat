@@ -31,7 +31,8 @@ def _open_system_path(path):
         subprocess.Popen(
             command,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            # Keep stderr connected to the shell: xdg-open/open may report
+            # asynchronous failures after Popen has returned.
             start_new_session=True,
         )
 
@@ -256,13 +257,19 @@ class OutputFileOption(OutputOption):
         return os.path.basename(self.path())
 
     def actions(self):
-        # Parsed paths can describe missing optional or mandatory outputs.
-        # Do not offer file operations before the actual file is accessible.
-        if not os.path.isfile(self.path()):
-            return ()
-        if not self.is_current():
-            return ()
-        out = ["open", "open_directory", "copy_to"]
+        # Navigating to a calculation's directory remains useful even when
+        # its historical file is missing or has been overwritten.
+        path = self.path()
+        directory_action = (
+            ["open_directory"]
+            if os.path.isdir(os.path.dirname(os.path.abspath(path)))
+            else []
+        )
+        # Opening, copying and scientific processing must only use verified
+        # current bytes; directory navigation does not read those bytes.
+        if not os.path.isfile(path) or not self.is_current():
+            return tuple(directory_action)
+        out = ["open", *directory_action, "copy_to"]
         if self.file_type == "agr":
             out.append("plot")
         elif self.file_type:
@@ -275,7 +282,11 @@ class OutputFileOption(OutputOption):
                 # conversion for SPLEED/BAND/AIPES calculations.
                 if action == "export_nexus" and self.file_type == "spc":
                     owner = getattr(self._container, "result", None)
-                    if str(getattr(owner, "task_name", "")).upper() != "ARPES":
+                    try:
+                        task = owner.task_name if owner is not None else None
+                    except (AttributeError, ValueError):
+                        task = None
+                    if str(task).upper() != "ARPES":
                         continue
                 out.append(action)
         return tuple(out)
@@ -312,6 +323,18 @@ class OutputFileOption(OutputOption):
         exporter = getattr(spectrum, "to_nexus", None)
         if not callable(exporter):
             raise ValueError(f"NeXus export is unavailable for {self.path()}")
+        owner = getattr(self._container, "result", None)
+        if owner is not None:
+            # An associated TaskResult is authoritative: never rediscover a
+            # possibly unrelated neighboring .inp from the SPC filename.
+            kwargs.setdefault("discover_input", False)
+            if "input_parameters" not in kwargs and "input_file" not in kwargs:
+                if getattr(owner, "_input_parameters", None) is not None:
+                    kwargs["input_parameters"] = owner.input_parameters
+                else:
+                    recorded_input = owner.input_parameters_file
+                    if recorded_input is not None:
+                        kwargs["input_file"] = recorded_input
         return exporter(destination, **kwargs)
 
     def plot(self, *args, **kwargs):

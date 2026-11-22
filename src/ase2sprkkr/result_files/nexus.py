@@ -120,8 +120,8 @@ def _companion_input_file(spc):
     return found.pop() if len(found) == 1 else None
 
 
-def _resolve_input(spc, input_parameters, input_file):
-    """Explicit filename > supplied parameters > unambiguous companion file."""
+def _resolve_input(spc, input_parameters, input_file, *, discover_input=True):
+    """Explicit filename > supplied parameters > optional companion discovery."""
     explicit = input_file is not None
     if explicit:
         candidate = Path(input_file)
@@ -130,7 +130,7 @@ def _resolve_input(spc, input_parameters, input_file):
     elif input_parameters is not None:
         return input_parameters, None, input_parameters.to_string(validate=False)
     else:
-        candidate = _companion_input_file(spc)
+        candidate = _companion_input_file(spc) if discover_input else None
 
     if candidate is None:
         warnings.warn(
@@ -489,10 +489,11 @@ def _write_nexus(path, filename, spc, parameters, input_path, input_text, metada
 
 
 def write_arpes_nexus(spc, filename, *, input_parameters=None,
-                      input_file=None, metadata=None):
+                      input_file=None, metadata=None, discover_input=True):
     """Export native SPC without inferring unavailable instrument metadata.
 
-    An explicit input_file takes precedence; missing input issues UserWarning.
+    An explicit input_file takes precedence. Companion discovery can be
+    disabled when an owning TaskResult has no verified input.
     Write to a temporary path and replace the target only on success.
     """
     try:
@@ -501,7 +502,7 @@ def write_arpes_nexus(spc, filename, *, input_parameters=None,
         raise ImportError("ARPES NeXus export needs h5py (ase2sprkkr[nexus])") from exc
 
     parameters, source_path, input_text = _resolve_input(
-        spc, input_parameters, input_file
+        spc, input_parameters, input_file, discover_input=discover_input,
     )
     target = Path(filename)
     temporary = None
