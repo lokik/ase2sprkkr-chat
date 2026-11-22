@@ -52,3 +52,11 @@ SPEC_OUTPUT_FILES = (
     # no result for this task: reserve/clear its path, never collect it.
     TaskFile("{DATASET_ADSI}.dos", collect=False),
 )
+
+# User-facing spectra and auxiliary native outputs share the output manifest,
+# but only the former produce end-of-run result tabs.
+SPEC_RESULT_FILES = (data_spc, data_pol1_spc, data_pol2_spc)
+SPEC_AUX_OUTPUT_FILES = (
+    "{DATASET_ADSI}_SPEC.out",
+    TaskFile("{DATASET_ADSI}.dos", collect=False),
+)

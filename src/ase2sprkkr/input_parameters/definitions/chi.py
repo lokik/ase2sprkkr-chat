@@ -28,7 +28,7 @@ def _validate_chi(p, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class CHIInputParametersDefinition(_BaseInputParametersDefinition):
-    _task_definition = TaskDefinition("CHI", supports={"3d", "2d"}, experimental=True, executable="kkrchi", mpi=False, output_files=(
+    _task_definition = TaskDefinition("CHI", supports={"3d", "2d"}, experimental=True, executable="kkrchi", mpi=False, result_files=(
             "{DATASET_ADSI}*_dens.agr",
             "{DATASET_ADSI}*_chifmag.agr",
             "{DATASET_ADSI}_*_GAMMA-OP.dat",

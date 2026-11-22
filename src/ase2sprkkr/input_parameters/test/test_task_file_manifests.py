@@ -249,3 +249,36 @@ def test_embedded_jxc_requires_frel_in_current_native_audit():
     parameters.MODE.MODE = "SP-SREL"
     with pytest.raises(DataValidityError, match="Embedded JXC/DMI currently requires FREL"):
         parameters.validate("save")
+
+def test_user_facing_result_files_are_also_collected_outputs(tmp_path):
+    directory = str(tmp_path)
+    for task in ("DOS", "BSFEK", "BSFKK", "XAS", "JXC", "DMI", "GILBERT", "ARPES", "AIPES", "BAND", "CLPES", "SPLEED"):
+        parameters = InputParameters.create(task)
+        parameters.CONTROL.DATASET = "Fe"
+        results = parameters.result_files(directory)
+        outputs = parameters.output_files(directory)
+        assert results, task
+        assert set(map(str, results)) <= set(map(str, outputs)), task
+        if task in ("ARPES", "AIPES", "BAND", "CLPES", "SPLEED"):
+            assert all(str(file).endswith(".spc") for file in results)
+
+
+def test_scf_potential_is_output_but_not_a_scientific_result(tmp_path):
+    p = InputParameters.create("SCF")
+    p.CONTROL.POTFIL = "Fe.pot"
+    outputs = p.output_files(str(tmp_path))
+    assert str(tmp_path / "Fe.pot_new") in set(map(str, outputs))
+    assert p.result_files(str(tmp_path)) == ()
+
+
+def test_spec_result_declarations_obey_polarization(tmp_path):
+    parameters = InputParameters.create("ARPES")
+    parameters.CONTROL.DATASET = "Fe"
+    assert tuple(map(str, parameters.result_files(str(tmp_path)))) == (
+        str(tmp_path / "Fe_ARPES_data.spc"),
+    )
+    parameters.SPEC_PH.NPOL = 0
+    assert tuple(map(str, parameters.result_files(str(tmp_path)))) == (
+        str(tmp_path / "Fe_ARPES_data_pol1.spc"),
+        str(tmp_path / "Fe_ARPES_data_pol2.spc"),
+    )

@@ -106,6 +106,7 @@ class TaskDefinition:
     output_reader_name: Optional[str]
     input_files: Tuple[TaskFile, ...]
     output_files: Tuple[TaskFile, ...]
+    result_files: Tuple[TaskFile, ...]
     cache_files: Tuple[TaskFile, ...]
 
     def __init__(
@@ -121,6 +122,7 @@ class TaskDefinition:
         output_reader: Optional[str] = None,
         input_files: Iterable[_FileTemplate] = (),
         output_files: Iterable[_FileTemplate] = (),
+        result_files: Iterable[_FileTemplate] = (),
         cache_files: Iterable[_FileTemplate] = (),
     ) -> None:
         schema_name = _normalize_identifier(
@@ -168,6 +170,7 @@ class TaskDefinition:
         for kind, values in (
             ("input", input_files),
             ("output", output_files),
+            ("result", result_files),
             ("cache", cache_files),
         ):
             object.__setattr__(
@@ -455,7 +458,12 @@ class InputParametersRegistry(ModuleRegistry):
             value if isinstance(value, TaskFile) else TaskFile(value)
             for value in schema_files
         )
-        return (*declared, *schema_files)
+        files = (*declared, *schema_files)
+        if kind == "output":
+            # Scientific results remain ordinary collected output files.
+            # The separate 'result' role is only presentation metadata.
+            return (*files, *self.files_for_task(task, parameters, directory, "result"))
+        return files
 
 
 class _ExtraTaskRegistry(ModuleRegistry):

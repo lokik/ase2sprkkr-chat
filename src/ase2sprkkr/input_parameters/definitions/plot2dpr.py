@@ -38,7 +38,7 @@ def _validate_plot2dpr(parameters, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class PLOT2DPRInputParametersDefinition(_BaseInputParametersDefinition):
-    _task_definition = TaskDefinition("PLOT2DPR", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=(
+    _task_definition = TaskDefinition("PLOT2DPR", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, result_files=(
             "PLY-V-ASA-*.ply",
             "POT-ASA-LINES.ply",
             "PLY-V-FP-*.ply",

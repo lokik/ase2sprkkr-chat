@@ -8,7 +8,7 @@ from ..input_parameters_definitions import InputParametersDefinition as _BaseInp
 class PLOTSFNInputParametersDefinition(_BaseInputParametersDefinition):
     _task_definition = TaskDefinition(
         "PLOTSFN", supports={"3d", "2d"}, experimental=True, executable="kkrgen",
-        mpi=False, output_files=_OUTPUTS["PLOTSFN"],
+        mpi=False, result_files=_OUTPUTS["PLOTSFN"],
     )
 
     @classmethod

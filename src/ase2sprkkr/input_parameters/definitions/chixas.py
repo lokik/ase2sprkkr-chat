@@ -14,8 +14,8 @@ class ChixasInputParametersDefinition(InputParameters):
 
     _task_definition = TaskDefinition("CHIXAS", supports={"3d", "2d"}, experimental=True, executable="kkrchi", mpi=False)
 
-    def output_files(self, parameters, directory):
-        files = list(super().output_files(parameters, directory))
+    def result_files(self, parameters, directory):
+        files = list(super().result_files(parameters, directory))
         dataset = dataset_adsi(parameters)
         shell = xray_shell_label(parameters.TASK.CL())
         prefix = f"{dataset}_*"
@@ -29,11 +29,15 @@ class ChixasInputParametersDefinition(InputParameters):
         files.extend(resolve_file(directory, f"{spectrum}_{kind}.rat")
                      for kind in ("SSZ", "SSX", "SST", "LLZ", "LLX", "LLT", "TOT"))
 
+        return tuple(files)
+
+    def output_files(self, parameters, directory):
+        files = list(super().output_files(parameters, directory))
         print_level = parameters.TASK.PRINT()
         if print_level is None:
             print_level = parameters.CONTROL.PRINT()
         if print_level >= 1:
-            files.append(resolve_file(directory, f"{dataset}_*_GG.dat"))
+            files.append(resolve_file(directory, f"{dataset_adsi(parameters)}_*_GG.dat"))
         return tuple(files)
 
 

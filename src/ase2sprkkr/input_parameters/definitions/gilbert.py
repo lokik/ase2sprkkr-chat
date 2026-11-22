@@ -11,7 +11,7 @@ from ..task_definition import TaskDefinition
 
 
 class GilbertInputParametersDefinition(TauCacheInputParametersDefinition):
-    _task_definition = TaskDefinition("GILBERT", supports={"3d", "2d"}, executable="kkrchi", output_files=(
+    _task_definition = TaskDefinition("GILBERT", supports={"3d", "2d"}, executable="kkrchi", result_files=(
             "{DATASET_ADSI}alfa_x.dat",
             "{DATASET_ADSI}alfa_T.dat",
             "{DATASET_ADSI}_alfa_T.agr",

@@ -13,8 +13,8 @@ class CLXPSInputParametersDefinition(InputParameters):
 
     _task_definition = TaskDefinition("CLXPS", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
 
-    def output_files(self, parameters, directory):
-        files = list(super().output_files(parameters, directory))
+    def result_files(self, parameters, directory):
+        files = list(super().result_files(parameters, directory))
         name = core_level_output_name(
             parameters, "xps", type_separator="", shell_separator="."
         )

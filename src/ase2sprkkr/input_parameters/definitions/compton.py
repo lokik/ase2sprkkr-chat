@@ -16,8 +16,8 @@ class ComptonInputParametersDefinition(RequiredTauInputParametersDefinition):
 
     _task_definition = TaskDefinition("COMPTON", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=True)
 
-    def output_files(self, parameters, directory):
-        files = list(super().output_files(parameters, directory))
+    def result_files(self, parameters, directory):
+        files = list(super().result_files(parameters, directory))
         dataset = dataset_adsi(parameters)
         task = parameters.TASK
         if task.MD2D() or task.EMD2D():

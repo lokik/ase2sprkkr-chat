@@ -450,6 +450,14 @@ class InputParametersDefinition(ConfigurationFileDefinition):
         """Return schema-specific output files."""
         return ()
 
+    def result_files(self, parameters, directory):
+        """Return scientifically meaningful outputs for user-facing results.
+
+        Also included by output_files() through the task registry; these
+        declarations do not change execution/collection semantics.
+        """
+        return ()
+
     def cache_files(self, parameters, directory):
         """Return schema-specific optional cache files."""
         return ()

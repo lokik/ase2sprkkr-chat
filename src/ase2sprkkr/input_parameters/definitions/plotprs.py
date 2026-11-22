@@ -23,7 +23,7 @@ def _validate_plotprs(parameters, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class PLOTPRSInputParametersDefinition(_BaseInputParametersDefinition):
-    _task_definition = TaskDefinition("PLOTPRS", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=(
+    _task_definition = TaskDefinition("PLOTPRS", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, result_files=(
             "{DATASET}_V_*.agr",
             "{DATASET}_VNS_*.agr",
             "{DATASET}_RHO_*.agr",

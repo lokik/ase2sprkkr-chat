@@ -16,8 +16,8 @@ class PosaniInputParametersDefinition(RequiredTauInputParametersDefinition):
 
     _task_definition = TaskDefinition("POSANI", supports={"3d"}, experimental=True, executable="kkrgen", mpi=True, input_files=("{DATASET_ADSI}_pos_dat.pan",))
 
-    def output_files(self, parameters, directory):
-        files = list(super().output_files(parameters, directory))
+    def result_files(self, parameters, directory):
+        files = list(super().result_files(parameters, directory))
         dataset = dataset_adsi(parameters)
         task = parameters.TASK
         if task.MD2D() or task.EMD2D():

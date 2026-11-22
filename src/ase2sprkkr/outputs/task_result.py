@@ -336,6 +336,37 @@ class TaskResult:
         """Files and other values exposed as the public result summary."""
         return self._ordered_output_files()
 
+    @property
+    def result_values(self):
+        """Scientific outputs only, selected by the task's result declarations.
+
+        Auxiliary outputs (such as SCF's *_new potential), input/output logs
+        and caches stay available through output_values and the file manifest,
+        but are not standalone end-of-run result tabs.
+        """
+        from fnmatch import fnmatchcase
+        from .file_provenance import task_file_declarations
+
+        _params, declarations = task_file_declarations(self, kinds=("result",))
+        patterns = tuple(
+            os.path.normcase(os.path.abspath(os.fspath(declaration)))
+            for _kind, declaration in declarations if declaration.collect
+        )
+        if not patterns:
+            return {}
+        return {
+            name: value for name, value in self.output_values.items()
+            if self._matches_result_pattern(value, patterns, fnmatchcase)
+        }
+
+    @staticmethod
+    def _matches_result_pattern(value, patterns, fnmatchcase):
+        try:
+            path = os.path.normcase(os.path.abspath(os.fspath(value.path())))
+        except (AttributeError, TypeError, ValueError, OSError):
+            return False
+        return any(fnmatchcase(path, pattern) for pattern in patterns)
+
     def _ordered_output_files(self):
         """Put actual result files first; omit internal, untyped task caches."""
         from fnmatch import fnmatchcase

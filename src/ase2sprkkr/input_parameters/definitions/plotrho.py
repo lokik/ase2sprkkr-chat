@@ -8,7 +8,7 @@ from ..input_parameters_definitions import InputParametersDefinition as _BaseInp
 class PLOTRHOInputParametersDefinition(_BaseInputParametersDefinition):
     _task_definition = TaskDefinition(
         "PLOTRHO", supports=(), experimental=True, executable="kkrgen",
-        mpi=False, output_files=_OUTPUTS["PLOTRHO"],
+        mpi=False, result_files=_OUTPUTS["PLOTRHO"],
     )
 
     @classmethod

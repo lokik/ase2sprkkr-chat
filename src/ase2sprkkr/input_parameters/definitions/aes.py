@@ -16,8 +16,8 @@ class AESInputParametersDefinition(RequiredTauInputParametersDefinition):
 
     _task_definition = TaskDefinition("AES", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, cache_files=("ME", *(f"ME{i}" for i in range(1, 13))))
 
-    def output_files(self, parameters, directory):
-        files = list(super().output_files(parameters, directory))
+    def result_files(self, parameters, directory):
+        files = list(super().result_files(parameters, directory))
         name = core_level_output_name(
             parameters, "aes", type_separator="", shell_separator="."
         )

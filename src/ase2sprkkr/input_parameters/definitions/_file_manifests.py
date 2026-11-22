@@ -98,8 +98,8 @@ class NrSpectroscopyInputParametersDefinition(InputParametersDefinition):
         self.output_extension = output_extension
         self.broadened_dos = broadened_dos
 
-    def output_files(self, parameters, directory):
-        files = list(super().output_files(parameters, directory))
+    def result_files(self, parameters, directory):
+        files = list(super().result_files(parameters, directory))
         name = core_level_output_name(
             parameters, self.output_extension, type_separator=".", shell_separator="."
         )

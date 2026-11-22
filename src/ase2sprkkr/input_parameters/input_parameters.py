@@ -304,6 +304,10 @@ class InputParameters(ConfigurationFile):
     def output_files(self, directory):
         return self._task_files(directory, "output")
 
+    def result_files(self, directory):
+        """Output files that should appear as user-facing scientific results."""
+        return self._task_files(directory, "result")
+
     def cache_files(self, directory):
         return self._task_files(directory, "cache")
 

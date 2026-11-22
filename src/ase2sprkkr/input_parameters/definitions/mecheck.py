@@ -13,8 +13,8 @@ class MecheckInputParametersDefinition(InputParameters):
 
     _task_definition = TaskDefinition("MECHECK", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
 
-    def output_files(self, parameters, directory):
-        files = list(super().output_files(parameters, directory))
+    def result_files(self, parameters, directory):
+        files = list(super().result_files(parameters, directory))
         if parameters.TASK.INITIALSTATE() == "CORE" and parameters.ENERGY.NE()[0] > 1:
             # K_CALC_ME=2 disables DATASET_check_*.dat in public 9.7.
             # Only non-zero matrix elements get one of these energy scans.
