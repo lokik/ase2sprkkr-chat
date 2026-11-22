@@ -354,7 +354,7 @@ class TaskResult:
         return ResultLoader().load_file(file)
 
     @classmethod
-    def _parse_file(cls, file, *, before_complete=None):
+    def _parse_file(cls, file, *, on_files_parsed=None):
         """Parse stdout, optionally resolving inputs before finalization."""
         from .reader_registry import reader_registry
 
@@ -367,7 +367,7 @@ class TaskResult:
             os.path.dirname(filename),
             task_name=task,
         )
-        return reader.read_from_file(filename, before_complete=before_complete)
+        return reader.read_from_file(filename, on_files_parsed=on_files_parsed)
 
     @classmethod
     def from_run(cls, run, manager=None, *, allow_unparsed=False):
@@ -502,7 +502,7 @@ class KkrOutputReader:
         return result
 
     @maybeclassmethod
-    def read_from_file(self, cls, output, error=None, return_code=0, input_file=None, directory=None, *, run_record=None, before_complete=None):
+    def read_from_file(self, cls, output, error=None, return_code=0, input_file=None, directory=None, *, run_record=None, on_files_parsed=None):
         """Parse output of an already finished SPR-KKR calculation."""
         if self is None:
             self = cls(None, None, directory)
@@ -511,10 +511,14 @@ class KkrOutputReader:
             result.run_record = run_record
         output_source = output if hasattr(output, "read") else result.path_to("output")
 
-        _parsed_output, parsed_error, parsed_return_code = self.parser.read_from_file(
-            output_source, error, [result], return_code
-        )
-        if before_complete is not None:
-            before_complete(result)
+        if on_files_parsed is not None:
+            self.parser._on_files_parsed = on_files_parsed
+        try:
+            _parsed_output, parsed_error, parsed_return_code = self.parser.read_from_file(
+                output_source, error, [result], return_code
+            )
+        finally:
+            if on_files_parsed is not None:
+                del self.parser._on_files_parsed
         result.complete(parsed_error, parsed_return_code)
         return result
