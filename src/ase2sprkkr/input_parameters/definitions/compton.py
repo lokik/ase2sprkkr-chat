@@ -27,8 +27,14 @@ class ComptonInputParametersDefinition(RequiredTauInputParametersDefinition):
         else:
             files.extend(resolve_file(directory, f"{dataset}_{part}.mcp")
                          for part in ("BND", "COR", "TOT"))
-            if parameters.CONTROL.PRINT() > 0:
-                files.append(resolve_file(directory, f"{dataset}_data.mcp"))
+
+        return tuple(files)
+
+    def output_files(self, parameters, directory):
+        """Diagnostic dump for PRINT>0, not a scientific momentum-density result."""
+        files = list(super().output_files(parameters, directory))
+        if not (parameters.TASK.MD2D() or parameters.TASK.EMD2D()) and parameters.CONTROL.PRINT() > 0:
+            files.append(resolve_file(directory, f"{dataset_adsi(parameters)}_data.mcp"))
         return tuple(files)
 
 

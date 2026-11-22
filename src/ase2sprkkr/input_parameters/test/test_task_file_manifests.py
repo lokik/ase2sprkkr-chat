@@ -298,3 +298,29 @@ def test_spec_output_manifest_retains_native_order_and_collision_only_dos(tmp_pa
     assert tuple(str(f) for f in p.result_files(str(tmp_path))) == (
         str(tmp_path / "Fe_ARPES_data.spc"),
     )
+
+
+@pytest.mark.parametrize(
+    ("task", "diagnostic"),
+    [("COMPTON", "Fe_COMPTON_data.mcp"), ("POSANI", "Fe_POSANI_data.mpa")],
+)
+def test_optional_diagnostic_dump_is_not_a_user_facing_result(tmp_path, task, diagnostic):
+    p = InputParameters.create(task)
+    p.CONTROL.DATASET = "Fe"
+    p.CONTROL.PRINT = 1
+    outputs = p.output_files(str(tmp_path))
+    results = p.result_files(str(tmp_path))
+    expected = str(tmp_path / diagnostic)
+    assert expected in tuple(map(str, outputs))
+    assert expected not in tuple(map(str, results))
+
+
+def test_phagen_export_is_a_result_not_a_temporary_cache(tmp_path):
+    p = InputParameters.create("PHAGEN")
+    p.CONTROL.POTFIL = "Fe.pot"
+    expected = (
+        str(tmp_path / "Fe.pot_ex_sprkkr"),
+        str(tmp_path / "Fe.pot.only_coulomb_new"),
+    )
+    assert tuple(map(str, p.result_files(str(tmp_path)))) == expected
+    assert tuple(map(str, p.output_files(str(tmp_path)))) == expected

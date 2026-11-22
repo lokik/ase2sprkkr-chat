@@ -26,8 +26,14 @@ class PosaniInputParametersDefinition(RequiredTauInputParametersDefinition):
         else:
             files.extend(resolve_file(directory, f"{dataset}_{part}.mpa")
                          for part in ("BND", "COR", "TOT"))
-            if parameters.CONTROL.PRINT() > 0:
-                files.append(resolve_file(directory, f"{dataset}_data.mpa"))
+
+        return tuple(files)
+
+    def output_files(self, parameters, directory):
+        """Diagnostic dump for PRINT>0, not a scientific momentum-density result."""
+        files = list(super().output_files(parameters, directory))
+        if not (parameters.TASK.MD2D() or parameters.TASK.EMD2D()) and parameters.CONTROL.PRINT() > 0:
+            files.append(resolve_file(directory, f"{dataset_adsi(parameters)}_data.mpa"))
         return tuple(files)
 
 

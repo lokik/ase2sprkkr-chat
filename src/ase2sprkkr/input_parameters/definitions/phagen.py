@@ -17,8 +17,8 @@ class PhagenInputParametersDefinition(InputParametersDefinition):
         mpi=False,
     )
 
-    def output_files(self, parameters, directory):
-        files = list(super().output_files(parameters, directory))
+    def result_files(self, parameters, directory):
+        files = list(super().result_files(parameters, directory))
         potfil = parameters.CONTROL.POTFIL()
         if potfil:
             files.extend(
