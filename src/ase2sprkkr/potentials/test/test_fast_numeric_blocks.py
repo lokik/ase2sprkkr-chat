@@ -37,7 +37,7 @@ def test_native_numeric_potential_blocks_are_floating_arrays(filename):
 
     for section_name in ("POTENTIAL", "CHARGE", "MOMENTS"):
         sections = getattr(potential, section_name)
-        for section in sections:
+        for section in sections.values():
             array = section.DATA()
             assert isinstance(array, np.ndarray)
             assert np.issubdtype(array.dtype, np.floating)
