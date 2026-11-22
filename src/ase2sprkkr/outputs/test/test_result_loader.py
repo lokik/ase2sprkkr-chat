@@ -81,7 +81,7 @@ def test_tied_scf_mtimes_are_unknown(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         TaskResult, "_parse_file",
-        classmethod(lambda _cls, path, :
+        classmethod(lambda _cls, path:
                     _SCF(None, None, tmp_path, output_file=path, task_name="SCF")),
     )
     results = ResultLoader.load_directory(tmp_path).results
@@ -171,7 +171,7 @@ def test_batch_preserves_good_results_after_one_bad_file(tmp_path, monkeypatch):
     missing = tmp_path / "missing.out"
     monkeypatch.setattr(
         TaskResult, "_parse_file",
-        classmethod(lambda _cls, path, :
+        classmethod(lambda _cls, path:
                     TaskResult(None, None, tmp_path, output_file=path, task_name="DOS")),
     )
     batch = ResultLoader().load_files((missing, valid))
@@ -269,7 +269,7 @@ def test_imported_result_refuses_potential_modified_after_loading(tmp_path, monk
     output = _output(tmp_path / "scf.out")
     monkeypatch.setattr(
         TaskResult, "_parse_file",
-        classmethod(lambda _cls, path, :
+        classmethod(lambda _cls, path:
                     _SCF(None, None, tmp_path, output_file=path, task_name="SCF")),
     )
     result = ResultLoader().load_file(output)
@@ -296,7 +296,7 @@ def test_overwritten_scf_does_not_capture_wrong_potential_as_history(tmp_path, m
     os.utime(newer, ns=(2_000_000_000, 2_000_000_000))
     monkeypatch.setattr(
         TaskResult, "_parse_file",
-        classmethod(lambda _cls, path, :
+        classmethod(lambda _cls, path:
                     _SCF(None, None, tmp_path, output_file=path, task_name="SCF")),
     )
     old_result = ResultLoader().load_file(older)
