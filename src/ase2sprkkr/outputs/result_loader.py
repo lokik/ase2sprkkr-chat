@@ -8,9 +8,9 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 import os
+from pathlib import Path
 
 import pyparsing as pp
-from pathlib import Path
 from typing import Iterable
 
 from kkrunner.files import FileState, FileVersion
@@ -170,10 +170,10 @@ class ResultLoader:
             # A file named by the stdout or by the run is authoritative.
             filename = result.path_to("input")
             if (result._input_parameters is None
-                    and result._detected_input_parameters is None
+                    and result.__dict__.get("input_parameters") is None
                     and result.file_is_current(filename)):
                 try:
-                    result._detected_input_parameters = self.inputs.parse(filename)
+                    result.input_parameters = self.inputs.parse(filename)
                 except Exception:
                     # The explicit file remains registered. A later request
                     # for input_parameters must still report its parse error.
@@ -187,9 +187,12 @@ class ResultLoader:
             return
         if result.output_file is not None:
             stem = Path(os.fspath(result.output_file)).stem
-            paired = next((name for suffix in (".inp", ".in")
-                           if (name := str(Path(result.directory) / (stem + suffix)))
-                           in candidates), None)
+            paired = None
+            for suffix in (".inp", ".in"):
+                name = str(Path(result.directory) / (stem + suffix))
+                if name in candidates:
+                    paired = name
+                    break
             candidates = (paired,) if paired else (candidates if len(candidates) == 1 else ())
         elif len(candidates) != 1:
             candidates = ()
@@ -202,7 +205,7 @@ class ResultLoader:
                 continue
             if result._task_name is not None and parameters.task_name != result._task_name.upper():
                 continue
-            result._detected_input_parameters = parameters
+            result.input_parameters = parameters
             result.files.add_file("input", filename)
             return
 
