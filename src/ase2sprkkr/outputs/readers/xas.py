@@ -5,6 +5,8 @@ Fortran WRITE(6,99012) energy-loop records, not the separate .rat table.
 XMO/XRS use other branches and intentionally do not share this reader.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from numbers import Integral
 import os

@@ -1,5 +1,7 @@
 """The Bloch spectral functions (BSF) reader and result."""
 
+from __future__ import annotations
+
 import os
 import re
 from dataclasses import dataclass
