@@ -195,7 +195,7 @@ def test_bsf_const_e_origin_is_part_of_arithmetic_grid():
         def __init__(self, start):
             self._grid = {
                 "MODE": "CONST-E", "KEYWORD": "BSF", "NQ_EFF": 1,
-                "NK1": 2, "NK2": 2, "VECK_START": start,
+                "NK1": 2, "NK2": 2, "VECKA": start,
                 "VECK1": np.array([1., 0., 0.]),
                 "VECK2": np.array([0., 1., 0.]),
                 "ERYD": np.array([0., 0.]),
@@ -212,5 +212,5 @@ def test_bsf_const_e_origin_is_part_of_arithmetic_grid():
 
     first = _GridOnlyBSF(np.array([0., 0., 0.]))
     shifted = _GridOnlyBSF(np.array([0.1, 0., 0.]))
-    with pytest.raises(ValueError, match="BSF VECK_START grids"):
+    with pytest.raises(ValueError, match="BSF VECKA grids"):
         first._check_arithmetic(shifted)
