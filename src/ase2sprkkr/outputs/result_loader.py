@@ -215,7 +215,7 @@ class ResultLoader:
             return True
 
     def _prepare_input(self, result):
-        """Optional input resolution before TaskResult.complete()."""
+        """Resolve native inputs once the stdout FILES table has been parsed."""
         try:
             self._discover_input(result)
         except Exception:
@@ -372,7 +372,7 @@ class ResultLoader:
                         break
 
         if not same_sources:
-            result = TaskResult._parse_file(path, before_complete=self._prepare_input)
+            result = TaskResult._parse_file(path, on_files_parsed=self._prepare_input)
             if _identity(path) != version:
                 raise RuntimeError(f"Output changed during parsing: {path}")
         self._associate(result, path)
