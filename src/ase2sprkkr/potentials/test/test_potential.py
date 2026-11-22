@@ -68,7 +68,9 @@ class TestPotential:
         assert str(restored.atoms.symbols) == str(potential.atoms.symbols)
 
     def test_scf_convergence_status(self):
-        potential = Potential.from_file(EXAMPLES / "FePt.new.pot")
+        # A small, converged native potential is enough to exercise the
+        # SCF status transitions and serialization; FePt is much larger.
+        potential = Potential.from_file(EXAMPLES / "Au_single_type.pot")
         atoms = potential.atoms
 
         assert atoms.sprkkr_is_scf_converged()
@@ -127,20 +129,20 @@ class TestPotential:
         assert potential.atoms.sites[-1].potential is not None
         assert potential.atoms.sites[-1].charge is not None
 
-        potential.atoms.sites[1].potential.bt = -potential.atoms.sites[1].potential.bt
+        original_bt = np.array(potential.atoms.sites[1].potential.bt, copy=True)
+        potential.atoms.sites[1].potential.bt = -original_bt
         saved = io.StringIO()
         potential.save_to_file(saved)
         saved.seek(0)
         restored = Potential.from_file(saved)
-        original = Potential.from_file(path)
 
         np.testing.assert_allclose(
             restored.atoms.sites[1].potential.bt,
-            -original.atoms.sites[1].potential.bt,
+            -original_bt,
         )
         assert not np.allclose(
             restored.atoms.sites[1].potential.bt,
-            original.atoms.sites[1].potential.bt,
+            original_bt,
         )
 
     def test_examples(self):
