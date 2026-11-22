@@ -18,15 +18,33 @@ def test_arpes_run(calc_args):
         pbc=True,
     )
     calculator = SPRKKR(atoms=atoms, **calc_args())
-    calculator.input_parameters.SCF.NITER = 1
-    calculator.set("NE", 10)
-    calculator.set("NKTAB", 10)
 
-    scf_output = calculator.calculate(**calc_args())
+    # A single inexpensive SCF iteration is sufficient to generate the
+    # potential for this ARPES integration smoke test.
+    scf_output = calculator.calculate(
+        **calc_args(options={"NITER": 1, "NE": 8, "NKTAB": 4, "NL": 2})
+    )
+    assert len(scf_output.iterations) == 1
+
     arpes_calculator = scf_output.calculator
     arpes_calculator.input_parameters = "arpes"
-    arpes_calculator.set("NE", 10)
-    arpes_calculator.set("NKTAB", 10)
 
-    arpes_output = arpes_calculator.calculate(**calc_args())
-    assert isinstance(arpes_output.spectra[0].ENERGY(), np.ndarray)
+    # The production ARPES defaults (50 layers, 57 reciprocal vectors and
+    # layer doubling [10, 10]) make a smoke test unnecessarily expensive.
+    # Keep a small but nontrivial layer construction and energy grid, while
+    # still running the native ARPES executable and reading its SPC output.
+    arpes_output = arpes_calculator.calculate(
+        **calc_args(
+            options={
+                "NE": 5,
+                "NKTAB": 4,
+                "NL": 2,
+                "SPEC_STR.N_LAYER": 6,
+                "SPEC_STR.NLAT_G_VEC": 9,
+                "SPEC_STR.N_LAYDBL": [3, 3],
+            }
+        )
+    )
+    energies = arpes_output.spectra[0].ENERGY()
+    assert isinstance(energies, np.ndarray)
+    assert energies.size > 0
