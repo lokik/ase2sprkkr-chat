@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from numbers import Integral
 
-from ..task_result import TaskResult, KkrOutputReader
+from ..task_result import TaskResult, KkrOutputReader, OutputMatch
 from ..progress import ProgressInfo
 from .default import DefaultOutputParser
 from ...common.decorators import cached_property
@@ -261,7 +261,7 @@ class DosOutputReader(KkrOutputReader):
 
     @classmethod
     def matches_output(cls, output):
-        """Recognize legacy DOS output from its ``FILES`` section."""
+        """A DOS artifact in FILES is only a hint, not proof of a DOS task."""
         lines = output.splitlines()
         for index, line in enumerate(lines):
             if line.strip() != b"FILES:":
@@ -276,6 +276,6 @@ class DosOutputReader(KkrOutputReader):
                 started = True
                 name, separator, _ = file_line.partition(b":")
                 if separator and name.strip() == b"DOS":
-                    return True
+                    return OutputMatch.MAYBE
             return False
         return False

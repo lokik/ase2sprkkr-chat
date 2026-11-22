@@ -2,11 +2,19 @@
 
 from types import SimpleNamespace
 
+from ase2sprkkr.outputs.task_result import OutputMatch
 from ase2sprkkr.outputs.readers.dos import (
     DosOutputParser,
+    DosOutputReader,
     DosProgressInfo,
     DosProgressParser,
 )
+
+
+def test_dos_files_entry_is_tentative_not_decisive():
+    output = b"TASK = NONE\nFILES:\n potential : Fe2.pot\n DOS : x.dos\n\n"
+    assert DosOutputReader.matches_output(output) is OutputMatch.MAYBE
+    assert DosOutputReader.matches_output(b"TASK = NONE\nFILES:\n potential : Fe2.pot\n\n") is False
 
 
 def test_dos_progress_is_structured_and_chunk_safe():

@@ -14,7 +14,7 @@ from .project_results import (
     load_project_result,
     retry_project_postprocessing,
 )
-from .task_result import TaskResult
+from .task_result import OutputMatch, TaskResult
 from .result_options import FileAssociation
 from .result_loader import ResultLoader, ResultBatch, LoadFailure
 
@@ -27,6 +27,7 @@ __all__ = [
     "ProjectResultUnavailableError",
     "UnrecoverableProjectResultError",
     "TaskResult",
+    "OutputMatch",
     "attach_project_run",
     "capture_result_file_manifest",
     "capture_result_file_versions",
