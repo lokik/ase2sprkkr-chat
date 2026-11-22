@@ -220,5 +220,7 @@ def test_historical_auxiliary_actions_require_original_file(tmp_path, auxiliary_
             option.parsed_file()
         with pytest.raises(HistoricalFileMismatchError):
             option.open()
+        destination = tmp_path / "copied.agr"
         with pytest.raises(HistoricalFileMismatchError):
-            option.save()
+            option.copy_to(destination)
+        assert not destination.exists()
