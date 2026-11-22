@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+from copy import deepcopy
 import pyparsing as pp
 from ..common.warnings import DataValidityError
 from ..common.decorators import cached_property, maybeclassmethod
@@ -9,6 +10,62 @@ from ..common.file_utils import FilePath, filename_from_file
 from ..potentials.potentials import Potential
 from ..input_parameters import input_parameters as input_parameters
 from .result_options import create_files_section
+
+
+class InputFileCache:
+    """Short-lived cache for native inputs shared by one output-import batch.
+
+    A directory listing is reused while the directory is unchanged. Parsed
+    input data is keyed by file identity, and each caller receives a copy:
+    modifying one result's parameters must not change another result.
+    """
+
+    def __init__(self):
+        self._directories = {}
+        self._parameters = {}
+
+    @staticmethod
+    def _identity(path):
+        stat = os.stat(path)
+        return (stat.st_dev, stat.st_ino, stat.st_size,
+                stat.st_mtime_ns, stat.st_ctime_ns)
+
+    def candidates(self, directory):
+        import glob
+
+        directory = os.path.realpath(os.fspath(directory))
+        identity = self._identity(directory)
+        entry = self._directories.get(directory)
+        if entry is not None and entry[0] == identity:
+            return entry[1]
+        files = tuple(sorted({
+            path for suffix in (".inp", ".in")
+            for path in glob.glob(os.path.join(directory, "*" + suffix))
+        }))
+        self._directories[directory] = (identity, files)
+        return files
+
+    def parse(self, filename):
+        path = os.path.realpath(os.fspath(filename))
+        identity = self._identity(path)
+        entry = self._parameters.get(path)
+        if entry is None or entry[0] != identity:
+            try:
+                parameters = input_parameters.InputParameters.from_file(path)
+            except Exception as exc:
+                self._parameters[path] = (identity, exc)
+                raise
+            self._parameters[path] = (identity, parameters)
+        else:
+            parameters = entry[1]
+            if isinstance(parameters, Exception):
+                raise parameters
+
+        # InputParameters is mutable; a parsed template may be reused but not
+        # exposed directly to a result that can edit it.
+        if isinstance(parameters, input_parameters.InputParameters):
+            return parameters.copy(copy_values=True)
+        return deepcopy(parameters)
 
 
 class TaskResult:
@@ -31,6 +88,7 @@ class TaskResult:
     ):
         self._input_parameters = input_parameters
         self._detected_input_parameters = None
+        self._input_cache = None
         self._calculator = calculator
         self._task_name = (
             str(task_name).strip().lower() if task_name is not None else None
@@ -88,7 +146,8 @@ class TaskResult:
             return self._detected_input_parameters
         # An explicitly registered input is authoritative: parsing errors
         # here must remain visible to the caller.
-        return input_parameters.InputParameters.from_file(source)
+        return (self._input_cache.parse(source) if self._input_cache is not None
+                else input_parameters.InputParameters.from_file(source))
 
     def _candidate_input_files(self):
         """Use an unambiguous native input file; never guess between runs."""
@@ -97,9 +156,12 @@ class TaskResult:
         directory = self.directory
         if not os.path.isdir(directory):
             return ()
-        candidates = sorted(
-            {path for suffix in (".inp", ".in")
-             for path in glob.glob(os.path.join(directory, "*" + suffix))}
+        candidates = (
+            self._input_cache.candidates(directory)
+            if self._input_cache is not None else sorted(
+                {path for suffix in (".inp", ".in")
+                 for path in glob.glob(os.path.join(directory, "*" + suffix))}
+            )
         )
         # A paired input name is authoritative even if the directory contains
         # unrelated calculations.
@@ -122,7 +184,9 @@ class TaskResult:
             if not self.file_is_current(filename):
                 continue
             try:
-                parameters = input_parameters.InputParameters.from_file(filename)
+                parameters = (self._input_cache.parse(filename)
+                              if self._input_cache is not None else
+                              input_parameters.InputParameters.from_file(filename))
             except (OSError, UnicodeError, ValueError, pp.ParseBaseException, DataValidityError):
                 continue
             if self._task_name is not None and parameters.task_name != self._task_name.upper():
@@ -318,7 +382,7 @@ class TaskResult:
         )
 
     @classmethod
-    def from_file(cls, file):
+    def from_file(cls, file, *, input_cache=None):
         """Read a standalone SPR-KKR output using registry-owned detection."""
         from .reader_registry import reader_registry
 
@@ -331,7 +395,7 @@ class TaskResult:
             os.path.dirname(filename),
             task_name=task,
         )
-        return reader.read_from_file(filename)
+        return reader.read_from_file(filename, input_cache=input_cache)
 
     @classmethod
     def from_run(cls, run, manager=None):
@@ -465,11 +529,12 @@ class KkrOutputReader:
         return result
 
     @maybeclassmethod
-    def read_from_file(self, cls, output, error=None, return_code=0, input_file=None, directory=None, *, run_record=None):
+    def read_from_file(self, cls, output, error=None, return_code=0, input_file=None, directory=None, *, run_record=None, input_cache=None):
         """Parse output of an already finished SPR-KKR calculation."""
         if self is None:
             self = cls(None, None, directory)
         result = self.create_result(output, input_file)
+        result._input_cache = input_cache
         if run_record is not None:
             result.run_record = run_record
         output_source = output if hasattr(output, "read") else result.path_to("output")
