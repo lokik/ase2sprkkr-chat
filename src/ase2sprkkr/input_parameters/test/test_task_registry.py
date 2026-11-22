@@ -705,3 +705,27 @@ def test_spec_input_requires_explicit_task_selector(name):
         InputParameters.input_parameters_registry.read_for_task(
             task, io.StringIO(missing_selector)
         )
+
+
+def test_spec_native_dos_side_effect_is_reserved_but_not_collected(tmp_path):
+    """KKRSPEC writes an otherwise unused DOS header before entering SPECMAIN."""
+    from kkrunner import ExecutionSpec, TaskFile
+    from kkrunner.files.manifest import FileManifest
+
+    for task_name in ("SPLEED", "ARPES", "AIPES", "BAND"):
+        params = InputParameters.create(task_name)
+        params.CONTROL.DATASET = "Fe2"
+        outputs = InputParameters.input_parameters_registry.files_for_task(
+            params.task_definition, params, str(tmp_path), "output"
+        )
+        uncollected = [entry for entry in outputs if isinstance(entry, TaskFile) and not entry.collect]
+        assert len(uncollected) == 1
+        assert uncollected[0].pathname == str(tmp_path / f"Fe2_{params.CONTROL.ADSI()}.dos")
+
+        manifest = FileManifest.from_spec(ExecutionSpec(
+            ["kkrspec"], directory=tmp_path, output_files=outputs,
+        ))
+        assert any(not entry.collect for entry in manifest.outputs)
+        assert uncollected[0].pathname not in manifest.output_files
+        assert uncollected[0].pathname not in [item.local_path for item in manifest.artifacts]
+        assert any(entry.collect for entry in manifest.outputs)
