@@ -603,7 +603,7 @@ class ScfOutputParser(SprKkrOutputParser):
 
             self.emit_info(
                 "scf_finished",
-                iterations[-1]["converged"]() if iterations else None,
+                iterations[-1]["converged"]() if len(iterations) else None,
             )
 
             result.iterations = iterations

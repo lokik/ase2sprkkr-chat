@@ -42,10 +42,16 @@ def test_seven_column_log_is_not_two_column_diagram(tmp_path):
     assert result.spleed_intensity is None
 
 
-def test_no_diagram_header_is_not_matched():
-    content = "unrelated\n 0.11000D+02   0.10000D+00\n"
-    assert SpecOutputParser.parse_spleed_intensity(StringIO(content)) is None
-
+def test_headerless_native_diagram_stops_at_unrelated_line():
+    # Native SPLOUT writes diagram rows to stdout without a heading.
+    content = (
+        "unrelated\n"
+        " 0.11000D+02   0.10000D+00\n"
+        "next section\n"
+        " 0.12000D+02   0.20000D+00\n"
+    )
+    spectrum = SpecOutputParser.parse_spleed_intensity(StringIO(content))
+    np.testing.assert_allclose(spectrum.RAW_DATA(), [[11., .1]])
 
 def test_parser_stops_at_first_unrelated_nonempty_line():
     content = (

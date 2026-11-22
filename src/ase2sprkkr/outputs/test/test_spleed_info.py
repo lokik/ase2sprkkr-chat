@@ -112,7 +112,7 @@ def test_native_rotation_diagram_first_column_is_energy():
 def test_full_spleed_reader_observes_lines_consumed_by_common_parser(monkeypatch, tmp_path):
     """The shared SPEC capture hook must see lines before FILES parsing ends."""
     async def read_commons(stream, _result):
-        assert await stream.readline() == b"i(e)-diagram\\n"
+        assert await stream.readline() == b"i(e)-diagram\n"
 
     events = []
     parser = SpleedOutputParser(on_info=lambda **event: events.append(event))

@@ -36,7 +36,7 @@ def test_scf_progress_ignores_incomplete_iteration():
     assert output[0]["kind"] == "scf_iteration"
     assert isinstance(output[0]["data"], ScfIterationInfo)
     assert output[0]["data"].iteration == 8
-    assert output[0]["data"].convergence_error == 0.000123
+    assert output[0]["data"].convergence_error == 0.0000123
     assert output[0]["data"].error == 0.0000123
     assert output[0]["data"].b_error == 0.000000456
     formatted = ScfOutputParser.format_info(**output[0])
