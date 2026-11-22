@@ -39,7 +39,7 @@ def test_native_xas_progress_is_chunk_safe_and_counts_only_completed_energies():
     for index in range(0, len(source), 7):
         parser.feed(source[index:index + 7])
     parser.finish()
-    assert [x["kind"] for x in events] == [
+    assert [x["kind"] for x in events if x["kind"] != "progress"] == [
         "xas_started", "xas_rate_file", "xas_core",
         "xas_energy", "xas_energy", "xas_energy",
         "xas_complete", "xas_finished",
@@ -95,7 +95,7 @@ def test_source_summary_is_authoritative_without_input_parameters():
     events = []
     parser = XasProgressParser(on_info=lambda **event: events.append(event))
     parser.feed(complete(120))
-    assert [e["kind"] for e in events] == ["xas_started", "xas_complete"]
+    assert [e["kind"] for e in events if e["kind"] != "progress"] == ["xas_started", "xas_complete"]
     assert parser.completed_points == 120
 
 
@@ -122,7 +122,7 @@ def test_full_output_reader_observes_lines_consumed_by_files_parser(
     asyncio.run(parse())
     assert result.xas_rate_filename == "Fe_L23.rat"
     assert result.xas_completed_points == 2
-    assert [e["kind"] for e in events] == [
+    assert [e["kind"] for e in events if e["kind"] != "progress"] == [
         "xas_started", "xas_rate_file", "xas_energy",
         "xas_energy", "xas_complete", "xas_finished",
     ]
@@ -151,3 +151,18 @@ def test_registered_xas_reader_and_input_energy_mesh():
     assert xas_total_points_from_parameters(parameters([100, 80])) is None
     assert xas_total_points_from_parameters(parameters([])) is None
     assert xas_total_points_from_parameters(None) is None
+
+def test_task_independent_xas_progress_counts_completed_energies_only():
+    from ase2sprkkr.outputs.progress import ProgressInfo
+
+    events = []
+    parser = XasProgressParser(on_info=lambda **e: events.append(e), total_points=10)
+    parser.feed(loop(1) + loop(4))
+    assert [e["data"] for e in events if e["kind"] == "progress"] == [
+        ProgressInfo(0, 10, unit="energies"),
+        ProgressInfo(3, 10, unit="energies"),
+    ]
+    parser.feed(complete(10))
+    assert [e["data"] for e in events if e["kind"] == "progress"][-1] == (
+        ProgressInfo(10, 10, unit="energies")
+    )
