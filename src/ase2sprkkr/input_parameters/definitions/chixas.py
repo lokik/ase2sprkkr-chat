@@ -32,7 +32,9 @@ class ChixasInputParametersDefinition(InputParameters):
         return tuple(files)
 
     def output_files(self, parameters, directory):
-        files = list(super().output_files(parameters, directory))
+        """Preserve the historical output order; mark diagnostic dumps auxiliary."""
+        files = list(self.result_files(parameters, directory))
+        files.extend(super().output_files(parameters, directory))
         print_level = parameters.TASK.PRINT()
         if print_level is None:
             print_level = parameters.CONTROL.PRINT()
