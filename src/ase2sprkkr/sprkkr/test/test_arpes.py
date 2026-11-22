@@ -25,6 +25,7 @@ def test_arpes_run(calc_args):
         **calc_args(options={"NITER": 1, "NE": 8, "NKTAB": 4, "NL": 2})
     )
     assert len(scf_output.iterations) == 1
+    assert scf_output.input_parameters.ENERGY.NE().tolist() == [8]
 
     arpes_calculator = scf_output.calculator
     arpes_calculator.input_parameters = "arpes"
@@ -45,6 +46,9 @@ def test_arpes_run(calc_args):
             }
         )
     )
+    assert arpes_output.input_parameters.ENERGY.NE().tolist() == [5]
+    assert arpes_output.input_parameters.SPEC_STR.N_LAYER() == 6
+    assert arpes_output.input_parameters.SPEC_STR.NLAT_G_VEC() == 9
     energies = arpes_output.spectra[0].ENERGY()
     assert isinstance(energies, np.ndarray)
     assert energies.size > 0
