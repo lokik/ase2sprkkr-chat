@@ -104,6 +104,8 @@ def test_repeated_value():
     assert compact(parameters.ENERGY.to_string()) == "ENERGY A=3 B=2 B=5 B=8 C=77"
 
     definition["ENERGY"].force_order = True
+    definition["ENERGY"].clear_grammar_cache()
+    grammar = definition.grammar()
     assert_parse(data, {"ENERGY": {"A": 3, "B": [2, 5, 8], "C": 77}}, grammar)
     parameters = definition.read_from_string(data)
     assert_equal(
@@ -113,6 +115,7 @@ def test_repeated_value():
     assert compact(parameters.ENERGY.to_string()) == "ENERGY A=3 B=2 B=5 B=8 C=77"
 
     definition["ENERGY"]["B"].is_repeated = V.Repeated.NUMBERED
+    definition["ENERGY"]["B"].clear_grammar_cache()
     grammar = definition.grammar()
     data = """ENERGY A=3
     B1=2
@@ -161,6 +164,7 @@ def test_repeated_value():
     assert compact(parameters.ENERGY.to_string()) == compact(data)
 
     definition["ENERGY"]["B"].is_repeated = V.Repeated.NUMBERED
+    definition["ENERGY"]["B"].clear_grammar_cache()
     grammar = definition.grammar()
     assert_not_valid(data, grammar)
 
