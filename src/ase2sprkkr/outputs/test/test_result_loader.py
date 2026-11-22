@@ -47,7 +47,7 @@ def test_loader_indexes_only_out_and_identifies_overwritten_scf(tmp_path, monkey
 
     reads = []
 
-    def parse(_cls, path):
+    def parse(_cls, path, *, before_complete=None):
         reads.append(Path(path))
         cls = _DOS if Path(path).name == "dos.out" else _SCF
         return cls(None, None, tmp_path, output_file=path,
@@ -81,7 +81,7 @@ def test_tied_scf_mtimes_are_unknown(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         TaskResult, "_parse_file",
-        classmethod(lambda _cls, path:
+        classmethod(lambda _cls, path, *, before_complete=None:
                     _SCF(None, None, tmp_path, output_file=path, task_name="SCF")),
     )
     results = ResultLoader.load_directory(tmp_path).results
@@ -99,7 +99,7 @@ def test_historical_hash_is_stronger_than_mtime_heuristic(tmp_path, monkeypatch)
     os.utime(new, ns=(2_000_000_000, 2_000_000_000))
     version = FileVersion.capture(potential, require_digest=True)
 
-    def parse(_cls, path):
+    def parse(_cls, path, *, before_complete=None):
         result = _SCF(None, None, tmp_path, output_file=path, task_name="SCF")
         if Path(path) == old:
             result.run_record = SimpleNamespace(
@@ -150,7 +150,7 @@ def test_reuse_invalidated_when_input_changes_without_output_change(tmp_path, mo
     inp.write_text("old")
     reads = []
 
-    def parse(_cls, path):
+    def parse(_cls, path, *, before_complete=None):
         reads.append(path)
         return TaskResult(None, None, tmp_path, output_file=path,
                           input_file=inp, task_name="DOS")
@@ -171,7 +171,7 @@ def test_batch_preserves_good_results_after_one_bad_file(tmp_path, monkeypatch):
     missing = tmp_path / "missing.out"
     monkeypatch.setattr(
         TaskResult, "_parse_file",
-        classmethod(lambda _cls, path:
+        classmethod(lambda _cls, path, *, before_complete=None:
                     TaskResult(None, None, tmp_path, output_file=path, task_name="DOS")),
     )
     batch = ResultLoader().load_files((missing, valid))
@@ -197,7 +197,7 @@ def test_companion_ignores_header_false_positive_and_tries_older(tmp_path, monke
 
     reads = []
 
-    def parse(_cls, path):
+    def parse(_cls, path, *, before_complete=None):
         reads.append(Path(path).name)
         if Path(path) == consumer:
             kind = _DOS
@@ -223,7 +223,7 @@ def test_companion_rejects_disagreement_between_registered_file_and_result(tmp_p
     consumer = _output(tmp_path / "dos.out", scf=False)
     scf = _output(tmp_path / "scf.out")
 
-    def parse(_cls, path):
+    def parse(_cls, path, *, before_complete=None):
         kind = _DOS if Path(path) == consumer else _SCF
         result = kind(None, None, tmp_path, output_file=path,
                       task_name="DOS" if kind is _DOS else "SCF")
@@ -242,7 +242,7 @@ def test_historical_missing_file_is_unknown_not_wrong_result(tmp_path, monkeypat
     output = _output(tmp_path / "scf.out")
     captured = FileVersion.capture(potential, require_digest=True)
 
-    def parse(_cls, path):
+    def parse(_cls, path, *, before_complete=None):
         result = _SCF(None, None, tmp_path, output_file=path, task_name="SCF")
         result.run_record = SimpleNamespace(files=SimpleNamespace(
             captured_at="historical", all_versions=(captured,),
@@ -269,7 +269,7 @@ def test_imported_result_refuses_potential_modified_after_loading(tmp_path, monk
     output = _output(tmp_path / "scf.out")
     monkeypatch.setattr(
         TaskResult, "_parse_file",
-        classmethod(lambda _cls, path:
+        classmethod(lambda _cls, path, *, before_complete=None:
                     _SCF(None, None, tmp_path, output_file=path, task_name="SCF")),
     )
     result = ResultLoader().load_file(output)
@@ -296,7 +296,7 @@ def test_overwritten_scf_does_not_capture_wrong_potential_as_history(tmp_path, m
     os.utime(newer, ns=(2_000_000_000, 2_000_000_000))
     monkeypatch.setattr(
         TaskResult, "_parse_file",
-        classmethod(lambda _cls, path:
+        classmethod(lambda _cls, path, *, before_complete=None:
                     _SCF(None, None, tmp_path, output_file=path, task_name="SCF")),
     )
     old_result = ResultLoader().load_file(older)
@@ -311,7 +311,7 @@ def test_historical_missing_potential_retains_recorded_version(tmp_path, monkeyp
     potential.write_text("historical")
     output = _output(tmp_path / "historical.out")
     captured = FileVersion.capture(potential, require_digest=True)
-    def parse(_cls, path):
+    def parse(_cls, path, *, before_complete=None):
         result = _SCF(None, None, tmp_path, output_file=path, task_name="SCF")
         result.run_record = SimpleNamespace(files=SimpleNamespace(
             captured_at="historical", all_versions=(captured,),
@@ -330,7 +330,7 @@ def test_cached_unmatched_input_is_rediscovered_after_repair(tmp_path, monkeypat
     inp.write_text("invalid input")
     reads = []
 
-    def parse_output(_cls, path):
+    def parse_output(_cls, path, *, before_complete=None):
         reads.append(path)
         result = _DOS(None, None, tmp_path, output_file=path, task_name="DOS")
         return result
@@ -362,7 +362,7 @@ def test_reparse_after_potential_rewrite_drops_cached_task_result(tmp_path, monk
     output = _output(tmp_path / "scf.out")
     reads = []
 
-    def parse(_cls, path):
+    def parse(_cls, path, *, before_complete=None):
         reads.append(path)
         return _SCF(None, None, tmp_path, output_file=path, task_name="SCF")
 
@@ -389,7 +389,7 @@ def test_retained_result_does_not_keep_entire_loader_alive(tmp_path, monkeypatch
     parameters.CONTROL.DATASET = "original"
     inp.write_text(parameters.to_string(validate=False))
 
-    def parse(_cls, path):
+    def parse(_cls, path, *, before_complete=None):
         return _DOS(None, None, tmp_path, output_file=path, task_name="DOS")
 
     monkeypatch.setattr(TaskResult, "_parse_file", classmethod(parse))
@@ -422,7 +422,7 @@ def test_standalone_from_file_uses_a_new_loader_each_time(tmp_path, monkeypatch)
 
     monkeypatch.setattr(
         TaskResult, "_parse_file",
-        classmethod(lambda _cls, path: _DOS(
+        classmethod(lambda _cls, path, *, before_complete=None: _DOS(
             None, None, tmp_path, output_file=path, task_name="DOS"
         )),
     )
@@ -434,3 +434,27 @@ def test_standalone_from_file_uses_a_new_loader_each_time(tmp_path, monkeypatch)
     assert first.input_parameters_file == second.input_parameters_file == str(native_input)
     assert first.input_parameters.CONTROL.DATASET() == "fresh"
     assert "_input_cache" not in vars(first)
+
+
+def test_native_input_is_available_before_result_completion(tmp_path, monkeypatch):
+    from ase2sprkkr import InputParameters
+
+    output = _output(tmp_path / "dos.out", scf=False)
+    native_input = tmp_path / "dos.inp"
+    parameters = InputParameters.create("DOS")
+    parameters.CONTROL.DATASET = "prepared"
+    native_input.write_text(parameters.to_string(validate=False))
+    observed = []
+
+    def parse(_cls, path, *, before_complete=None):
+        result = _DOS(None, None, tmp_path, output_file=path, task_name="DOS")
+        assert result.input_parameters is None
+        assert before_complete is not None
+        before_complete(result)
+        observed.append(result.input_parameters.CONTROL.DATASET())
+        return result
+
+    monkeypatch.setattr(TaskResult, "_parse_file", classmethod(parse))
+    result = ResultLoader().load_file(output)
+    assert observed == ["prepared"]
+    assert result.input_parameters_file == str(native_input)
