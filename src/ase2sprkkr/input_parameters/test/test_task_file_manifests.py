@@ -1,3 +1,5 @@
+import pytest
+
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 
 
