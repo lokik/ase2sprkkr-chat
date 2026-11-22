@@ -166,8 +166,20 @@ class DOSResultFile(CommonResultFile):
         raw_data = np.asarray(self.RAW_DATA())
         if raw_data.size == 0:
             raise ValueError("DOS file contains no numerical DOS data (header only).")
-        if raw_data.ndim != 2 or raw_data.shape[1] != 8:
-            raise ValueError(f"Invalid DOS data shape {raw_data.shape}; expected eight columns")
+        if raw_data.ndim != 2 or raw_data.shape[1] < 3:
+            raise ValueError(
+                f"Invalid DOS data shape {raw_data.shape}; expected energy, Y, and DOS columns"
+            )
+        # There are two non-DOS columns, followed by one column per
+        # atomic-type orbital and spin. The number of columns is not fixed:
+        # e.g. three types with three orbitals and two spins yield 20 columns.
+        orbitals_per_spin = sum(self.n_orbitals_for(t) for t in self.TYPES())
+        dos_columns = raw_data.shape[1] - 2
+        if not orbitals_per_spin or dos_columns % orbitals_per_spin:
+            raise ValueError(
+                f"Invalid DOS data shape {raw_data.shape}; expected 2 + "
+                f"n_spins * {orbitals_per_spin} columns"
+            )
         n_types = self.n_types()
         if n_types > 1:
             n_types += 1
