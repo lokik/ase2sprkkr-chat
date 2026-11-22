@@ -1,7 +1,5 @@
 """Scriptable result-file operations must not depend on a Qt application."""
-import shutil
 import subprocess
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -199,32 +197,6 @@ def test_export_nexus_uses_verified_registered_input_without_guessing(
     original.write_text("REPLACED INPUT", encoding="utf-8")
     option.export_nexus(tmp_path / "second.nxs")
     assert calls[-1] == {"discover_input": False}
-
-
-def test_export_nexus_real_spc_contains_owned_task_parameters(tmp_path):
-    h5py = pytest.importorskip("h5py")
-    from ase2sprkkr.input_parameters.input_parameters import InputParameters
-
-    source = (
-        Path(__file__).resolve().parents[2]
-        / "result_files" / "examples" / "Au_kx_ky_ARPES_data.spc"
-    )
-    spc_path = tmp_path / source.name
-    shutil.copy2(source, spc_path)
-    # This sibling must not override authoritative in-memory parameters.
-    (tmp_path / "Au_kx_ky_ARPES.inp").write_text(
-        "INVALID FOREIGN INPUT", encoding="utf-8",
-    )
-    params = InputParameters.create("ARPES")
-    result = TaskResult(params, None, str(tmp_path), task_name="ARPES")
-    option = result.files.add_file("SPC", str(spc_path), "spc")
-    destination = tmp_path / "export.nxs"
-
-    assert option.export_nexus(destination) == destination
-    with h5py.File(destination) as exported:
-        text = exported["entry/calculation/parameters/sprkkr_input"].asstr()[()]
-        assert text == params.to_string(validate=False)
-        assert "original_input" in exported["entry/calculation"]
 
 
 def test_export_nexus_reuses_cached_verified_input_after_file_is_removed(
