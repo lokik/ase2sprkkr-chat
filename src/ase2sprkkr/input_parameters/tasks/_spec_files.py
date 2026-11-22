@@ -4,6 +4,9 @@ Each callback returns a filename or None when the file is not used.
 """
 
 
+from kkrunner import TaskFile
+
+
 def input_inp(parameters):
     return "input.inp" if parameters.TASK.INPVER() == 0 else None
 
@@ -44,4 +47,8 @@ SPEC_OUTPUT_FILES = (
     data_spc,
     data_pol1_spc,
     data_pol2_spc,
+    # KKRSPEC normally creates the generic DOS header through KKRMAIN even
+    # for spectroscopy tasks. It can overwrite a DOS calculation but carries
+    # no result for this task: reserve/clear its path, never collect it.
+    TaskFile("{DATASET_ADSI}.dos", collect=False),
 )
