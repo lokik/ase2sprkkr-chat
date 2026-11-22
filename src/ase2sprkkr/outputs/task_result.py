@@ -28,7 +28,6 @@ class TaskResult:
         task_name=None,
     ):
         self._input_parameters = input_parameters
-        self._detected_input_parameters = None
         self._calculator = calculator
         self._task_name = (
             str(task_name).strip().lower() if task_name is not None else None
@@ -82,13 +81,11 @@ class TaskResult:
         source = self.input_parameters_file
         if source is None:
             return None
-        if self._detected_input_parameters is not None:
-            return self._detected_input_parameters
         # Parsing a registered input is independent of import caches.
         # Explicit input errors stay observable to the caller.
         return input_parameters.InputParameters.from_file(source)
 
-    @cached_property
+    @property
     def input_parameters_file(self):
         """Registered input path. Native-input discovery belongs to ResultLoader."""
         if "input" not in self.files:
