@@ -42,21 +42,19 @@ def data_pol2_spc(parameters):
 
 
 SPEC_INPUT_FILES = (input_inp, struc_inp)
-SPEC_OUTPUT_FILES = (
-    "{DATASET_ADSI}_SPEC.out",
-    data_spc,
-    data_pol1_spc,
-    data_pol2_spc,
-    # KKRSPEC normally creates the generic DOS header through KKRMAIN even
-    # for spectroscopy tasks. It can overwrite a DOS calculation but carries
-    # no result for this task: reserve/clear its path, never collect it.
-    TaskFile("{DATASET_ADSI}.dos", collect=False),
-)
-
-# User-facing spectra and auxiliary native outputs share the output manifest,
-# but only the former produce end-of-run result tabs.
 SPEC_RESULT_FILES = (data_spc, data_pol1_spc, data_pol2_spc)
+
+# Native logs and reserved-but-uncollectable generic DOS headers are not
+# user-facing spectra. They still participate in the ordinary output manifest.
 SPEC_AUX_OUTPUT_FILES = (
     "{DATASET_ADSI}_SPEC.out",
     TaskFile("{DATASET_ADSI}.dos", collect=False),
+)
+
+# Historical combined declaration retained for consumers that need all files.
+# It is assembled from the same objects rather than independently maintained.
+SPEC_OUTPUT_FILES = (
+    SPEC_AUX_OUTPUT_FILES[0],
+    *SPEC_RESULT_FILES,
+    SPEC_AUX_OUTPUT_FILES[1],
 )
