@@ -299,11 +299,13 @@ class TaskResult:
         # for calculations that report successful completion.
         self.enrich_declared_output_files(warn_missing=return_code == 0)
 
-    def enrich_declared_output_files(self, *, warn_missing=True):
+    def enrich_declared_output_files(self, *, warn_missing=True, file_operations=None):
         """Expose existing task-declared outputs, preserving parsed FILES entries."""
         from .file_provenance import register_declared_result_files
 
-        return register_declared_result_files(self, warn_missing=warn_missing)
+        return register_declared_result_files(
+            self, warn_missing=warn_missing, file_operations=file_operations
+        )
 
     @property
     def atoms(self):
@@ -380,6 +382,7 @@ class TaskResult:
         potential_path=None,
         result_files=None,
         output_version=None,
+        file_operations=None,
     ):
         """Capture the files used or produced by this result as a KKRunner manifest."""
         from .file_provenance import capture_result_file_manifest
@@ -390,6 +393,7 @@ class TaskResult:
             potential_path=potential_path,
             result_files=result_files,
             output_version=output_version,
+            file_operations=file_operations,
         )
 
     @classmethod

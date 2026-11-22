@@ -238,3 +238,33 @@ def test_historical_mismatched_schema_skips_declarations_but_keeps_result(tmp_pa
     assert not manifest.outputs
     assert any(item.local_path.endswith("Fe.pot") for item in manifest.inputs)
 
+
+def test_shared_file_operations_cache_wildcard_discovery_for_result_and_manifest(tmp_path, monkeypatch):
+    from kkrunner.files import FileOperations
+    from kkrunner.files import operations as operations_module
+
+    parameters = _parameters("SCF")
+    out = tmp_path / "run.out"
+    out.write_text("output")
+    startup = tmp_path / "Fe_SCFSTART.dos"
+    startup.write_text("startup DOS")
+    result = TaskResult(parameters, None, str(tmp_path), output_file=out.name, task_name="SCF")
+
+    actual_glob = operations_module.glob_module.glob
+    observed_patterns = []
+
+    def watched_glob(pattern, *, recursive=False):
+        observed_patterns.append(pattern)
+        return actual_glob(pattern, recursive=recursive)
+
+    monkeypatch.setattr(operations_module.glob_module, "glob", watched_glob)
+    operations = FileOperations()
+    result.enrich_declared_output_files(warn_missing=False, file_operations=operations)
+    pattern = str(tmp_path / "*_SCFSTART.dos")
+    assert observed_patterns.count(pattern) == 1
+    assert startup.name in result.files
+
+    manifest = result.to_file_manifest(file_operations=operations)
+    assert str(startup) in {entry.local_path for entry in manifest.outputs}
+    # Manifest creation must use the same cached wildcard discovery.
+    assert observed_patterns.count(pattern) == 1

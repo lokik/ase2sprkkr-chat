@@ -7,9 +7,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
+import glob
 import os
 
-from kkrunner.files import FileEntry, FileManifest, FileVersion
+from kkrunner.files import FileEntry, FileManifest, FileOperations, FileVersion
 
 
 def result_file_manifest(result: Any) -> FileManifest | None:
@@ -116,7 +117,7 @@ def task_file_declarations(result, *, kinds=("input", "cache", "output")):
 
 
 
-def register_declared_result_files(result, *, warn_missing=True):
+def register_declared_result_files(result, *, warn_missing=True, file_operations: FileOperations | None = None):
     """Add existing task-declared outputs to the parsed result file registry.
 
     The native OUT FILES table is authoritative for observed names and types.
@@ -125,10 +126,11 @@ def register_declared_result_files(result, *, warn_missing=True):
     This must run after the calculation's outputs have been made available
     locally (for persistent/remote runs, after result-file retrieval).
     """
-    import glob
     import warnings
 
     from ..result_files import ResultFile
+
+    operations = file_operations if file_operations is not None else FileOperations()
 
     _parameters, declarations = task_file_declarations(result, kinds=("output",))
     if not declarations:
@@ -177,11 +179,11 @@ def register_declared_result_files(result, *, warn_missing=True):
         declared = local_path(declaration)
         pattern = os.fspath(declared)
         paths = (
-            sorted(local_path(match) for match in glob.glob(pattern))
+            tuple(local_path(match) for match in operations.glob(pattern, recursive=False))
             if glob.has_magic(pattern)
-            else [declared]
+            else (declared,)
         )
-        found = [path for path in paths if path.is_file()]
+        found = [path for path in paths if operations.is_file(path)]
         if getattr(result, "run_record", None) is not None:
             # Wildcards must not discover additional outputs of a newer run.
             found = [path for path in found if result_file_version(result, path) is not None]
@@ -230,6 +232,7 @@ def capture_result_file_manifest(
     potential_path: str | os.PathLike | None = None,
     result_files: Mapping[str, FileVersion] | None = None,
     output_version: FileVersion | None = None,
+    file_operations: FileOperations | None = None,
 ) -> FileManifest:
     """Snapshot files declared by the task and observed by the parser.
 
@@ -242,10 +245,9 @@ def capture_result_file_manifest(
     This does not mutate result.files: a declaration does not prove that a
     file was produced by this particular calculation.
     """
-    import glob
-
     from kkrunner.files import CacheEntry
 
+    operations = file_operations if file_operations is not None else FileOperations()
     directory = Path(result.directory).expanduser().absolute()
     source = output_path if output_path is not None else result.output_file
     if source is None:
@@ -278,8 +280,8 @@ def capture_result_file_manifest(
         path = absolute(declaration)
         optional = getattr(declaration, "optional", False)
         if glob.has_magic(str(path)):
-            for match in sorted(glob.glob(str(path))):
-                if Path(match).is_file():
+            for match in operations.glob(str(path), recursive=False):
+                if operations.is_file(match):
                     add(match, kind, optional=optional, pattern=str(path))
         else:
             add(path, kind, optional=optional)
@@ -339,7 +341,7 @@ def capture_result_file_manifest(
         status = None
         message = None
         if kind in {"output", "cache"}:
-            if path.is_file():
+            if operations.is_file(path):
                 status = "available"
             elif kind == "cache" or optional:
                 status = "skipped"
@@ -354,7 +356,7 @@ def capture_result_file_manifest(
     def versions(paths, *, digest):
         return tuple(
             known.get(path) or FileVersion.capture(path, digest=digest)
-            for path in paths if path.is_file()
+            for path in paths if operations.is_file(path)
         )
 
     inputs, outputs, caches = (selected(kind) for kind in ("input", "output", "cache"))
@@ -364,9 +366,9 @@ def capture_result_file_manifest(
         caches=tuple(CacheEntry(entry(path)) for path in caches),
         stdout=FileEntry(
             local_path=str(output),
-            availability_state="available" if output.is_file() else "failed",
+            availability_state="available" if operations.is_file(output) else "failed",
             availability_message=(
-                None if output.is_file() else f"Result OUT file is missing: {output}"
+                None if operations.is_file(output) else f"Result OUT file is missing: {output}"
             ),
         ),
         input_versions=versions(inputs, digest=False),

@@ -8,6 +8,7 @@ on:
       - 'chatgpt-**'
   pull_request:
     branches:
+      - cluster
       - develop
       - workflow
 
@@ -34,7 +35,7 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: lokik/kkrunner-chat
-        ref: c173e518efb8adfc8ca77ecf099a4a3a97ed19a0
+        ref: 1955dc8518c3128a2f7571f70edd878cec1c37f3
         path: .ci/kkrunner
     - name: Install matching KKRunner and ASE2SPRKKR
       env:
@@ -58,7 +59,7 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: lokik/kkrunner-chat
-        ref: c173e518efb8adfc8ca77ecf099a4a3a97ed19a0
+        ref: 1955dc8518c3128a2f7571f70edd878cec1c37f3
         path: .ci/kkrunner
     - name: Install matching KKRunner and ASE2SPRKKR
       env:
@@ -94,7 +95,7 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: lokik/kkrunner-chat
-        ref: c173e518efb8adfc8ca77ecf099a4a3a97ed19a0
+        ref: 1955dc8518c3128a2f7571f70edd878cec1c37f3
         path: .ci/kkrunner
     - name: Install matching KKRunner and ASE2SPRKKR
       env:
