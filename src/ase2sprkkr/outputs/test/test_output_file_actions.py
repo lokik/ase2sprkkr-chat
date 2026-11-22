@@ -6,7 +6,7 @@ import pytest
 from kkrunner.files import FileVersion
 from kkrunner.runs import HistoricalFileMismatchError
 
-from ase2sprkkr.outputs.result_options import FileAssociation, OutputFileOption
+from ase2sprkkr.outputs.result_options import FileAttribution, OutputFileOption
 from ase2sprkkr.outputs.task_result import TaskResult
 
 
@@ -31,8 +31,8 @@ def test_copy_to_has_no_dialog_and_preserves_file_metadata(tmp_path):
 
 def test_copy_and_open_reject_overwritten_historical_file(tmp_path, monkeypatch):
     option, path = _file(tmp_path)
-    option.set_association(
-        FileAssociation.VERIFIED,
+    option.set_attribution(
+        FileAttribution.VERIFIED,
         recorded_version=FileVersion.capture(path, require_digest=True),
     )
     path.write_text("new contents", encoding="utf-8")

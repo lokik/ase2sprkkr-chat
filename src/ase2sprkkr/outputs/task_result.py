@@ -203,56 +203,41 @@ class TaskResult:
         except (AttributeError, KeyError, OSError, ValueError):
             return None
 
+    def _file_options(self, path):
+        """All registered roles of one path; each retains its own attribution."""
+        requested = os.path.abspath(os.fspath(path))
+        return tuple(
+            option for option in self.files.items().values()
+            if os.path.abspath(os.fspath(option.path())) == requested
+        )
+
     def file_is_current(self, path):
-        """Whether a path still belongs to this result's captured file version."""
+        """Whether the current contents can be used by this result.
+
+        A registered file delegates its attribution and version check to
+        OutputFileOption. Only unregistered dependencies (e.g. a cluster's
+        host potential) use the manifest fallback here.
+        """
+        options = self._file_options(path)
+        if options:
+            # A pathname alone does not identify a role.  Refuse it if any
+            # registered role identifies today's bytes as another result.
+            return all(option.is_current() for option in options)
+
         from .file_provenance import result_file_manifest, result_file_version
-        from .result_options import FileAssociation
-        # A loader can identify this pathname as a newer SCF's output.
-        # Do not let the mere presence of the file bypass that evidence.
-        for option in self.files.items().values():
-            if option.path() != os.fspath(path):
-                continue
-            if option.association is FileAssociation.NOT_THIS_RESULT:
-                return False
-            if (option.association is FileAssociation.UNKNOWN
-                    and option.association_evidence == "scf_mtime_tie_or_unreadable"):
-                # A tie between competing SCFs cannot justify using today's
-                # POTFIL as the historical result of either calculation.
-                return False
-            # An observed import version is a fence against later rewrites,
-            # even when there was no authoritative run manifest. Historical
-            # digest evidence takes priority if it still matches.
-            recorded = option.recorded_version
-            if recorded is not None and recorded.available:
-                if not recorded.is_current():
-                    return False
-            else:
-                observed = option.observed_version
-                if observed is not None and not observed.is_current():
-                    return False
         if result_file_manifest(self) is None and getattr(self, "run_record", None) is None:
             return os.path.isfile(path)
         version = result_file_version(self, path)
         return version is not None and version.is_current()
 
     def require_current_file(self, path):
-        """Refuse to use missing, overwritten or unrecorded historical files."""
-        from .file_provenance import result_file_manifest
-        has_provenance = (
-            result_file_manifest(self) is not None or getattr(self, "run_record", None) is not None
-        )
-        if not self.file_is_current(path) and (
-            has_provenance or any(
-                item.path() == os.fspath(path)
-                and (
-                    item.recorded_version is not None
-                    or item.observed_version is not None
-                    or item.association.name == "NOT_THIS_RESULT"
-                    or item.association_evidence == "scf_mtime_tie_or_unreadable"
-                )
-                for item in self.files.items().values()
-            )
-        ):
+        """Validate a registered file once, otherwise check its run manifest."""
+        options = self._file_options(path)
+        if options:
+            for option in options:
+                option.require_current()
+            return
+        if not self.file_is_current(path):
             from kkrunner.runs import HistoricalFileMismatchError
             raise HistoricalFileMismatchError(f"Result file is unavailable or changed: {path}")
 
@@ -261,7 +246,9 @@ class TaskResult:
 
         from ..result_files import read_plottable_file
 
-        self.require_current_file(file.path())
+        if getattr(getattr(file, "_container", None), "result", None) is not self:
+            raise ValueError("A parsed result file must belong to this TaskResult")
+        file.require_current()
         # Grace plots do not depend on the calculation potential.
         if potential is None and file.file_type != "agr":
             potential = self.any_potential

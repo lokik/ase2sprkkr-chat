@@ -21,3 +21,15 @@ def test_project_result_helpers_are_public():
     assert TaskResult is implementation_result
     assert attach_project_run is implementation_attach
     assert load_project_result is implementation_load
+
+
+def test_file_attribution_is_public_without_old_association_alias():
+    import ase2sprkkr
+    import ase2sprkkr.outputs as outputs
+
+    assert ase2sprkkr.FileAttribution is outputs.FileAttribution
+    assert set(outputs.FileAttribution.__members__) == {
+        "UNKNOWN", "NOT_THIS_RESULT", "LIKELY", "VERIFIED",
+    }
+    assert not hasattr(ase2sprkkr, "FileAssociation")
+    assert not hasattr(outputs, "FileAssociation")
