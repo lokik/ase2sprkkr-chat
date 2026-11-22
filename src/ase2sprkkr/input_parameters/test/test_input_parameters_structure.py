@@ -1,5 +1,6 @@
 import re
 import warnings
+import pickle
 
 import numpy as np
 import pyparsing as pp
@@ -475,6 +476,30 @@ def test_grammar_hook_changes_invalidate_compiled_ancestors():
     assert without_hook is not with_hook
     definition.parse("CONTROL MODE=3")
     assert len(hits) == observed
+
+
+def test_pickle_omits_cached_grammars_on_nested_definitions():
+    definition = cd.InputParametersDefinition.definition_from_dict(
+        {"CONTROL": [V("MODE", int)]}
+    )
+    original_root = definition.grammar()
+    original_section = definition["CONTROL"].grammar()
+    assert "_grammar_cache" in definition.__dict__
+    assert "_grammar_cache" in definition["CONTROL"].__dict__
+
+    restored = pickle.loads(pickle.dumps(definition))
+    assert "_grammar_cache" not in restored.__dict__
+    assert "_grammar_cache" not in restored["CONTROL"].__dict__
+
+    new_root = restored.grammar()
+    new_section = restored["CONTROL"].grammar()
+    assert new_root is restored.grammar()
+    assert new_section is restored["CONTROL"].grammar()
+    assert new_root is not original_root
+    assert new_section is not original_section
+    assert restored.parse("CONTROL MODE=2").to_dict() == {
+        "CONTROL": {"MODE": 2}
+    }
 
 
 def test_clear_grammar_cache_after_schema_edit():

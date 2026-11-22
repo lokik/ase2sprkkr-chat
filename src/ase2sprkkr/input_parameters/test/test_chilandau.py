@@ -21,7 +21,12 @@ def test_defaults_roundtrip_pickle():
     assert q.ENERGY.NE().tolist() == [30]
     assert "EMAX=" not in text and "CLURAD=2.2" in text
     assert "FULLPOT" not in text and "QREPONLY" not in text
-    assert pickle.loads(pickle.dumps(q)).to_string() == q.to_string()
+    restored = pickle.loads(pickle.dumps(q))
+    assert restored.to_string() == q.to_string()
+    assert "_grammar_cache" not in restored._definition.__dict__
+    # Parsing remains available and re-creates the compiled grammar lazily.
+    assert restored._definition.grammar() is restored._definition.grammar()
+    assert restored._definition.read_from_string(text).to_string() == q.to_string()
     assert p.task_definition.executable == "kkrchi"
     assert p.task_definition.mpi is False
 
