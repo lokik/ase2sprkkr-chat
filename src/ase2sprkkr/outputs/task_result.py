@@ -248,6 +248,15 @@ class TaskResult:
         self.require_current_file(self.potential_filename)
         return self._read_potential(self.potential_filename)
 
+    def interpret_potential(self, potential):
+        """Interpret a parsed potential in the context of this result.
+
+        This is deliberately separate from file parsing: ResultLoader may share
+        an unmodified potential between multiple outputs, while individual
+        results may need a different scientific interpretation of its state.
+        """
+        return potential
+
     @property
     def any_potential(self):
         """Return the parsed potential (SCF then try output and then input) """
