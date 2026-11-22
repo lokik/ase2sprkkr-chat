@@ -188,7 +188,10 @@ class RegexNumericTable(pp.Token):
         if self.table.grouping:
             if np.any(counts != counts[0]):
                 raise pp.ParseException(text, loc, "Unequal group lengths", self)
-            result = result.reshape(len(counts), int(counts[0]))
+            shape = (len(counts), int(counts[0]))
+            if not structured:
+                shape += (len(self.fields),)
+            result = result.reshape(shape)
         if self.table.length is not None and len(result) != self.table.length:
             raise pp.ParseException(text, loc, "Incorrect table length", self)
         return match.end(), pp.ParseResults([result])
