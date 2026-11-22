@@ -150,33 +150,49 @@ class BaseDefinition:
         optional = self.is_optional
         return bool(optional(item)) if callable(optional) else bool(optional)
 
-    def add_grammar_hook(self, hook):
-        """Added hooks process the grammar of the option/container.
-        E.g. it is used when the number of readed lines should depend
-        on the value of the option.
+    def clear_grammar_cache(self):
+        """Discard cached grammars for this definition and its ancestors.
+
+        Configure a schema before its first parse. If a caller deliberately
+        edits an already-used definition, it must explicitly clear the cache
+        (or construct a separate definition). Grammar hooks are the exception:
+        their public add/remove methods handle invalidation automatically.
         """
+        definition = self
+        while definition is not None:
+            definition.__dict__.pop("_grammar_cache", None)
+            definition = definition.container
+
+    def add_grammar_hook(self, hook):
+        """Register a grammar hook and invalidate affected compiled grammars."""
         self.grammar_hooks.append(hook)
+        self.clear_grammar_cache()
 
     def remove_grammar_hook(self, hook):
-        """Remove a grammar hook"""
+        """Remove a grammar hook and invalidate affected compiled grammars."""
         self.grammar_hooks.remove(hook)
+        self.clear_grammar_cache()
 
     def grammar(self, allow_dangerous: bool = False, *, allow_incomplete: bool = False):
-        """Generate grammar with the correct settings of pyparsing global state.
+        """Return a compiled grammar, keyed by the requested parse policy.
 
-        Parameters
-        ----------
-        allow_dangerous
-         Allow dangerous values - i.e. values that do not fulfill the requirements
-         for the given-option value (i.e. a type requirement or other constraints).
-        allow_incomplete
-         Allow missing non-optional input items, reporting them as validation issues.
+        Parser schemas are configured before their first parse. Reusing the
+        pyparsing expression avoids rebuilding the entire grammar (especially
+        its recursive ignore rules) for each input file. Explicit mutations to
+        a previously parsed schema require :meth:`clear_grammar_cache` or a
+        fresh definition.
         """
         self._finalize()
-        with generate_grammar():
-            return self._grammar and self._grammar(
-                allow_dangerous, allow_incomplete=allow_incomplete
-            )
+        key = (allow_dangerous, allow_incomplete)
+        cache = self.__dict__.setdefault("_grammar_cache", {})
+        if key not in cache:
+            with generate_grammar():
+                builder = self._grammar
+                cache[key] = (
+                    builder(allow_dangerous, allow_incomplete=allow_incomplete)
+                    if builder is not None else None
+                )
+        return cache[key]
 
     def _get_root_definition(self):
         """Return the root of the definition tree containing this item."""
