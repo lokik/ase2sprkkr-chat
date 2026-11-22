@@ -90,8 +90,9 @@ class TestCalculator:
 
         output = SPRKKR().calculate(
             slab,
-            **calc_args(options={"EMIN": 8.0, "NITER": 2, "NKTAB3D": 4}),
+            **calc_args(options={"EMIN": 8.0, "NITER": 1, "NKTAB3D": 4, "NE": 8}),
         )
+        assert len(output.iterations) == 1
         output.input_parameters.CONTROL.POTFIL = "xxx"
         text = _input_for_atoms(output.input_parameters, slab)
         assert re.search("NKTAB3D=", text)
@@ -186,9 +187,12 @@ class TestCalculator:
         _fast_atoms(atoms)
         atoms.calc = calculator
         calculator.input_parameters.find("NITER").set(2)
-        calculator.input_parameters.find("NKTAB").set(50)
+        calculator.input_parameters.find("NKTAB").set(5)
+        calculator.input_parameters.find("NE").set(8)
         assert isinstance(atoms.get_potential_energy(), float)
-        calculator.input_parameters.find("NITER").set(100)
+        # Keep a different persistent default to test the per-run override,
+        # but avoid an accidental 100-iteration ASE calculation later.
+        calculator.input_parameters.find("NITER").set(3)
 
         output = calculator.calculate(options={"NITER": 2}, mpi=4)
         assert len(output.iterations) == 2
@@ -207,7 +211,7 @@ class TestCalculator:
 
         atoms = bulk("LiCl", "rocksalt", a=5.64) * (2, 1, 1)
         calculator = SPRKKR(atoms=atoms, **calc_args())
-        output = calculator.calculate(options={"EMIN": -1.0, "NITER": 1, "NKTAB": 40, "NE": 20})
+        output = calculator.calculate(options={"EMIN": -1.0, "NITER": 1, "NKTAB": 8, "NE": 8})
         assert len(output.iterations) == 1
         assert len(output.iterations[-1]["atomic_types"]) == 3
         for atomic_type in output.iterations[-1]["atomic_types"].values():
@@ -228,7 +232,8 @@ class TestCalculator:
         _fast_atoms(atoms)
         input_parameters = SPRKKR.InputParameters.create("scf")
         input_parameters.SCF.NITER = 1
-        input_parameters.TAU.NKTAB = 20
+        input_parameters.TAU.NKTAB = 6
+        input_parameters.ENERGY.NE = 8
 
         output = calculator.calculate(input_parameters=input_parameters)
         assert output.atoms == output.potential.atoms
@@ -250,11 +255,11 @@ class TestCalculator:
         calculator.calculate(
             input_parameters="PHAGEN",
             potential=str(converged),
-            options={"NKTAB": 30},
+            options={"NKTAB": 6},
         )
         output.calculator.calculate(
             input_parameters="PHAGEN", potential=str(converged),
-            options={"NKTAB": 10},
+            options={"NKTAB": 4},
         )
         assert Path(f"{converged}_ex_sprkkr").is_file()
         assert Path(f"{converged}.only_coulomb_new").is_file()

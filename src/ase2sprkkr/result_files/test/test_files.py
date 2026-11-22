@@ -15,6 +15,18 @@ from ...common.configuration_containers import DisabledAttributeError
 from ...common.configuration_containers import RootConfigurationContainer
 
 
+# Reading every native example exercises each parser, including the large BSF
+# and SPC files. Plotting every one of those full-resolution datasets adds
+# costly, redundant rendering; use representative lightweight examples instead.
+_PLOT_SMOKE_EXAMPLES = {
+    "SnTe_BLOCHSF.bsf",
+    "SnTe_BLOCHSF_spol.bsf",
+    "Mo2Se4_ARPES_ARPES_data.spc",
+    "Mo2Se4_SCF_SCF_SCFSTART.dos",
+    "Cu_XAS_Cu_L23.rat",
+}
+
+
 class TestOutput:
 
     @pytest.mark.slow
@@ -84,7 +96,7 @@ class TestOutput:
                     assert len(output.K1()) == output.NK1()
                     assert len(output.K2()) == output.NK2()
 
-            if hasattr(output, "plot"):
+            if filename in _PLOT_SMOKE_EXAMPLES and hasattr(output, "plot"):
                 if isinstance(output, JXCResultFile):
                     continue
                 with tempfile.NamedTemporaryFile() as target:
@@ -95,6 +107,16 @@ class TestOutput:
                     if "exclude_vc" in getattr(output, "plot_parameters", {}):
                         kwargs["exclude_vc"] = False
                     output.plot(**kwargs)
+
+    def test_small_kx_ky_arpes_plot(self, tmp_path):
+        # Preserve kx/ky plot-mode coverage without rendering the large native
+        # Au spectrum every time we run the generic result-file tests.
+        source = Path(__file__).parent / "data" / "Mo2Se4_ARPES_kx_ky_small.spc"
+        output = ResultFile.from_file(source, unknown=False)
+        assert output.MODE() == "kx_ky"
+        target = tmp_path / "arpes_kx_ky.png"
+        output.plot(filename=str(target), dpi=72)
+        assert target.stat().st_size > 0
 
     def test_guess_potential_filename_and_manual_override(self, tmp_path):
         output_path = tmp_path / "Fe_JXC_XCPLTEN_Jij.dat"
