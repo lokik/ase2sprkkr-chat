@@ -354,18 +354,20 @@ class TaskResult:
         )
         if not patterns:
             return {}
-        return {
-            name: value for name, value in self.output_values.items()
-            if self._matches_result_pattern(value, patterns, fnmatchcase)
-        }
-
-    @staticmethod
-    def _matches_result_pattern(value, patterns, fnmatchcase):
-        try:
-            path = os.path.normcase(os.path.abspath(os.fspath(value.path())))
-        except (AttributeError, TypeError, ValueError, OSError):
-            return False
-        return any(fnmatchcase(path, pattern) for pattern in patterns)
+        # Several parser keys can refer to the same physical output. A
+        # scientific result represents a file, not an arbitrary alias key.
+        results = {}
+        seen_paths = set()
+        for name, value in self.output_values.items():
+            try:
+                path = os.path.normcase(os.path.abspath(os.fspath(value.path())))
+            except (AttributeError, TypeError, ValueError, OSError):
+                continue
+            if path in seen_paths or not any(fnmatchcase(path, pattern) for pattern in patterns):
+                continue
+            seen_paths.add(path)
+            results[name] = value
+        return results
 
     def _ordered_output_files(self):
         """Put actual result files first; omit internal, untyped task caches."""

@@ -45,3 +45,14 @@ def test_jxc_result_patterns_include_multiple_agr_outputs(tmp_path):
 
     assert set(result.result_values) == {"jxc", "plot1", "plot2"}
     assert "unrelated" in result.output_values
+
+
+def test_result_values_deduplicates_parser_aliases_for_same_output(tmp_path):
+    p = InputParameters.create("DOS")
+    p.CONTROL.DATASET = "Fe"
+    result = _result(p, tmp_path)
+    result.files.add_file("DOS", "Fe_DOS.dos", "dos")
+    result.files.add_file("alias", "Fe_DOS.dos", "dos")
+    assert len(result.output_values) == 2
+    assert len(result.result_values) == 1
+    assert next(iter(result.result_values)) == "DOS"
