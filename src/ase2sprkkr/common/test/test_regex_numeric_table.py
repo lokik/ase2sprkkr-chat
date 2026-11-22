@@ -90,6 +90,17 @@ def test_fast_table_rejects_unsupported_schema():
             table.grammar()
 
 
+def test_fast_table_preserves_homogeneous_numeric_arrays():
+    sample = "1 1 2.0 3.0\n1 2 -1.25 4.5\n2 1 0.0 1.0\n2 2 2.5 6.0"
+    options = dict(grouping=True, numbering=True, header=False, groups_as_list=False)
+    with generate_grammar():
+        expected = Table({"A": float, "B": float}, **options).parse(sample)
+        actual = Table({"A": float, "B": float}, fast_numeric=True, **options).parse(sample)
+    assert actual.shape == expected.shape == (2, 2, 2)
+    assert actual.dtype == expected.dtype
+    np.testing.assert_array_equal(actual, expected)
+
+
 def test_native_rat_fixture_is_parsed_with_bulk_table():
     from ase2sprkkr.result_files.definitions.rat import RATResultFile
     from pathlib import Path
