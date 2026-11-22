@@ -36,6 +36,51 @@ Load a recognized structured file using ``ResultFile``:
 deprecated compatibility name. Result-file parsing is independent of
 running a new calculation.
 
+Loading related calculation outputs
+-----------------------------------
+
+Use :class:`ase2sprkkr.outputs.ResultLoader` to import multiple native
+``.out`` files with a shared directory index and short-lived caches for
+input parameters and potentials. The loader does not store GUI history or
+search for unrelated file extensions.
+
+.. code-block:: python
+
+   from ase2sprkkr import ResultLoader, FileAssociation
+
+   batch = ResultLoader.load_directory("/calculations/Fe")
+   for result in batch.results:
+       print(result.task_name, result.files["output"].path())
+
+   # Recent outputs can share the same cache without a directory glob:
+   loader = ResultLoader()
+   recent = loader.load_files(["Fe_DOS.out", "Fe_SCF.out"])
+   print(recent.failures)  # Individual bad outputs do not abort the batch.
+
+Each result owns the association of its files. A file can be absent or
+overwritten without losing the fact that it was named in the original
+output or input. For example:
+
+.. code-block:: python
+
+   file = result.files["converged"]
+   print(file.path(), file.association, file.association_evidence)
+   print(file.recorded_version, file.observed_version)
+
+``UNKNOWN`` means no reliable conclusion; ``LIKELY`` is heuristic;
+``NOT_THIS_RESULT`` indicates that the file is attributed elsewhere
+(e.g. a newer SCF using the same filename); ``VERIFIED`` requires a
+matching historical content digest from the run manifest. Only the
+result-file option holds these values; there is no parallel provenance
+registry on ``TaskResult``.
+
+The version observed at import protects against later rewrites, but
+**does not prove** which past calculation produced those bytes.
+``associated_with`` may identify the newer competing SCF stdout.
+Use ``file.is_current()`` before operating on a file; cached results
+are re-associated when reused. One ``ResultLoader`` instance is intended
+for one import worker and is not thread-safe.
+
 Grace .agr projects
 -------------------
 

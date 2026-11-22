@@ -23,6 +23,8 @@ __all__ = (
     "promote_ase_atoms",
     "ResultFile",
     "TaskResult",
+    "ResultLoader",
+    "FileAssociation",
     "__version__",
     "config",
 )
@@ -39,6 +41,8 @@ _LAZY_EXPORTS = {
     "SPRKKRAtoms": (".sprkkr.sprkkr_atoms", "SPRKKRAtoms"),
     "ResultFile": (".result_files", "ResultFile"),
     "TaskResult": (".outputs.task_result", "TaskResult"),
+    "ResultLoader": (".outputs.result_loader", "ResultLoader"),
+    "FileAssociation": (".outputs.result_options", "FileAssociation"),
 }
 
 

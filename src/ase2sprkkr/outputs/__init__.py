@@ -15,9 +15,15 @@ from .project_results import (
     retry_project_postprocessing,
 )
 from .task_result import TaskResult
+from .result_options import FileAssociation
+from .result_loader import ResultLoader, ResultBatch, LoadFailure
 
 __all__ = [
     "OutputOnlyResult",
+    "FileAssociation",
+    "ResultLoader",
+    "ResultBatch",
+    "LoadFailure",
     "ProjectResultUnavailableError",
     "UnrecoverableProjectResultError",
     "TaskResult",
