@@ -214,6 +214,14 @@ class ResultLoader:
             result.files.add_file("input", filename)
             return True
 
+    def _prepare_input(self, result):
+        """Optional input resolution before TaskResult.complete()."""
+        try:
+            self._discover_input(result)
+        except Exception:
+            # Unrelated or invalid INP files must not break OUT parsing.
+            pass
+
     def _expected_files(self, result):
         """Add named inputs/outputs even if a physical file is missing."""
         from .output_only_result import OutputOnlyResult
@@ -364,7 +372,7 @@ class ResultLoader:
                         break
 
         if not same_sources:
-            result = TaskResult._parse_file(path)
+            result = TaskResult._parse_file(path, before_complete=self._prepare_input)
             if _identity(path) != version:
                 raise RuntimeError(f"Output changed during parsing: {path}")
         self._associate(result, path)
