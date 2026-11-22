@@ -111,7 +111,9 @@ class TestPotential:
                 options={"NITER": 1, "NKTAB": 5, "NE": 5, "TOL": 1e-2},
             ),
         )
-        assert (tmp_path / "output_test_calc.inp").is_file()
+        input_text = (tmp_path / "output_test_calc.inp").read_text()
+        assert "NKTAB3D=5" in input_text
+        assert (tmp_path / "output_test_calc.pot").is_file()
         written = Potential.from_file(tmp_path / "output_test_calc.pot")
         assert written.atoms is not None
         assert len(written.atoms.regions["left"]) == len(potential.atoms.regions["left"])
