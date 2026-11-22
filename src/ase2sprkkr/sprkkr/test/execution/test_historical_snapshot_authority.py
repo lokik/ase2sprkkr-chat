@@ -1,7 +1,5 @@
-from types import SimpleNamespace
-
 import pytest
-from kkrunner import RunState, RunStore
+from kkrunner import ExecutionSpec, RunState, RunStore
 from kkrunner.files import FileManifest
 from kkrunner.runs.manager import RunManager
 
@@ -14,7 +12,7 @@ def test_later_primary_output_is_not_mistaken_for_uncaptured_history(tmp_path):
     input_file = tmp_path / 'run.inp'
     output_file = tmp_path / 'run.out'
     input_file.write_text('input')
-    spec = SimpleNamespace(directory=str(tmp_path), input_file=str(input_file), output_file=str(output_file), input_files=(str(input_file),), output_files=(str(output_file),), cache_files=())
+    spec = ExecutionSpec(argv=(), directory=str(tmp_path), input_file=str(input_file), output_file=str(output_file), input_files=(str(input_file),), output_files=(str(output_file),))
     record = manager.new_record(directory=tmp_path, files=FileManifest.from_spec(spec), metadata={'ase2sprkkr': {'task': str('DOS').upper()}}, processing_required=True)
     store.save(record)
     record = manager.complete(record, state=RunState.FINISHED, return_code=0, artifacts_available=False)
