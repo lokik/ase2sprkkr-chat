@@ -12,7 +12,7 @@ from ..input_parameters_definitions import (
     MAX_INPUT_FILE_SIZE,
     _read_input_text,
     _TaskSelectorMap,
-    _task_preparse_definition,
+    _scan_task_selectors,
     _task_selector_map,
 )
 
@@ -20,21 +20,12 @@ from ..input_parameters_definitions import (
 _EXAMPLES = Path(__file__).parent.parent / "examples"
 
 
-def test_preparse_ipd_is_cached_and_contains_only_repeated_task():
-    a = _task_preparse_definition()
-    assert a is _task_preparse_definition()
-    assert a.grammar() is a.grammar()
-    assert list(a.sections) == ["TASK"]
-    assert list(a["TASK"].values) == ["TASK"]
-    assert a["TASK"]["TASK"].is_repeated
-    assert a["TASK"]["TASK"].type.keywords
+def test_native_task_scanner_reads_only_switches():
+    mapping = _task_selector_map()
+    assert _scan_task_selectors("TASK ARPES", mapping) == ("ARPES",)
+    assert _scan_task_selectors("TASK DMI JXC", mapping) == ("DMI", "JXC")
+    assert _scan_task_selectors("CONTROL ADSI=unrelated", mapping) == ()
 
-    one = a.read_from_string("TASK ARPES")
-    assert list(one.TASK.TASK()) == ["ARPES"]
-    both = a.read_from_string("TASK DMI JXC")
-    assert list(both.TASK.TASK()) == ["DMI", "JXC"]
-    none = a.read_from_string("CONTROL ADSI=unrelated")
-    assert not none.TASK.TASK()
 
 
 def test_mapping_is_declarative_and_independent_of_adsi():
@@ -138,12 +129,10 @@ def test_limit_from_path_and_binary_and_text_stream(tmp_path, small_input_limit)
     assert _read_input_text(io.BytesIO(b"abc")) == "abc"
 
 
-def test_unrecognized_task_switch_without_known_selector_defaults_to_scf():
-    # Native TASK sections may also contain non-selector flags. When no
-    # registered TASK selector occurs, the selected IPD must still be SCF.
-    preview = _task_preparse_definition().read_from_string("TASK UNKNOWN")
-    value = preview.TASK.TASK()
-    assert value is None or len(value) == 0
+def test_unknown_task_switch_does_not_select_an_ipd():
+    # Unknown TASK switches do not become candidates for autodetection.
+    assert _scan_task_selectors("TASK UNKNOWN", _task_selector_map()) == ()
+
 
 
 def test_selected_parser_failure_never_falls_back(monkeypatch):
@@ -203,20 +192,40 @@ def test_error_policy_with_multiple_candidate_ipds(monkeypatch):
         mod._read_selected_definitions("content", ("FIRST", "SECOND"))
 
 
-def test_unordered_preparse_recognizes_interleaved_selectors():
-    preview = _task_preparse_definition()
+def test_unordered_scanner_recognizes_interleaved_selectors():
+    mapping = _task_selector_map()
     cases = [
         "TASK DMI CLURAD=4.0 JXC",
         "TASK JXC CLURAD=4.0 DMI",
         "TASK DMI CLURAD=4.0 JXC NSHLCLU=3 DMI",
     ]
-    for text in cases:
-        parsed = preview.read_from_string(text)
-        selected = list(parsed.TASK.TASK())
-        assert selected == [
-            token for token in text.split()
-            if token in ("DMI", "JXC")
-        ]
+    for source in cases:
+        assert _scan_task_selectors(source, mapping) == tuple(
+            token for token in source.split() if token in ("DMI", "JXC")
+        )
+
+
+@pytest.mark.parametrize(("source", "expected"), (
+    ("TASK\n  DMI\n  CLURAD=4.0 JXC # DMI\nOTHER X=JXC", ("DMI", "JXC")),
+    ("TASK\n# JXC\n  DMI", ("DMI",)),
+    ("TASK SELECT={DMI JXC} DMI", ("DMI",)),
+    ("TASK SELECT= {DMI, JXC} DMI", ("DMI",)),
+    ("TASK SELECT=[DMI,JXC] DMI", ("DMI",)),
+    ("TASK SELECT=(DMI JXC) DMI", ("DMI",)),
+    ("TASK SELECT=JXC DMI", ("DMI",)),
+    ("TASK SELECT = JXC", ()),
+    ("TASK DMI=1 JXC", ("JXC",)),
+    ("TASK JXC # DMI", ("JXC",)),
+    ("TASK=JXC", ("JXC",)),
+    ("TASK DMI\nSITES X=JXC", ("DMI",)),
+    ("TASK DMI\n   # JXC\n  JXC", ("DMI", "JXC")),
+    ("TASKER JXC\nCONTROL JXC", ()),
+    ("CONTROL TEST=JXC\n  DMI", ()),
+    ("TASK " + " " * 80 + "DMI", ()),
+))
+def test_scanner_ignores_values_comments_and_other_sections(source, expected):
+    assert _scan_task_selectors(source, {"DMI", "JXC"}) == expected
+
 
 
 def test_class_autodetection_tries_all_interleaved_candidates(monkeypatch):
@@ -313,21 +322,21 @@ def test_size_limit_exact_boundary_and_multibyte_utf8(small_input_limit):
         _read_input_text(io.BytesIO("č".encode("utf-8") * (limit // 2 + 1)))
 
 
-def test_preparse_uses_strict_grammar_when_full_parse_is_dangerous(monkeypatch):
+def test_autodetect_with_dangerous_parser_uses_the_same_safe_scanner(monkeypatch):
     from .. import input_parameters_definitions as mod
 
-    preparse = _task_preparse_definition()
     calls = []
-    original_read = preparse.read_from_string
+    original = mod._scan_task_selectors
 
-    def read(*args, **kwargs):
-        calls.append(kwargs["allow_dangerous"])
-        return original_read(*args, **kwargs)
+    def scan(text, mapping):
+        calls.append(text)
+        return original(text, mapping)
 
-    monkeypatch.setattr(preparse, "read_from_string", read)
+    monkeypatch.setattr(mod, "_scan_task_selectors", scan)
     source = _EXAMPLES / "scf.in"
     InputParametersDefinition.from_file(source, allow_dangerous=True)
-    assert calls == [False]
+    assert calls == [source.read_text()]
+
 
 
 def test_scalar_task_selector_and_registration_immutability_contract():
