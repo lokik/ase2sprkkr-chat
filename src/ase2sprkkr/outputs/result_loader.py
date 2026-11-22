@@ -174,6 +174,7 @@ class ResultLoader:
                     and result.file_is_current(filename)):
                 try:
                     result.input_parameters = self.inputs.parse(filename)
+                    return True
                 except Exception:
                     # The explicit file remains registered. A later request
                     # for input_parameters must still report its parse error.
@@ -207,7 +208,7 @@ class ResultLoader:
                 continue
             result.input_parameters = parameters
             result.files.add_file("input", filename)
-            return
+            return True
 
     def _expected_files(self, result):
         """Add named inputs/outputs even if a physical file is missing."""
@@ -218,7 +219,10 @@ class ResultLoader:
         if isinstance(result, OutputOnlyResult):
             return
         try:
-            self._discover_input(result)
+            if self._discover_input(result):
+                # The output parser may have completed before the native input
+                # was discovered. Add declarations now that it is available.
+                result.enrich_declared_output_files(warn_missing=False)
         except Exception:
             # Optional input discovery must not make a parsed OUT unusable.
             pass
