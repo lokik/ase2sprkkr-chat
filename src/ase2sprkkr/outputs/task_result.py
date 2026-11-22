@@ -354,8 +354,8 @@ class TaskResult:
         return ResultLoader().load_file(file)
 
     @classmethod
-    def _parse_file(cls, file):
-        """Parse stdout only; ResultLoader attaches available native inputs."""
+    def _parse_file(cls, file, *, before_complete=None):
+        """Parse stdout, optionally resolving inputs before finalization."""
         from .reader_registry import reader_registry
 
         filename = os.fspath(file)
@@ -367,7 +367,7 @@ class TaskResult:
             os.path.dirname(filename),
             task_name=task,
         )
-        return reader.read_from_file(filename)
+        return reader.read_from_file(filename, before_complete=before_complete)
 
     @classmethod
     def from_run(cls, run, manager=None, *, allow_unparsed=False):
@@ -502,7 +502,7 @@ class KkrOutputReader:
         return result
 
     @maybeclassmethod
-    def read_from_file(self, cls, output, error=None, return_code=0, input_file=None, directory=None, *, run_record=None):
+    def read_from_file(self, cls, output, error=None, return_code=0, input_file=None, directory=None, *, run_record=None, before_complete=None):
         """Parse output of an already finished SPR-KKR calculation."""
         if self is None:
             self = cls(None, None, directory)
@@ -514,5 +514,7 @@ class KkrOutputReader:
         _parsed_output, parsed_error, parsed_return_code = self.parser.read_from_file(
             output_source, error, [result], return_code
         )
+        if before_complete is not None:
+            before_complete(result)
         result.complete(parsed_error, parsed_return_code)
         return result
