@@ -67,29 +67,42 @@ class ScfResult(TaskResult):
 
     produces_potential = True
 
-    @cached_property
-    def potential(self):
-        """Use the final SCF iteration to interpret an embedded result potential.
+    def _with_output_scf_status(self, potential):
+        """Project the final SCF convergence onto this result's embedded state.
 
-        Native CLUPOT can retain SCFSTATUS=ITERATING even when its corresponding
-        OUT reports convergence. For a *parsed* converged SCF result, promote
-        only that in-memory cluster potential to CONVERGED. Never rewrite the
-        historical output file, infer convergence from radial data, or change
-        the separate periodic host.
+        Native CLUPOT can retain SCFSTATUS=ITERATING after its OUT converges.
+        The CLUPOT and host may be shared with other results by ResultLoader;
+        neither the cached native potential nor its atoms may be modified.
+        This interpretation belongs only to a successful, parsed SCF result.
         """
-        potential = super().potential
         if (
-            self.is_embedded
-            and getattr(self, "return_code", 0) == 0
-            and getattr(self, "iterations", None)
-            and self.converged
-            and str(potential.SCF_INFO.SCFSTATUS()).strip().upper() == "ITERATING"
+            not self.is_embedded
+            or getattr(self, "return_code", 0) != 0
+            or not getattr(self, "iterations", None)
+            or not self.converged
+            or str(potential.SCF_INFO.SCFSTATUS()).strip().upper() != "ITERATING"
         ):
-            potential.SCF_INFO.SCFSTATUS = "CONVERGED"
-            atoms = getattr(potential, "_atoms", None)
-            if atoms is not None:
-                atoms.info["sprkkr_embedding_scf_status"] = "CONVERGED"
-        return potential
+            return potential
+        atoms = potential.atoms
+        if atoms is None:
+            return potential
+
+        from ...sprkkr.sprkkr_atoms import SPRKKRAtoms
+
+        # Detach option containers and site metadata without duplicating the
+        # large radial arrays. The periodic embedding host remains shared.
+        selected = (
+            atoms.copy(shallow=True)
+            if isinstance(atoms, SPRKKRAtoms)
+            else atoms.copy()
+        )
+        selected.potential.SCF_INFO.SCFSTATUS = "CONVERGED"
+        selected.info["sprkkr_embedding_scf_status"] = "CONVERGED"
+        return selected.potential
+
+    def _load_result_potential(self, loader=None):
+        """Return the SCF potential with result-specific convergence applied."""
+        return self._with_output_scf_status(super()._load_result_potential(loader))
 
     @cached_property
     def calculator(self):
@@ -117,12 +130,16 @@ class ScfResult(TaskResult):
 
     @property
     def potential_filename(self):
-        fname = super().potential_filename + "_new"
-        return fname
+        # The parsed output's explicit converged file takes precedence, even
+        # when the original input is no longer available.
+        if "converged" in self.files:
+            return self.path_to("converged")
+        return self.start_potential_filename + "_new"
 
     @property
     def start_potential_filename(self):
-        return super().potential_filename
+        """The SCF input, never its registered converged output."""
+        return self._input_potential_filename()
 
     @cached_property
     def start_potential(self):

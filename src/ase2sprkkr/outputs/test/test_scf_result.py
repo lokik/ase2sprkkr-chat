@@ -301,16 +301,21 @@ def test_parsed_embedded_scf_result_updates_in_memory_convergence_only(
         result.iterations = [{"converged": lambda: converged}]
 
     read_potential = result._read_potential
+    raw_potentials = []
 
     def read_with_atoms(filename):
         cluster = read_potential(filename)
         assert cluster.atoms.info["sprkkr_embedding_scf_status"] == "ITERATING"
+        raw_potentials.append(cluster)
         return cluster
 
     monkeypatch.setattr(result, "_read_potential", read_with_atoms)
     cluster = result.potential
     assert result.potential is cluster
     assert cluster.SCF_INFO.SCFSTATUS() == expected_status
+    # Even standalone ScfResult must leave its raw parsed CLUPOT untouched.
+    assert raw_potentials[0].SCF_INFO.SCFSTATUS() == "ITERATING"
+    assert raw_potentials[0].atoms.info["sprkkr_embedding_scf_status"] == "ITERATING"
     assert cluster.atoms.info["sprkkr_embedding_scf_status"] == expected_status
     assert cluster.host.SCF_INFO.SCFSTATUS() == "CONVERGED"
     assert (tmp_path / "cluster.pot_new").read_bytes() == (
@@ -327,3 +332,100 @@ def test_scf_result_does_not_reinterpret_periodic_status(tmp_path):
     result.iterations = [{"converged": lambda: True}]
     copyfile(POTENTIAL_EXAMPLES / "GeTeX5.pot", result.potential_filename)
     assert result.potential.SCF_INFO.SCFSTATUS() == "ITR-BULK"
+
+
+@pytest.mark.parametrize(
+    ("converged", "return_code", "expected"),
+    [
+        (True, 0, "CONVERGED"),
+        (False, 0, "ITERATING"),
+        (None, 0, "ITERATING"),
+        (True, 139, "ITERATING"),
+    ],
+)
+def test_result_loader_embedded_interpretation_does_not_mutate_shared_clupot(
+    embedded_scf_result, converged, return_code, expected,
+):
+    """A parsed CLUPOT belongs to the batch; SCF status belongs to the result."""
+    from ..result_loader import ResultLoader
+
+    result = embedded_scf_result
+    result.return_code = return_code
+    if converged is not None:
+        result.iterations = [{"converged": lambda: converged}]
+
+    loader = ResultLoader()
+    raw = loader.potential(
+        result.potential_filename, host=result.host_potential_filename
+    )
+    cached_atoms = raw.atoms
+    assert raw.SCF_INFO.SCFSTATUS() == "ITERATING"
+
+    selected = result.get_atoms(loader=loader)
+    assert selected.potential.SCF_INFO.SCFSTATUS() == expected
+    assert selected.info["sprkkr_embedding_scf_status"] == expected
+    assert raw.SCF_INFO.SCFSTATUS() == "ITERATING"
+    assert raw.atoms is cached_atoms
+    assert raw.host.SCF_INFO.SCFSTATUS() == "CONVERGED"
+    assert result.get_atoms(loader=loader).potential.SCF_INFO.SCFSTATUS() == expected
+    assert result.atoms.potential.SCF_INFO.SCFSTATUS() == expected
+    assert result.get_atoms().potential is result.potential
+
+    if expected == "CONVERGED":
+        assert selected is not cached_atoms
+        assert selected.potential is not raw
+        assert selected.embedding_host is cached_atoms.embedding_host
+    else:
+        assert selected is cached_atoms
+
+    # A second result sees the original file interpretation from the same cache.
+    other = ScfResult(result.input_parameters, None, result.directory)
+    assert other.get_atoms(loader=loader) is cached_atoms
+
+
+@pytest.mark.parametrize("embedded", [False, True])
+def test_registered_scf_output_never_replaces_start_potential(
+    tmp_path, embedded,
+):
+    """Converged output attribution cannot modify the SCF input reference."""
+    parameters = InputParameters.create("SCF")
+    parameters.CONTROL.POTFIL = "host.pot" if embedded else "Fe.pot"
+    if embedded:
+        parameters.CONTROL.CLUTYPE = "embedded"
+        parameters.CONTROL.POTFIL_CLU = "cluster.pot"
+
+    result = ScfResult(parameters, None, tmp_path)
+    start = result.start_potential_filename
+    output = tmp_path / ("cluster.pot_new" if embedded else "Fe.pot_new")
+    result.files.add_file("converged", output)
+
+    assert result.start_potential_filename == start
+    assert result.potential_filename == str(output)
+    assert start == str(tmp_path / ("cluster.pot" if embedded else "Fe.pot"))
+    assert start != result.potential_filename
+
+
+def test_scf_uses_explicit_converged_file_when_input_is_unavailable(tmp_path):
+    """The output file association, not GUI-specific fallback, chooses POTFIL."""
+    recorded = tmp_path / "recorded.pot_new"
+    result = ScfResult(None, None, tmp_path, task_name="SCF")
+    result.files.add_file("converged", recorded)
+    assert result.potential_filename == str(recorded)
+
+
+def test_periodic_result_atoms_work_with_or_without_shared_loader(tmp_path):
+    """The loader changes only parse reuse, not the reconstructed structure."""
+    from ..result_loader import ResultLoader
+
+    potential = tmp_path / "FePt.pot"
+    copyfile(POTENTIAL_EXAMPLES / "FePt.new.pot", potential)
+    result = TaskResult(None, None, tmp_path, task_name="DOS")
+    result.files.add_file("potential", potential)
+
+    standalone = result.atoms
+    loader = ResultLoader()
+    cached = result.get_atoms(loader=loader)
+    assert len(cached) == len(standalone)
+    assert str(cached.symbols) == str(standalone.symbols)
+    assert result.get_atoms(loader=loader) is cached
+    assert result.potential.atoms is standalone
