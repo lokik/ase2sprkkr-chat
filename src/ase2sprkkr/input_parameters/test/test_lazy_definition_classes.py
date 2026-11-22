@@ -63,7 +63,7 @@ parameters = InputParametersDefinition.from_file({str(path)!r})
 assert parameters.definition_name == 'DOS'
 assert _task_selector_map.cache_info().currsize == 1
 assert 'DOS' in reg._values
-assert set(reg._values) == {'DOS'}
+assert set(reg._values) == {{'DOS'}}
 assert 'JXC' not in reg._modules
 assert 'ARPES' not in reg._modules
 assert 'JXC' not in reg._values
