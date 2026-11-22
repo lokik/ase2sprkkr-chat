@@ -139,7 +139,10 @@ def test_load_historical_scf_with_missing_auxiliary_output(tmp_path, monkeypatch
     )
     record = _record(tmp_path, "SCF")
     record = __import__("dataclasses").replace(record, state=RunState.FINISHED, files=files, return_code=0)
-    result = SimpleNamespace()
+    # The mocked parser must still return a valid TaskResult: the loader
+    # annotates its file provenance after historical reconstruction.
+    from ase2sprkkr.outputs.task_result import TaskResult
+    result = TaskResult(None, None, tmp_path, output_file=str(output), task_name="SCF")
     calls = []
 
     class Manager(_Manager):
@@ -211,7 +214,9 @@ def test_historical_auxiliary_actions_require_original_file(tmp_path, auxiliary_
         assert "plot" in option.actions()
         assert option.parsed_file() is not None
     else:
-        assert option.actions() == ()
+        # Directory navigation is safe, but scientific/file operations must
+        # remain unavailable for missing, replaced or unrecorded artifacts.
+        assert option.actions() == ("open_directory",)
         with pytest.raises(HistoricalFileMismatchError):
             option.parsed_file()
         with pytest.raises(HistoricalFileMismatchError):
