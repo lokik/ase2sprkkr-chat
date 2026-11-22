@@ -27,7 +27,7 @@ class RegexNumericTable(pp.Token):
         super().__init__()
 
         from .arrays import Complex
-        from .basic import Integer, Real, String
+        from .basic import Integer, Real, String, Unsigned
 
         if (
             table.header or table.free_header or table.repeat_sparse
@@ -41,8 +41,9 @@ class RegexNumericTable(pp.Token):
         # existing, fully general Table parser.
         for special in (table.grouping, table.numbering):
             if special and (
-                not isinstance(special.column, Integer)
+                not isinstance(special.column, (Integer, Unsigned))
                 or special.column.prefix or special.column.postfix
+                or special.column.min is not None or special.column.max is not None
             ):
                 raise ValueError("fast_numeric requires plain integer group/row numbers")
 
