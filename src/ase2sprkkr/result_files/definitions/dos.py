@@ -166,8 +166,19 @@ class DOSResultFile(CommonResultFile):
         raw_data = np.asarray(self.RAW_DATA())
         if raw_data.size == 0:
             raise ValueError("DOS file contains no numerical DOS data (header only).")
-        if raw_data.ndim != 2 or raw_data.shape[1] != 8:
-            raise ValueError(f"Invalid DOS data shape {raw_data.shape}; expected eight columns")
+        if raw_data.ndim != 2:
+            raise ValueError(f"Invalid DOS data shape {raw_data.shape}; expected two dimensions")
+        # The first two columns contain energy and its imaginary part. The
+        # remaining columns hold one DOS value per orbital, type and spin;
+        # their number therefore depends on the calculation, not the text
+        # format's eight-value physical line width.
+        orbitals = sum(self.n_orbitals_for(t) for t in self.TYPES())
+        dos_columns = raw_data.shape[1] - 2
+        if orbitals == 0 or dos_columns <= 0 or dos_columns % orbitals != 0:
+            raise ValueError(
+                f"Invalid DOS data shape {raw_data.shape}; expected two leading "
+                f"columns and a positive multiple of {orbitals} orbital columns"
+            )
         n_types = self.n_types()
         if n_types > 1:
             n_types += 1
