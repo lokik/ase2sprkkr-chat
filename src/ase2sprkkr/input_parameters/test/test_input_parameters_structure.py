@@ -204,7 +204,7 @@ def test_copy_skips_discarded_members(monkeypatch, remove_replaced):
 def test_customized_spectroscopy_definitions_are_independent(task):
     from importlib import import_module
 
-    factory = import_module(f"ase2sprkkr.input_parameters.definitions.{task}").input_parameters_definition
+    factory = import_module(f"ase2sprkkr.input_parameters.definitions.{task}").definition.create_definition
     first = factory()
     second = factory()
     for section in first.members():
