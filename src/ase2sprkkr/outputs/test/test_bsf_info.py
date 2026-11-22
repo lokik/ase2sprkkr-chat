@@ -179,3 +179,33 @@ def test_native_bsf_e_plots_uses_ek_header_when_one_k_vector():
     assert ("bsf_grid", BsfGridInfo("EK", 200, 1)) in [
         (event["kind"], event["data"]) for event in events
     ]
+
+def test_task_independent_progress_counts_local_bsf_rank_until_native_finish():
+    from ase2sprkkr.outputs.progress import ProgressInfo
+
+    parser, events = _collect()
+    parser.feed(
+        "MPI calculation with NPROCS = 4\n"
+        "E(k)-relation mode for:\nwith NE = 200 NK = 297\n"
+        "IE= 151 E= -0.8 0.001 all matrices set up - enter k-loop\n"
+        "IE= 175 E= -0.9 0.001 all matrices set up - enter k-loop\n"
+    )
+    assert [e["data"] for e in events if e["kind"] == "progress"] == [
+        ProgressInfo(0, 50, label="Reporting MPI rank: energy loops"),
+        ProgressInfo(24, 50, label="Reporting MPI rank: energy loops"),
+    ]
+    parser.feed("finished in subroutine <BLOCHSF>\n")
+    assert [e["data"] for e in events if e["kind"] == "progress"][-1] == ProgressInfo(
+        50, 50, label="Reporting MPI rank: energy loops"
+    )
+
+
+def test_task_independent_bsf_progress_is_absent_for_kk_without_counter():
+    parser, events = _collect()
+    parser.feed(
+        "constant E mode for:\nNK1 = 60 K1 = (1 0 0)\n"
+        "NK2 = 60 K2 = (0 1 0)\n"
+        "IE= 1 E= 0.12 0.001 all matrices set up - enter k-loop\n"
+        "finished in subroutine <BLOCHSF>\n"
+    )
+    assert not any(e["kind"] == "progress" for e in events)

@@ -40,7 +40,7 @@ def _validate_sigma(p, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class SIGMAInputParametersDefinition(_BaseInputParametersDefinition):
-    _task_definition = TaskDefinition("SIGMA", supports={"3d", "2d"}, experimental=True, executable="kkrchi", mpi=False, output_files=("sigma?????.dat",))
+    _task_definition = TaskDefinition("SIGMA", supports={"3d", "2d"}, experimental=True, executable="kkrchi", mpi=False, result_files=("sigma?????.dat",))
 
     @classmethod
     def create_definition(cls):

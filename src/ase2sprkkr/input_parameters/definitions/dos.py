@@ -17,7 +17,7 @@ class DOSInputParametersDefinition(_BaseInputParametersDefinition):
         supports={"3d", "2d", "embedded"},
         mpi=True,
         output_reader="DOS",
-        output_files=(TaskFile("{DATASET_ADSI}.dos", type="DOS"),),
+        result_files=(TaskFile("{DATASET_ADSI}.dos", type="DOS"),),
     )
 
     @classmethod

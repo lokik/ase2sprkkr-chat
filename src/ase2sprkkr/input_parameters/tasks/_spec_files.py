@@ -42,13 +42,12 @@ def data_pol2_spc(parameters):
 
 
 SPEC_INPUT_FILES = (input_inp, struc_inp)
+SPEC_RESULT_FILES = (data_spc, data_pol1_spc, data_pol2_spc)
+
+# Historical output declaration and ordering remain unchanged. Scientific
+# results are a presentation subset, not an additional file contract.
 SPEC_OUTPUT_FILES = (
     "{DATASET_ADSI}_SPEC.out",
-    data_spc,
-    data_pol1_spc,
-    data_pol2_spc,
-    # KKRSPEC normally creates the generic DOS header through KKRMAIN even
-    # for spectroscopy tasks. It can overwrite a DOS calculation but carries
-    # no result for this task: reserve/clear its path, never collect it.
+    *SPEC_RESULT_FILES,
     TaskFile("{DATASET_ADSI}.dos", collect=False),
 )

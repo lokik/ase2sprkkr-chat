@@ -22,8 +22,8 @@ class JxcInputParametersDefinition(InputParametersDefinition):
     def initialize_from_result(self, parameters, result):
         parameters.ENERGY.EMIN.set_default(result.last_iteration.energy.EMIN())
 
-    def output_files(self, parameters, directory):
-        files = list(super().output_files(parameters, directory))
+    def result_files(self, parameters, directory):
+        files = list(super().result_files(parameters, directory))
         dataset = dataset_adsi(parameters)
         embedded = parameters.CONTROL.CLUTYPE() == "embedded"
         if embedded:

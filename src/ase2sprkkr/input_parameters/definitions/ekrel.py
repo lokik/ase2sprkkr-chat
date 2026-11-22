@@ -47,7 +47,7 @@ def _validate_ekrel(parameters, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class EKRELInputParametersDefinition(_BaseInputParametersDefinition):
-    _task_definition = TaskDefinition("EKREL", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=True, output_files=("{DATASET_ADSI}.bnd",))
+    _task_definition = TaskDefinition("EKREL", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=True, result_files=("{DATASET_ADSI}.bnd",))
 
     @classmethod
     def create_definition(cls):

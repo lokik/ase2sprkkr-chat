@@ -14,6 +14,7 @@ import re
 
 from .default import DefaultResult, DefaultOutputParser
 from ..task_result import KkrOutputReader
+from ..progress import ProgressInfo
 
 
 def xas_total_points_from_parameters(parameters):
@@ -163,6 +164,9 @@ class XasOutputParser(DefaultOutputParser):
             self._last_index = index
             if self.total_points is None or index <= self.total_points:
                 self.emit_info(
+                    "progress", ProgressInfo(index - 1, self.total_points, unit="energies")
+                )
+                self.emit_info(
                     "xas_energy",
                     XasEnergyInfo(index, index - 1, self.total_points),
                 )
@@ -174,6 +178,7 @@ class XasOutputParser(DefaultOutputParser):
                 self._start()
                 self._complete_seen = True
                 self.completed_points = count
+                self.emit_info("progress", ProgressInfo(count, count, unit="energies"))
                 self.emit_info("xas_complete", count)
             return
 

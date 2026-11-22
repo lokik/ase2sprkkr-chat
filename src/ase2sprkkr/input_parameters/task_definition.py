@@ -106,6 +106,7 @@ class TaskDefinition:
     output_reader_name: Optional[str]
     input_files: Tuple[TaskFile, ...]
     output_files: Tuple[TaskFile, ...]
+    result_files: Tuple[TaskFile, ...]
     cache_files: Tuple[TaskFile, ...]
 
     def __init__(
@@ -121,6 +122,7 @@ class TaskDefinition:
         output_reader: Optional[str] = None,
         input_files: Iterable[_FileTemplate] = (),
         output_files: Iterable[_FileTemplate] = (),
+        result_files: Iterable[_FileTemplate] = (),
         cache_files: Iterable[_FileTemplate] = (),
     ) -> None:
         schema_name = _normalize_identifier(
@@ -168,12 +170,22 @@ class TaskDefinition:
         for kind, values in (
             ("input", input_files),
             ("output", output_files),
+            ("result", result_files),
             ("cache", cache_files),
         ):
             object.__setattr__(
                 self, f"{kind}_files",
                 _normalize_task_files(values, f"{kind}_files"),
             )
+
+        # Preserve TaskDefinition.output_files as the *complete* public file
+        # contract, including scientific results. result_files is additional
+        # semantic metadata, not a replacement for the existing field.
+        outputs = list(self.output_files)
+        for result_file in self.result_files:
+            if not any(file.pathname == result_file.pathname for file in outputs):
+                outputs.append(result_file)
+        object.__setattr__(self, "output_files", tuple(outputs))
 
     def output_reader(
         self,
@@ -455,7 +467,17 @@ class InputParametersRegistry(ModuleRegistry):
             value if isinstance(value, TaskFile) else TaskFile(value)
             for value in schema_files
         )
-        return (*declared, *schema_files)
+        files = (*declared, *schema_files)
+        if kind == "output":
+            # Scientific-result declarations are also ordinary outputs.
+            # If an output was already declared explicitly, do not add a
+            # duplicate (and retain its original ordering and metadata).
+            # Duplicate declarations within one role remain validation errors.
+            result_files = self.files_for_task(task, parameters, directory, "result")
+            explicit_paths = {os.fspath(file) for file in files}
+            return (*files, *(file for file in result_files
+                              if os.fspath(file) not in explicit_paths))
+        return files
 
 
 class _ExtraTaskRegistry(ModuleRegistry):

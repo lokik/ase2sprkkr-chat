@@ -22,7 +22,7 @@ def _validate_fmag(parameters, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class FMAGInputParametersDefinition(_BaseInputParametersDefinition):
-    _task_definition = TaskDefinition("FMAG", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=True, output_files=("{DATASET_ADSI}_fmag_*.agr", "{DATASET_ADSI}_dens_*.agr"))
+    _task_definition = TaskDefinition("FMAG", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=True, result_files=("{DATASET_ADSI}_fmag_*.agr", "{DATASET_ADSI}_dens_*.agr"))
 
     @classmethod
     def create_definition(cls):

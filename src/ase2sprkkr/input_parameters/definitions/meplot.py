@@ -19,8 +19,8 @@ class MeplotInputParametersDefinition(InputParameters):
 
     _task_definition = TaskDefinition("MEPLOT", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False)
 
-    def output_files(self, parameters, directory):
-        files = list(super().output_files(parameters, directory))
+    def result_files(self, parameters, directory):
+        files = list(super().result_files(parameters, directory))
         dataset = dataset_adsi(parameters)
         task = parameters.TASK
 

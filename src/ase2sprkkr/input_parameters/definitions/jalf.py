@@ -25,7 +25,7 @@ def _validate_jalf(parameters, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class JALFInputParametersDefinition(_BaseInputParametersDefinition):
-    _task_definition = TaskDefinition("JALF", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=("{DATASET}_JALF.dat", "curdns1", "curdns2", "curdns3"))
+    _task_definition = TaskDefinition("JALF", supports={"3d", "2d"}, experimental=True, executable="kkrgen", mpi=False, output_files=("{DATASET}_JALF.dat", "curdns1", "curdns2", "curdns3"), result_files=("{DATASET}_JALF.dat",))
 
     @classmethod
     def create_definition(cls):

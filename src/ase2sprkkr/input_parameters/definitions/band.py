@@ -3,7 +3,7 @@ import numpy as np
 from ...common.grammar_types import Integer, SetOf
 from ...common.warnings import DataValidityError
 from ..task_definition import TaskDefinition
-from ..tasks._spec_files import SPEC_INPUT_FILES, SPEC_OUTPUT_FILES
+from ..tasks._spec_files import SPEC_INPUT_FILES, SPEC_OUTPUT_FILES, SPEC_RESULT_FILES
 
 from ._sections import CONTROL
 from ..input_parameters_definitions import InputValueDefinition as V, InputSectionDefinition as Section
@@ -39,7 +39,7 @@ from ..input_parameters_definitions import InputParametersDefinition as _BaseInp
 
 class BANDInputParametersDefinition(_BaseInputParametersDefinition):
     _task_definition = TaskDefinition("BAND", supports={"3d", "2d"}, experimental=True, executable="kkrspec", mpi=False, output_reader="SPEC",
-        input_files=SPEC_INPUT_FILES, output_files=SPEC_OUTPUT_FILES,
+        input_files=SPEC_INPUT_FILES, output_files=SPEC_OUTPUT_FILES, result_files=SPEC_RESULT_FILES,
     )
 
     @classmethod

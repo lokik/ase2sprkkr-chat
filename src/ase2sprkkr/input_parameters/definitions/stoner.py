@@ -30,7 +30,7 @@ from ..input_parameters_definitions import InputParametersDefinition as _BaseInp
 class STONERInputParametersDefinition(_BaseInputParametersDefinition):
     _task_definition = TaskDefinition(
         "STONER", experimental=True, executable="kkrgen", mpi=False,
-        supports={"3d", "2d"}, output_files=(
+        supports={"3d", "2d"}, result_files=(
             "{DATASET_ADSI}_*_g-spin.dat",
             "{DATASET_ADSI}_*_g-orb.dat",
             "{DATASET_ADSI}_*_VWN_A-xc.dat",

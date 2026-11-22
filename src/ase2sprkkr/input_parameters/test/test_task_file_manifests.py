@@ -109,11 +109,11 @@ def test_spec_outputs_follow_polarization_and_task(tmp_path):
         )
         if task == "CLPES":
             outputs += (str(tmp_path / "Fe_CLPES_corewf"),)
-        assert parameters.output_files(str(tmp_path)) == outputs
+        assert tuple(file for file in parameters.output_files(str(tmp_path)) if file.collect) == outputs
 
         # Selecting S polarization does not itself enable two output channels.
         parameters.SPEC_PH.POL_P = "S"
-        assert parameters.output_files(str(tmp_path)) == outputs
+        assert tuple(file for file in parameters.output_files(str(tmp_path)) if file.collect) == outputs
 
         if task != "CLPES":
             for npol in (0, 3):
@@ -124,11 +124,11 @@ def test_spec_outputs_follow_polarization_and_task(tmp_path):
                     str(tmp_path / f"Fe_{task}_data_pol1.spc"),
                     str(tmp_path / f"Fe_{task}_data_pol2.spc"),
                 )
-                assert output_files == expected
+                assert tuple(file for file in output_files if file.collect) == expected
 
     parameters = InputParameters.create("BAND")
     parameters.CONTROL.DATASET = "Fe"
-    assert parameters.output_files(str(tmp_path)) == (
+    assert tuple(file for file in parameters.output_files(str(tmp_path)) if file.collect) == (
         str(tmp_path / "Fe_BAND_SPEC.out"), str(tmp_path / "Fe_BAND_data.spc"),
     )
 
@@ -137,10 +137,11 @@ def test_spec_outputs_follow_polarization_and_task(tmp_path):
     for diagram in (0, 1, 2):
         parameters.SPEC_EL.TYP = diagram
         declared = parameters.output_files(str(tmp_path))
-        assert tuple(map(str, declared)) == (
+        assert tuple(map(str, (f for f in declared if f.collect))) == (
             str(tmp_path / "Fe_SPLEED_SPEC.out"), str(tmp_path / "Fe_SPLEED_data.spc"),
         )
         assert all(not f.optional for f in declared)
+        assert (str(declared[-1]), declared[-1].collect) == (str(tmp_path / "Fe_SPLEED.dos"), False)
 
 
 def test_scf_invalid_grid_and_mixing_are_rejected():
@@ -217,3 +218,95 @@ def test_embedded_jxc_requires_frel_in_current_native_audit():
     parameters.MODE.MODE = "SP-SREL"
     with pytest.raises(DataValidityError, match="Embedded JXC/DMI currently requires FREL"):
         parameters.validate("save")
+
+def test_user_facing_result_files_are_also_collected_outputs(tmp_path):
+    directory = str(tmp_path)
+    for task in ("DOS", "BSFEK", "BSFKK", "XAS", "JXC", "DMI", "GILBERT", "ARPES", "AIPES", "BAND", "CLPES", "SPLEED"):
+        parameters = InputParameters.create(task)
+        parameters.CONTROL.DATASET = "Fe"
+        results = parameters.result_files(directory)
+        outputs = parameters.output_files(directory)
+        assert results, task
+        assert set(map(str, results)) <= set(map(str, outputs)), task
+        if task in ("ARPES", "AIPES", "BAND", "CLPES", "SPLEED"):
+            assert all(str(file).endswith(".spc") for file in results)
+
+
+def test_scf_potential_is_output_but_not_a_scientific_result(tmp_path):
+    p = InputParameters.create("SCF")
+    p.CONTROL.POTFIL = "Fe.pot"
+    outputs = p.output_files(str(tmp_path))
+    assert str(tmp_path / "Fe.pot_new") in set(map(str, outputs))
+    assert p.result_files(str(tmp_path)) == ()
+
+
+def test_spec_result_declarations_obey_polarization(tmp_path):
+    parameters = InputParameters.create("ARPES")
+    parameters.CONTROL.DATASET = "Fe"
+    assert tuple(map(str, parameters.result_files(str(tmp_path)))) == (
+        str(tmp_path / "Fe_ARPES_data.spc"),
+    )
+    parameters.SPEC_PH.NPOL = 0
+    assert tuple(map(str, parameters.result_files(str(tmp_path)))) == (
+        str(tmp_path / "Fe_ARPES_data_pol1.spc"),
+        str(tmp_path / "Fe_ARPES_data_pol2.spc"),
+    )
+
+
+def test_spec_output_manifest_retains_native_order_and_collision_only_dos(tmp_path):
+    p = InputParameters.create("ARPES")
+    p.CONTROL.DATASET = "Fe"
+    outputs = p.output_files(str(tmp_path))
+    assert tuple(str(f) for f in outputs) == (
+        str(tmp_path / "Fe_ARPES_SPEC.out"),
+        str(tmp_path / "Fe_ARPES_data.spc"),
+        str(tmp_path / "Fe_ARPES.dos"),
+    )
+    assert tuple(f.collect for f in outputs) == (True, True, False)
+    assert tuple(str(f) for f in p.result_files(str(tmp_path))) == (
+        str(tmp_path / "Fe_ARPES_data.spc"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("task", "diagnostic"),
+    [("COMPTON", "Fe_COMPTON_data.mcp"), ("POSANI", "Fe_POSANI_data.mpa")],
+)
+def test_optional_diagnostic_dump_is_not_a_user_facing_result(tmp_path, task, diagnostic):
+    p = InputParameters.create(task)
+    p.CONTROL.DATASET = "Fe"
+    p.CONTROL.PRINT = 1
+    outputs = p.output_files(str(tmp_path))
+    results = p.result_files(str(tmp_path))
+    expected = str(tmp_path / diagnostic)
+    assert expected in tuple(map(str, outputs))
+    assert expected not in tuple(map(str, results))
+
+
+def test_phagen_export_is_a_result_not_a_temporary_cache(tmp_path):
+    p = InputParameters.create("PHAGEN")
+    p.CONTROL.POTFIL = "Fe.pot"
+    expected = (
+        str(tmp_path / "Fe.pot_ex_sprkkr"),
+        str(tmp_path / "Fe.pot.only_coulomb_new"),
+    )
+    assert tuple(map(str, p.result_files(str(tmp_path)))) == expected
+    assert tuple(map(str, p.output_files(str(tmp_path)))) == expected
+
+
+def test_direct_task_definition_output_contract_includes_results_without_duplicates():
+    from ase2sprkkr.input_parameters.task_definition import TaskDefinition, TaskFile
+
+    task = TaskDefinition(
+        "DOS",
+        output_files=("data.dos", "log.out"),
+        result_files=(TaskFile("data.dos", type="DOS"),),
+    )
+    assert tuple(map(str, task.output_files)) == ("data.dos", "log.out")
+    assert tuple(map(str, task.result_files)) == ("data.dos",)
+
+    # A scientific declaration not explicitly listed in output_files must
+    # still remain visible in the full legacy TaskDefinition.output_files API.
+    dos = InputParameters.create("DOS").task_definition
+    assert tuple(map(str, dos.output_files)) == ("{DATASET_ADSI}.dos",)
+    assert tuple(map(str, dos.result_files)) == ("{DATASET_ADSI}.dos",)

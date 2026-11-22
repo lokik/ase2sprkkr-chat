@@ -16,8 +16,8 @@ class PosaniInputParametersDefinition(RequiredTauInputParametersDefinition):
 
     _task_definition = TaskDefinition("POSANI", supports={"3d"}, experimental=True, executable="kkrgen", mpi=True, input_files=("{DATASET_ADSI}_pos_dat.pan",))
 
-    def output_files(self, parameters, directory):
-        files = list(super().output_files(parameters, directory))
+    def result_files(self, parameters, directory):
+        files = list(super().result_files(parameters, directory))
         dataset = dataset_adsi(parameters)
         task = parameters.TASK
         if task.MD2D() or task.EMD2D():
@@ -26,8 +26,15 @@ class PosaniInputParametersDefinition(RequiredTauInputParametersDefinition):
         else:
             files.extend(resolve_file(directory, f"{dataset}_{part}.mpa")
                          for part in ("BND", "COR", "TOT"))
-            if parameters.CONTROL.PRINT() > 0:
-                files.append(resolve_file(directory, f"{dataset}_data.mpa"))
+
+        return tuple(files)
+
+    def output_files(self, parameters, directory):
+        """Preserve the historical output order; mark diagnostic dumps auxiliary."""
+        files = list(self.result_files(parameters, directory))
+        files.extend(super().output_files(parameters, directory))
+        if not (parameters.TASK.MD2D() or parameters.TASK.EMD2D()) and parameters.CONTROL.PRINT() > 0:
+            files.append(resolve_file(directory, f"{dataset_adsi(parameters)}_data.mpa"))
         return tuple(files)
 
 

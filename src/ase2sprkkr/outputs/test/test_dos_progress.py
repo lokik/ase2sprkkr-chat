@@ -15,7 +15,7 @@ def test_dos_progress_is_structured_and_chunk_safe():
     parser.feed(" 13/300 do")
     assert events == []
     parser.feed("ne.\n14/300 completed\n")
-    assert events == [
+    assert [e for e in events if e["kind"] != "progress"] == [
         {"kind": "dos_started", "data": None},
         {"kind": "dos_progress", "data": DosProgressInfo(13, 300)},
         {"kind": "dos_progress", "data": DosProgressInfo(14, 300)},
@@ -27,10 +27,10 @@ def test_dos_does_not_invent_progress_from_fractions_or_unfinished_points():
     events = []
     parser = DosProgressParser(on_info=lambda **event: events.append(event))
     parser.feed("ENERGY NE=300\n13/300\n1/0 done.\n301/300 done.\n")
-    assert events == [{"kind": "dos_started", "data": None}]
+    assert [e for e in events if e["kind"] != "progress"] == [{"kind": "dos_started", "data": None}]
     parser.feed("12/300 done.\n12/300 done.\n")
     assert events[-1] == {"kind": "dos_progress", "data": DosProgressInfo(12, 300)}
-    assert len(events) == 2
+    assert len([e for e in events if e["kind"] != "progress"]) == 2
 
 
 def test_dos_progress_prints_the_same_info_as_callback(capsys):
@@ -96,7 +96,7 @@ def test_native_dos_energy_headers_are_per_energy_not_per_atomic_type():
     )
     parser.feed(" 13 E= 0.4061 0.0100 IT= 1 Ti\n")
     parser.feed(" 13 E= 0.4061 0.0100 IT= 2 Co\n")
-    assert [event["kind"] for event in events] == ["dos_started"]
+    assert [event["kind"] for event in events if event["kind"] != "progress"] == ["dos_started"]
 
     parser.feed(" 14 E= 0.4081 0.0100 IT= 1 Ti\n")
     assert events[-1] == {
@@ -242,3 +242,17 @@ def test_native_dos_both_printed_header_variants():
     assert [e["data"].completed for e in events if e["kind"] == "dos_progress"] == [1]
     parser.feed(" 3 E= 0.1236 0.0010 L= 0 IT= 1 Fe\n")
     assert [e["data"].completed for e in events if e["kind"] == "dos_progress"] == [1, 2]
+
+def test_task_independent_progress_reports_dos_mpi_estimate_and_completion():
+    from ase2sprkkr.outputs.progress import ProgressInfo
+
+    events = []
+    parser = DosProgressParser(on_info=lambda **e: events.append(e), total_points=200)
+    parser.feed("MPI calculation with NPROCS = 4\n")
+    parser.feed(" 151 E= 0.41 0.01 IT= 1 Fe\n")
+    parser.feed(" 176 E= 0.42 0.01 IT= 1 Fe\n")
+    assert [e["data"] for e in events if e["kind"] == "progress"] == [
+        ProgressInfo(0, 200, estimated=True), ProgressInfo(100, 200, estimated=True)
+    ]
+    parser.feed("program stopped regularly via STOP_REGULAR\n")
+    assert [e["data"] for e in events if e["kind"] == "progress"][-1] == ProgressInfo(200, 200)

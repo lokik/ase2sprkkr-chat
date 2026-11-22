@@ -7,7 +7,7 @@ from ..input_parameters_definitions import InputParametersDefinition as _BaseInp
 class PLOT2DPOTInputParametersDefinition(_BaseInputParametersDefinition):
     _task_definition = TaskDefinition(
         "PLOT2DPOT", supports={"3d", "2d"}, experimental=True, executable="kkrgen",
-        mpi=False, output_files=_PLY_OUTPUTS,
+        mpi=False, result_files=_PLY_OUTPUTS,
     )
 
     @classmethod

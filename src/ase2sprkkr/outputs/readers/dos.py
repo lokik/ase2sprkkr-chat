@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from numbers import Integral
 
 from ..task_result import TaskResult, KkrOutputReader
+from ..progress import ProgressInfo
 from .default import DefaultOutputParser
 from ...common.decorators import cached_property
 from ...input_parameters.definitions._filenames import dataset_adsi
@@ -127,6 +128,7 @@ class DosOutputParser(DefaultOutputParser):
         progress = DosProgressInfo(completed, total, estimated)
         if progress != self.last_progress:
             self.last_progress = progress
+            self.emit_info("progress", ProgressInfo(completed, total, estimated=estimated))
             self.emit_info("dos_progress", progress)
 
     def _consume_line(self, line):

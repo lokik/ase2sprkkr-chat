@@ -40,7 +40,7 @@ def _validate_optabs(p, _values, why):
 from ..input_parameters_definitions import InputParametersDefinition as _BaseInputParametersDefinition
 
 class OPTABSInputParametersDefinition(_BaseInputParametersDefinition):
-    _task_definition = TaskDefinition("OPTABS", supports={"3d", "2d"}, experimental=True, executable="kkrchi", mpi=False, output_files=("sig_?????_ISPR??_NV.dat", "sig_?????_ISPR??_VC.dat"))
+    _task_definition = TaskDefinition("OPTABS", supports={"3d", "2d"}, experimental=True, executable="kkrchi", mpi=False, result_files=("sig_?????_ISPR??_NV.dat", "sig_?????_ISPR??_VC.dat"))
 
     @classmethod
     def create_definition(cls):

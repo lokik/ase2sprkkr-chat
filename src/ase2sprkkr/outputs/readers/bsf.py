@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from math import ceil
 
 from ..task_result import TaskResult, KkrOutputReader
+from ..progress import ProgressInfo
 from .default import DefaultOutputParser
 from ...common.decorators import cached_property
 
@@ -140,6 +141,7 @@ class BsfOutputParser(DefaultOutputParser):
         self._last_energy = None
         self.nprocs = None
         self._rank_start = None
+        self._rank_total = None
 
     @staticmethod
     def format_info(kind, data):
@@ -189,6 +191,7 @@ class BsfOutputParser(DefaultOutputParser):
             # EPHOT triggers a second native energy loop (blochsf.f).
             # Start fresh local-rank accounting; this is not a completion.
             self._rank_start = None
+            self._rank_total = None
             self._last_energy = None
             self.emit_info("bsf_energy_window", int(match[1]))
         if self.mode == "KK" and (match := self._outer_krow.match(line)):
@@ -244,6 +247,13 @@ class BsfOutputParser(DefaultOutputParser):
                         )
                         entered = point.index - self._rank_start + 1
                         if total > 0 and 0 < entered <= total:
+                            self._rank_total = total
+                            self.emit_info(
+                                "progress", ProgressInfo(
+                                    entered - 1, total,
+                                    label="Reporting MPI rank: energy loops",
+                                ),
+                            )
                             self.emit_info(
                                 "bsf_rank_progress",
                                 BsfRankProgressInfo(
@@ -260,6 +270,13 @@ class BsfOutputParser(DefaultOutputParser):
 
         if not self._finished_seen and self._finished.search(line):
             self._finished_seen = True
+            if self._rank_total is not None:
+                self.emit_info(
+                    "progress", ProgressInfo(
+                        self._rank_total, self._rank_total,
+                        label="Reporting MPI rank: energy loops",
+                    ),
+                )
             self.emit_info("bsf_finished", BsfFinishedInfo(self.negative_warnings))
 
     @staticmethod

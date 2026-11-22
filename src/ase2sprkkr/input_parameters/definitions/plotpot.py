@@ -8,7 +8,7 @@ from ..input_parameters_definitions import InputParametersDefinition as _BaseInp
 class PLOTPOTInputParametersDefinition(_BaseInputParametersDefinition):
     _task_definition = TaskDefinition(
         "PLOTPOT", supports={"3d", "2d"}, experimental=True, executable="kkrgen",
-        mpi=False, output_files=_OUTPUTS["PLOTPOT"],
+        mpi=False, result_files=_OUTPUTS["PLOTPOT"],
     )
 
     @classmethod
