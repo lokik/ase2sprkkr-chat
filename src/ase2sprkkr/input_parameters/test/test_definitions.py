@@ -9,7 +9,7 @@ import pytest
 from kkrunner import TaskFile
 
 from ...common.grammar_types import Keyword
-from ...common.warnings import DataValidityError, DataValidityWarning
+from ...common.warnings import DataValidityError, DataValidityWarning, catch_warnings_of
 from ..input_parameters import InputParameters
 from ..task_definition import TaskDefinition
 
@@ -186,18 +186,24 @@ class TestDefinitions:
         assert bsfkk.name == "bsf"
         assert bsfkk.task_name == "BSFKK"
         assert bsfkk.ENERGY.NE().tolist() == [1]
-        with pytest.warns(DataValidityWarning, match="ENERGY.NE selects BSF-EK"):
+        # The requested task selects defaults, but NE selects the effective
+        # BSF mode; changing it deliberately does not emit a warning.
+        with catch_warnings_of(DataValidityWarning) as warnings:
             bsfkk.ENERGY.NE = 2
+        assert not warnings
         assert bsfkk.ENERGY.NE().tolist() == [2]
         assert bsfkk.task_name == "BSFEK"
+        assert bsfkk.requested_task_name == "BSFKK"
 
         bsfek = InputParameters.create("BSFEK")
         assert bsfek.task_name == "BSFEK"
         assert bsfek.ENERGY.NE().tolist() == [200]
-        with pytest.warns(DataValidityWarning, match="ENERGY.NE selects BSF-KK"):
+        with catch_warnings_of(DataValidityWarning) as warnings:
             bsfek.ENERGY.NE = 1
+        assert not warnings
         assert bsfek.ENERGY.NE().tolist() == [1]
         assert bsfek.task_name == "BSFKK"
+        assert bsfek.requested_task_name == "BSFEK"
 
     def test_bsf_modes_cannot_be_mixed(self):
         ip = InputParameters.create("BSFEK")
