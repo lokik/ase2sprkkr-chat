@@ -50,7 +50,8 @@ def test_generated_cache_tracks_fermi_and_can_be_cleared_explicitly(monkeypatch)
 def rat_result():
     from ase2sprkkr.result_files.definitions.rat import RATResultFile
 
-    return RATResultFile.from_file(RAT_FILE)
+    # Do not hide a broken RAT parser behind the unknown-format fallback.
+    return RATResultFile.from_file(RAT_FILE, try_only="RAT", unknown=False)
 
 
 @pytest.fixture(scope="module")
