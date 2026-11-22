@@ -194,7 +194,7 @@ def test_create_run_rejects_unsupported_2d_before_opening_files(source, tmp_path
 
 def test_file_only_potential_uses_explicit_atoms_for_task_validation(tmp_path):
     from ase import Atoms
-    from ase2sprkkr import SPRKKR
+    from ase2sprkkr import InputParameters, SPRKKR
 
     params = InputParameters.for_task("DOS")
     path = tmp_path / "native.pot"
