@@ -30,6 +30,32 @@ def _calculator(directory, atoms=None):
     )
 
 
+def test_explicit_parameters_do_not_initialize_default_scf(tmp_path):
+    parameters = InputParameters.create("DOS")
+    parameters.CONTROL.POTFIL = "existing.pot"
+    calculator = _calculator(tmp_path)
+    assert calculator._input_parameters is None
+
+    prepared = calculator.prepare(
+        input_parameters=parameters, potential=False, output_file=False
+    )
+    try:
+        assert prepared.input_parameters.task_name == "DOS"
+        assert calculator._input_parameters is None
+    finally:
+        prepared.close()
+
+
+def test_missing_explicit_parameters_still_initialize_default_scf(tmp_path):
+    calculator = _calculator(tmp_path)
+    assert calculator._input_parameters is None
+
+    with pytest.raises(ValueError, match="Potential in the input parameters is not set"):
+        calculator.prepare(potential=False)
+
+    assert calculator._input_parameters.task_name == "SCF"
+
+
 def test_nested_files_use_calculation_directory_for_serialized_references(
     tmp_path, monkeypatch, li_bulk
 ):
