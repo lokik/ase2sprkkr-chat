@@ -47,13 +47,13 @@ def test_loader_indexes_only_out_and_identifies_overwritten_scf(tmp_path, monkey
 
     reads = []
 
-    def parse(_cls, path, *, input_cache=None):
+    def parse(_cls, path, ):
         reads.append(Path(path))
         cls = _DOS if Path(path).name == "dos.out" else _SCF
         return cls(None, None, tmp_path, output_file=path,
                    task_name="DOS" if cls is _DOS else "SCF")
 
-    monkeypatch.setattr(TaskResult, "from_file", classmethod(parse))
+    monkeypatch.setattr(TaskResult, "_parse_file", classmethod(parse))
     loader = ResultLoader()
     assert [p.name for p in loader.find_outputs(tmp_path)] == [
         "dos.out", "newer.out", "older.out",
@@ -80,8 +80,8 @@ def test_tied_scf_mtimes_are_unknown(tmp_path, monkeypatch):
         os.utime(path, ns=(1_000_000_000, 1_000_000_000))
 
     monkeypatch.setattr(
-        TaskResult, "from_file",
-        classmethod(lambda _cls, path, *, input_cache=None:
+        TaskResult, "_parse_file",
+        classmethod(lambda _cls, path, :
                     _SCF(None, None, tmp_path, output_file=path, task_name="SCF")),
     )
     results = ResultLoader.load_directory(tmp_path).results
@@ -99,7 +99,7 @@ def test_historical_hash_is_stronger_than_mtime_heuristic(tmp_path, monkeypatch)
     os.utime(new, ns=(2_000_000_000, 2_000_000_000))
     version = FileVersion.capture(potential, require_digest=True)
 
-    def parse(_cls, path, *, input_cache=None):
+    def parse(_cls, path, ):
         result = _SCF(None, None, tmp_path, output_file=path, task_name="SCF")
         if Path(path) == old:
             result.run_record = SimpleNamespace(
@@ -108,7 +108,7 @@ def test_historical_hash_is_stronger_than_mtime_heuristic(tmp_path, monkeypatch)
             )
         return result
 
-    monkeypatch.setattr(TaskResult, "from_file", classmethod(parse))
+    monkeypatch.setattr(TaskResult, "_parse_file", classmethod(parse))
     loader = ResultLoader()
     old_result = loader.load_file(old)
     option = old_result.files["converged"]
@@ -150,12 +150,12 @@ def test_reuse_invalidated_when_input_changes_without_output_change(tmp_path, mo
     inp.write_text("old")
     reads = []
 
-    def parse(_cls, path, *, input_cache=None):
+    def parse(_cls, path, ):
         reads.append(path)
         return TaskResult(None, None, tmp_path, output_file=path,
                           input_file=inp, task_name="DOS")
 
-    monkeypatch.setattr(TaskResult, "from_file", classmethod(parse))
+    monkeypatch.setattr(TaskResult, "_parse_file", classmethod(parse))
     loader = ResultLoader()
     original = loader.load_file(output)
     assert loader.load_file(output) is original
@@ -170,8 +170,8 @@ def test_batch_preserves_good_results_after_one_bad_file(tmp_path, monkeypatch):
     valid = _output(tmp_path / "valid.out", scf=False)
     missing = tmp_path / "missing.out"
     monkeypatch.setattr(
-        TaskResult, "from_file",
-        classmethod(lambda _cls, path, *, input_cache=None:
+        TaskResult, "_parse_file",
+        classmethod(lambda _cls, path, :
                     TaskResult(None, None, tmp_path, output_file=path, task_name="DOS")),
     )
     batch = ResultLoader().load_files((missing, valid))
@@ -197,7 +197,7 @@ def test_companion_ignores_header_false_positive_and_tries_older(tmp_path, monke
 
     reads = []
 
-    def parse(_cls, path, *, input_cache=None):
+    def parse(_cls, path, ):
         reads.append(Path(path).name)
         if Path(path) == consumer:
             kind = _DOS
@@ -208,7 +208,7 @@ def test_companion_ignores_header_false_positive_and_tries_older(tmp_path, monke
         return kind(None, None, tmp_path, output_file=path,
                     task_name="DOS" if kind is _DOS else "SCF")
 
-    monkeypatch.setattr(TaskResult, "from_file", classmethod(parse))
+    monkeypatch.setattr(TaskResult, "_parse_file", classmethod(parse))
     loader = ResultLoader()
     dos = loader.load_file(consumer)
     found = loader.companion_scf(dos)
@@ -223,7 +223,7 @@ def test_companion_rejects_disagreement_between_registered_file_and_result(tmp_p
     consumer = _output(tmp_path / "dos.out", scf=False)
     scf = _output(tmp_path / "scf.out")
 
-    def parse(_cls, path, *, input_cache=None):
+    def parse(_cls, path, ):
         kind = _DOS if Path(path) == consumer else _SCF
         result = kind(None, None, tmp_path, output_file=path,
                       task_name="DOS" if kind is _DOS else "SCF")
@@ -231,7 +231,7 @@ def test_companion_rejects_disagreement_between_registered_file_and_result(tmp_p
             result.files.add_file("converged", "wrong.pot_new")
         return result
 
-    monkeypatch.setattr(TaskResult, "from_file", classmethod(parse))
+    monkeypatch.setattr(TaskResult, "_parse_file", classmethod(parse))
     loader = ResultLoader()
     assert loader.companion_scf(loader.load_file(consumer)) is None
 
@@ -242,14 +242,14 @@ def test_historical_missing_file_is_unknown_not_wrong_result(tmp_path, monkeypat
     output = _output(tmp_path / "scf.out")
     captured = FileVersion.capture(potential, require_digest=True)
 
-    def parse(_cls, path, *, input_cache=None):
+    def parse(_cls, path, ):
         result = _SCF(None, None, tmp_path, output_file=path, task_name="SCF")
         result.run_record = SimpleNamespace(files=SimpleNamespace(
             captured_at="historical", all_versions=(captured,),
         ))
         return result
 
-    monkeypatch.setattr(TaskResult, "from_file", classmethod(parse))
+    monkeypatch.setattr(TaskResult, "_parse_file", classmethod(parse))
     result = ResultLoader().load_file(output)
     entry = result.files["converged"]
     assert entry.association is FileAssociation.VERIFIED
@@ -268,8 +268,8 @@ def test_imported_result_refuses_potential_modified_after_loading(tmp_path, monk
     potential.write_text("at import")
     output = _output(tmp_path / "scf.out")
     monkeypatch.setattr(
-        TaskResult, "from_file",
-        classmethod(lambda _cls, path, *, input_cache=None:
+        TaskResult, "_parse_file",
+        classmethod(lambda _cls, path, :
                     _SCF(None, None, tmp_path, output_file=path, task_name="SCF")),
     )
     result = ResultLoader().load_file(output)
@@ -295,8 +295,8 @@ def test_overwritten_scf_does_not_capture_wrong_potential_as_history(tmp_path, m
     os.utime(older, ns=(1_000_000_000, 1_000_000_000))
     os.utime(newer, ns=(2_000_000_000, 2_000_000_000))
     monkeypatch.setattr(
-        TaskResult, "from_file",
-        classmethod(lambda _cls, path, *, input_cache=None:
+        TaskResult, "_parse_file",
+        classmethod(lambda _cls, path, :
                     _SCF(None, None, tmp_path, output_file=path, task_name="SCF")),
     )
     old_result = ResultLoader().load_file(older)
@@ -311,13 +311,13 @@ def test_historical_missing_potential_retains_recorded_version(tmp_path, monkeyp
     potential.write_text("historical")
     output = _output(tmp_path / "historical.out")
     captured = FileVersion.capture(potential, require_digest=True)
-    def parse(_cls, path, *, input_cache=None):
+    def parse(_cls, path, ):
         result = _SCF(None, None, tmp_path, output_file=path, task_name="SCF")
         result.run_record = SimpleNamespace(files=SimpleNamespace(
             captured_at="historical", all_versions=(captured,),
         ))
         return result
-    monkeypatch.setattr(TaskResult, "from_file", classmethod(parse))
+    monkeypatch.setattr(TaskResult, "_parse_file", classmethod(parse))
     result = ResultLoader().load_file(output)
     potential.unlink()
     versions = capture_result_file_versions(result)
@@ -330,13 +330,12 @@ def test_cached_unmatched_input_is_rediscovered_after_repair(tmp_path, monkeypat
     inp.write_text("invalid input")
     reads = []
 
-    def parse_output(_cls, path, *, input_cache=None):
+    def parse_output(_cls, path, ):
         reads.append(path)
         result = _DOS(None, None, tmp_path, output_file=path, task_name="DOS")
-        result._input_cache = input_cache
-        return result
+                return result
 
-    monkeypatch.setattr(TaskResult, "from_file", classmethod(parse_output))
+    monkeypatch.setattr(TaskResult, "_parse_file", classmethod(parse_output))
     loader = ResultLoader()
 
     def parse_input(path):
@@ -363,11 +362,11 @@ def test_reparse_after_potential_rewrite_drops_cached_task_result(tmp_path, monk
     output = _output(tmp_path / "scf.out")
     reads = []
 
-    def parse(_cls, path, *, input_cache=None):
+    def parse(_cls, path, ):
         reads.append(path)
         return _SCF(None, None, tmp_path, output_file=path, task_name="SCF")
 
-    monkeypatch.setattr(TaskResult, "from_file", classmethod(parse))
+    monkeypatch.setattr(TaskResult, "_parse_file", classmethod(parse))
     loader = ResultLoader()
     first = loader.load_file(output)
     assert loader.load_file(output) is first
@@ -382,24 +381,31 @@ def test_reparse_after_potential_rewrite_drops_cached_task_result(tmp_path, monk
 def test_retained_result_does_not_keep_entire_loader_alive(tmp_path, monkeypatch):
     import gc
     import weakref
+    from ase2sprkkr import InputParameters
 
     output = _output(tmp_path / "dos.out", scf=False)
     inp = tmp_path / "dos.inp"
-    inp.write_text("deferred native input")
+    parameters = InputParameters.create("DOS")
+    parameters.CONTROL.DATASET = "original"
+    inp.write_text(parameters.to_string(validate=False))
 
-    def parse(_cls, path, *, input_cache=None):
-        result = _DOS(None, None, tmp_path, output_file=path, task_name="DOS")
-        result._input_cache = input_cache
-        return result
+    def parse(_cls, path):
+        return _DOS(None, None, tmp_path, output_file=path, task_name="DOS")
 
-    monkeypatch.setattr(TaskResult, "from_file", classmethod(parse))
+    monkeypatch.setattr(TaskResult, "_parse_file", classmethod(parse))
     loader = ResultLoader()
     result = loader.load_file(output)
-    assert result._input_cache is loader.inputs
+    assert result.input_parameters_file == str(inp)
+    assert result.input_parameters.CONTROL.DATASET() == "original"
+    assert "_input_cache" not in vars(result)
+
     loader_ref = weakref.ref(loader)
+    inputs_ref = weakref.ref(loader.inputs)
     del loader
     gc.collect()
-
     assert loader_ref() is None
-    # The retained result can still discover input candidates if needed.
-    assert result._input_cache.candidates(tmp_path) == (str(inp),)
+    assert inputs_ref() is None
+
+    # The parsed parameters are detached and remain usable without a loader.
+    inp.write_text("overwritten after import")
+    assert result.input_parameters.CONTROL.DATASET() == "original"
