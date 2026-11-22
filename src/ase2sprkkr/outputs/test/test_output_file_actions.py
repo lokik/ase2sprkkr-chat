@@ -192,8 +192,8 @@ def test_export_nexus_uses_verified_registered_input_without_guessing(
 
     # A neighboring file must not be silently read after the registered
     # historical input was proven to be from a different version.
-    result.files["input"].set_association(
-        FileAssociation.VERIFIED,
+    result.files["input"].set_attribution(
+        FileAttribution.VERIFIED,
         recorded_version=FileVersion.capture(original, require_digest=True),
     )
     original.write_text("REPLACED INPUT", encoding="utf-8")
