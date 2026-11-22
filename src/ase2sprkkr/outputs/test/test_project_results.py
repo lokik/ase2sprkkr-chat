@@ -122,7 +122,6 @@ def test_project_attach_passes_executor_to_manager(tmp_path):
 
 def test_load_historical_scf_with_missing_auxiliary_output(tmp_path, monkeypatch):
     """Only the authoritative output is required to reconstruct an SCF result."""
-    from types import SimpleNamespace
     from ase2sprkkr.outputs import project_results
     from kkrunner.files import FileVersion
     from kkrunner.files.manifest import FileEntry
