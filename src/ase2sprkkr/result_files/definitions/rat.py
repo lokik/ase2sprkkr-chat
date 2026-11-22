@@ -801,6 +801,13 @@ def create_definition():
                                     numbering=True,
                                     header=False,
                                     groups_as_list=False,
+                                    fast_numeric=True,
+                                    # Native xrayspec.f uses (+), (-), (z) for
+                                    # POLOBS=S and (x), (y), (z) for POLOBS=C.
+                                    value_codes={"ADD": {
+                                        "(+)": 1, "(-)": -1, "(z)": 0,
+                                        "(x)": 2, "(y)": 3,
+                                    }},
                                 ),
                                 name_in_grammar=False,
                             ),
