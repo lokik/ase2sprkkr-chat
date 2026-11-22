@@ -101,6 +101,22 @@ def test_import_with_native_input_resolves_potential_before_scf_parser(tmp_path)
     assert result.files["converged"].path() == str(tmp_path / "from-native-input.pot_new")
 
 
+def test_direct_reader_can_resolve_native_input_without_retaining_loader(tmp_path):
+    from ..readers.scf import ScfOutputReader
+
+    source = Path(__file__).parent.parent / "examples" / "scf.out"
+    output = tmp_path / "scf.out"
+    output.write_bytes(source.read_bytes())
+    parameters = InputParameters.create("SCF")
+    parameters.CONTROL.POTFIL = "reader-native.pot"
+    (tmp_path / "scf.inp").write_text(parameters.to_string(validate=False))
+
+    result = ScfOutputReader(None, None, tmp_path).read_from_file(output)
+    assert result.start_potential_filename == str(tmp_path / "reader-native.pot")
+    assert result.files["converged"].path() == str(tmp_path / "reader-native.pot_new")
+    assert "_input_cache" not in vars(result)
+
+
 def test_scf_result_calculator_without_original_calculator(monkeypatch, tmp_path):
     result = ScfResult(None, None, tmp_path)
     result.files.add_file("potential", "Fe.pot")
