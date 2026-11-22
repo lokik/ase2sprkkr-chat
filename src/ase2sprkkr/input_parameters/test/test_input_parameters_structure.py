@@ -64,22 +64,17 @@ def test_numpy_array():
         definition.grammar(),
     )
 
-    def fixed_array_definition(force_order=False):
-        definition = cd.InputParametersDefinition.definition_from_dict(
-            {
-                "ENERGY": [
-                    V("A", 1),
-                    V("B", 2),
-                    V("C", gt.NumpyArray(lines=3), name_in_grammar=False),
-                    V("D", gt.NumpyArray(lines=2), name_in_grammar=False),
-                    V("E", 3),
-                ]
-            }
-        )
-        definition["ENERGY"].force_order = force_order
-        return definition
-
-    definition = fixed_array_definition()
+    definition = cd.InputParametersDefinition.definition_from_dict(
+        {
+            "ENERGY": [
+                V("A", 1),
+                V("B", 2),
+                V("C", gt.NumpyArray(lines=3), name_in_grammar=False),
+                V("D", gt.NumpyArray(lines=2), name_in_grammar=False),
+                V("E", 3),
+            ]
+        }
+    )
     data = """ENERGY A=3 B=2
     1 1
     2 2
@@ -97,7 +92,9 @@ def test_numpy_array():
         }
     }
     assert_parse(data, expected, definition.grammar())
-    assert_parse(data, expected, fixed_array_definition(force_order=True).grammar())
+    definition["ENERGY"].force_order = True
+    definition["ENERGY"].clear_grammar_cache()
+    assert_parse(data, expected, definition.grammar())
 
     definition = cd.InputParametersDefinition.definition_from_dict(
         {
@@ -479,6 +476,28 @@ def test_grammar_hook_changes_invalidate_compiled_ancestors():
     assert hits == [True]
 
 
+def test_clear_grammar_cache_after_schema_edit():
+    definition = cd.InputParametersDefinition.definition_from_dict(
+        {"CONTROL": [V("REQUIRED", int, is_optional=True), V("MODE", 1)]}
+    )
+    root_grammar = definition.grammar()
+    section_grammar = definition["CONTROL"].grammar()
+    assert definition.parse("CONTROL MODE=2").to_dict() == {
+        "CONTROL": {"MODE": 2}
+    }
+
+    # Structural changes are explicit: the cached parser remains unchanged
+    # until the caller invalidates it.
+    definition["CONTROL"]["REQUIRED"].is_optional = False
+    assert definition.grammar() is root_grammar
+    definition.clear_grammar_cache()
+
+    assert definition.grammar() is not root_grammar
+    assert definition["CONTROL"].grammar() is not section_grammar
+    with pytest.raises(pp.ParseBaseException):
+        definition.parse("CONTROL MODE=2")
+
+
 @pytest.mark.parametrize("force_order", [False, True])
 def test_strict_and_incomplete_grammars_can_be_reused_independently(force_order):
     definition = cd.InputParametersDefinition.definition_from_dict(
@@ -677,29 +696,23 @@ def test_cross_section_conditional_length():
 
 
 def test_switch():
-    def simple_switch_definition(required_c=False):
-        definition = cd.InputParametersDefinition.definition_from_dict(
-            {
-                "ENERGY": [
-                    V("A", 1),
-                    *switch(
-                        "A",
-                        {
-                            1: [V("B", 2, is_optional=True)],
-                            2: V("C", 3, is_optional=True),
-                        },
-                    ),
-                ]
-            }
-        )
-        definition.custom_class = None
-        definition["ENERGY"].custom_class = None
-        definition["ENERGY"].force_order = True
-        if required_c:
-            definition["ENERGY"]["C"].is_optional = False
-        return definition
-
-    definition = simple_switch_definition()
+    definition = cd.InputParametersDefinition.definition_from_dict(
+        {
+            "ENERGY": [
+                V("A", 1),
+                *switch(
+                    "A",
+                    {
+                        1: [V("B", 2, is_optional=True)],
+                        2: V("C", 3, is_optional=True),
+                    },
+                ),
+            ]
+        }
+    )
+    definition.custom_class = None
+    definition["ENERGY"].custom_class = None
+    definition["ENERGY"].force_order = True
     grammar = definition.grammar()
 
     assert_parse("ENERGY A=2 C=4", {"ENERGY": {"A": 2, "C": 4}}, grammar)
@@ -719,38 +732,33 @@ def test_switch():
         assert_not_valid(text, grammar)
     assert_parse("ENERGY A=2", {"ENERGY": {"A": 2}}, grammar)
 
-    assert_not_valid("ENERGY A=2", simple_switch_definition(required_c=True).grammar())
+    definition["ENERGY"]["C"].is_optional = False
+    definition["ENERGY"]["C"].clear_grammar_cache()
+    assert_not_valid("ENERGY A=2", definition.grammar())
 
-    def expanded_switch_definition(required_members=False):
-        definition = cd.InputParametersDefinition.definition_from_dict(
-            {
-                "ENERGY": [
-                    V("A", 1),
-                    *switch(
-                        "A",
-                        {
-                            1: [
-                                V("B", 2, is_optional=True),
-                                V("D", 3, is_optional=True),
-                                V("C", 1, is_optional=True),
-                            ],
-                            2: [
-                                V("C", 3, is_optional=True),
-                                V("E", 1, is_optional=True),
-                                V("B", 2, is_optional=True),
-                            ],
-                        },
-                    ),
-                ]
-            }
-        )
-        definition["ENERGY"].force_order = True
-        if required_members:
-            for name in ("B", "C", "D", "E"):
-                definition["ENERGY"][name].is_optional = False
-        return definition
-
-    definition = expanded_switch_definition()
+    definition = cd.InputParametersDefinition.definition_from_dict(
+        {
+            "ENERGY": [
+                V("A", 1),
+                *switch(
+                    "A",
+                    {
+                        1: [
+                            V("B", 2, is_optional=True),
+                            V("D", 3, is_optional=True),
+                            V("C", 1, is_optional=True),
+                        ],
+                        2: [
+                            V("C", 3, is_optional=True),
+                            V("E", 1, is_optional=True),
+                            V("B", 2, is_optional=True),
+                        ],
+                    },
+                ),
+            ]
+        }
+    )
+    definition["ENERGY"].force_order = True
     grammar = definition.grammar()
 
     cases = (
@@ -771,8 +779,10 @@ def test_switch():
     ):
         assert_not_valid(text, grammar)
 
-    strict_definition = expanded_switch_definition(required_members=True)
-    grammar = strict_definition.grammar()
+    for name in ("B", "C", "D", "E"):
+        definition["ENERGY"][name].is_optional = False
+    definition.clear_grammar_cache()
+    grammar = definition.grammar()
     for text in (
         "ENERGY A=2 B=2",
         "ENERGY A=1 B=2",
@@ -784,6 +794,6 @@ def test_switch():
     ):
         assert_not_valid(text, grammar)
 
-    out = strict_definition.read_from_string("ENERGY A=2 C=4 E=2 B=6")
+    out = definition.read_from_string("ENERGY A=2 C=4 E=2 B=6")
     assert out["ENERGY"].to_dict() == {"A": 2, "C": 4, "E": 2, "B": 6}
     assert out["ENERGY"].to_string() == "ENERGY\n\tA=2\n\tC=4\n\tE=2\n\tB=6\n"
