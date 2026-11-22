@@ -506,6 +506,14 @@ class KkrOutputReader:
         """Parse output of an already finished SPR-KKR calculation."""
         if self is None:
             self = cls(None, None, directory)
+        standalone_loader = None
+        if (on_files_parsed is None and run_record is None
+                and self.input_parameters is None
+                and isinstance(output, (str, os.PathLike))):
+            from .result_loader import ResultLoader
+
+            standalone_loader = ResultLoader()
+            on_files_parsed = standalone_loader._prepare_input
         result = self.create_result(output, input_file)
         if run_record is not None:
             result.run_record = run_record
@@ -521,4 +529,6 @@ class KkrOutputReader:
             if on_files_parsed is not None:
                 del self.parser._on_files_parsed
         result.complete(parsed_error, parsed_return_code)
+        if standalone_loader is not None:
+            return standalone_loader.associate_result(result)
         return result
