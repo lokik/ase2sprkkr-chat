@@ -161,3 +161,35 @@ def test_process_exit_error_remains_a_value_error():
         ProcessOutputParser().result(None, None, 3)
     assert isinstance(caught.value, ValueError)
     assert caught.value.output is None
+
+
+def test_real_truncated_scf_output_is_inspectable_from_run_store(tmp_path):
+    """Exercise the actual SCF parser and persistent-file verification."""
+    from dataclasses import replace
+    from kkrunner import RunManager, RunStore
+
+    output = tmp_path / "truncated_SCF.out"
+    output.write_text("SPR-KKR output was truncated before the FILES section\n")
+    files = FileManifest(
+        stdout=FileEntry(str(output)),
+        output_versions=(FileVersion.capture(output, require_digest=True),),
+        captured_at="2026-11-18T00:00:00+00:00",
+    )
+    manager = RunManager(RunStore(tmp_path / "runs"))
+    record = replace(
+        manager.new_record(
+            directory=tmp_path, files=files,
+            metadata={"ase2sprkkr": {"task": "SCF"}},
+        ),
+        state=RunState.FAILED, return_code=139,
+    )
+    manager.store.save(record)
+    result = project_results.load_project_result(
+        manager, record.id, allow_unparsed=True,
+    )
+    assert isinstance(result, OutputOnlyResult)
+    assert result.output_file is not None
+    assert result.parse_error.startswith("EOFError:")
+    assert "open" in result.output_values["output"].actions()
+    output.write_text("different bytes")
+    assert result.output_values["output"].actions() == ()
