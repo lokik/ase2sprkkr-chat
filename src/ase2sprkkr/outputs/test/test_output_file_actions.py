@@ -36,7 +36,7 @@ def test_copy_and_open_reject_overwritten_historical_file(tmp_path, monkeypatch)
         recorded_version=FileVersion.capture(path, require_digest=True),
     )
     path.write_text("new contents", encoding="utf-8")
-    assert option.actions() == ()
+    assert option.actions() == ("open_directory",)
     opened = []
     monkeypatch.setattr(
         "ase2sprkkr.outputs.result_options._open_system_path", opened.append,
@@ -75,6 +75,7 @@ def test_open_and_open_directory_launch_nonblocking_system_opener(
     ]
     assert all(kwargs["start_new_session"] for _, kwargs in calls)
     assert all(kwargs["stdout"] == subprocess.DEVNULL for _, kwargs in calls)
+    assert all("stderr" not in kwargs for _, kwargs in calls)
 
 
 def test_plot_forwards_options_to_native_plotter(tmp_path, monkeypatch):
@@ -110,3 +111,120 @@ def test_nexus_export_delegates_destination_and_metadata(tmp_path, monkeypatch):
     )
     with pytest.raises(ValueError, match="NeXus export is unavailable"):
         option.export_nexus(destination)
+
+
+def test_actions_on_spc_with_unknown_task_keep_generic_file_operations(tmp_path):
+    result = TaskResult(None, None, str(tmp_path))
+    path = tmp_path / "unknown.spc"
+    path.write_text("SPC data", encoding="utf-8")
+    option = result.files.add_file("spectrum", str(path), "spc")
+
+    assert "open" in option.actions()
+    assert "copy_to" in option.actions()
+    assert "export_nexus" not in option.actions()
+
+
+def test_directory_action_survives_missing_file_but_not_missing_directory(tmp_path):
+    option, path = _file(tmp_path)
+    path.unlink()
+    assert option.actions() == ("open_directory",)
+    tmp_path.rmdir()
+    assert option.actions() == ()
+
+
+def test_export_nexus_prefers_owned_parameters_and_respects_overrides(
+    tmp_path, monkeypatch,
+):
+    from ase2sprkkr.input_parameters.input_parameters import InputParameters
+
+    params = InputParameters.create("ARPES")
+    result = TaskResult(params, None, str(tmp_path), task_name="ARPES")
+    source = tmp_path / "spectrum.spc"
+    source.write_text("not parsed by mock", encoding="utf-8")
+    option = result.files.add_file("SPC", str(source), "spc")
+    calls = []
+    monkeypatch.setattr(
+        OutputFileOption, "parsed_file",
+        lambda self: SimpleNamespace(
+            to_nexus=lambda filename, **kw: calls.append((filename, kw))
+        ),
+    )
+    destination = tmp_path / "target.nxs"
+    option.export_nexus(destination)
+    assert calls == [(destination, {
+        "discover_input": False, "input_parameters": params,
+    })]
+
+    other = InputParameters.create("ARPES")
+    option.export_nexus(
+        destination, input_parameters=other, discover_input=True,
+    )
+    assert calls[-1] == (destination, {
+        "discover_input": True, "input_parameters": other,
+    })
+
+
+def test_export_nexus_uses_verified_registered_input_without_guessing(
+    tmp_path, monkeypatch,
+):
+    source = tmp_path / "spectrum.spc"
+    source.write_text("SPC data", encoding="utf-8")
+    original = tmp_path / "input.inp"
+    original.write_text("INPUT DATA", encoding="utf-8")
+    result = TaskResult(
+        None, None, str(tmp_path), input_file=str(original),
+        task_name="ARPES",
+    )
+    option = result.files.add_file("SPC", str(source), "spc")
+    calls = []
+    monkeypatch.setattr(
+        OutputFileOption, "parsed_file",
+        lambda self: SimpleNamespace(
+            to_nexus=lambda filename, **kw: calls.append(kw)
+        ),
+    )
+    option.export_nexus(tmp_path / "first.nxs")
+    assert calls[-1] == {
+        "discover_input": False, "input_file": str(original),
+    }
+
+    # A neighboring file must not be silently read after the registered
+    # historical input was proven to be from a different version.
+    result.files["input"].set_association(
+        FileAssociation.VERIFIED,
+        recorded_version=FileVersion.capture(original, require_digest=True),
+    )
+    original.write_text("REPLACED INPUT", encoding="utf-8")
+    option.export_nexus(tmp_path / "second.nxs")
+    assert calls[-1] == {"discover_input": False}
+
+
+def test_export_nexus_reuses_cached_verified_input_after_file_is_removed(
+    tmp_path, monkeypatch,
+):
+    from ase2sprkkr.input_parameters.input_parameters import InputParameters
+
+    source = tmp_path / "spectrum.spc"
+    source.write_text("SPC data", encoding="utf-8")
+    input_path = tmp_path / "spectrum.inp"
+    input_path.write_text("old input", encoding="utf-8")
+    result = TaskResult(
+        None, None, str(tmp_path), task_name="ARPES", input_file=str(input_path),
+    )
+    known = InputParameters.create("ARPES")
+    # Simulate previous lazy parsing of the verified registered input.
+    result.input_parameters = known
+    input_path.unlink()
+    option = result.files.add_file("SPC", str(source), "spc")
+    calls = []
+    monkeypatch.setattr(
+        OutputFileOption, "parsed_file",
+        lambda self: SimpleNamespace(
+            to_nexus=lambda filename, **kwargs: calls.append(kwargs)
+        ),
+    )
+
+    option.export_nexus(tmp_path / "export.nxs")
+    assert calls == [{
+        "input_parameters": known, "discover_input": False,
+    }]

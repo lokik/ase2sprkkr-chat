@@ -700,3 +700,27 @@ def test_hdf5_scales_do_not_flatten_nonseparable_coordinates(tmp_path):
         np.testing.assert_array_equal(data["data"], spc.TOTAL())
         np.testing.assert_array_equal(data["k_x"], spc.KX())
         np.testing.assert_array_equal(data["k_y"], spc.KY())
+
+def test_export_nexus_real_spc_contains_owned_task_parameters(tmp_path):
+    from ase2sprkkr.input_parameters.input_parameters import InputParameters
+    from ase2sprkkr.outputs.task_result import TaskResult
+    import shutil
+
+    source = Path(__file__).resolve().parents[1] / "examples" / "Au_kx_ky_ARPES_data.spc"
+    spc_path = tmp_path / source.name
+    shutil.copy2(source, spc_path)
+    # This sibling must not override authoritative in-memory parameters.
+    (tmp_path / "Au_kx_ky_ARPES.inp").write_text(
+        "INVALID FOREIGN INPUT", encoding="utf-8",
+    )
+    params = InputParameters.create("ARPES")
+    result = TaskResult(params, None, str(tmp_path), task_name="ARPES")
+    option = result.files.add_file("SPC", str(spc_path), "spc")
+    destination = tmp_path / "export.nxs"
+
+    assert option.export_nexus(destination) == destination
+    with h5py.File(destination) as exported:
+        text = exported["entry/calculation/parameters/sprkkr_input"].asstr()[()]
+        assert text == params.to_string(validate=False)
+        assert "original_input" in exported["entry/calculation"]
+

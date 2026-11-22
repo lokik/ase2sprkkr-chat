@@ -28,13 +28,14 @@ class ARPESResultFile(CommonResultFile, Arithmetic):
     additional_actions = ("export_nexus",)
 
     def to_nexus(self, filename, *, input_parameters=None, input_file=None,
-                 metadata=None):
+                 metadata=None, discover_input=True):
         """Export an ARPES spectrum together with its available input data."""
         from ..nexus import write_arpes_nexus
 
         return write_arpes_nexus(
             self, filename, input_parameters=input_parameters,
-            input_file=input_file, metadata=metadata
+            input_file=input_file, metadata=metadata,
+            discover_input=discover_input,
         )
 
     def plot(
