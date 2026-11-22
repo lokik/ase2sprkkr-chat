@@ -251,7 +251,7 @@ def _observe(args, observer):
     if args.info:
         from ase2sprkkr.outputs.readers.scf import ScfProgressParser
 
-        progress = ScfProgressParser(on_info=lambda message: sys.stdout.write(message))
+        progress = ScfProgressParser(print_info=True)
 
     def emit(text, kind):
         if kind == "out" and progress is not None:
