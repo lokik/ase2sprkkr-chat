@@ -12,7 +12,6 @@ import pytest
 from ...common.module_registry import RegistryDefinitionError, RegistryEntryNotFound
 from ..input_parameters import InputParameters
 from ..task_definition import InputParametersRegistry, TaskDefinition, TaskRegistry
-from ...common.warnings import DataValidityWarning
 
 
 def _package(tmp_path, monkeypatch, name, modules):
