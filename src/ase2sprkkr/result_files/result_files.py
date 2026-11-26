@@ -65,10 +65,11 @@ class ResultFile(ConfigurationFile):
 
     @cached_property
     def potential_filename(self):
-        if not getattr(self, "_filename", None):
+        filename = self.original_filename
+        if filename is None:
             raise ValueError("The result file has no filename. Set the potential filename manually.")
 
-        path = Path(self._filename)
+        path = Path(filename)
         directory = path.parent
         stem = path.stem
 
@@ -83,7 +84,7 @@ class ResultFile(ConfigurationFile):
             stem = stem[0]
 
         raise ValueError(
-            f"No potential file found for {self._filename}. Set it manually using set_potential_filename()."
+            f"No potential file found for {filename}. Set it manually using set_potential_filename()."
         )
 
     @potential_filename.setter
@@ -98,10 +99,7 @@ class ResultFile(ConfigurationFile):
     def potential(self, value):
         if isinstance(value, Potential):
             self.__dict__["potential"] = value
-            if hasattr(value, "_filename"):
-                self.__dict__["potential_filename"] = value._filename
-            else:
-                self.__dict__.pop("potential_filename", None)
+            self.__dict__["potential_filename"] = value.original_filename
         else:
             self.__dict__["potential_filename"] = value
             self.__dict__.pop("potential", None)
