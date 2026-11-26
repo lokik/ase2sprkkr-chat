@@ -1,7 +1,7 @@
 from .configuration_definitions import RealItemDefinition, Validator
 from .options import Option
 from .dangerous_values import DangerousValue
-from .grammar_types import GrammarType, type_from_type, type_from_value, Array, QString
+from .grammar_types import GrammarType, BaseMixed, type_from_type, type_from_value, Array, QString
 from .warnings import warnings, DataValidityError, ValidationResult
 from .repetition import Repeated
 from .decorators import cached_property
@@ -129,6 +129,8 @@ def _rebuild_modified_definition(
 
 class ValueDefinition(RealItemDefinition):
     result_class = Option
+    type_of_dangerous: Optional[BaseMixed] = None
+    """Mixed grammar for dangerous values, or None without a native fallback grammar."""
     delimiter = pp.Empty().set_name("")
     intrinsic_validators = RealItemDefinition.intrinsic_validators + (
         _validate_required,
@@ -660,7 +662,7 @@ class ValueDefinition(RealItemDefinition):
 
             body = body.copy().add_parse_action(check_fixed)
 
-        if allow_dangerous and hasattr(self, "type_of_dangerous"):
+        if allow_dangerous and self.type_of_dangerous is not None:
             danger = pp.Forward()
             danger << self.type_of_dangerous.grammar(self.name + "_dangerous")
             danger.add_parse_action(lambda x: DangerousValue(x[0], self.type_of_dangerous, False))
@@ -793,11 +795,9 @@ class ValueDefinition(RealItemDefinition):
         dangerous = isinstance(value, DangerousValue)
         if dangerous:
             type = value.value_type
-            if not type:
-                if hasattr(self, "type_of_dangerous"):
-                    type = getattr(self.type_of_dangerous, "string_type", QString)
-                else:
-                    type = QString
+            if type is None:
+                mixed_type = self.type_of_dangerous
+                type = mixed_type.string_type if mixed_type is not None else QString.I
             value = value()
 
         else:

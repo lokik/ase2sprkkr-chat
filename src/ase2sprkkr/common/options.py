@@ -547,7 +547,7 @@ class Option(BaseOption):
                 policy.add(issue)
                 return DangerousValue(
                     value,
-                    getattr(definition, "type_of_dangerous", None),
+                    definition.type_of_dangerous,
                     validate=False,
                 )
             policy.discard(issue)
