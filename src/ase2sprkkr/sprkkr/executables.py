@@ -53,10 +53,7 @@ class ExecutableDefinition:
         user-defined input schemas. Unsupported cluster executables fail
         explicitly rather than running the periodic binary by mistake.
         """
-        try:
-            cluster_type = input_parameters.CONTROL.CLUTYPE()
-        except (AttributeError, KeyError):
-            cluster_type = None
+        cluster_type = input_parameters.cluster_type
         if cluster_type is None or cluster_type == "":
             return self.name
         if cluster_type != "embedded":
@@ -164,10 +161,7 @@ def resolve_task_executable(task, input_parameters):
     KKRGEN task can be run in an embedded cluster. Keep this opt-in decision in
     TaskDefinition, and the native program-name mapping in ExecutableDefinition.
     """
-    try:
-        cluster_type = input_parameters.CONTROL.CLUTYPE()
-    except (AttributeError, KeyError):
-        cluster_type = None
+    cluster_type = input_parameters.cluster_type
     if cluster_type == "embedded":
         error = task_system_error(task, "embedded")
         if error:

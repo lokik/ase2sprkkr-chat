@@ -92,6 +92,7 @@ class InputParameters(ConfigurationFile):
         self._inputfile = inputfile
         self._outputfile = inputfile if outputfile is False else outputfile
         self._directory = None
+        self._potential = None
 
     @property
     def directory(self):
@@ -147,7 +148,7 @@ class InputParameters(ConfigurationFile):
 
     @property
     def potential(self):
-        pot = getattr(self, "_potential", None)
+        pot = self._potential
         potfil = self.CONTROL.POTFIL.result
         if pot:
             if potfil == pot[0]:
@@ -155,6 +156,13 @@ class InputParameters(ConfigurationFile):
         out = Potential.from_file(potfil) if potfil else None
         self._potential = potfil, out
         return out
+
+    @property
+    def cluster_type(self):
+        """Native cluster mode; custom schemas may omit the CONTROL option."""
+        if "CONTROL" not in self or "CLUTYPE" not in self.CONTROL:
+            return None
+        return self.CONTROL.CLUTYPE()
 
     def set_from_atoms(self, atoms, io_data=None):
         """Derive native input settings from periodic atoms or an embedding host."""
@@ -168,7 +176,7 @@ class InputParameters(ConfigurationFile):
                 raise ValueError("Embedded atoms require CONTROL.CLUTYPE=embedded")
             self.CONTROL.CLUTYPE = "embedded"
             atoms = host_atoms(host)
-        elif atoms is not None and getattr(self.CONTROL, "CLUTYPE", lambda: None)() == "embedded":
+        elif atoms is not None and self.cluster_type == "embedded":
             raise ValueError("CONTROL.CLUTYPE=embedded requires embedded atoms")
         return super().set_from_atoms(atoms, io_data)
 
@@ -284,11 +292,7 @@ class InputParameters(ConfigurationFile):
 
     def input_files(self, directory):
         files = self._task_files(directory, "input")
-        try:
-            embedded = self.CONTROL.CLUTYPE() == "embedded"
-        except (AttributeError, KeyError):
-            embedded = False
-        if not embedded:
+        if self.cluster_type != "embedded":
             return files
         cluster_file = self.CONTROL.POTFIL_CLU()
         if not cluster_file:
