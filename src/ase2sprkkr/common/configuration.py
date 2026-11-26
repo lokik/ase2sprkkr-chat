@@ -168,10 +168,7 @@ class Configuration:
 
     @property
     def doc(self):
-        try:
-            return self._definition.description()
-        except AttributeError as e:
-            raise Exception("Cannot retrieve documentation") from e
+        return self._definition.description()
 
     def help(self, verbose=False, show_hidden=False):
         if verbose is True:
