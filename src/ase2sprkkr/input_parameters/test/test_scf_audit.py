@@ -86,6 +86,7 @@ def test_cluster_centre_object_references_are_written_as_native_numbers(option, 
 
 
 def test_cluster_site_reference_follows_2d_potfil_order_on_each_write():
+    from ase.cell import Cell
     from ...sprkkr.atoms_region import AtomsRegion
     from ...sprkkr.sprkkr_atoms import SPRKKRAtoms
 
@@ -94,9 +95,9 @@ def test_cluster_site_reference_follows_2d_potfil_order_on_each_write():
         cell=[2, 2, 6], pbc=(True, True, False), symmetry=False,
     )
     atoms.set_regions([
-        AtomsRegion("left", slice(0, 2), [2, 2, 2]),
-        AtomsRegion("central", slice(2, 3), [2, 2, 2], pbc=(True, True, False)),
-        AtomsRegion("right", slice(3, 4), [2, 2, 2]),
+        AtomsRegion("left", slice(0, 2), Cell.new([2, 2, 2])),
+        AtomsRegion("central", slice(2, 3), Cell.new([2, 2, 2]), pbc=(True, True, False)),
+        AtomsRegion("right", slice(3, 4), Cell.new([2, 2, 2])),
     ])
     p = parameters()
     p.TAU.IQCNTR = atoms.sites[0]
