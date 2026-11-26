@@ -280,7 +280,7 @@ class ResultLoader:
                 # The output parser may have completed before the native input
                 # was discovered. Add declarations now that it is available.
                 result.enrich_declared_output_files(
-                    warn_missing=getattr(result, "return_code", None) == 0,
+                    warn_missing=result.return_code == 0,
                     file_operations=self.file_operations,
                 )
         except Exception:
@@ -290,7 +290,7 @@ class ResultLoader:
             potential = result.potential_filename
         except Exception:
             return
-        if not potential or not hasattr(result.files, "add_file"):
+        if not potential:
             return
         if result.produces_potential:
             name = "converged"
@@ -304,13 +304,8 @@ class ResultLoader:
     def _associate(self, result, output):
         self._expected_files(result)
         historical = (result_file_manifest(result) is not None
-                      or getattr(result, "run_record", None) is not None)
-        file_entries = result.files.items()
-        if hasattr(file_entries, "items"):
-            file_entries = file_entries.items()
-        for name, item in file_entries:
-            if not hasattr(item, "set_attribution"):
-                continue
+                      or result.run_record is not None)
+        for name, item in result.files.items().items():
             try:
                 path = Path(item.path()).expanduser().resolve()
             except (OSError, ValueError, TypeError):
@@ -340,8 +335,6 @@ class ResultLoader:
         if not result.produces_potential or "converged" not in result.files:
             return
         item = result.files["converged"]
-        if not hasattr(item, "set_attribution"):
-            return
         if historical or item.observed_version is None:
             # Historical run evidence is authoritative; standalone SCF
             # heuristics need an observed physical potential. Do not compute
@@ -393,7 +386,7 @@ class ResultLoader:
         if cached is not None and cached[0] == version and cached[2] == directory_version:
             result = cached[1]
             input_file = result.files["input"] if "input" in result.files else None
-            observed = getattr(input_file, "observed_version", None)
+            observed = input_file.observed_version if input_file is not None else None
             if observed is not None:
                 same_sources = observed.is_current()
             elif input_file is None:
@@ -405,7 +398,7 @@ class ResultLoader:
                 # POTFIL or auxiliary data. If those bytes changed, reuse of
                 # the TaskResult object would return stale cached properties.
                 for item in result.files.items().values():
-                    observed_file = getattr(item, "observed_version", None)
+                    observed_file = item.observed_version
                     if (observed_file is not None
                             and not observed_file.is_current()):
                         same_sources = False

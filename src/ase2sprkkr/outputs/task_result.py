@@ -40,6 +40,8 @@ class TaskResult:
         input_file=None,
         task_name=None,
     ):
+        self.run_record = None
+        self.return_code = None
         self._input_parameters = input_parameters
         self._calculator = calculator
         self._task_name = (
@@ -238,7 +240,7 @@ class TaskResult:
             return all(option.is_current() for option in options)
 
         from .file_provenance import result_file_manifest, result_file_version
-        if result_file_manifest(self) is None and getattr(self, "run_record", None) is None:
+        if result_file_manifest(self) is None and self.run_record is None:
             return os.path.isfile(path)
         version = result_file_version(self, path)
         return version is not None and version.is_current()
@@ -451,7 +453,7 @@ class TaskResult:
 
         from .project_results import _reader_for_record
         reader = _reader_for_record(None, record)
-        available_input = files.input_file if getattr(reader, "input_parameters", None) is not None else None
+        available_input = files.input_file if reader.input_parameters is not None else None
 
         result = reader.read_from_file(
             output,
