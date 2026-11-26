@@ -168,20 +168,12 @@ class ResultFile(ConfigurationFile):
           A :class:`Potential` or its filename. If omitted, it is looked up
           lazily from the result filename when it is needed.
         """
-        from .definition_registry import result_file_definition_registry
-
-        registry = result_file_definition_registry
         definitions = cls.definitions
         # Candidate discovery follows cls.definitions, not the global registry:
         # subclasses can supply their own parsers for the same extension.
         by_extension = {}
-        for name, definition in definitions.items():
-            # Legacy/custom mappings may use an extension as the key without
-            # exposing an extension attribute on the parser object.
-            extension = getattr(definition, "extension", None)
-            if extension is None:
-                extension = name
-            extension = extension.lower().lstrip(".")
+        for definition in definitions.values():
+            extension = definition.extension.lower().lstrip(".")
             candidates = by_extension.setdefault(extension, [])
             if not any(definition is item for item in candidates):
                 candidates.append(definition)
