@@ -97,7 +97,6 @@ class LatticeSection(PotentialSection):
 
         else:
             raise ValueError(f"{self.SISDIM()} problem periodicity type not implemented")
-        write_io_data["sites_order"] = write_io_data.sites_order
         write_io_data["lattice.alat"] = alat
         self["ALAT"].set(alat / Bohr)
         self["SCALED_PRIMITIVE_CELL"].set(cell / alat)
