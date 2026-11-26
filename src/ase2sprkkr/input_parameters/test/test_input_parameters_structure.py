@@ -248,7 +248,7 @@ def test_length():
         absent = definition.read_from_string("ENERGY A=1")
         assert "NK=" not in absent.to_string()
     assert absent.ENERGY.NK() is None
-    assert not hasattr(absent.ENERGY, "_parsed_values")
+    assert absent.ENERGY._parsed_values is None
 
     with pytest.raises(DataValidityError):
         parsed.ENERGY.NK = 7
@@ -414,6 +414,8 @@ def test_parse_validation_sees_keyword_assignments():
     def parsed_keywords(section, _values, why):
         if why == "parse":
             assert "MODE" in section._parsed_values
+            assert section._parsed_values.checks == {}
+            assert not section._parsed_values.allow_incomplete
 
     definition = cd.InputParametersDefinition(
         [
@@ -427,7 +429,10 @@ def test_parse_validation_sees_keyword_assignments():
     parameters = definition.create_object()
     parameters.CONTROL.set(validation_reason="parse", MODE=2)
     assert parameters.CONTROL.MODE() == 2
-    assert not hasattr(parameters.CONTROL, "_parsed_values")
+    assert parameters.CONTROL._parsed_values is None
+    parameters.CONTROL.set({"MODE": 4}, validation_reason="parse")
+    assert parameters.CONTROL.MODE() == 4
+    assert parameters.CONTROL._parsed_values is None
 
 
 def test_compiled_grammar_is_reused_per_definition_and_parse_policy():
@@ -556,15 +561,15 @@ def test_incomplete_parse_can_be_validated_later():
         parameters.set(values, validation_reason="parse")
     assert len(issues) == 1
     assert parameters.CONTROL.MODE() == 2
-    assert not hasattr(parameters, "_parsed_values")
-    assert not hasattr(parameters.CONTROL, "_parsed_values")
+    assert parameters._parsed_values is None
+    assert parameters.CONTROL._parsed_values is None
 
     # Merging keyword assignments must preserve the section's parse metadata.
     with pytest.warns(DataValidityError, match="CONTROL.REQUIRED") as issues:
         parameters.CONTROL.set(values["CONTROL"], MODE=3, validation_reason="parse")
     assert len(issues) == 1
     assert parameters.CONTROL.MODE() == 3
-    assert not hasattr(parameters.CONTROL, "_parsed_values")
+    assert parameters.CONTROL._parsed_values is None
 
 
 def test_incomplete_read_does_not_relax_nested_strict_validation():
@@ -591,8 +596,8 @@ def test_incomplete_read_does_not_relax_nested_strict_validation():
     assert len(issues) == 1
     assert validated == [True]
     assert strict.CONTROL.MODE() == 1
-    assert not hasattr(strict.CONTROL, "_parsed_values")
-    assert not hasattr(outer.CONTROL, "_parsed_values")
+    assert strict.CONTROL._parsed_values is None
+    assert outer.CONTROL._parsed_values is None
 
 
 def test_adding_empty_custom_member_is_validated():
@@ -627,7 +632,7 @@ def test_conditional_length():
 
     active = definition.read_from_string("CONTROL VALUES=1 2 3 NVALUES=3 MODE=1")
     assert active.CONTROL.NVALUES() == 3
-    assert not hasattr(active.CONTROL, "_parsed_values")
+    assert active.CONTROL._parsed_values is None
     assert "NVALUES=3" in active.to_string()
 
     with pytest.warns(DataValidityError):
@@ -645,7 +650,7 @@ def test_conditional_length():
         )
     assert len(issues) == 1
     assert incomplete.CONTROL.NVALUES() == 3
-    assert not hasattr(incomplete.CONTROL, "_parsed_values")
+    assert incomplete.CONTROL._parsed_values is None
     # Incomplete parsing must not relax subsequent strict reads of the schema.
     with pytest.raises(pp.ParseBaseException, match="Missing non-optional input item"):
         definition.read_from_string("CONTROL VALUES=1 2 3 MODE=1")
@@ -656,7 +661,7 @@ def test_conditional_length():
             absent = definition.read_from_string(f"CONTROL MODE={mode}")
             assert "NVALUES=" not in absent.to_string()
         assert absent.CONTROL["NVALUES"]() is None
-        assert not hasattr(absent.CONTROL, "_parsed_values")
+        assert absent.CONTROL._parsed_values is None
 
     with warnings.catch_warnings():
         warnings.simplefilter("error", DataValidityError)
@@ -710,7 +715,7 @@ def test_cross_section_conditional_length():
             absent = definition.read_from_string(f"SECTION_A OTHER=1\nSECTION_B MODE={mode}")
             assert "NVALUES=" not in absent.to_string()
         assert absent.SECTION_A["NVALUES"]() is None
-        assert not hasattr(absent.SECTION_A, "_parsed_values")
+        assert absent.SECTION_A._parsed_values is None
 
     with warnings.catch_warnings():
         warnings.simplefilter("error", DataValidityError)

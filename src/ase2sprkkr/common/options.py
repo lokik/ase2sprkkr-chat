@@ -698,20 +698,20 @@ class Option(BaseOption):
         if why == "parse":
             if d.validate_parsed:
                 d.validate_parsed(self)
-            parsed = getattr(container, "_parsed_values", None)
+            parsed = container._parsed_values if container is not None else None
             if (
                 parsed is not None
                 and d.is_stored
                 and d.allowed(container)
                 and not d.is_optional_for(self)
                 and self.name not in parsed
-                and self.name not in getattr(parsed, "checks", ())
+                and self.name not in parsed.checks
             ):
                 # Conditions and callable optionality are resolved here, once
                 # all sections have been staged. Absence is a parse error,
                 # unlike semantic validation of an explicitly supplied value.
                 message = f"Missing non-optional input item {self._get_path()}"
-                if not getattr(parsed, "allow_incomplete", False):
+                if not parsed.allow_incomplete:
                     raise pp.ParseException(message)
                 # The grammar already reported unconditional omissions.
                 # Runtime-dependent presence is resolved only at this stage.

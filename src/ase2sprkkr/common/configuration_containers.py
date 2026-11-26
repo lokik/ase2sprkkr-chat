@@ -16,6 +16,7 @@ import copy
 import itertools
 from typing import Callable, Iterator, Mapping, Optional, Union, Any
 from .configuration_transaction import ConfigurationTransaction
+from .parsing_results import Values
 from .warnings import (
     DataValidityError,
     ReportInvalidPolicy,
@@ -36,6 +37,9 @@ class BaseConfigurationContainer(BaseConfiguration, ABC):
     """Configuration container, that holds members, either in classical way
     (see :class:ConfigurationContainer) or treat them in a special way
     """
+
+    _parsed_values: Values | None = None
+    """Present only during deferred parse validation; None outside it."""
 
     def copy(self, copy_values: bool = False):
         """Create a copy of the container
@@ -201,16 +205,16 @@ class ConfigurationContainer(BaseConfigurationContainer):
     class ParsedValuesChange:
         """Temporary record of the values explicitly present in parsed input."""
 
-        _MISSING = object()
-
         def __init__(
             self, container: "ConfigurationContainer", values: Mapping[str, Any]
         ) -> None:
-            """Expose parsed ``values`` temporarily on ``container``."""
+            """Expose a uniform parsed-values context, including for manual assignments."""
             self.container = container
-            self.old_values = getattr(
-                container, "_parsed_values", self._MISSING
-            )
+            self.old_values = container._parsed_values
+            if not isinstance(values, Values):
+                parsed = Values()
+                parsed.update(values)
+                values = parsed
             container._parsed_values = values
 
         def commit(self) -> None:
@@ -220,10 +224,7 @@ class ConfigurationContainer(BaseConfigurationContainer):
             self._restore()
 
         def _restore(self) -> None:
-            if self.old_values is self._MISSING:
-                self.container.__dict__.pop("_parsed_values", None)
-            else:
-                self.container._parsed_values = self.old_values
+            self.container._parsed_values = self.old_values
 
     def __init__(self, definition, container=None):
         """Create the container and its members, according to the definition"""
