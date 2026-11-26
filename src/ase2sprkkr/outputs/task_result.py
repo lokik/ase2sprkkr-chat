@@ -7,7 +7,7 @@ from ..common.decorators import cached_property, maybeclassmethod
 from ..common.file_utils import FilePath, filename_from_file
 from ..potentials.potentials import Potential
 from ..input_parameters import input_parameters as input_parameters
-from .result_options import create_files_section
+from .result_options import OutputFileOption, create_files_section
 
 
 class OutputMatch(Enum):
@@ -40,6 +40,9 @@ class TaskResult:
         input_file=None,
         task_name=None,
     ):
+        self.run_record = None
+        self.file_manifest = None
+        self.return_code = None
         self._input_parameters = input_parameters
         self._calculator = calculator
         self._task_name = (
@@ -110,12 +113,7 @@ class TaskResult:
     def is_embedded(self):
         """Whether the run uses a separate cluster potential."""
         parameters = self.input_parameters
-        if parameters is None:
-            return False
-        try:
-            return parameters.CONTROL.CLUTYPE() == "embedded"
-        except (AttributeError, KeyError):
-            return False
+        return parameters is not None and parameters.cluster_type == "embedded"
 
     @cached_property
     def host_potential_filename(self):
@@ -238,7 +236,7 @@ class TaskResult:
             return all(option.is_current() for option in options)
 
         from .file_provenance import result_file_manifest, result_file_version
-        if result_file_manifest(self) is None and getattr(self, "run_record", None) is None:
+        if result_file_manifest(self) is None and self.run_record is None:
             return os.path.isfile(path)
         version = result_file_version(self, path)
         return version is not None and version.is_current()
@@ -259,7 +257,7 @@ class TaskResult:
 
         from ..result_files import read_plottable_file
 
-        if getattr(getattr(file, "_container", None), "result", None) is not self:
+        if not isinstance(file, OutputFileOption) or file._container.result is not self:
             raise ValueError("A parsed result file must belong to this TaskResult")
         file.require_current()
         # Grace plots do not depend on the calculation potential.
@@ -320,7 +318,7 @@ class TaskResult:
     def result_values(self):
         """Scientific outputs only, selected by the task's result declarations.
 
-        Auxiliary outputs (such as SCF's *_new potential), input/output logs
+        Auxiliary outputs (such as SCF's ``*_new`` potential), input/output logs
         and caches stay available through output_values and the file manifest,
         but are not standalone end-of-run result tabs.
         """
@@ -339,10 +337,9 @@ class TaskResult:
         results = {}
         seen_paths = set()
         for name, value in self.output_values.items():
-            try:
-                path = os.path.normcase(os.path.abspath(os.fspath(value.path())))
-            except (AttributeError, TypeError, ValueError, OSError):
+            if not isinstance(value, OutputFileOption):
                 continue
+            path = os.path.normcase(os.path.abspath(os.fspath(value.path())))
             if path in seen_paths or not any(fnmatchcase(path, pattern) for pattern in patterns):
                 continue
             seen_paths.add(path)
@@ -451,7 +448,7 @@ class TaskResult:
 
         from .project_results import _reader_for_record
         reader = _reader_for_record(None, record)
-        available_input = files.input_file if getattr(reader, "input_parameters", None) is not None else None
+        available_input = files.input_file if reader.input_parameters is not None else None
 
         result = reader.read_from_file(
             output,

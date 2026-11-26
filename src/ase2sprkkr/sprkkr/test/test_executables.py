@@ -84,10 +84,13 @@ def test_executables_is_public_read_only_metadata():
 
 
 def test_resolve_native_executable_from_input_parameters():
-    from types import SimpleNamespace
+    from ase2sprkkr import InputParameters
 
     def params(mode):
-        return SimpleNamespace(CONTROL=SimpleNamespace(CLUTYPE=lambda: mode))
+        parameters = InputParameters.create("SCF")
+        if mode is not None:
+            parameters.CONTROL.CLUTYPE = mode
+        return parameters
 
     for name, cluster_name in (("kkrscf", "embscf"), ("kkrgen", "embgen")):
         definition = executables[name]
@@ -100,8 +103,10 @@ def test_resolve_native_executable_from_input_parameters():
     with pytest.raises(ValueError, match="Unsupported SPR-KKR CLUTYPE"):
         executables["kkrscf"].resolve(params("other"))
 
-    legacy = SimpleNamespace(CONTROL=SimpleNamespace())
-    assert executables["kkrscf"].resolve(legacy) == "kkrscf"
+    from ase2sprkkr.input_parameters.input_parameters_definitions import InputParametersDefinition, InputSectionDefinition
+
+    custom = InputParametersDefinition("custom", [InputSectionDefinition("CONTROL", [])]).create_object()
+    assert executables["kkrscf"].resolve(custom) == "kkrscf"
 
 
 @pytest.mark.parametrize("variant, error", [(False, TypeError), (" ", ValueError)])
@@ -111,10 +116,11 @@ def test_invalid_cluster_variant_metadata(variant, error):
 
 
 def test_unknown_custom_executable_still_works_outside_embedding():
-    from types import SimpleNamespace
+    from ase2sprkkr import InputParameters
 
-    normal = SimpleNamespace(CONTROL=SimpleNamespace(CLUTYPE=lambda: None))
-    embedded = SimpleNamespace(CONTROL=SimpleNamespace(CLUTYPE=lambda: "embedded"))
+    normal = InputParameters.create("SCF")
+    embedded = InputParameters.create("SCF")
+    embedded.CONTROL.CLUTYPE = "embedded"
     assert executables.resolve("my-custom-binary", normal) == "my-custom-binary"
     with pytest.raises(ValueError, match="does not support embedded"):
         executables.resolve("my-custom-binary", embedded)

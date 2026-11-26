@@ -462,7 +462,7 @@ def _create_sprkkr_run(
         if executor is None:
             executor = executor_from_profile(profile)
         manager = resolve_project_manager(project)
-        if manager is None and getattr(prepared, "clear_cache", False):
+        if manager is None and prepared.clear_cache:
             # An untracked run has no conflict reservation. A clean-cache run
             # must use the same persistent run store as ordinary project runs,
             # even when the caller has not assigned a specific project.
@@ -473,7 +473,7 @@ def _create_sprkkr_run(
         if metadata is not None and "ase2sprkkr" in metadata:
             raise ValueError("The 'ase2sprkkr' run metadata namespace is reserved")
         if manager is not None:
-            if getattr(prepared, "_temporary_directory", False):
+            if prepared._temporary_directory:
                 raise ValueError("Tracked runs require a persistent calculation directory; pass directory=path")
             if error_file is False:
                 raise ValueError("Tracked runs require persistent stderr; use error_file=None or a pathname")
@@ -488,7 +488,7 @@ def _create_sprkkr_run(
             if file is not None
         )
         auxiliary_outputs, cache_files = _run_cache_files(
-            input_parameters, prepared.directory, clear_cache=getattr(prepared, "clear_cache", False),
+            input_parameters, prepared.directory, clear_cache=prepared.clear_cache,
         )
         output_files = tuple(
             file for file in (

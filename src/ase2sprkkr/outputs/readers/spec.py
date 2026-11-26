@@ -40,26 +40,19 @@ class SpecResult(ArpesResult):
     Provides access to the parsed data from spec.out files.
     """
 
-    @cached_property
-    def potential_barrier(self) -> Dict[str, float]:
-        """Extract potential barrier parameters from the output."""
-        if not hasattr(self, "_potential_barrier"):
-            self._parse_potential_barrier()
-        return self._potential_barrier
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._file_content = None
 
-    @cached_property
+    @property
     def lattice_constants(self) -> Dict[str, float]:
         """Extract lattice constants from the output."""
-        if not hasattr(self, "_lattice_constants"):
-            self._parse_lattice_info()
-        return self._lattice_constants
+        return self._lattice_info[0]
 
-    @cached_property
+    @property
     def basis_vectors(self) -> Dict[str, np.ndarray]:
         """Extract basis vectors from the output."""
-        if not hasattr(self, "_basis_vectors"):
-            self._parse_lattice_info()
-        return self._basis_vectors
+        return self._lattice_info[1]
 
     @property
     def spleed_intensity(self):
@@ -71,7 +64,7 @@ class SpecResult(ArpesResult):
             return None
         # A parsed SPEC stream is authoritative even when its output file is
         # unavailable or has different contents.
-        if hasattr(self, "_file_content"):
+        if self._file_content is not None:
             return SpecOutputParser.parse_spleed_intensity(
                 self._file_content.splitlines()
             )
@@ -80,6 +73,7 @@ class SpecResult(ArpesResult):
         filename = self.path_to("output")
         if not os.path.isfile(filename):
             return None
+        self.require_current_file(filename)
         with open(filename, encoding="utf-8", errors="replace") as stream:
             return SpecOutputParser.parse_spleed_intensity(stream)
 
@@ -120,62 +114,66 @@ class SpecResult(ArpesResult):
             )
         return np.array([])
 
-    def _parse_potential_barrier(self) -> None:
+    @cached_property
+    def potential_barrier(self) -> Dict[str, float]:
         """Parse the potential barrier section of the output."""
-        self._potential_barrier = {}
+        values = {}
         content = self._get_file_content()
 
         # Parse potential barrier parameters
         ibar_match = re.search(r"#\s*ibar:\s*(\d+)", content)
         if ibar_match:
-            self._potential_barrier["ibar"] = int(ibar_match.group(1))
+            values["ibar"] = int(ibar_match.group(1))
 
         epsx_match = re.search(r"#\s*epsx:\s*([\d.E+-]+)", content)
         if epsx_match:
-            self._potential_barrier["epsx"] = float(epsx_match.group(1))
+            values["epsx"] = float(epsx_match.group(1))
 
         # Parse zparup and zpardn (these appear to be arrays)
         zpar_match = re.search(r"#\s*zparup:\s*([\d.E+-]+)\s+([\d.E+-]+)\s+([\d.E+-]+)", content)
         if zpar_match:
-            self._potential_barrier["zparup"] = [float(x) for x in zpar_match.groups()]
+            values["zparup"] = [float(x) for x in zpar_match.groups()]
 
         zpardn_match = re.search(r"#\s*zpardn:\s*([\d.E+-]+)\s+([\d.E+-]+)\s+([\d.E+-]+)", content)
         if zpardn_match:
-            self._potential_barrier["zpardn"] = [float(x) for x in zpardn_match.groups()]
+            values["zpardn"] = [float(x) for x in zpardn_match.groups()]
 
         # Parse bparp
         bparp_match = re.search(r"#\s*bparp:\s*([\d.E+-]+)\s+([\d.E+-]+)\s+([\d.E+-]+)", content)
         if bparp_match:
-            self._potential_barrier["bparp"] = [float(x) for x in bparp_match.groups()]
+            values["bparp"] = [float(x) for x in bparp_match.groups()]
 
-    def _parse_lattice_info(self) -> None:
+        return values
+
+    @cached_property
+    def _lattice_info(self):
         """Parse lattice constants and basis vectors from the output."""
         content = self._get_file_content()
-        self._lattice_constants = {}
-        self._basis_vectors = {}
+        constants = {}
 
         # Parse lattice constant
         lat_match = re.search(r"lattice constant\s*:\s*([\d.]+)", content)
         if lat_match:
-            self._lattice_constants["a"] = float(lat_match.group(1))
+            constants["a"] = float(lat_match.group(1))
 
-        self._basis_vectors = {"real": np.zeros((2, 2)), "reciprocal": np.zeros((2, 2))}
+        vectors = {"real": np.zeros((2, 2)), "reciprocal": np.zeros((2, 2))}
         # Parse real basis vectors
         matches = re.finditer(r"(real|reciprocal) basis\s+(\d+)\s*:\s*([\d.-]+)\s+([\d.-]+)", content)
         for match in matches:
-            self._basis_vectors[match.group(1)][int(match.group(2)) - 1] = [match.group(3), match.group(4)]
+            vectors[match.group(1)][int(match.group(2)) - 1] = [match.group(3), match.group(4)]
+
+        return constants, vectors
 
     def _get_file_content(self) -> str:
         """Reuse captured SPEC text; fall back to disk for unparsed results."""
-        if not hasattr(self, "_file_content"):
-            if hasattr(self, "output_lines"):
-                self._file_content = "\n".join(self.output_lines)
-            elif self.output_file is not None:
-                with open(self.output_file, "r") as stream:
-                    self._file_content = stream.read()
-            else:
-                self._file_content = ""
-        return self._file_content
+        if self._file_content is not None:
+            return self._file_content
+        if self.output_file is None:
+            return ""
+        filename = self.path_to("output")
+        self.require_current_file(filename)
+        with open(filename, encoding="utf-8", errors="replace") as stream:
+            return stream.read()
 
 
 class _CapturedSpecStream:

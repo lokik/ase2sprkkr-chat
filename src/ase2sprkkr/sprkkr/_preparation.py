@@ -375,7 +375,7 @@ def validate_task_system(task, resolved_input, resolved_potential):
     kind = system_kind_for_atoms(resolved_potential.atoms)
     # For a path-only embedded calculation the host POTFIL is not itself
     # an embedded structure; the complete pair is checked during source loading.
-    if kind is None and getattr(parameters.CONTROL, "CLUTYPE", lambda: None)() == "embedded":
+    if kind is None and parameters.cluster_type == "embedded":
         kind = "embedded"
     # When a task does not support both periodic geometries, inspect an
     # available potential to reject a known unsupported system before creating
@@ -559,9 +559,6 @@ def write_potential(
     with status_context:
         potential.save_to_file(handle, resolved.atoms, restart_scf=restart_scf)
 
-    flush = getattr(handle, "flush", None)
-    if flush is not None:
-        flush()
     if isinstance(handle, TemporaryNamedFile):
         handle.close_file()
     else:
@@ -616,9 +613,6 @@ def write_cluster_potentials(
     else:
         cluster_to_write = cluster
     cluster_to_write.save_to_file(handle)
-    flush = getattr(handle, "flush", None)
-    if flush is not None:
-        flush()
     if isinstance(handle, TemporaryNamedFile):
         handle.close_file()
     else:

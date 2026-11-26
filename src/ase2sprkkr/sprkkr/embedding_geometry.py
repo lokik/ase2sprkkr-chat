@@ -13,6 +13,8 @@ import numpy as np
 from ..bindings.spglib import symmetry_dataset
 from .embedding import host_atoms, host_dimension, translation_basis
 from .site_equivalence import site_equivalence_tags
+from .sprkkr_atoms import SPRKKRAtoms
+from ..potentials.potentials import PeriodicPotential
 
 
 @dataclass(frozen=True, order=True)
@@ -76,13 +78,12 @@ class HostSite:
             raise IndexError("original_site is outside the host structure")
         if host_dimension(host) != 2:
             return None
-        regions = getattr(atoms, "regions", {})
+        regions = atoms.regions if isinstance(atoms, SPRKKRAtoms) else {}
         for name, region in regions.items():
             if self.original_site in region.ids:
                 return name
-        lattice = getattr(host, "LATTICE", None)
-        if lattice is not None and hasattr(lattice, "NQ_L") and hasattr(lattice, "NQ_R"):
-            left, right = int(lattice.NQ_L()), int(lattice.NQ_R())
+        if isinstance(host, PeriodicPotential):
+            left, right = int(host.LATTICE.NQ_L()), int(host.LATTICE.NQ_R())
             if self.original_site < left:
                 return "left"
             if self.original_site >= len(atoms) - right:
@@ -96,13 +97,12 @@ def embedding_host_indices(host):
     atoms = host_atoms(host)
     if host_dimension(host) != 2:
         return tuple(range(len(atoms)))
-    lattice = getattr(host, "LATTICE", None)
-    if lattice is not None and hasattr(lattice, "NQ_L") and hasattr(lattice, "NQ_R"):
-        left, right = int(lattice.NQ_L()), int(lattice.NQ_R())
+    if isinstance(host, PeriodicPotential):
+        left, right = int(host.LATTICE.NQ_L()), int(host.LATTICE.NQ_R())
         if left < 0 or right < 0 or left + right > len(atoms):
             raise ValueError("Invalid 2D host lead-site counts")
         return tuple(range(left, len(atoms) - right))
-    regions = getattr(atoms, "regions", {})
+    regions = atoms.regions if isinstance(atoms, SPRKKRAtoms) else {}
     if "central" in regions:
         return tuple(sorted(int(i) for i in regions["central"].ids))
     return tuple(range(len(atoms)))
@@ -165,7 +165,7 @@ class EmbeddingSymmetry:
         centre_scaled = position @ inv
 
         memberships = None
-        regions = getattr(self.atoms, "regions", {})
+        regions = self.atoms.regions if isinstance(self.atoms, SPRKKRAtoms) else {}
         if regions:
             memberships = [[] for _ in range(len(self.atoms))]
             for name, region in regions.items():

@@ -66,6 +66,7 @@ def test_cluster_restart_uses_cluster_atomic_types_after_host_gen_summary(tmp_pa
 
 def test_scf_failure_before_first_iteration_has_no_convergence_or_last_iteration(tmp_path):
     result = ScfResult(None, None, tmp_path)
+    assert len(result.iterations) == 0
     assert result.converged is False
     with pytest.raises(AttributeError, match="No iteration has been finished"):
         _ = result.last_iteration
@@ -167,7 +168,8 @@ def test_embedded_scf_result_reads_clupot_and_continues_with_dos(tmp_path, embed
     from ...sprkkr.executables import executables
 
     result = embedded_scf_result
-    ScfOutputParser().read_from_file(CLUSTER_OUTPUT, None, [result])
+    _, error, return_code = ScfOutputParser().read_from_file(CLUSTER_OUTPUT, None, [result])
+    result.complete(error, return_code)
     start = tmp_path / "cluster.pot"
     converged = tmp_path / "cluster.pot_new"
 

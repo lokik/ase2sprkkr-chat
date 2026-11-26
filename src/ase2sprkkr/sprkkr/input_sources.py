@@ -31,9 +31,9 @@ def existing_potential_files(parameters, directory):
     """Resolve required native potential paths relative to the execution directory."""
     control = parameters.CONTROL
     names = ["POTFIL"]
-    if getattr(control, "CLUTYPE", lambda: None)() == "embedded":
+    if parameters.cluster_type == "embedded":
         names.append("POTFIL_CLU")
-    elif getattr(control, "POTFIL_CLU", lambda: None)():
+    elif "POTFIL_CLU" in control and control.POTFIL_CLU():
         raise ValueError("CONTROL.POTFIL_CLU requires CONTROL.CLUTYPE=embedded")
 
     directory = Path(directory).expanduser().absolute()

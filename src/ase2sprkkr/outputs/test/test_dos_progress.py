@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from ase2sprkkr.outputs.task_result import OutputMatch
+from ase2sprkkr.outputs.task_result import OutputMatch, TaskResult
 from ase2sprkkr.outputs.readers.dos import (
     DosOutputParser,
     DosOutputReader,
@@ -83,7 +83,7 @@ def test_full_dos_output_parser_emits_same_events_and_retains_lines(tmp_path):
     path.write_text("13/300 done.\n14/300 done.\nUnrelated native message\n")
     events = []
     parser = ParserWithoutHeader(on_info=lambda **event: events.append(event))
-    result = SimpleNamespace()
+    result = TaskResult(None, None, tmp_path, task_name="DOS")
     parsed, error, return_code = parser.read_from_file(path, read_args=[result])
     assert parsed is result
     assert error is None and return_code == 0

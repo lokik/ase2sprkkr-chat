@@ -4,6 +4,7 @@ import asyncio
 from types import SimpleNamespace
 
 from ase2sprkkr.outputs.reader_registry import reader_registry
+from ase2sprkkr.outputs.task_result import TaskResult
 from ase2sprkkr.outputs.readers.xas import (
     XasCoreInfo, XasEnergyInfo, XasOutputParser, XasOutputReader,
     XasProgressParser, xas_total_points_from_parameters,
@@ -107,7 +108,7 @@ def test_full_output_reader_observes_lines_consumed_by_files_parser(
     async def read_first_line(stream, _result):
         assert await stream.readline() == b"          RATE-FILE :  ( 7) Fe_L23.rat\n"
     monkeypatch.setattr(parser, "read_commons", read_first_line)
-    result = SimpleNamespace(input_parameters=None)
+    result = TaskResult(None, None, None, task_name="XAS")
 
     async def parse():
         stream = asyncio.StreamReader()

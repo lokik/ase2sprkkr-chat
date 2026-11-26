@@ -217,3 +217,11 @@ def test_direct_detached_profile_round_trips_without_changing_endpoint(tmp_path)
     assert profile.detached is True
     assert SPRKKRProfile().detached is False
     assert profile.backend_config == SPRKKRProfile(backend="direct").backend_config
+
+
+def test_invalid_profile_object_is_not_silently_treated_as_local():
+    import pytest
+    from types import SimpleNamespace
+
+    with pytest.raises(TypeError, match="Expected a profile"):
+        resolve_sprkkr_profile(SimpleNamespace(executr="ssh"))

@@ -6,6 +6,7 @@ displacements are always derived from these positions.
 """
 
 import numpy as np
+from ase import Atoms
 
 EMBEDDING_ARRAY = "sprkkr_embedding"
 EMBEDDING_HOST = "sprkkr_embedding_host"
@@ -15,10 +16,14 @@ def host_atoms(host):
     """Accept an ASE Atoms or an SPR-KKR Potential as the embedding host."""
     if host is None:
         raise ValueError("sprkkr_embedding_host must be assigned before using embedding")
-    atoms = getattr(host, "atoms", host)
-    if atoms is None or not hasattr(atoms, "positions") or not hasattr(atoms, "cell"):
-        raise TypeError("Embedding host must be Atoms or a Potential containing Atoms")
-    return atoms
+    if isinstance(host, Atoms):
+        return host
+    from ..potentials.potentials import PeriodicPotential
+    if isinstance(host, PeriodicPotential):
+        atoms = host.atoms
+        if atoms is not None:
+            return atoms
+    raise TypeError("Embedding host must be Atoms or a periodic Potential containing Atoms")
 
 
 def host_dimension(host):
@@ -33,11 +38,13 @@ def translation_basis(host):
     basis = np.zeros((5, 3))
     basis[:3] = np.asarray(atoms.cell)
     if host_dimension(host) == 2:
-        regions = getattr(atoms, "regions", {})
+        from .sprkkr_atoms import SPRKKRAtoms
+        from ..potentials.potentials import PeriodicPotential
+        regions = atoms.regions if isinstance(atoms, SPRKKRAtoms) else {}
         if "left" in regions and "right" in regions:
             basis[3] = np.asarray(regions["left"].cell[2])
             basis[4] = np.asarray(regions["right"].cell[2])
-        elif hasattr(host, "LATTICE"):
+        elif isinstance(host, PeriodicPotential):
             from ase.units import Bohr
             lattice = host.LATTICE
             alat = lattice.ALAT() * Bohr

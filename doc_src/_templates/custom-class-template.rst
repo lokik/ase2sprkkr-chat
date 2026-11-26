@@ -22,7 +22,7 @@
 
    .. rubric:: {{ _('Constructor') }}
    {% block init %}
-   .. automethod:: __init__
+   .. automethod:: {{ fullname }}.__init__
    {% endblock %}
 
    {% block own_attributes %}

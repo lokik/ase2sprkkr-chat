@@ -6,27 +6,30 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING
 import glob
 import os
 
 from kkrunner.files import FileEntry, FileManifest, FileOperations, FileVersion
 
+if TYPE_CHECKING:
+    from .task_result import TaskResult
 
-def result_file_manifest(result: Any) -> FileManifest | None:
+
+def result_file_manifest(result: TaskResult) -> FileManifest | None:
     """Return the recorded manifest for either a persistent or a live run."""
-    record = getattr(result, "run_record", None)
-    return record.files if record is not None else getattr(result, "file_manifest", None)
+    record = result.run_record
+    return record.files if record is not None else result.file_manifest
 
 
-def result_file_version(result: Any, path, *, require_digest=False) -> FileVersion | None:
+def result_file_version(result: TaskResult, path, *, require_digest=False) -> FileVersion | None:
     """Use the run's recorded provenance and capture only new imports.
 
     An absent version in a historical manifest is not permission to adopt the
     bytes currently at that pathname as an output of the old calculation.
     """
     files = result_file_manifest(result)
-    if files is None and getattr(result, "run_record", None) is None:
+    if files is None and result.run_record is None:
         return FileVersion.capture(path, require_digest=require_digest)
     if files is None or files.captured_at is None:
         return None
@@ -35,7 +38,7 @@ def result_file_version(result: Any, path, *, require_digest=False) -> FileVersi
                  if os.path.abspath(os.fspath(version.path)) == path), None)
 
 
-def capture_result_file_versions(result: Any) -> Mapping[str, FileVersion]:
+def capture_result_file_versions(result: TaskResult) -> Mapping[str, FileVersion]:
     """Capture path-backed output values exposed by *result*.
 
     Output options are owned by ASE2SPRKKR and expose ``path()`` when their
@@ -43,34 +46,23 @@ def capture_result_file_versions(result: Any) -> Mapping[str, FileVersion]:
     an optional or unstable output is omitted rather than represented by a weak
     metadata-only identity.
     """
-    try:
-        items = tuple(result.output_values.items())
-    except Exception:  # noqa: BLE001 - optional result metadata boundary
-        return MappingProxyType({})
+    from .result_options import OutputFileOption
 
     historical = (result_file_manifest(result) is not None
-                  or getattr(result, "run_record", None) is not None)
+                  or result.run_record is not None)
     versions: dict[str, FileVersion] = {}
-    for key, value in items:
-        path_getter = getattr(value, "path", None)
-        if not callable(path_getter):
+    for key, value in result.output_values.items():
+        if not isinstance(value, OutputFileOption):
             continue
         try:
-            path = path_getter()
-            if not path:
+            path = value.path()
+            if not historical and not value.is_current():
                 continue
-            if not historical:
-                # A standalone import may only capture bytes that are still
-                # attributed to this result. A recorded manifest, by contrast,
-                # is authoritative even when its files have been overwritten
-                # or deleted, with or without prior ResultLoader annotation.
-                checker = getattr(value, "is_current", None)
-                if callable(checker) and not checker():
-                    continue
             version = result_file_version(result, path, require_digest=True)
             if version is not None:
                 versions[str(key)] = version
-        except Exception:  # noqa: BLE001 - provenance enrichment is best effort
+        except (OSError, ValueError):
+            # An optional or unstable file cannot establish content identity.
             continue
     return MappingProxyType(versions)
 
@@ -177,13 +169,13 @@ def register_declared_result_files(result, *, warn_missing=True, file_operations
             else (declared,)
         )
         found = [path for path in paths if operations.is_file(path)]
-        if getattr(result, "run_record", None) is not None:
+        if result.run_record is not None:
             # Wildcards must not discover additional outputs of a newer run.
             found = [path for path in found if result_file_version(result, path) is not None]
-        if not found and not getattr(declaration, "optional", False):
+        if not found and not declaration.optional:
             missing_required.add(pattern)
 
-        hint = getattr(declaration, "type", None)
+        hint = declaration.type
         file_type = hint.lower() if hint and hint.lower() in known_formats else None
         for path in found:
             if path in registered:
@@ -219,7 +211,7 @@ def register_declared_result_files(result, *, warn_missing=True, file_operations
 
 
 def capture_result_file_manifest(
-    result: Any,
+    result: TaskResult,
     *,
     output_path: str | os.PathLike | None = None,
     potential_path: str | os.PathLike | None = None,
@@ -271,7 +263,7 @@ def capture_result_file_manifest(
     parameters, declarations = task_file_declarations(result)
     for kind, declaration in declarations:
         path = absolute(declaration)
-        optional = getattr(declaration, "optional", False)
+        optional = declaration.optional
         if glob.has_magic(str(path)):
             for match in operations.glob(str(path), recursive=False):
                 if operations.is_file(match):
@@ -286,15 +278,11 @@ def capture_result_file_manifest(
         if potential:
             add(potential, "input")
 
-    registered = result.files.items()
-    # OutputFilesSection.items() returns a dict, unlike dict.items().
-    if isinstance(registered, Mapping):
-        registered = registered.items()
-    for name, option in registered:
+    for name, option in result.files.items().items():
         role = str(name).casefold()
         if role == "output":
             continue
-        location = option.path() if callable(getattr(option, "path", None)) else option
+        location = option.path()
         if role in {"input", "potential", "start_potential"}:
             kind = "input"
         elif role == "sfn":

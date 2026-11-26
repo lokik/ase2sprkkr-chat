@@ -11,6 +11,16 @@ from ase2sprkkr.outputs.task_result import TaskResult
 from kkrunner.runs import HistoricalFileMismatchError
 
 
+def test_associate_incomplete_result_records_file_provenance(tmp_path):
+    output = tmp_path / "incomplete.out"
+    output.write_text("partial output")
+    result = TaskResult(None, None, tmp_path, output_file=output, task_name="DOS")
+
+    assert ResultLoader().associate_result(result) is result
+    assert result.files["output"].observed_version.is_current()
+    assert result.return_code is None
+
+
 class _SCF(TaskResult):
     produces_potential = True
 
@@ -344,7 +354,8 @@ def test_cached_unmatched_input_is_rediscovered_after_repair(tmp_path, monkeypat
     def parse_input(path):
         if inp.read_text() == "invalid input":
             raise ValueError("invalid input")
-        return SimpleNamespace(task_name="DOS")
+        from ase2sprkkr import InputParameters
+        return InputParameters.create("DOS")
 
     monkeypatch.setattr(loader.inputs, "parse", parse_input)
     first = loader.load_file(output)

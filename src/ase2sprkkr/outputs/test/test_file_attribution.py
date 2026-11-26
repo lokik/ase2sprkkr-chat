@@ -199,6 +199,10 @@ def test_missing_unversioned_file_has_unknown_current_attribution(tmp_path):
     path.write_bytes(b"temporary")
     result = TaskResult(None, None, tmp_path, task_name="DOS")
     option = result.files.add_file("auxiliary", path)
+    assert option.attribution_details() == (FileAttribution.UNKNOWN, None)
+    assert option.recorded_version is None
+    assert option.observed_version is None
+    assert option.attributed_to is None
     option.set_attribution(FileAttribution.LIKELY, evidence="manual_reference")
     assert option.attribution is FileAttribution.LIKELY
     path.unlink()

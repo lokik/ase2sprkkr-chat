@@ -1,6 +1,7 @@
 """Prepared SPR-KKR resources belong to the generic Run lifecycle."""
 
 import sys
+from contextlib import ExitStack
 from threading import Event
 from types import SimpleNamespace
 
@@ -11,68 +12,40 @@ from kkrunner.backends.contracts import SubmissionNotStarted
 from kkrunner.client import EndpointClient
 from kkrunner.runs import Run
 
+from ase2sprkkr import InputParameters
+from ase2sprkkr.input_parameters.task_definition import TaskDefinition
+from ase2sprkkr.sprkkr import calculation as calculation_module
 from ase2sprkkr.sprkkr.calculation import PreparedCalculation
 from ase2sprkkr.sprkkr.profile import SPRKKRProfile
 
 
-class _Task:
-    name = "SCF"
-    # Python reads the prepared input file from stdin, so this exercises the
-    # real direct runner without requiring an installed SPR-KKR executable.
-    executable = sys.executable
-    mpi = False
-
-    def output_reader(self, **kwargs):
-        return SimpleNamespace(
+@pytest.fixture
+def prepared(tmp_path, monkeypatch):
+    parameters = InputParameters.create("DOS")
+    for name in ("input_files", "output_files", "cache_files"):
+        monkeypatch.setattr(InputParameters, name, lambda self, directory: ())
+    monkeypatch.setattr(
+        TaskDefinition, "output_reader",
+        lambda self, **kwargs: SimpleNamespace(
             read_from_file=lambda *args, **options: SimpleNamespace(
                 return_code=options.get("return_code"),
             ),
-        )
-
-
-class _Parameters:
-    CONTROL = SimpleNamespace(
-        POTFIL=SimpleNamespace(result=None),
-        DATASET=SimpleNamespace(result=None),
+        ),
     )
-
-    def task_definition_required(self):
-        return _Task()
-
-    def input_files(self, directory):
-        return ()
-
-    def output_files(self, directory):
-        return ()
-
-    def cache_files(self, directory):
-        return ()
-
-
-class _Prepared:
-    create_run = PreparedCalculation.create_run
-
-    def __init__(self, input_file, output_file, directory):
-        self.input_parameters = _Parameters()
-        self.input_file = input_file
-        self.potential_file = None
-        self.output_file = output_file
-        self.directory = str(directory)
-        self.closed = False
-
-    def close(self):
-        if not self.closed:
-            self.closed = True
-            self.input_file.close()
-            self.output_file.close()
-
-
-def _prepared(tmp_path):
+    monkeypatch.setattr(calculation_module, "resolve_task_executable", lambda *_: sys.executable)
     input_path = tmp_path / "run.inp"
     input_path.write_text("print('ok')\n")
-    input_file = input_path.open("rb")
-    output_file = (tmp_path / "run.out").open("w+b")
-    return _Prepared(input_file, output_file, tmp_path)
+    with ExitStack() as stack:
+        input_file = stack.enter_context(input_path.open("rb"))
+        output_file = stack.enter_context((tmp_path / "run.out").open("w+b"))
+        calculation = PreparedCalculation(
+            parameters, input_file, None, output_file, str(tmp_path),
+            0, stack.pop_all(), None,
+        )
+        try:
+            yield calculation
+        finally:
+            calculation.close()
 
 
 def _create_run(prepared, *, executor=None, callback=None):
@@ -84,8 +57,7 @@ def _create_run(prepared, *, executor=None, callback=None):
     )
 
 
-def test_files_are_closed_when_runner_creation_fails(tmp_path, monkeypatch):
-    prepared = _prepared(tmp_path)
+def test_files_are_closed_when_runner_creation_fails(prepared, monkeypatch):
     executor = EndpointClient()
 
     def fail_factory(*args, **kwargs):
@@ -94,16 +66,14 @@ def test_files_are_closed_when_runner_creation_fails(tmp_path, monkeypatch):
     monkeypatch.setattr(executor, "create_run_parts", fail_factory)
     with pytest.raises(RuntimeError, match="factory failed"):
         _create_run(prepared, executor=executor)
-    assert prepared.closed
     assert prepared.input_file.closed
     assert prepared.output_file.closed
 
 
-def test_files_are_closed_when_submission_fails_before_start(tmp_path, monkeypatch):
-    prepared = _prepared(tmp_path)
+def test_files_are_closed_when_submission_fails_before_start(prepared, monkeypatch):
     runner = _create_run(prepared)
     assert isinstance(runner, Run)
-    assert not prepared.closed
+    assert not prepared.input_file.closed
 
     def fail_submission():
         raise SubmissionNotStarted("staging failed")
@@ -112,28 +82,23 @@ def test_files_are_closed_when_submission_fails_before_start(tmp_path, monkeypat
     with pytest.raises(SubmissionNotStarted, match="staging failed"):
         runner.submit()
     assert runner.state is RunState.FAILED
-    assert prepared.closed
     assert prepared.input_file.closed
     assert prepared.output_file.closed
 
 
-def test_completion_releases_files_without_wait(tmp_path):
-    prepared = _prepared(tmp_path)
+def test_completion_releases_files_without_wait(prepared):
     completed = Event()
     runner = _create_run(prepared, callback=lambda result: completed.set())
     runner.submit()
     assert completed.wait(10), "completion callback was not called"
     assert runner.state is RunState.FINISHED
-    assert prepared.closed
     assert prepared.input_file.closed
     assert prepared.output_file.closed
 
 
-def test_unstarted_runner_can_release_owned_files_explicitly(tmp_path):
-    prepared = _prepared(tmp_path)
+def test_unstarted_runner_can_release_owned_files_explicitly(prepared):
     runner = _create_run(prepared)
     runner.close()
     runner.close()
-    assert prepared.closed
     assert prepared.input_file.closed
     assert prepared.output_file.closed

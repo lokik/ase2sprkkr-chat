@@ -192,7 +192,7 @@ class DosOutputParser(DefaultOutputParser):
             _DosHeaderStream(stdout, self._consume_line), result
         )
         if self.total_points is None:
-            self.total_points = dos_total_points_from_parameters(getattr(result, "input_parameters", None))
+            self.total_points = dos_total_points_from_parameters(result.input_parameters)
         self._note_started()
         result.output_lines = []
         async for raw_line in stdout:

@@ -7,12 +7,6 @@ from ase2sprkkr.outputs.readers.spec import SpecResult, SpecOutputParser, SpecOu
 
 
 def test_spec_result_properties():
-    class InMemorySpecResult(SpecResult):
-        def __init__(self, content):
-            self._file_content = content
-            self._task_name = "band"
-            self.output_file = None
-
     content = """
  parameter for potential barrier:
 # ibar:  1
@@ -37,7 +31,8 @@ stookes-vector    of the photonfield  0.10000E+01  100.000%    0.000%    0.000%
 1.9000E+00  -9.6825E-02  5.7837E-08 -4.2368E-04  2.8906E-08  2.8931E-08
 """
 
-    result = InMemorySpecResult(content)
+    result = SpecResult(None, None, None, task_name="BAND")
+    result._file_content = content
 
     assert result.potential_barrier == {
         "ibar": 1,
@@ -302,3 +297,13 @@ def test_spec_streamed_spleed_intensity_without_disk_or_with_stale_disk(
         assert spectrum is not None
         np.testing.assert_allclose(spectrum.RAW_DATA(), streamed_rows)
         np.testing.assert_allclose(result.spectral_data, streamed_rows)
+
+
+def test_disk_spleed_intensity_is_not_frozen_by_other_parsed_properties(tmp_path):
+    output = tmp_path / "Fe_SPEC.out"
+    header = "# ibar: 2\ni(e)-diagram\n"
+    output.write_text(header + f"{1.:12.5E}  {2.:12.5E}\n")
+    result = SpecResult(None, None, tmp_path, output_file=output, task_name="SPLEED")
+    assert result.potential_barrier == {"ibar": 2}
+    output.write_text(header + f"{1.:12.5E}  {3.:12.5E}\n")
+    np.testing.assert_allclose(result.spleed_intensity.RAW_DATA(), [[1, 3]])

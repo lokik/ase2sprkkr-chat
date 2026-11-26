@@ -253,7 +253,7 @@ def load_project_result(manager, run, *, allow_unparsed=False):
 
     input_file = None
     if manager.input_file_is_current(record) and (
-        getattr(reader, "input_parameters", None) is not None
+        reader.input_parameters is not None
     ):
         input_file = result_files.input_file
 

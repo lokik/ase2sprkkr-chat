@@ -67,6 +67,11 @@ class ScfResult(TaskResult):
 
     produces_potential = True
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.iterations = scf_section.create_object()
+        self.scf_tolerance = None
+
     def _with_output_scf_status(self, potential):
         """Project the final SCF convergence onto this result's embedded state.
 
@@ -77,8 +82,7 @@ class ScfResult(TaskResult):
         """
         if (
             not self.is_embedded
-            or getattr(self, "return_code", 0) != 0
-            or not getattr(self, "iterations", None)
+            or self.return_code != 0
             or not self.converged
             or str(potential.SCF_INFO.SCFSTATUS()).strip().upper() != "ITERATING"
         ):
@@ -172,7 +176,7 @@ class ScfResult(TaskResult):
         """Whether the last completed SCF iteration reached convergence."""
         # Failed or incomplete runs may have no finished iterations.
         # Repeated sections are truthy even when empty, so check the count.
-        return len(getattr(self, "iterations", ())) > 0 and self.last_iteration["converged"]()
+        return len(self.iterations) > 0 and self.last_iteration["converged"]()
 
     def iteration_values(self, name):
         """Return the array of values of given name from the
@@ -199,7 +203,7 @@ class ScfResult(TaskResult):
     @property
     def last_iteration(self):
         """Return the data of the last iteration"""
-        if len(getattr(self, "iterations", ())) == 0:
+        if len(self.iterations) == 0:
             raise AttributeError("No iteration has been finished")
         return self.iterations[-1]
 

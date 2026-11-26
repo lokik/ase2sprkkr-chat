@@ -327,8 +327,7 @@ class ASEProfile:
         # Stage only after successful validation: rejected changes do not
         # affect the parser or pending writes. All ASEProfile views share the
         # same staged state through the profiles container.
-        pending = getattr(self._profiles, "_ase_pending_updates", {})
-        self._profiles._ase_pending_updates = {**pending, **updates}
+        self._profiles._ase_pending_updates.update(updates)
         self._ase_config.parser = parser
 
     def set(self, values=None, **kwargs):
@@ -372,6 +371,11 @@ class ProfilesConfigurationContainer(RepeatedConfigurationContainer):
         def rollback(self):
             self.profiles._values = self.old_values
 
+    def __init__(self, definition, container=None):
+        super().__init__(definition, container)
+        self._ase_pending_updates = {}
+        self._legacy_write_warning_emitted = False
+
     reserved_names = frozenset(("legacy", "ase", "default"))
     legacy_fields = (
         "mpi",
@@ -409,7 +413,7 @@ class ProfilesConfigurationContainer(RepeatedConfigurationContainer):
         return value
 
     def _warn_legacy_write(self):
-        if getattr(self, "_legacy_write_warning_emitted", False):
+        if self._legacy_write_warning_emitted:
             return
         warnings.warn(
             "config.executables.dir is deprecated together with "
@@ -741,7 +745,7 @@ class ProfilesConfigurationContainer(RepeatedConfigurationContainer):
         """
         from .ase_profile_storage import write_ase_sprkkr
 
-        updates = getattr(self, "_ase_pending_updates", {})
+        updates = self._ase_pending_updates
         if not updates:
             return
         write_ase_sprkkr(updates, system=system)

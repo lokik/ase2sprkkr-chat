@@ -15,16 +15,15 @@ def system_kind_for_atoms(atoms):
     """Classify the geometry for native task selection, without modifying it."""
     if atoms is None:
         return None
-    if EMBEDDING_ARRAY in getattr(atoms, "arrays", {}) and getattr(atoms, "info", {}).get(EMBEDDING_HOST) is not None:
+    if EMBEDDING_ARRAY in atoms.arrays and atoms.info.get(EMBEDDING_HOST) is not None:
         return "embedded"
     periodicity = tuple(bool(axis) for axis in atoms.get_pbc())
     if all(periodicity):
         return "3d"
     if not any(periodicity):
         return "cluster"
-    if periodicity == (True, True, False) and {"left", "central", "right"}.issubset(
-        getattr(atoms, "regions", {})
-    ):
+    if (periodicity == (True, True, False) and isinstance(atoms, SPRKKRAtoms)
+            and {"left", "central", "right"}.issubset(atoms.regions)):
         return "2d"
     return "unknown"
 
@@ -462,7 +461,8 @@ class SPRKKRAtoms(Atoms):
         if self._potential is not None:
             potential = self._potential.copy(copy_values=not shallow)
             potential.atoms = out
-            if hasattr(self._potential, "_complete"):
+            from ..potentials.potentials import PeriodicPotential
+            if isinstance(self._potential, PeriodicPotential):
                 potential._complete = self._potential._complete
             out._potential = potential
         return out

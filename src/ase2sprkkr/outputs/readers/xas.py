@@ -192,7 +192,7 @@ class XasOutputParser(DefaultOutputParser):
         await self.read_commons(_XasHeaderStream(stdout, self._consume_line), result)
         if self.total_points is None:
             self.total_points = xas_total_points_from_parameters(
-                getattr(result, "input_parameters", None)
+                result.input_parameters
             )
         result.output_lines = []
         async for raw_line in stdout:
