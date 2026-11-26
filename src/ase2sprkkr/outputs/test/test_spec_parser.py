@@ -302,8 +302,8 @@ def test_spec_streamed_spleed_intensity_without_disk_or_with_stale_disk(
 def test_disk_spleed_intensity_is_not_frozen_by_other_parsed_properties(tmp_path):
     output = tmp_path / "Fe_SPEC.out"
     header = "# ibar: 2\ni(e)-diagram\n"
-    output.write_text(header + "  1.0E+00  2.0E+00\n")
+    output.write_text(header + f"{1.:12.5E}  {2.:12.5E}\n")
     result = SpecResult(None, None, tmp_path, output_file=output, task_name="SPLEED")
     assert result.potential_barrier == {"ibar": 2}
-    output.write_text(header + "  1.0E+00  3.0E+00\n")
+    output.write_text(header + f"{1.:12.5E}  {3.:12.5E}\n")
     np.testing.assert_allclose(result.spleed_intensity.RAW_DATA(), [[1, 3]])

@@ -38,10 +38,14 @@ def prepared(tmp_path, monkeypatch):
     with ExitStack() as stack:
         input_file = stack.enter_context(input_path.open("rb"))
         output_file = stack.enter_context((tmp_path / "run.out").open("w+b"))
-        yield PreparedCalculation(
+        calculation = PreparedCalculation(
             parameters, input_file, None, output_file, str(tmp_path),
             0, stack.pop_all(), None,
         )
+        try:
+            yield calculation
+        finally:
+            calculation.close()
 
 
 def _create_run(prepared, *, executor=None, callback=None):

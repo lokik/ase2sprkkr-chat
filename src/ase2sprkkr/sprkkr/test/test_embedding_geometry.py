@@ -183,6 +183,8 @@ def test_2d_potential_lead_indices_are_excluded():
     atoms = Atoms("Cu3", positions=[[0, 0, -2], [0, 0, 0], [0, 0, 2]],
                   cell=[2, 2, 8], pbc=(True, True, False))
     host = PeriodicPotential(atoms, set_from_atoms=False)
+    host.LATTICE.SYSDIM = "2D"
+    host.LATTICE.SYSTYPE = "LIV"
     host.LATTICE.NQ_L = 1
     host.LATTICE.NQ_R = 1
     assert embedding_host_indices(host) == (1,)
@@ -196,6 +198,8 @@ def test_tilted_2d_lead_vectors_restrict_host_symmetry():
     atoms = Atoms("Cu", positions=[[0, 0, 0]], cell=[2, 2, 10],
                   pbc=(True, True, False))
     host = PeriodicPotential(atoms, set_from_atoms=False)
+    host.LATTICE.SYSDIM = "2D"
+    host.LATTICE.SYSTYPE = "LIV"
     host.LATTICE.NQ_L = 0
     host.LATTICE.NQ_R = 0
     host.LATTICE.ALAT = 1.0 / Bohr
