@@ -15,12 +15,14 @@ from enum import Enum
 import inspect
 from typing import Callable, Dict, Iterable, Optional, Union, Any
 import itertools
+from threading import RLock
 from . import backward_compatibility  # NOQA
 import re
 
 from .options import Dummy, DummyStub
 from .decorators import cached_class_property, cached_property
-from .grammar import as_delimiter, generate_grammar, Suppress, TokenConverter
+from .grammar import (as_delimiter, generate_grammar, Suppress, TokenConverter,
+                      GrammarPool, grammar_build, grammar_build_state)
 from .grammar_types.basic import Separator, KeywordSeparator
 from .repetition import Repeated, RepeatedItemGrammar
 from .warnings import DataValidityWarning, ValidationResult
@@ -28,6 +30,7 @@ from .warnings import DataValidityWarning, ValidationResult
 
 Validator = Callable[[Any, Any, str], Any]
 _NO_GENERATED_KEY = object()
+_definition_lock = RLock()
 
 
 class _TreeState(Enum):
@@ -190,25 +193,27 @@ class BaseDefinition:
         self.clear_grammar_cache()
 
     def grammar(self, allow_dangerous: bool = False, *, allow_incomplete: bool = False):
-        """Return a compiled grammar, keyed by the requested parse policy.
+        """Return a pool of compiled parsers for the requested parse policy.
 
-        Parser schemas are configured before their first parse. Reusing the
-        pyparsing expression avoids rebuilding the entire grammar (especially
-        its recursive ignore rules) for each input file. Explicit mutations to
-        a previously parsed schema require :meth:`clear_grammar_cache` or a
-        fresh definition.
+        Each concurrent parse borrows its own grammar. Explicit schema edits
+        require :meth:`clear_grammar_cache` or a fresh definition.
         """
         self._finalize()
         key = (allow_dangerous, allow_incomplete)
-        cache = self.__dict__.setdefault("_grammar_cache", {})
-        if key not in cache:
-            with generate_grammar():
+        with _definition_lock:
+            cache = self.__dict__.setdefault("_grammar_cache", {})
+            if key not in cache:
                 builder = self._grammar
-                cache[key] = (
-                    builder(allow_dangerous, allow_incomplete=allow_incomplete)
-                    if builder is not None else None
-                )
-        return cache[key]
+                if builder is None:
+                    cache[key] = None
+                else:
+                    def compile_grammar():
+                        with grammar_build():
+                            return builder(
+                                allow_dangerous, allow_incomplete=allow_incomplete
+                            )
+                    cache[key] = GrammarPool(compile_grammar)
+            return cache[key]
 
     def _get_root_definition(self):
         """Return the root of the definition tree containing this item."""
@@ -220,16 +225,19 @@ class BaseDefinition:
     def _finalize(self):
         """Finalize the complete definition tree before its first use."""
         root = self._get_root_definition()
-        if root._tree_state is not _TreeState.UNFINALIZED:
+        if root._tree_state is _TreeState.FINALIZED:
             return
-        root._tree_state = _TreeState.FINALIZING
-        try:
-            root.added_to_container(None)
-        except Exception:
-            root._tree_state = _TreeState.UNFINALIZED
-            raise
-        else:
-            root._tree_state = _TreeState.FINALIZED
+        with _definition_lock:
+            if root._tree_state is not _TreeState.UNFINALIZED:
+                return
+            root._tree_state = _TreeState.FINALIZING
+            try:
+                root.added_to_container(None)
+            except Exception:
+                root._tree_state = _TreeState.UNFINALIZED
+                raise
+            else:
+                root._tree_state = _TreeState.FINALIZED
 
     @property
     def _grammar(self):
@@ -1022,11 +1030,14 @@ class Switch(ControlDefinition):
         f <<= self.empty
         f.set_name(f"<IF* ? THEN {str(grammar)}")
 
-        self._grammars[definition.name] = (grammar, f)
+        grammar_build_state(self)["grammars"][definition.name] = (grammar, f)
         return f
 
     def item_hook(self, grammar):
-        grammars = self._grammars = {}
+        if not self.container.force_order:
+            return grammar
+        grammars = {}
+        grammar_build_state(self)["grammars"] = grammars
 
         def choose(value):
 
@@ -1049,8 +1060,6 @@ class Switch(ControlDefinition):
                     elif i.output_definition.has_grammar():
                         raise KeyError(f"In Switch, the item {i.name} for case {value} was not prepared")
 
-        if not self.container.force_order:
-            return grammar
         return grammar.add_parse_action(lambda x: choose(x[0][1]) and x)
 
     def remove_from_container(self):

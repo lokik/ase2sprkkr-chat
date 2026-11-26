@@ -3,6 +3,8 @@
 import copy
 import inspect
 
+from .grammar import grammar_build_state
+
 
 class DependentValue:
     """Resolve and evaluate a value derived from other configuration items.
@@ -88,26 +90,29 @@ class DependentValue:
         except KeyError:
             return False
 
-        values = [self._MISSING] * len(definitions)
-
         for index, source in enumerate(definitions):
 
-            def parse_action(string, location, tokens, index=index):
-                values[index] = self._parsed_value(tokens)
-                if index == len(values) - 1:
-                    if any(value is self._MISSING for value in values):
-                        missing = ", ".join(
-                            path
-                            for path, value in zip(self.paths, values)
-                            if value is self._MISSING
-                        )
-                        raise KeyError(
-                            f"Dependent values have not been parsed: {missing}"
-                        )
-                    callback(self(*values))
-                return tokens
+            def grammar_hook(grammar, index=index):
+                # The hook belongs to the definition, but its parse action
+                # and the target it updates belong to this compiled grammar.
+                state = grammar_build_state(self)
+                values = state.setdefault("values", [self._MISSING] * len(definitions))
 
-            def grammar_hook(grammar, parse_action=parse_action):
+                def parse_action(string, location, tokens):
+                    values[index] = self._parsed_value(tokens)
+                    if index == len(values) - 1:
+                        if any(value is self._MISSING for value in values):
+                            missing = ", ".join(
+                                path
+                                for path, value in zip(self.paths, values)
+                                if value is self._MISSING
+                            )
+                            raise KeyError(
+                                f"Dependent values have not been parsed: {missing}"
+                            )
+                        callback(self(*values), state)
+                    return tokens
+
                 grammar.add_parse_action(parse_action)
 
             source.add_grammar_hook(grammar_hook)

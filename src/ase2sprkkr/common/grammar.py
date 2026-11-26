@@ -4,6 +4,7 @@ Various pyparsing grammar elements and a few useful routines.
 
 import re
 from contextlib import contextmanager
+from contextvars import ContextVar
 from threading import Lock
 from typing import Optional
 
@@ -45,6 +46,58 @@ def generate_grammar():
                 pe.set_default_whitespace_chars(whitespace)
                 pp.Keyword.DEFAULT_KEYWORD_CHARS = keywords
                 _grammar_defaults = None
+
+
+_grammar_build_state = ContextVar("grammar_build_state", default=None)
+
+
+@contextmanager
+def grammar_build():
+    """Isolate temporary state used to assemble one compiled parser."""
+    token = _grammar_build_state.set({})
+    try:
+        with generate_grammar():
+            yield
+    finally:
+        _grammar_build_state.reset(token)
+
+
+def grammar_build_active():
+    return _grammar_build_state.get() is not None
+
+
+def grammar_build_state(owner):
+    """Return one construction-local slot, retained only by its parse actions."""
+    return _grammar_build_state.get().setdefault(owner, {})
+
+
+class GrammarPool:
+    """Lend exclusive compiled parsers; build another only during overlap."""
+
+    def __init__(self, factory):
+        self._factory = factory
+        self._available = []
+        self._lock = Lock()
+
+    @contextmanager
+    def acquire(self):
+        with self._lock:
+            grammar = self._available.pop() if self._available else None
+        if grammar is None:
+            grammar = self._factory()
+        try:
+            yield grammar
+        finally:
+            with self._lock:
+                self._available.append(grammar)
+
+    def parse_string(self, *args, **kwargs):
+        with self.acquire() as grammar:
+            return grammar.parse_string(*args, **kwargs)
+
+    def parse_file(self, *args, **kwargs):
+        with self.acquire() as grammar:
+            return grammar.parse_file(*args, **kwargs)
 
 
 def replace_whitechars(expr):

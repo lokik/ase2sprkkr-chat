@@ -8,7 +8,7 @@ import numpy as np
 
 from .dependencies import DependentValue
 from .parsing_results import ArrayKey, DefArrayKey, DefDictKey, DictKey, IgnoredKey, Key, RepeatedKey
-from .grammar import Forward, generate_grammar, TokenConverter
+from .grammar import Forward, generate_grammar, TokenConverter, grammar_build_state
 from .warnings import DataValidityError
 
 if TYPE_CHECKING:
@@ -266,7 +266,6 @@ class VariableRepeatedItemGrammar(ValidatedRepeatedItemGrammar):
     def __init__(self, count):
         self.dependency = DependentValue.create(count)
         self.count = self.dependency
-        self.forward = None
 
     @staticmethod
     def _limits(value):
@@ -281,11 +280,11 @@ class VariableRepeatedItemGrammar(ValidatedRepeatedItemGrammar):
     def apply_hooks(self, container):
         self.dependency.bind(container, self._set_count)
 
-    def _set_count(self, value):
+    def _set_count(self, value, state):
         lower, upper = self._limits(value)
         with generate_grammar():
-            self.forward << self._delimited_list(
-                self._item_grammar, self.delimiter, lower, upper
+            state["forward"] << self._delimited_list(
+                state["item_grammar"], state["delimiter"], lower, upper
             )
 
     def grammar(self, grammar, delimiter):
@@ -293,11 +292,12 @@ class VariableRepeatedItemGrammar(ValidatedRepeatedItemGrammar):
             missing = ", ".join(self.dependency.paths)
             raise KeyError(f"No repeated_count dependencies found: {missing}")
 
-        if not self.forward:
-            self.forward = Forward()
-        self._item_grammar = grammar
-        self.delimiter = delimiter or ''
-        return self.forward
+        state = grammar_build_state(self.dependency)
+        if "forward" not in state:
+            state["forward"] = Forward()
+        state["item_grammar"] = grammar
+        state["delimiter"] = delimiter or ''
+        return state["forward"]
 
     def copy(self):
         return VariableRepeatedItemGrammar(self.dependency)

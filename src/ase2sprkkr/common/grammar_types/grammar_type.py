@@ -12,7 +12,7 @@ import inspect
 from .. import grammar_types
 from ..decorators import cached_class_property, cache, add_called_class_as_argument, cached_property
 from ..alternative_types import normalize_type, allowed_types
-from ..grammar import generate_grammar, Forward
+from ..grammar import generate_grammar, Forward, grammar_build_active
 from ..formats import full_format_for_string
 
 
@@ -171,8 +171,18 @@ class GrammarType:
         """
         return a == b
 
-    @cache
     def grammar(self, param_name: str = False):
+        # A compiled definition must own its type grammars as well: tables,
+        # dynamic data and parse-action closures can carry parser state.
+        if grammar_build_active():
+            return self._build_grammar(param_name)
+        return self._cached_grammar(param_name)
+
+    @cache
+    def _cached_grammar(self, param_name):
+        return self._build_grammar(param_name)
+
+    def _build_grammar(self, param_name):
         """Return a pyparsing grammar for the type
 
         Parameters

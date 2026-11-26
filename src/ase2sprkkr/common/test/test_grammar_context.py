@@ -4,7 +4,7 @@ from threading import Event
 import pyparsing as pp
 import pytest
 
-from ..grammar import generate_grammar
+from ..grammar import generate_grammar, GrammarPool
 
 
 def parser_defaults():
@@ -48,3 +48,28 @@ def test_overlapping_grammar_contexts_restore_only_after_last_exit():
         for future in futures:
             future.result(timeout=15)
     assert parser_defaults() == original
+
+
+def test_grammar_pool_reuses_parsers_after_success_and_failure():
+    built = []
+
+    def factory():
+        grammar = pp.Word(pp.nums)
+        built.append(grammar)
+        return grammar
+
+    pool = GrammarPool(factory)
+    assert pool.parse_string("123", parse_all=True)[0] == "123"
+    with pytest.raises(pp.ParseBaseException):
+        pool.parse_string("bad", parse_all=True)
+    assert pool.parse_string("456", parse_all=True)[0] == "456"
+    with pool.acquire() as first:
+        with pool.acquire() as second:
+            assert first is not second
+    assert len(built) == 2
+
+    # Later short-lived threads borrow an existing parser.
+    for _ in range(3):
+        with ThreadPoolExecutor(max_workers=1) as workers:
+            assert workers.submit(pool.parse_string, "789").result(timeout=5)[0] == "789"
+    assert len(built) == 2

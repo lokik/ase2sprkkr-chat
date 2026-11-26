@@ -823,3 +823,36 @@ def test_switch():
     out = definition.read_from_string("ENERGY A=2 C=4 E=2 B=6")
     assert out["ENERGY"].to_dict() == {"A": 2, "C": 4, "E": 2, "B": 6}
     assert out["ENERGY"].to_string() == "ENERGY\n\tA=2\n\tC=4\n\tE=2\n\tB=6\n"
+
+
+def test_parallel_switch_parses_have_independent_compiled_grammars():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, local
+
+    definition = cd.InputParametersDefinition.definition_from_dict({
+        "ENERGY": [V("A", 1), *switch("A", {
+            1: V("B", int), 2: V("C", int),
+        })],
+    })
+    definition.custom_class = None
+    definition["ENERGY"].custom_class = None
+    definition["ENERGY"].force_order = True
+    definition.create_object()  # install the switch hook first
+
+    barrier = Barrier(2)
+    seen = local()
+
+    def overlap(grammar):
+        def wait_once(tokens):
+            if not getattr(seen, "waited", False):
+                seen.waited = True
+                barrier.wait(timeout=5)
+            return tokens
+        grammar.add_parse_action(wait_once)
+
+    definition["ENERGY"]["A"].add_grammar_hook(overlap)
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        first = workers.submit(definition.parse, "ENERGY A=1 B=10")
+        second = workers.submit(definition.parse, "ENERGY A=2 C=20")
+        assert first.result(timeout=15).to_dict() == {"ENERGY": {"A": 1, "B": 10}}
+        assert second.result(timeout=15).to_dict() == {"ENERGY": {"A": 2, "C": 20}}
