@@ -10,6 +10,7 @@ from ..embedding_geometry import (
     embedding_sites_within_shells,
 )
 from ..sprkkr_atoms import SPRKKRAtoms
+from ...potentials.potentials import PeriodicPotential
 
 
 def cubic():
@@ -179,21 +180,11 @@ def test_add_remove_cluster_sites_are_nonmutating():
 
 
 def test_2d_potential_lead_indices_are_excluded():
-    class Lattice:
-        def NQ_L(self):
-            return 1
-
-        def NQ_R(self):
-            return 1
-
-    class Host:
-        LATTICE = Lattice()
-
-        def __init__(self):
-            self.atoms = Atoms("Cu3", positions=[[0, 0, -2], [0, 0, 0], [0, 0, 2]],
-                               cell=[2, 2, 8], pbc=(True, True, False))
-
-    host = Host()
+    atoms = Atoms("Cu3", positions=[[0, 0, -2], [0, 0, 0], [0, 0, 2]],
+                  cell=[2, 2, 8], pbc=(True, True, False))
+    host = PeriodicPotential(atoms, set_from_atoms=False)
+    host.LATTICE.NQ_L = 1
+    host.LATTICE.NQ_R = 1
     assert embedding_host_indices(host) == (1,)
     region = embedding_sites_within_radius(host, (0, 0, 0), 3)
     assert all(s.original_site == 1 for s in region)
@@ -202,30 +193,14 @@ def test_2d_potential_lead_indices_are_excluded():
 def test_tilted_2d_lead_vectors_restrict_host_symmetry():
     from ase.units import Bohr
 
-    class Lattice:
-        def NQ_L(self):
-            return 0
-
-        def NQ_R(self):
-            return 0
-
-        def ALAT(self):
-            return 1.0 / Bohr
-
-        def A_L3(self):
-            return (1, 0, 5)
-
-        def A_R3(self):
-            return (1, 0, 5)
-
-    class Host:
-        LATTICE = Lattice()
-
-        def __init__(self):
-            self.atoms = Atoms("Cu", positions=[[0, 0, 0]], cell=[2, 2, 10],
-                               pbc=(True, True, False))
-
-    host = Host()
+    atoms = Atoms("Cu", positions=[[0, 0, 0]], cell=[2, 2, 10],
+                  pbc=(True, True, False))
+    host = PeriodicPotential(atoms, set_from_atoms=False)
+    host.LATTICE.NQ_L = 0
+    host.LATTICE.NQ_R = 0
+    host.LATTICE.ALAT = 1.0 / Bohr
+    host.LATTICE.A_L3 = (1, 0, 5)
+    host.LATTICE.A_R3 = (1, 0, 5)
     symmetry = EmbeddingSymmetry(host, HostSite(0, (0, 0)))
     # A quarter-turn would rotate the tilted lead vector into a direction
     # which is NOT equivalent by an integer in-plane translation.

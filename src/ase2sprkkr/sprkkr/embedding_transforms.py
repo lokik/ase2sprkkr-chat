@@ -2,18 +2,21 @@
 from __future__ import annotations
 
 from copy import copy
+from .sprkkr_atoms import SPRKKRAtoms
+from ..potentials.potentials import PeriodicPotential
 import numpy as np
 from .embedding import EMBEDDING_ARRAY, EMBEDDING_HOST, embedding_data, host_atoms, host_dimension, translation_basis
 
 
 def embedded_host_transform_capability(cluster, action):
     """Whether an operation has a lossless host-site correspondence."""
-    host = getattr(cluster, "embedding_host", None)
-    if host is None or EMBEDDING_ARRAY not in getattr(cluster, "arrays", {}):
+    if not isinstance(cluster, SPRKKRAtoms) or cluster.embedding_host is None or EMBEDDING_ARRAY not in cluster.arrays:
         return False, "The embedded structure needs a host and embedding indices."
+    host = cluster.embedding_host
     dim = host_dimension(host)
     if action in ("sites", "lattice", "scale"):
-        if dim == 2 and not getattr(host_atoms(host), "regions", {}):
+        atoms = host_atoms(host)
+        if dim == 2 and (not isinstance(atoms, SPRKKRAtoms) or not atoms.regions):
             return False, "2D host edits require left/right bulk regions."
         return True, ""
     if action == "repeat":
@@ -29,14 +32,13 @@ def embedded_host_transform_capability(cluster, action):
 
 def _new_host(old_host, updated):
     from ..potentials.potential_base import Potential
-    from .sprkkr_atoms import SPRKKRAtoms
     original = host_atoms(old_host)
     result = updated.copy()
     SPRKKRAtoms.promote_ase_atoms(result)
     if not np.array_equal(result.pbc, original.pbc):
         raise ValueError("A host edit may not change periodicity")
-    previous_regions = getattr(original, "regions", {})
-    if previous_regions and not getattr(result, "regions", {}):
+    previous_regions = original.regions if isinstance(original, SPRKKRAtoms) else {}
+    if previous_regions and not result.regions:
         if len(result) != len(original):
             raise ValueError("2D host-site count changed")
         matrix = np.linalg.solve(np.asarray(original.cell), np.asarray(result.cell))
@@ -49,12 +51,12 @@ def _new_host(old_host, updated):
             )
             regions.append(region)
         result.set_regions(regions)
-    if host_dimension(old_host) == 2 and not getattr(result, "regions", {}):
+    if host_dimension(old_host) == 2 and not result.regions:
         raise ValueError("2D host requires valid left/right bulk regions")
     result._potential = None
     if result.are_sites_inited():
         result.sprkkr_reset_potential()
-    return Potential.from_atoms(result) if hasattr(old_host, "LATTICE") else result
+    return Potential.from_atoms(result) if isinstance(old_host, PeriodicPotential) else result
 
 
 def rebase_embedded_host(cluster, updated_host, *, repeat=(1, 1, 1),
@@ -66,7 +68,6 @@ def rebase_embedded_host(cluster, updated_host, *, repeat=(1, 1, 1),
     embedding translations are divided into within-cell and supercell terms.
     Existing radial data become invalid: both structures restart at START.
     """
-    from .sprkkr_atoms import SPRKKRAtoms
     if not isinstance(cluster, SPRKKRAtoms):
         raise TypeError("Expected an embedded SPRKKRAtoms structure")
     old_host = cluster.embedding_host
