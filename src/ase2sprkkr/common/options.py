@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from enum import Enum
 import numpy as np
 import pyparsing as pp
 from typing import Any, Optional, Union
@@ -21,6 +22,10 @@ from .warnings import (
     RetainInvalidPolicy,
     ValidationResult,
 )
+
+
+class _ResultState(Enum):
+    MISSING = 0
 
 
 class _DiscardInvalidValue(Exception):
@@ -99,19 +104,17 @@ class Option(BaseOption):
     '1J'
     """
 
+    _result = _ResultState.MISSING
+
     class Change:
         """Original state and finalization of a staged option value."""
-
-        _MISSING_RESULT = object()
 
         def __init__(self, option: "Option") -> None:
             """Capture the current state and hook of ``option``."""
             self.option = option
             self.hook = option._hook
             self.old_value = option._value
-            self.old_result = getattr(
-                option, "_result", self._MISSING_RESULT
-            )
+            self.old_result = option._result
 
         def commit(self) -> Any:
             if self.hook:
@@ -119,10 +122,7 @@ class Option(BaseOption):
 
         def rollback(self) -> None:
             self.option._value = self.old_value
-            if self.old_result is self._MISSING_RESULT:
-                self.option.__dict__.pop("_result", None)
-            else:
-                self.option._result = self.old_result
+            self.option._result = self.old_result
 
     class IndexedChange(Change):
         """Rollback state for an in-place indexed value change."""
@@ -188,7 +188,7 @@ class Option(BaseOption):
         d = self._definition
         if d.is_generated:
             return d.get_generated(self)
-        if hasattr(self, "_result"):
+        if self._result is not _ResultState.MISSING:
             return self._result
         if self._value is not None:
             return self._value
@@ -363,7 +363,7 @@ class Option(BaseOption):
 
         change = self.Change(self)
         self._value = converted
-        self.__dict__.pop("_result", None)
+        self.clear_result()
         transaction.push(change)
         transaction._finish_stage()
         return True
@@ -386,12 +386,12 @@ class Option(BaseOption):
             transaction._finish_stage()
             return False
 
-        if self._value is None or hasattr(self, "_result"):
+        if self._value is None or self._result is not _ResultState.MISSING:
             current = copy.deepcopy(self._value_or_default())
             current = self._unpack_value(current)
             change = self.Change(self)
             self._value = self._pack_value(current)
-            self.__dict__.pop("_result", None)
+            self.clear_result()
             target = self._value
         else:
             change = self.IndexedChange(self, key)
@@ -404,7 +404,6 @@ class Option(BaseOption):
             raise
 
         transaction.push(change)
-        self.__dict__.pop("_result", None)
         transaction._finish_stage()
         return True
 
@@ -590,7 +589,7 @@ class Option(BaseOption):
         In a such case, this property can be utilized: the value of the option is
         retained as is and the transformed value is stored in the result.
         """
-        if hasattr(self, "_result"):
+        if self._result is not _ResultState.MISSING:
             if isinstance(self._result, DangerousValue):
                 return self._result.value
             return self._result
@@ -601,8 +600,7 @@ class Option(BaseOption):
         self._result = value
 
     def clear_result(self):
-        if hasattr(self, "_result"):
-            del self._result
+        self._result = _ResultState.MISSING
 
     def stage_clear(
         self,
