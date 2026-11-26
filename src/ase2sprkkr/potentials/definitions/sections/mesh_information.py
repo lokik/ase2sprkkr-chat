@@ -13,9 +13,8 @@ class MeshInformationSection(UniqueListSection):
     _value_class = ExponentialMesh
 
     def _set_from_atoms(self, atoms: SPRKKRAtoms, write_io_data: WriteIoData):
-        ul = getattr(write_io_data, self._value_name)
-        self["DATA"].set([i.to_tuple() for i in ul.iter_unique()])
-        fullpot = [i.fullpot_tuple() for i in ul.iter_unique()]
+        super()._set_from_atoms(atoms, write_io_data)
+        fullpot = [i.fullpot_tuple() for i in write_io_data.meshes.iter_unique()]
 
         found = None
         for i in fullpot:
