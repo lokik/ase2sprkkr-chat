@@ -85,7 +85,7 @@ class ConfigurationTransaction:
         low-level staging.
         """
         self._container = configuration._get_root_container()
-        if getattr(self._container, "_running_post_change_hooks", False):
+        if self._container._running_post_change_hooks:
             raise RuntimeError(
                 "A configuration cannot be changed from its post-change hooks"
             )
@@ -101,7 +101,7 @@ class ConfigurationTransaction:
     ) -> Optional["ConfigurationTransaction"]:
         """Return the active transaction for ``configuration``, if any."""
         root = configuration._get_root_container()
-        return getattr(root, "_active_transaction", None)
+        return root._active_transaction
 
     @classmethod
     def use(
@@ -171,7 +171,7 @@ class ConfigurationTransaction:
         finally:
             if outermost:
                 self._changes.clear()
-                self._container.__dict__.pop("_active_transaction", None)
+                self._container._active_transaction = None
         if hooks:
             self._run_hooks(hooks)
         return False
@@ -187,7 +187,7 @@ class ConfigurationTransaction:
         """Push a staged change and return it; it must implement rollback."""
         try:
             self._require_active()
-        except Exception:
+        except RuntimeError:
             change.rollback()
             raise
         self._changes.append(change)
@@ -250,7 +250,7 @@ class ConfigurationTransaction:
                 except Exception as error:
                     errors.append(error)
         finally:
-            self._container.__dict__.pop("_running_post_change_hooks", None)
+            self._container._running_post_change_hooks = False
         if errors:
             raise PostChangeHookError(
                 "Configuration was already committed, but post-change hooks failed",

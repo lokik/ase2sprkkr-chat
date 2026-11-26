@@ -8,7 +8,7 @@ import pytest
 
 from ...common import grammar_types as gt
 from ...common.configuration_definitions import VirtualDefinition, gather, switch
-from ...common.configuration_transaction import ConfigurationTransaction
+from ...common.configuration_transaction import ConfigurationTransaction, PostChangeHookError
 from ...common.generated_configuration_definitions import GeneratedValueDefinition, Length
 from ...common.options import DangerousValue
 from ...common.warnings import DataValidityError
@@ -329,7 +329,9 @@ def test_standard_container_access_during_transactions():
     assert section["VALUE"].is_dangerous()
 
     dangerous = DangerousValue("unchecked")
+    assert ConfigurationTransaction.current(section) is None
     with ConfigurationTransaction(section) as transaction:
+        assert ConfigurationTransaction.current(section["VALUE"]) is transaction
         with transaction.savepoint() as savepoint:
             section.stage_value(transaction, "EXTRA", dangerous, unknown="add")
             assert "VALUE" in section
@@ -338,6 +340,7 @@ def test_standard_container_access_during_transactions():
             assert section["EXTRA"].is_dangerous()
             savepoint.rollback()
     assert "EXTRA" not in section
+    assert ConfigurationTransaction.current(section) is None
 
     generated_definition = cd.InputParametersDefinition.definition_from_dict(
         {"CONTROL": [V("VALUES", gt.Array(int)), V("NVALUES", Length("VALUES"))]}
@@ -352,6 +355,27 @@ def test_standard_container_access_during_transactions():
     copied = generated_definition.copy().create_object()
     copied.CONTROL.VALUES = [1, 2]
     assert copied.CONTROL.NVALUES() == 2
+
+
+def test_failed_post_change_hook_does_not_leave_transaction_active():
+    definition = cd.InputParametersDefinition.definition_from_dict(
+        {"CONTROL": [V("VALUE", 1)]}
+    )
+    section = definition.create_object().CONTROL
+    option = section["VALUE"]
+
+    def mutate_again(_option):
+        option.set(3)
+
+    option.add_hook(mutate_again)
+    with pytest.raises(PostChangeHookError, match="already committed"):
+        option.set(2)
+    assert option() == 2
+    assert ConfigurationTransaction.current(option) is None
+
+    option.add_hook(None)
+    option.set(3)
+    assert option() == 3
 
 
 def test_definition_storage_metadata():
