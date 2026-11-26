@@ -5,6 +5,8 @@ from __future__ import annotations
 import io
 import os
 from collections.abc import Mapping
+
+import pyparsing as pp
 from . import definitions, tasks
 from .task_definition import InputParametersRegistry, TaskRegistry, TaskFile
 from ..sprkkr.configuration import (
@@ -15,8 +17,14 @@ from ..sprkkr.configuration import (
 from ..common.configuration_containers import BaseConfigurationContainer
 from ..common.repeated_configuration_containers import RepeatedConfigurationContainer
 from ..common.decorators import cached_class_property
+from ..common.warnings import DataValidityError
 from ..potentials.potentials import Potential
 from ..sprkkr.embedding import EMBEDDING_HOST, host_atoms
+
+# Failures expected while reading external native input, not arbitrary
+# exceptions from the caller or from registry/definition implementation.
+NATIVE_INPUT_ERRORS = (OSError, UnicodeError, ValueError, pp.ParseBaseException, DataValidityError)
+
 
 class _LazyInputParametersDefinitions(Mapping):
     """Read-only compatibility mapping that materializes only requested schemas.

@@ -140,7 +140,8 @@ class TaskResult:
     def _input_potential_filename(self):
         """Native POTFIL used as input, independent of any produced file."""
         parameters = self.input_parameters
-        potfil = parameters.CONTROL.POTFIL() if parameters is not None else None
+        control = parameters.CONTROL if parameters is not None and "CONTROL" in parameters else None
+        potfil = control.POTFIL() if control is not None and "POTFIL" in control else None
         if self.is_embedded:
             potfil = parameters.CONTROL.POTFIL_CLU()
             if not potfil:

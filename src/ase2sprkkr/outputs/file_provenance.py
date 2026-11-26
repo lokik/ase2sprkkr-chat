@@ -74,13 +74,14 @@ def task_file_declarations(result, *, kinds=("input", "cache", "output")):
     These declarations are expectations, not evidence that a particular output
     was written by the run. Keep the parser's observed file registry separate.
     """
+    from ..input_parameters.input_parameters import InputParameters, NATIVE_INPUT_ERRORS
+
     try:
         parameters = result.input_parameters
-    except Exception:  # noqa: BLE001 - optional historical input parser boundary
+    except NATIVE_INPUT_ERRORS:
         return None, ()
     if parameters is None:
         return None, ()
-    from ..input_parameters.input_parameters import InputParameters
 
     if not isinstance(parameters, InputParameters):
         return None, ()

@@ -655,3 +655,47 @@ def test_run_record_without_available_manifest_never_adopts_scf_potential(tmp_pa
     option = result.files["converged"]
     assert option.attribution is FileAttribution.UNKNOWN
     assert not result.file_is_current(potential)
+
+def test_input_discovery_propagates_programming_errors(tmp_path, monkeypatch):
+    output = _output(tmp_path / "run.out", scf=False)
+    native_input = tmp_path / "run.inp"
+    native_input.write_text("external input")
+    result = TaskResult(None, None, tmp_path, output_file=output,
+                        input_file=native_input, task_name="DOS")
+    loader = ResultLoader()
+
+    def broken_parse(_path):
+        raise AttributeError("broken parser contract")
+
+    monkeypatch.setattr(loader.inputs, "parse", broken_parse)
+    with pytest.raises(AttributeError, match="broken parser contract"):
+        loader.associate_result(result)
+
+
+def test_declared_output_enrichment_propagates_programming_errors(tmp_path, monkeypatch):
+    from ase2sprkkr import InputParameters
+
+    output = _output(tmp_path / "dos.out", scf=False)
+    native_input = tmp_path / "dos.inp"
+    native_input.write_text(InputParameters.create("DOS").to_string(validate=False))
+    result = TaskResult(None, None, tmp_path, output_file=output,
+                        input_file=native_input, task_name="DOS")
+
+    def broken_enrichment(**kwargs):
+        raise RuntimeError("broken output declarations")
+
+    monkeypatch.setattr(result, "enrich_declared_output_files", broken_enrichment)
+    with pytest.raises(RuntimeError, match="broken output declarations"):
+        ResultLoader().associate_result(result)
+
+
+def test_optional_potential_does_not_hide_programming_errors(tmp_path):
+    class BrokenResult(TaskResult):
+        @property
+        def potential_filename(self):
+            raise AttributeError("broken potential contract")
+
+    output = _output(tmp_path / "dos.out", scf=False)
+    result = BrokenResult(None, None, tmp_path, output_file=output, task_name="DOS")
+    with pytest.raises(AttributeError, match="broken potential contract"):
+        ResultLoader().associate_result(result)

@@ -15,16 +15,22 @@ import stat as stat_module
 from pathlib import Path
 from typing import Iterable
 
-import pyparsing as pp
-
 from kkrunner.files import FileFingerprint, FileOperations
 
-from ..common.warnings import DataValidityError
 from ..input_parameters import input_parameters as input_parameters
+from ..input_parameters.input_parameters import NATIVE_INPUT_ERRORS
 from .file_provenance import result_file_manifest, result_file_version
 from .output_detection import looks_like_scf_output
 from .result_options import FileAttribution
 from .task_result import TaskResult
+
+
+class _FileChangedDuringReadError(RuntimeError):
+    """External bytes changed while the loader was reading or associating them."""
+
+
+_INPUT_DISCOVERY_ERRORS = NATIVE_INPUT_ERRORS + (_FileChangedDuringReadError,)
+_COMPANION_READ_ERRORS = _INPUT_DISCOVERY_ERRORS + (EOFError,)
 
 
 def _file_batch(method):
@@ -79,8 +85,8 @@ class _NativeInputCache:
                 # partial or mixed parse if its contents changed in the middle
                 # of reading, even if a later output load is otherwise valid.
                 if self._file_operations.fingerprint(path, refresh=True) != identity:
-                    raise RuntimeError(f"Native input changed during parsing: {path}")
-            except Exception as exc:
+                    raise _FileChangedDuringReadError(f"Native input changed during parsing: {path}")
+            except _INPUT_DISCOVERY_ERRORS as exc:
                 self._parameters[path] = (identity, exc)
                 raise
             self._parameters[path] = (identity, parameters)
@@ -220,9 +226,9 @@ class ResultLoader:
                 try:
                     result.input_parameters = self.inputs.parse(filename)
                     return True
-                except Exception:
-                    # The explicit file remains registered. A later request
-                    # for input_parameters must still report its parse error.
+                except _INPUT_DISCOVERY_ERRORS:
+                    # An invalid explicitly named input remains registered so
+                    # a later request can report its actual parse error.
                     pass
             return
         if result._input_parameters is not None:
@@ -250,7 +256,7 @@ class ResultLoader:
                 continue
             try:
                 parameters = self.inputs.parse(filename)
-            except (OSError, UnicodeError, ValueError, pp.ParseBaseException, DataValidityError):
+            except _INPUT_DISCOVERY_ERRORS:
                 continue
             if (result._task_name is not None
                     and parameters.task_name != result._task_name.upper()):
@@ -261,11 +267,7 @@ class ResultLoader:
 
     def _prepare_input(self, result):
         """Resolve native inputs once the stdout FILES table has been parsed."""
-        try:
-            self._discover_input(result)
-        except Exception:
-            # Unrelated or invalid INP files must not break OUT parsing.
-            pass
+        self._discover_input(result)
 
     def _expected_files(self, result):
         """Add named inputs/outputs even if a physical file is missing."""
@@ -275,20 +277,17 @@ class ResultLoader:
         # scientific inputs; preserve that conservative fallback contract.
         if isinstance(result, OutputOnlyResult):
             return
-        try:
-            if self._discover_input(result):
-                # The output parser may have completed before the native input
-                # was discovered. Add declarations now that it is available.
-                result.enrich_declared_output_files(
-                    warn_missing=result.return_code == 0,
-                    file_operations=self.file_operations,
-                )
-        except Exception:
-            # Optional input discovery must not make a parsed OUT unusable.
-            pass
+        if self._discover_input(result):
+            # The output parser may have completed before the native input
+            # was discovered. Add declarations now that it is available.
+            result.enrich_declared_output_files(
+                warn_missing=result.return_code == 0,
+                file_operations=self.file_operations,
+            )
         try:
             potential = result.potential_filename
-        except Exception:
+        except NATIVE_INPUT_ERRORS:
+            # No POTFIL or an invalid external input does not invalidate OUT.
             return
         if not potential:
             return
@@ -308,7 +307,7 @@ class ResultLoader:
         for name, item in result.files.items().items():
             try:
                 path = Path(item.path()).expanduser().resolve()
-            except (OSError, ValueError, TypeError):
+            except (OSError, ValueError):
                 continue
             recorded = result_file_version(result, path) if historical else None
             observed = None
@@ -407,10 +406,10 @@ class ResultLoader:
         if not same_sources:
             result = TaskResult._parse_file(path, on_files_parsed=self._prepare_input)
             if self.file_operations.fingerprint(path, refresh=True) != version:
-                raise RuntimeError(f"Output changed during parsing: {path}")
+                raise _FileChangedDuringReadError(f"Output changed during parsing: {path}")
         self._associate(result, path)
         if self.file_operations.fingerprint(path, refresh=True) != version:
-            raise RuntimeError(f"Output changed during association: {path}")
+            raise _FileChangedDuringReadError(f"Output changed during association: {path}")
         if not same_sources:
             input_signature = (
                 self._input_candidate_versions(path.parent)
@@ -444,7 +443,7 @@ class ResultLoader:
         try:
             source = Path(result.path_to("output")).resolve()
             potential = Path(result.potential_filename).resolve()
-        except (OSError, ValueError, KeyError, AttributeError):
+        except NATIVE_INPUT_ERRORS:
             return None
         candidates = set(self.scf_claims(source.parent, potential))
         while candidates:
@@ -454,19 +453,22 @@ class ResultLoader:
             candidates.remove(match)
             try:
                 companion = self.load_file(match)
-                if not companion.produces_potential:
-                    continue
-                declared = Path(companion.potential_filename).resolve()
-                if declared != potential:
-                    continue
-                if "converged" in companion.files:
-                    registered = Path(companion.path_to("converged")).resolve()
-                    if registered != potential:
-                        continue
-                return companion
-            except Exception:
-                # An unreadable or inconsistent candidate cannot block others.
+            except _COMPANION_READ_ERRORS:
+                # An unreadable external candidate cannot block older ones.
                 continue
+            if not companion.produces_potential:
+                continue
+            try:
+                declared = Path(companion.potential_filename).resolve()
+            except NATIVE_INPUT_ERRORS:
+                continue
+            if declared != potential:
+                continue
+            if "converged" in companion.files:
+                registered = Path(companion.path_to("converged")).resolve()
+                if registered != potential:
+                    continue
+            return companion
         return None
 
     @_file_batch
