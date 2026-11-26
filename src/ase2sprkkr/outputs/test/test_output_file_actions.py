@@ -6,7 +6,9 @@ import pytest
 from kkrunner.files import FileVersion
 from kkrunner.runs import HistoricalFileMismatchError
 
-from ase2sprkkr.outputs.result_options import FileAttribution, OutputFileOption
+from ase2sprkkr.outputs.result_options import (
+    FileAttribution, OutputFileOption, create_output_section, generated_output,
+)
 from ase2sprkkr.outputs.task_result import TaskResult
 
 
@@ -18,10 +20,28 @@ def _file(tmp_path):
     return option, path
 
 
+def test_generated_output_uses_declared_display_and_plot_metadata():
+    calls = []
+    section = create_output_section("RESULTS", [
+        generated_output("plain", lambda _section: 1),
+        generated_output(
+            "curve", lambda _section: 2, display_name="Curve data",
+            plot=lambda option, **kwargs: calls.append((option(), kwargs)),
+        ),
+    ])
+    assert section["plain"].display_name == "plain"
+    assert section["plain"].actions() == ()
+    assert section["curve"].display_name == "Curve data"
+    assert section["curve"].actions() == ("plot",)
+    section["curve"].plot(show=False)
+    assert calls == [(2, {"show": False})]
+
+
 def test_copy_to_has_no_dialog_and_preserves_file_metadata(tmp_path):
     option, path = _file(tmp_path)
     destination = tmp_path / "copy.dat"
 
+    assert option.display_name == "extra"
     assert {"open", "open_directory", "copy_to"} <= set(option.actions())
     assert "save" not in option.actions()
     assert option.copy_to(destination) == destination
