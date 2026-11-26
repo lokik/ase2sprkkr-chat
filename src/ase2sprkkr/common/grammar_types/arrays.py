@@ -423,9 +423,7 @@ class Sequence(GrammarType):
     def value_constructor(self, *values):
         if self.names:
             return self.value_type(*values)
-        if self.as_list:
-            return [[*values]]
-        return [tuple(values)]
+        return list(values) if self.as_list else values
 
     def __len__(self):
         return len(self.types)
@@ -441,7 +439,7 @@ class Sequence(GrammarType):
             return g
 
         grammars = [grm(i) for i in self.types]
-        grammar = pp.And(grammars).set_parse_action(lambda x: self.value_constructor(*x))
+        grammar = pp.And(grammars).set_parse_action(lambda x: [self.value_constructor(*x)])
         if self.allowed_values is not None:
             grammar.add_condition_ex(
                 lambda x: x[0] in self.allowed_values, lambda x: f"{x[0]} is not in the list of allowed values"
@@ -458,10 +456,6 @@ class Sequence(GrammarType):
     def convert(self, value):
         if not isinstance(value, self.value_type):
             return self.value_constructor(*value)
-            try:
-                return self.value_constructor(*value)
-            except TypeError:
-                pass
         return value
 
     def grammar_name(self):
