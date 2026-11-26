@@ -159,8 +159,8 @@ def test_failed_history_without_return_code_is_not_parsed_as_success(tmp_path, m
     parsed = []
     _patch_reader(monkeypatch, parsed)
     result = load_project_result(manager, record.id)
-    assert parsed[0][1]['return_code'] != 0
-    assert result.return_code != 0
+    assert parsed[0][1]['return_code'] is None
+    assert result.return_code is None
     assert result.run_record.state == RunState.FAILED
 
 

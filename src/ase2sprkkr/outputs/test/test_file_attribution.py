@@ -333,3 +333,45 @@ def test_nexus_export_checks_file_state_once(tmp_path, monkeypatch):
     assert option.export_nexus(destination) == destination
     assert exports == [(destination, {"discover_input": False})]
     assert len(checks) == 1
+
+@pytest.mark.parametrize("rollback", (False, True))
+def test_historical_evidence_follows_transactional_path_changes(tmp_path, rollback):
+    from ase2sprkkr.common.configuration_transaction import ConfigurationTransaction
+
+    old, new = tmp_path / "old.dat", tmp_path / "new.dat"
+    old.write_text("original")
+    new.write_text("unrelated")
+    version = FileVersion.capture(old, require_digest=True)
+    observed = FileVersion.capture(old, digest=False)
+    result = TaskResult(None, None, tmp_path, task_name="DOS")
+    result.run_record = SimpleNamespace(files=FileManifest(
+        output_versions=(version,), captured_at="2026-11-22T00:00:00+00:00",
+    ))
+    option = result.files.add_file("curve", old)
+    option.set_attribution(FileAttribution.VERIFIED, recorded_version=version,
+                           observed_version=observed, evidence="run_manifest_digest")
+    assert option.is_current()
+
+    def change():
+        # A section mutation calls stage(), not OutputFileOption.set().
+        result.files.set({"curve": str(new)})
+        assert option.path() == str(new)
+        assert option.recorded_version is None
+        assert option.observed_version is None
+        assert not option.is_current()
+        with pytest.raises(HistoricalFileMismatchError):
+            option.require_current()
+
+    if rollback:
+        with pytest.raises(RuntimeError, match="rollback"):
+            with ConfigurationTransaction(result.files):
+                change()
+                raise RuntimeError("rollback")
+        assert option.path() == str(old)
+        assert option.recorded_version is version
+        assert option.observed_version is observed
+        assert option.is_current()
+    else:
+        change()
+        assert option.path() == str(new)
+        assert not option.is_current()

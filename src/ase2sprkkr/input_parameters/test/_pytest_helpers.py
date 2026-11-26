@@ -2,13 +2,15 @@ import numpy as np
 import pyparsing as pp
 import pytest
 
+from ...common.grammar import GrammarPool
+
 
 def as_array(value):
     return np.atleast_1d(value)
 
 
 def parse(text, grammar):
-    if not isinstance(grammar, pp.ParserElement):
+    if not isinstance(grammar, (pp.ParserElement, GrammarPool)):
         grammar = grammar()
     return grammar.parse_string(text, True)
 

@@ -484,6 +484,8 @@ def test_pickle_omits_cached_grammars_on_nested_definitions():
     )
     original_root = definition.grammar()
     original_section = definition["CONTROL"].grammar()
+    assert definition.parse("CONTROL MODE=2").to_dict() == {"CONTROL": {"MODE": 2}}
+    original_section.parse_string("CONTROL MODE=2", parse_all=True)
     assert "_grammar_cache" in definition.__dict__
     assert "_grammar_cache" in definition["CONTROL"].__dict__
 
@@ -758,6 +760,13 @@ def test_switch():
         assert_not_valid(text, grammar)
     assert_parse("ENERGY A=2", {"ENERGY": {"A": 2}}, grammar)
 
+    # Reuse the same grammar after success and failure, switching between
+    # both branches and crossing a line/section delimiter.
+    for _ in range(5):
+        assert_parse("ENERGY A=1\n\tB=4", {"ENERGY": {"A": 1, "B": 4}}, grammar)
+        assert_not_valid("ENERGY A=1 C=4", grammar)
+        assert_parse("ENERGY A=2\n\tC=5", {"ENERGY": {"A": 2, "C": 5}}, grammar)
+
     definition["ENERGY"]["C"].is_optional = False
     definition["ENERGY"]["C"].clear_grammar_cache()
     assert_not_valid("ENERGY A=2", definition.grammar())
@@ -823,3 +832,39 @@ def test_switch():
     out = definition.read_from_string("ENERGY A=2 C=4 E=2 B=6")
     assert out["ENERGY"].to_dict() == {"A": 2, "C": 4, "E": 2, "B": 6}
     assert out["ENERGY"].to_string() == "ENERGY\n\tA=2\n\tC=4\n\tE=2\n\tB=6\n"
+
+
+@pytest.mark.parametrize("second_incomplete", (False, True))
+def test_parallel_switch_parses_have_independent_compiled_grammars(second_incomplete):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, local
+
+    definition = cd.InputParametersDefinition.definition_from_dict({
+        "ENERGY": [V("A", 1), *switch("A", {
+            1: V("B", int), 2: V("C", int),
+        })],
+    })
+    definition.custom_class = None
+    definition["ENERGY"].custom_class = None
+    definition["ENERGY"].force_order = True
+    definition.create_object()  # install the switch hook first
+
+    barrier = Barrier(2)
+    seen = local()
+
+    def overlap(grammar):
+        def wait_once(tokens):
+            if not getattr(seen, "waited", False):
+                seen.waited = True
+                barrier.wait(timeout=5)
+            return tokens
+        grammar.add_parse_action(wait_once)
+
+    definition["ENERGY"]["A"].add_grammar_hook(overlap)
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        first = workers.submit(definition.parse, "ENERGY A=1 B=10")
+        second = workers.submit(
+            definition.parse, "ENERGY A=2 C=20", allow_incomplete=second_incomplete
+        )
+        assert first.result(timeout=15).to_dict() == {"ENERGY": {"A": 1, "B": 10}}
+        assert second.result(timeout=15).to_dict() == {"ENERGY": {"A": 2, "C": 20}}

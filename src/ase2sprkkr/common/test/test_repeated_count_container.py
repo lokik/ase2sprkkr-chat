@@ -217,3 +217,46 @@ class TestRepeatedCountParsing:
         dictionary.ROWS.set({1: {"VAL": 10}})
         assert dictionary.ROWS.get_member(1) is dictionary.ROWS[1]
         assert dictionary.ROWS.get_member("1.VAL") is dictionary.ROWS[1]["VAL"]
+
+
+def test_parallel_repeated_counts_are_independent():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, local
+
+    item = S("ITEM", members=[V("VAL", int, name_in_grammar=False)],
+             is_repeated=Repeated.REPEATED, repeated_count="N",
+             repeated_with_name=True)
+    root = IP([S("PARENT", members=[V("N", int), item])])
+    root.create_object()
+    barrier = Barrier(2)
+    seen = local()
+
+    def overlap(grammar):
+        def wait_once(tokens):
+            if not getattr(seen, "waited", False):
+                seen.waited = True
+                barrier.wait(timeout=5)
+            return tokens
+        grammar.add_parse_action(wait_once)
+
+    root["PARENT"]["N"].add_grammar_hook(overlap)
+
+    def parse(n):
+        data = f"PARENT\n\tN={n}\n" + "\tITEM\n\t\t10\n" * n
+        return len(root.read_from_string(data).PARENT.ITEM)
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        first = workers.submit(parse, 1)
+        second = workers.submit(parse, 3)
+        assert first.result(timeout=15) == 1
+        assert second.result(timeout=15) == 3
+
+
+def test_parse_source_section_without_dependent_target():
+    source = S("SOURCE", members=[V("N", int)])
+    item = S("ITEM", members=[V("VAL", int, name_in_grammar=False)],
+             is_repeated=Repeated.REPEATED, repeated_count="..SOURCE.N",
+             repeated_with_name=True)
+    root = IP([source, S("CHILD", members=[item])])
+    root.create_object()
+    assert source.parse("SOURCE N=2").to_dict() == {"N": 2}

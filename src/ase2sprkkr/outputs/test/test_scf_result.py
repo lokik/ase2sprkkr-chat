@@ -168,7 +168,9 @@ def test_embedded_scf_result_reads_clupot_and_continues_with_dos(tmp_path, embed
     from ...sprkkr.executables import executables
 
     result = embedded_scf_result
-    _, error, return_code = ScfOutputParser().read_from_file(CLUSTER_OUTPUT, None, [result])
+    _, error, return_code = ScfOutputParser().read_from_file(
+        CLUSTER_OUTPUT, None, [result], return_code=0
+    )
     result.complete(error, return_code)
     start = tmp_path / "cluster.pot"
     converged = tmp_path / "cluster.pot_new"

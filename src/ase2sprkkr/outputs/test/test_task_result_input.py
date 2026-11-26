@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from ase2sprkkr import InputParameters
+from ase2sprkkr.input_parameters.input_parameters import NativeInputError
 from ase2sprkkr.outputs import ResultLoader
 from ase2sprkkr.outputs.task_result import KkrOutputReader, TaskResult
 
@@ -122,7 +123,7 @@ def test_invalid_guessed_input_is_nonfatal_but_explicit_input_error_propagates(
     path.write_text("invalid input")
 
     def invalid_input(_cls, filename):
-        raise ValueError("invalid historical input")
+        raise NativeInputError("invalid historical input")
 
     monkeypatch.setattr(InputParameters, "from_file", classmethod(invalid_input))
     guessed = TaskResult(None, None, str(tmp_path), output_file="legacy.out", task_name="SCF")
@@ -131,7 +132,7 @@ def test_invalid_guessed_input_is_nonfatal_but_explicit_input_error_propagates(
     assert guessed.input_parameters_file is None
 
     explicit = TaskResult(None, None, str(tmp_path), input_file=str(path))
-    with pytest.raises(ValueError, match="invalid historical input"):
+    with pytest.raises(NativeInputError, match="invalid historical input"):
         _ = explicit.input_parameters
 
 
@@ -193,7 +194,7 @@ def test_loader_caches_invalid_guessed_input_but_explicit_error_propagates(
 
     def fail(_cls, _filename):
         calls.append(True)
-        raise ValueError("invalid input")
+        raise NativeInputError("invalid input")
 
     monkeypatch.setattr(InputParameters, "from_file", classmethod(fail))
     loader = ResultLoader()
@@ -205,7 +206,7 @@ def test_loader_caches_invalid_guessed_input_but_explicit_error_propagates(
     assert len(calls) == 1
 
     explicit = TaskResult(None, None, str(tmp_path), input_file=str(path))
-    with pytest.raises(ValueError, match="invalid input"):
+    with pytest.raises(NativeInputError, match="invalid input"):
         _ = explicit.input_parameters
 
 

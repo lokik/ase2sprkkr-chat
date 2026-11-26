@@ -4,7 +4,7 @@ from threading import Event
 import pyparsing as pp
 import pytest
 
-from ..grammar import generate_grammar
+from ..grammar import generate_grammar, GrammarPool
 
 
 def parser_defaults():
@@ -48,3 +48,137 @@ def test_overlapping_grammar_contexts_restore_only_after_last_exit():
         for future in futures:
             future.result(timeout=15)
     assert parser_defaults() == original
+
+
+def test_grammar_pool_reuses_parsers_after_success_and_failure():
+    built = []
+
+    def factory():
+        grammar = pp.Word(pp.nums)
+        built.append(grammar)
+        return grammar
+
+    pool = GrammarPool(factory)
+    assert pool.parse_string("123", parse_all=True)[0] == "123"
+    with pytest.raises(pp.ParseBaseException):
+        pool.parse_string("bad", parse_all=True)
+    assert pool.parse_string("456", parse_all=True)[0] == "456"
+    with pool.acquire() as first:
+        with pool.acquire() as second:
+            assert first is not second
+    assert len(built) == 2
+
+    # Later short-lived threads borrow an existing parser.
+    for _ in range(3):
+        with ThreadPoolExecutor(max_workers=1) as workers:
+            assert workers.submit(pool.parse_string, "789").result(timeout=5)[0] == "789"
+    assert len(built) == 2
+
+
+def test_grammar_pool_resets_mutable_parse_state_on_every_return():
+    from ..grammar import dependent_forward
+
+    def factory():
+        forward = dependent_forward()
+        def set_value(tokens):
+            forward << pp.Literal(tokens[0])
+        count = (pp.Word(pp.nums) + ":").set_parse_action(set_value)
+        return pp.Optional(count) + forward
+
+    pool = GrammarPool(factory)
+    assert pool.parse_string("1:1", parse_all=True).as_list() == ["1", ":", "1"]
+    # A previous successful parse cannot supply a missing dependency.
+    with pytest.raises(pp.ParseBaseException):
+        pool.parse_string("1", parse_all=True)
+    # Neither can a previous unsuccessful parse.
+    with pytest.raises(pp.ParseBaseException):
+        pool.parse_string("2:3", parse_all=True)
+    with pytest.raises(pp.ParseBaseException):
+        pool.parse_string("2", parse_all=True)
+    assert pool.parse_string("3:3", parse_all=True).as_list() == ["3", ":", "3"]
+
+def test_pool_full_parse_accepts_trailing_whitespace_with_active_builder(tmp_path):
+    pool = GrammarPool(lambda: pp.Literal("x"))
+    file = tmp_path / "input"
+    file.write_text("x\n")
+    assert pool.parse_string("x\n", parse_all=True).as_list() == ["x"]
+    with generate_grammar():
+        assert pool.parse_string("x\n", parse_all=True).as_list() == ["x"]
+        assert pool.parse_file(file, parse_all=True).as_list() == ["x"]
+        assert pool.parse_string("x y").as_list() == ["x"]
+        with pytest.raises(pp.ParseBaseException):
+            pool.parse_string("x y", parse_all=True)
+
+
+def test_pooled_parse_survives_restored_defaults_when_another_builder_exits():
+    original = parser_defaults()
+    builder_entered, parsing, builder_exited = Event(), Event(), Event()
+
+    def build():
+        with generate_grammar():
+            builder_entered.set()
+            assert parsing.wait(5)
+        builder_exited.set()
+
+    def factory():
+        def check_during_parse():
+            assert builder_entered.is_set()
+            parsing.set()
+            assert builder_exited.wait(5)
+            assert parser_defaults() == original
+        return pp.Literal("x").set_parse_action(check_during_parse)
+
+    pool = GrammarPool(factory)
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        builder = workers.submit(build)
+        assert builder_entered.wait(5)
+        parser = workers.submit(pool.parse_string, "x\n", True)
+        assert parser.result(timeout=15).as_list() == ["x"]
+        builder.result(timeout=15)
+    assert parser_defaults() == original
+
+def test_pooled_parse_does_not_change_global_defaults():
+    original = parser_defaults()
+
+    def factory():
+        assert parser_defaults()[0] == " \t\r"
+
+        def check_defaults():
+            assert parser_defaults() == original
+
+        return pp.Literal("x").set_parse_action(check_defaults)
+
+    pool = GrammarPool(factory)
+    for _ in range(2):
+        assert pool.parse_string("x\n", parse_all=True).as_list() == ["x"]
+        assert parser_defaults() == original
+
+@pytest.mark.parametrize("wrapper_name", ("Forward", "Suppress", "TokenConverter"))
+def test_lightweight_wrappers_ignore_comments_without_skipping_whitespace(wrapper_name):
+    from .. import grammar as light
+
+    with generate_grammar():
+        wrapper = getattr(light, wrapper_name)(pp.Literal("B").leave_whitespace())
+        parser = pp.Literal("A") + wrapper
+        parser.ignore("#" + pp.rest_of_line + pp.LineEnd())
+    assert parser.parse_string("A# comment\nB", parse_all=True)[0] == "A"
+    with pytest.raises(pp.ParseBaseException):
+        parser.parse_string("A\nB", parse_all=True)
+
+
+def test_forward_propagates_ignored_comments_to_new_targets():
+    from ..grammar import Forward
+
+    with generate_grammar():
+        forward = Forward(pp.Empty())
+        first = pp.Literal("B") + "=" + pp.Word(pp.nums)
+        second = pp.Literal("C") + "=" + pp.Word(pp.nums)
+        parser = pp.Literal("A") + forward
+        parser.ignore("#" + pp.rest_of_line + pp.LineEnd())
+
+    for _ in range(5):
+        for target, name in ((first, "B"), (second, "C")):
+            forward << target
+            assert parser.parse_string(
+                f"A # comment\n{name} # comment\n=1", parse_all=True
+            ).as_list() == ["A", name, "=", "1"]

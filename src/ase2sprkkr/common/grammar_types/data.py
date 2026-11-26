@@ -15,7 +15,7 @@ from functools import partial
 from .grammar_type import GrammarType, compare_numpy_values
 from ..dependencies import DependentValue
 from ..decorators import add_to_signature, cached_property
-from ..grammar import SkipToRegex, Forward
+from ..grammar import SkipToRegex, dependent_forward, register_grammar_reset
 
 def _shape_lines(shape, *, items_per_line):
     size = math.prod(shape)
@@ -129,7 +129,6 @@ class RawData(GrammarType):
         self._line_dependency = None
         if lines is not None and not isinstance(lines, Integral):
             self._line_dependency = DependentValue.create(lines)
-        self.forward = None
         super().__init__(**kwargs)
 
     def _n_lines_grammar(self, lines):
@@ -148,12 +147,15 @@ class RawData(GrammarType):
             if isinstance(self.lines, Integral):
                 out = self._n_lines_grammar(self.lines)
             else:
-                if self.forward is None or not self._line_dependency.hooks:
+                if not self._line_dependency.hooks:
                     missing = ", ".join(self._line_dependency.paths)
                     raise KeyError(
                         f"No line-count dependencies found: {missing}"
                     )
-                out = self.forward
+                state = self._line_dependency.grammar_state()
+                if "forward" not in state:
+                    state["forward"] = dependent_forward()
+                out = state["forward"]
         elif self.ends_with:
             if isinstance(self.ends_with, re.Pattern):
                 out = SkipToRegex(self.ends_with, include_pattern=self.include_ends_with)
@@ -213,12 +215,11 @@ class RawData(GrammarType):
 
     def added_to_container(self, container):
         if self._line_dependency is not None:
-            self.forward = Forward()
             self._line_dependency.bind(container, self._set_number_of_lines)
         super().added_to_container(container)
 
-    def _set_number_of_lines(self, lines):
-        self.forward << self._n_lines_grammar(lines)
+    def _set_number_of_lines(self, lines, state):
+        state["forward"] << self._n_lines_grammar(lines)
 
     def __del__(self):
         # Construction can fail before RawData.__init__ initializes this field.
@@ -233,7 +234,6 @@ class RawData(GrammarType):
         out = super().copy()
         if self._line_dependency is not None:
             out._line_dependency = self._line_dependency.copy()
-            out.forward = None
         return out
 
     def convert(self, val):
@@ -316,7 +316,6 @@ class NumpyArray(RawData):
             if isinstance(shape, (str, DependentValue)) or callable(shape)
             else None
         )
-        self._parsed_shape = None
         self.no_newline_at_end = no_newline_at_end
         if dtypes is None:
             if dtype == "line":
@@ -443,6 +442,12 @@ class NumpyArray(RawData):
 
     def _grammar(self, param_name=False):
         grammar = super()._grammar(param_name)
+        shape_state = (
+            self._shape_dependency.grammar_state()
+            if self._shape_dependency is not None else None
+        )
+        if shape_state is not None:
+            register_grammar_reset(lambda: shape_state.pop("shape", None))
 
         def parse(v):
             v = v[0]
@@ -452,9 +457,8 @@ class NumpyArray(RawData):
                 if self.items_per_line is not None:
                     if isinstance(self.delimiter, int):
                         shape = (
-                            self._parsed_shape
-                            if self._shape_dependency is not None
-                            else self.shape
+                            shape_state.get("shape")
+                            if shape_state is not None else self.shape
                         )
                         if shape and all(i >= 0 for i in shape):
                             remaining = math.prod(shape)
@@ -527,9 +531,8 @@ class NumpyArray(RawData):
                             raise ValueError("No dtype specified")
                         raise last_error
             shape = (
-                self._parsed_shape
-                if self._shape_dependency is not None
-                else self.shape
+                shape_state.get("shape")
+                if shape_state is not None else self.shape
             )
             if shape:
                 v = v.reshape(tuple(shape))
@@ -552,8 +555,8 @@ class NumpyArray(RawData):
             dependency.unbind()
         super().__del__()
 
-    def _set_parsed_shape(self, shape):
-        self._parsed_shape = tuple(int(item) for item in shape)
+    def _set_parsed_shape(self, shape, state):
+        state["shape"] = tuple(int(item) for item in shape)
 
     def expected_shape(self, item):
         """Return the shape expected for a runtime option."""
@@ -568,5 +571,4 @@ class NumpyArray(RawData):
         out = super().copy()
         if self._shape_dependency is not None:
             out._shape_dependency = self._shape_dependency.copy()
-            out._parsed_shape = None
         return out

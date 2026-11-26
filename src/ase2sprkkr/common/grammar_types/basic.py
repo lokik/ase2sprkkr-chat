@@ -12,7 +12,7 @@ from unyt.array import unyt_quantity
 from collections import defaultdict
 
 from ..decorators import add_to_signature, cached_property, cached_class_property
-from ..grammar import generate_grammar, separator_grammar, replace_whitechars, optional_quote
+from ..grammar import generate_grammar, separator_grammar, replace_whitechars, optional_quote, Forward
 from .grammar_type import TypedGrammarType, GrammarType, add_to_parent_validation
 
 ppc = pp.pyparsing_common
@@ -240,24 +240,28 @@ class BaseRealWithUnits(Real):
         return {str(v): k for k, v in self.units.items()}
 
     def _grammar_units(self, units):
-        i = id(units)
-        if i not in self.grammar_cache:
+        key = (id(units), self.default_unit)
+        if key not in self.grammar_cache:
+            with generate_grammar():
+                def unit_defs():
+                    for unit in units:
+                        yield pp.CaselessKeyword(unit), unit
+                    if self.default_unit:
+                        yield pp.Empty(), self.default_unit
 
-            def unit_defs():
-                for i in self.units:
-                    yield pp.CaselessKeyword(i), i
-                if self.default_unit:
-                    yield pp.Empty(), self.default_unit
-
-            units = (g.set_parse_action(lambda x, *args, unit=unit: unit) for g, unit in unit_defs())
-            out = Real.I.grammar() + pp.Or(units)
-            out.set_parse_action(lambda x: x[0] * self.units[x[1]])
-            self.grammar_cache[i] = out
-            return out
-        return self.grammar_cache[i]
+                choices = (
+                    g.set_parse_action(lambda x, *args, unit=unit: unit)
+                    for g, unit in unit_defs()
+                )
+                out = Real.I.grammar() + pp.Or(choices)
+                out.set_parse_action(lambda x: x[0] * units[x[1]])
+                self.grammar_cache[key] = out
+        return self.grammar_cache[key]
 
     def _grammar(self, param_name):
-        return self._grammar_units(self.units)
+        # The unit syntax is shared, but each caller owns its validation
+        # and definition-specific parse actions.
+        return Forward(self._grammar_units(self.units))
 
     def convert(self, value):
         if isinstance(value, unyt_quantity):

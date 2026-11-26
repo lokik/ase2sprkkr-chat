@@ -4,6 +4,7 @@ Various pyparsing grammar elements and a few useful routines.
 
 import re
 from contextlib import contextmanager
+from contextvars import ContextVar
 from threading import Lock
 from typing import Optional
 
@@ -45,6 +46,70 @@ def generate_grammar():
                 pe.set_default_whitespace_chars(whitespace)
                 pp.Keyword.DEFAULT_KEYWORD_CHARS = keywords
                 _grammar_defaults = None
+
+
+_grammar_build_state = ContextVar("grammar_build_state", default=None)
+
+
+@contextmanager
+def grammar_build():
+    """Isolate temporary state used to assemble one compiled parser."""
+    resets = []
+    token = _grammar_build_state.set(({}, resets))
+    try:
+        with generate_grammar():
+            yield resets
+    finally:
+        _grammar_build_state.reset(token)
+
+
+def grammar_build_active():
+    return _grammar_build_state.get() is not None
+
+
+def grammar_build_state(owner):
+    """Return one construction-local slot, retained only by its parse actions."""
+    return _grammar_build_state.get()[0].setdefault(owner, {})
+
+
+def register_grammar_reset(reset):
+    """Restore one piece of mutable parser state after returning its lease."""
+    _grammar_build_state.get()[1].append(reset)
+
+
+class GrammarPool:
+    """Lend exclusive compiled parsers; build another only during overlap."""
+
+    def __init__(self, factory):
+        self._factory = factory
+        self._available = []
+        self._lock = Lock()
+
+    @contextmanager
+    def acquire(self, *, parse_all=False):
+        with self._lock:
+            entry = self._available.pop() if self._available else None
+        if entry is None:
+            with grammar_build() as resets:
+                grammar = self._factory()
+                complete = complete_grammar(grammar)
+            entry = grammar, complete, resets
+        grammar, complete, resets = entry
+        try:
+            yield complete if parse_all else grammar
+        finally:
+            for reset in resets:
+                reset()
+            with self._lock:
+                self._available.append(entry)
+
+    def parse_string(self, string, parse_all=False):
+        with self.acquire(parse_all=parse_all) as grammar:
+            return grammar.parse_string(string)
+
+    def parse_file(self, file, encoding="utf-8", parse_all=False):
+        with self.acquire(parse_all=parse_all) as grammar:
+            return grammar.parse_file(file, encoding=encoding)
 
 
 def replace_whitechars(expr):
@@ -177,13 +242,31 @@ class Transparent(pp.ParseElementEnhance):
     """
 
     def preParse(self, instring, loc):
-        return loc
+        # Ignore comments just like ordinary pyparsing elements, but leave
+        # whitespace handling to the wrapped expression.
+        return self._skipIgnorables(instring, loc)
 
     def parseImpl(self, instring, loc, do_actions=True):
         return self.expr._parse(instring, loc, do_actions)
 
     def __str__(self):
         return f"{self.__class__.__name__}({self.expr})"
+
+def complete_grammar(grammar):
+    """Match the whole input with an explicit, fixed trailing-whitespace rule.
+
+    pyparsing's parse_all=True constructs a fresh StringEnd during parsing,
+    so its behavior otherwise depends on the current global defaults.
+    """
+    end = pp.StringEnd().set_whitespace_chars(" \t\r\n")
+    for ignored in grammar.ignoreExprs:
+        end.ignore(ignored)
+    # Let the original grammar do its own initial preParse, as usual.
+    complete = pp.And([Transparent(grammar), end]).leave_whitespace(recursive=False)
+    if grammar.keepTabs:
+        complete.parse_with_tabs()
+    return complete
+
 
 class Suppress(Transparent):
 
@@ -201,7 +284,19 @@ class Forward(Transparent):
         super().__init__(expr)
 
     def __lshift__(self, other):
+        # An alternative assigned after ignore() must receive the same
+        # ignore expressions as the original target.
+        for ignored in self.ignoreExprs:
+            other.ignore(ignored)
         self.expr = other
+
+
+def dependent_forward():
+    """A forward whose parse-time target must not survive its grammar lease."""
+    unresolved = pp.NoMatch().set_name("<unresolved dependency>")
+    forward = Forward(unresolved)
+    register_grammar_reset(lambda: forward << unresolved)
+    return forward
 
 
 pp.ParserElement.add_condition_ex = add_condition_ex

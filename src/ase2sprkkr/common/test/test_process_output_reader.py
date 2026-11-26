@@ -32,7 +32,7 @@ def test_read_output_file(tmp_path):
 
     assert out == b"one\ntwo\n"
     assert err == b"warning\n"
-    assert return_code == 0
+    assert return_code is None
 
 
 def test_run_coro_sync_outside_event_loop():
@@ -71,7 +71,7 @@ def test_process_parser_can_read_from_an_existing_event_loop(tmp_path):
 
     async def check():
         assert _OutputParser().read_from_file(output, error) == (
-            b"out\n", b"err\n", 0,
+            b"out\n", b"err\n", None,
         )
 
     asyncio.run(check())
@@ -83,7 +83,7 @@ def test_read_output_file_does_not_close_caller_streams():
 
     parsed = _OutputParser().read_from_file(output, error)
 
-    assert parsed == (b"output\n", b"warning\n", 0)
+    assert parsed == (b"output\n", b"warning\n", None)
     assert not output.closed and not error.closed
     output.seek(0)
     error.seek(0)
@@ -106,3 +106,11 @@ def test_reader_only_closes_streams_that_it_opens(tmp_path):
             assert borrowed.read() == b"data"
         assert reader.file is None
         assert not borrowed.closed
+
+@pytest.mark.parametrize("return_code", (None, 0))
+def test_explicit_exit_status_is_preserved(return_code):
+    output = io.BytesIO(b"out\n")
+    error = io.BytesIO(b"err\n")
+    assert _OutputParser().read_from_file(output, error, return_code=return_code) == (
+        b"out\n", b"err\n", return_code,
+    )

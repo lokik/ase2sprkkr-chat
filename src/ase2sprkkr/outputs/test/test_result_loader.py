@@ -352,8 +352,10 @@ def test_cached_unmatched_input_is_rediscovered_after_repair(tmp_path, monkeypat
     loader = ResultLoader()
 
     def parse_input(path):
+        from ase2sprkkr.input_parameters.input_parameters import NativeInputError
+
         if inp.read_text() == "invalid input":
-            raise ValueError("invalid input")
+            raise NativeInputError("invalid input")
         from ase2sprkkr import InputParameters
         return InputParameters.create("DOS")
 
@@ -655,3 +657,72 @@ def test_run_record_without_available_manifest_never_adopts_scf_potential(tmp_pa
     option = result.files["converged"]
     assert option.attribution is FileAttribution.UNKNOWN
     assert not result.file_is_current(potential)
+
+@pytest.mark.parametrize("error_type", (AttributeError, ValueError))
+def test_input_discovery_propagates_programming_errors(tmp_path, monkeypatch, error_type):
+    output = _output(tmp_path / "run.out", scf=False)
+    native_input = tmp_path / "run.inp"
+    native_input.write_text("external input")
+    result = TaskResult(None, None, tmp_path, output_file=output,
+                        input_file=native_input, task_name="DOS")
+    loader = ResultLoader()
+
+    def broken_parse(_path):
+        raise error_type("broken parser contract")
+
+    monkeypatch.setattr(loader.inputs, "parse", broken_parse)
+    with pytest.raises(error_type, match="broken parser contract"):
+        loader.associate_result(result)
+
+
+def test_declared_output_enrichment_propagates_programming_errors(tmp_path, monkeypatch):
+    from ase2sprkkr import InputParameters
+
+    output = _output(tmp_path / "dos.out", scf=False)
+    native_input = tmp_path / "dos.inp"
+    native_input.write_text(InputParameters.create("DOS").to_string(validate=False))
+    result = TaskResult(None, None, tmp_path, output_file=output,
+                        input_file=native_input, task_name="DOS")
+
+    def broken_enrichment(**kwargs):
+        raise RuntimeError("broken output declarations")
+
+    monkeypatch.setattr(result, "enrich_declared_output_files", broken_enrichment)
+    with pytest.raises(RuntimeError, match="broken output declarations"):
+        ResultLoader().associate_result(result)
+
+
+@pytest.mark.parametrize("error_type", (AttributeError, ValueError))
+def test_optional_potential_does_not_hide_programming_errors(tmp_path, error_type):
+    class BrokenResult(TaskResult):
+        @property
+        def potential_filename(self):
+            raise error_type("broken potential contract")
+
+    output = _output(tmp_path / "dos.out", scf=False)
+    result = BrokenResult(None, None, tmp_path, output_file=output, task_name="DOS")
+    with pytest.raises(error_type, match="broken potential contract"):
+        ResultLoader().associate_result(result)
+
+def test_file_declarations_do_not_hide_registry_errors(tmp_path, monkeypatch):
+    from ase2sprkkr import InputParameters
+    from ase2sprkkr.outputs.file_provenance import task_file_declarations
+
+    parameters = InputParameters.create("DOS")
+    result = TaskResult(parameters, None, tmp_path, task_name="DOS")
+
+    def broken_lookup(_self):
+        raise RuntimeError("broken task registry")
+
+    monkeypatch.setattr(InputParameters, "task_definition_required", broken_lookup)
+    with pytest.raises(RuntimeError, match="broken task registry"):
+        task_file_declarations(result)
+
+
+def test_invalid_native_input_remains_optional(tmp_path):
+    output = _output(tmp_path / "dos.out", scf=False)
+    native_input = tmp_path / "dos.inp"
+    native_input.write_text("TASK\n  TASK=INVALID_TASK_SELECTOR\n")
+    result = TaskResult(None, None, tmp_path, output_file=output, task_name="DOS")
+    assert ResultLoader().associate_result(result) is result
+    assert "input" not in result.files

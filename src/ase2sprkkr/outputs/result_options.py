@@ -136,24 +136,32 @@ class OutputFileOption(OutputOption):
             or self.name
         )
 
-    def set(self, value, **kwargs):
-        """Clear attribution when the underlying file is changed directly.
+    class Change(Option.Change):
+        """Rollback file evidence together with the staged pathname."""
 
-        Direct `result.files[name].set(...)` must have the same semantics as
-        `result.files.add_file(name, ...)`; provenance belongs to the file
-        identity, not to the option's name.
-        """
-        try:
-            previous = self()
-        except (AttributeError, ValueError, TypeError):
-            previous = None
-        super().set(value, **kwargs)
-        current = self()
-        if (previous is None) != (current is None) or (
-            previous is not None and current is not None
-            and os.fspath(previous) != os.fspath(current)
-        ):
+        def __init__(self, option):
+            super().__init__(option)
+            self.attribution = option._file_attribution
+            self.evidence = option._file_attribution_evidence
+            self.recorded = option.recorded_version
+            self.observed = option.observed_version
+            self.attributed_to = option.attributed_to
+
+        def rollback(self):
+            super().rollback()
+            self.option.set_attribution(
+                self.attribution, evidence=self.evidence,
+                recorded_version=self.recorded, observed_version=self.observed,
+                attributed_to=self.attributed_to,
+            )
+
+    def stage(self, transaction, value, **kwargs):
+        """Invalidate evidence on every pathname change, including bulk edits."""
+        previous = self()
+        changed = super().stage(transaction, value, **kwargs)
+        if previous != self():
             self.clear_attribution()
+        return changed
 
     def _assess_file(self):
         """Return (attribution, evidence, usable) from one currentness check.

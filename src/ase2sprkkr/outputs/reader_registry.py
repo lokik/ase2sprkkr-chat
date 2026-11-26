@@ -155,7 +155,7 @@ class OutputReaderRegistry(ModuleRegistry):
         arbitrary input from the directory must not be associated with it.
         No result or input-parameter cache is retained by this detection.
         """
-        from ..input_parameters.input_parameters import InputParameters
+        from ..input_parameters.input_parameters import InputParameters, NATIVE_INPUT_ERRORS
         from ..input_parameters.input_parameters_definitions import (
             _read_input_text, _scan_task_selectors, _snapshot_stream,
             _task_selector_map,
@@ -185,7 +185,7 @@ class OutputReaderRegistry(ModuleRegistry):
                     current.st_size, current.st_mtime_ns, current.st_ctime_ns):
                 return None
             return parameters.task_name
-        except Exception:
+        except NATIVE_INPUT_ERRORS:
             # An absent, unreadable or invalid optional INP cannot prevent
             # detection using the stdout's own weaker fingerprints.
             return None
