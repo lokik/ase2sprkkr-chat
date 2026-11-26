@@ -1,0 +1,24 @@
+name: preprocessing integration (diagnostic)
+on:
+  push:
+    branches: [chatgpt-preprocessing-integration-check]
+permissions:
+  contents: read
+jobs:
+  integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install exact candidate KKRunner
+        run: python -m pip install "git+https://github.com/lokik/kkrunner-chat.git@4a27deb8836b9aebd863628c3d7e2431d18bf446"
+      - name: Install declared ASE2SPRKKR dependencies
+        run: ./install_dependencies.sh '.[psij]'
+      - name: Test preprocessing, resource ownership, persistence and execution
+        env:
+          DO_NOT_RUN_SPRKKR: '1'
+          MPLBACKEND: Agg
+        run: ./run_tests -q -k "calculation_plan or preparation_filenames or save_input_contract or calculator_file_sentinels or calculator_workflow or project_option or persistent_option or project_storage_policy or execution_resources or calculator_persist or calculator_constructor or calculator_truthiness or executor_mpi or profile_executor or configured_ssh_compression or legacy_ssh_compression_yaml or ssh_compression_defaults_to_auto"
