@@ -1,3 +1,5 @@
+from pathlib import Path
+from shutil import copyfile
 from types import SimpleNamespace
 
 import pytest
@@ -5,6 +7,8 @@ from ase.build import bulk
 from ase.calculators.calculator import CalculationFailed, PropertyNotImplementedError
 from kkrunner.runs import RunState
 
+from ase2sprkkr.outputs.task_result import TaskResult
+from ase2sprkkr.outputs.readers.scf import ScfResult
 from ase2sprkkr.sprkkr.calculator import SPRKKR
 
 
@@ -55,30 +59,54 @@ def test_create_run_only_prepares_runner(tmp_path, monkeypatch, case):
     assert seen['run']['result_context'] is calculator
 
 
-def test_calculate_runs_and_updates_state(monkeypatch):
+@pytest.fixture
+def scf_result(tmp_path):
+    package = Path(__file__).resolve().parents[3]
+    output = tmp_path / "scf.out"
+    copyfile(package / "outputs/examples/scf.out", output)
+    result = TaskResult.from_file(output)
+    potential = tmp_path / "FePt.pot_new"
+    copyfile(package / "potentials/examples/FePt.pot", potential)
+    result.files.add_file("converged", potential)
+    assert isinstance(result, ScfResult)
+    assert len(result.iterations) > 0
+    return result
+
+
+def test_calculate_runs_and_updates_state(monkeypatch, scf_result):
     calculator = SPRKKR(atoms=bulk('Al'), mpi=False, empty_spheres=False)
-    new_potential = SimpleNamespace(atoms=None)
-    result = SimpleNamespace(task_name='SCF', energy=1.25, potential=new_potential)
+    result = scf_result
+    new_potential = result.potential
+    energy = result.energy
     runner = _Runner(result)
     callback_state = []
     monkeypatch.setattr(calculator, 'create_run', lambda **kwargs: runner)
     returned = calculator.calculate(callback=lambda out: callback_state.append((out, calculator.results['energy'], calculator._potential)))
     assert returned is result
     assert runner.ran
-    assert calculator.results['energy'] == 1.25
+    assert calculator.results['energy'] == energy
     assert calculator._potential is new_potential
-    assert callback_state == [(result, 1.25, new_potential)]
+    assert callback_state == [(result, energy, new_potential)]
 
 
-def test_calculate_does_not_adopt_potential_when_explicit_atoms_are_used(monkeypatch):
+def test_calculate_does_not_adopt_potential_when_explicit_atoms_are_used(monkeypatch, scf_result):
     calculator = SPRKKR(atoms=bulk('Al'), mpi=False, empty_spheres=False)
     old_potential = calculator.potential
-    new_potential = SimpleNamespace(atoms=None)
-    result = SimpleNamespace(task_name='SCF', energy=1.25, potential=new_potential)
+    result = scf_result
     runner = _Runner(result)
     monkeypatch.setattr(calculator, 'create_run', lambda **kwargs: runner)
     calculator.calculate(atoms=bulk('Al'))
     assert calculator._potential is old_potential
+
+
+@pytest.mark.parametrize("task", ["SCF", "DOS"])
+def test_calculate_without_completed_scf_iteration_has_no_energy(tmp_path, monkeypatch, task):
+    calculator = SPRKKR(atoms=bulk("Al"), mpi=False, empty_spheres=False)
+    result_class = ScfResult if task == "SCF" else TaskResult
+    result = result_class(None, None, tmp_path, task_name=task)
+    monkeypatch.setattr(calculator, "create_run", lambda **kwargs: _Runner(result))
+    assert calculator.calculate(atoms=bulk("Al")) is result
+    assert "energy" not in calculator.results
 
 
 def test_calculate_reports_failed_process_without_updating_state(tmp_path):

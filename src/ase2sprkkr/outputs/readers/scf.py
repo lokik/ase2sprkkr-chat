@@ -166,10 +166,7 @@ class ScfResult(TaskResult):
     @property
     def energy(self):
         """Total energy of the last iteration"""
-        try:
-            return self.last_iteration.energy.ETOT()
-        except Exception as e:
-            raise AttributeError("No iteration has been finished") from e
+        return self.last_iteration.energy.ETOT()
 
     @property
     def converged(self):
