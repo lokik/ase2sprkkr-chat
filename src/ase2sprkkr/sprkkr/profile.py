@@ -12,7 +12,7 @@ import shlex
 from dataclasses import dataclass, replace
 from typing import Any
 
-from ..configuration import config
+from ..configuration import config, ExecutionProfile
 from kkrunner import ExecutionSpec
 from kkrunner.backends.config import BackendConfig
 from kkrunner.client import EndpointClient
@@ -20,7 +20,7 @@ from kkrunner.client.pool import default_client_pool
 from kkrunner.client.staging import StagingSpec
 from kkrunner.transports import LocalTransport, SshTransport
 from kkrunner.execution import MpiSpec
-from ..profiles import ase_command_profile_values
+from ..profiles import ASEProfile, LegacyProfile, ase_command_profile_values
 
 
 @dataclass(frozen=True)
@@ -203,14 +203,6 @@ class SPRKKRProfile:
         )
 
 
-def _profile_value(profile, name):
-    try:
-        value = getattr(profile, name)
-    except AttributeError:
-        return None
-    return value() if callable(value) else value
-
-
 def _shell_argv(value):
     if value is None:
         return ()
@@ -280,21 +272,38 @@ def _configured_profile(profile, configuration):
             changes["output_sync"] = "changed"
         return replace(profile, **changes) if changes else profile
 
-    if getattr(profile, "source", None) == "ase":
+    if isinstance(profile, ASEProfile):
         profile = profile.configuration_profile()
+    if isinstance(profile, LegacyProfile):
+        return _configured_profile(
+            SPRKKRProfile(
+                name=resolved_name,
+                executable_dir=profile.executable_dir(),
+                executable_suffix=(
+                    profile.executable_suffix()
+                    if profile.executable_suffix() is not None
+                    else os.environ.get("SPRKKR_EXECUTABLE_SUFFIX", "")
+                ),
+                mpi=profile.mpi(),
+                mpi_warning=profile.mpi_warning(),
+            ),
+            configuration,
+        )
+    if not isinstance(profile, ExecutionProfile):
+        raise TypeError("Expected a profile name, SPRKKRProfile or configuration profile")
 
-    suffix = _profile_value(profile, "executable_suffix")
+    suffix = profile.executable_suffix()
     if suffix is None:
         suffix = os.environ.get("SPRKKR_EXECUTABLE_SUFFIX", "")
-    executable_dir = _profile_value(profile, "executable_dir")
+    executable_dir = profile.executable_dir()
     if executable_dir is None:
         executable_dir = False
-    mpi = _profile_value(profile, "mpi")
+    mpi = profile.mpi()
     if mpi is None:
         mpi = "auto"
     else:
         mpi = _normalize_mpi(mpi)
-    mpi_warning = _profile_value(profile, "mpi_warning")
+    mpi_warning = profile.mpi_warning()
     if mpi_warning is None:
         mpi_warning = True
 
@@ -303,22 +312,22 @@ def _configured_profile(profile, configuration):
         executable_dir=executable_dir,
         executable_suffix=suffix,
         mpi=mpi,
-        executor=_profile_value(profile, "executor") or "local",
-        backend=_profile_value(profile, "backend"),
-        host=_profile_value(profile, "host"),
-        local_root=_profile_value(profile, "local_root"),
-        remote_root=_profile_value(profile, "remote_root"),
-        ssh_options=_shell_argv(_profile_value(profile, "ssh_options")),
-        ssh_zstd=bool(_profile_value(profile, "ssh_zstd")),
-        remote_command=_shell_argv(_profile_value(profile, "remote_command")),
-        remote_python=_shell_argv(_profile_value(profile, "remote_python")) or ("python3",),
-        input_sync=_profile_value(profile, "input_sync") or "changed",
-        output_sync=_profile_value(profile, "output_sync") or "changed",
-        psij_backend=_profile_value(profile, "psij_backend"),
-        psij_url=_profile_value(profile, "psij_url"),
-        filesystem_id=_profile_value(profile, "filesystem_id"),
+        executor=profile.executor() or "local",
+        backend=profile.backend(),
+        host=profile.host(),
+        local_root=profile.local_root(),
+        remote_root=profile.remote_root(),
+        ssh_options=_shell_argv(profile.ssh_options()),
+        ssh_zstd=bool(profile.ssh_zstd()),
+        remote_command=_shell_argv(profile.remote_command()),
+        remote_python=_shell_argv(profile.remote_python()) or ("python3",),
+        input_sync=profile.input_sync() or "changed",
+        output_sync=profile.output_sync() or "changed",
+        psij_backend=profile.psij_backend(),
+        psij_url=profile.psij_url(),
+        filesystem_id=profile.filesystem_id(),
         mpi_warning=mpi_warning,
-        detached=bool(_profile_value(profile, "detached")),
+        detached=bool(profile.detached()),
     )
 
 
