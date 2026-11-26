@@ -1,3 +1,4 @@
+import io
 import re
 import warnings
 import pickle
@@ -12,6 +13,7 @@ from ...common.configuration_definitions import VirtualDefinition, gather, switc
 from ...common.configuration_transaction import ConfigurationTransaction, PostChangeHookError
 from ...common.generated_configuration_definitions import GeneratedValueDefinition, Length
 from ...common.options import DangerousValue
+from ...common.value_definitions import ValueDefinition
 from ...common.warnings import DataValidityError
 from .. import input_parameters_definitions as cd
 from ._pytest_helpers import as_array, assert_equal, assert_not_valid, assert_parse
@@ -490,6 +492,23 @@ def test_section_assignment_accepts_read_only_mappings_and_preserves_input():
     with pytest.raises(ValueError, match="Only a mapping"):
         parameters.CONTROL.set([("MODE", 5)])
     assert parameters.CONTROL.MODE() == 3
+
+
+def test_dangerous_values_without_native_mixed_grammar():
+    definition = ValueDefinition("VALUE", int)
+    option = definition.create_object()
+    option.set(DangerousValue("not an integer"))
+    assert option() == "not an integer"
+    output = io.StringIO()
+    definition.write_value(output, option, option(unpack=False))
+    assert output.getvalue() == '"not an integer"'
+
+    option.set("invalid integer", retain_invalid="all", report_invalid="ignore")
+    assert option.is_dangerous()
+    assert option() == "invalid integer"
+    output = io.StringIO()
+    definition.write_value(output, option, option(unpack=False))
+    assert output.getvalue() == '"invalid integer"'
 
 
 def test_compiled_grammar_is_reused_per_definition_and_parse_policy():
