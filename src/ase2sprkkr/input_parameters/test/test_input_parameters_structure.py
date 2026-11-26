@@ -484,6 +484,8 @@ def test_pickle_omits_cached_grammars_on_nested_definitions():
     )
     original_root = definition.grammar()
     original_section = definition["CONTROL"].grammar()
+    assert definition.parse("CONTROL MODE=2").to_dict() == {"CONTROL": {"MODE": 2}}
+    original_section.parse_string("CONTROL MODE=2", parse_all=True)
     assert "_grammar_cache" in definition.__dict__
     assert "_grammar_cache" in definition["CONTROL"].__dict__
 

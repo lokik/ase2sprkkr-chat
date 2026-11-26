@@ -250,3 +250,13 @@ def test_parallel_repeated_counts_are_independent():
         second = workers.submit(parse, 3)
         assert first.result(timeout=15) == 1
         assert second.result(timeout=15) == 3
+
+
+def test_parse_source_section_without_dependent_target():
+    source = S("SOURCE", members=[V("N", int)])
+    item = S("ITEM", members=[V("VAL", int, name_in_grammar=False)],
+             is_repeated=Repeated.REPEATED, repeated_count="..SOURCE.N",
+             repeated_with_name=True)
+    root = IP([source, S("CHILD", members=[item])])
+    root.create_object()
+    assert source.parse("SOURCE N=2").to_dict() == {"N": 2}

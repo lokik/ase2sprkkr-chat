@@ -73,3 +73,26 @@ def test_grammar_pool_reuses_parsers_after_success_and_failure():
         with ThreadPoolExecutor(max_workers=1) as workers:
             assert workers.submit(pool.parse_string, "789").result(timeout=5)[0] == "789"
     assert len(built) == 2
+
+
+def test_grammar_pool_resets_mutable_parse_state_on_every_return():
+    from ..grammar import dependent_forward
+
+    def factory():
+        forward = dependent_forward()
+        def set_value(tokens):
+            forward << pp.Literal(tokens[0])
+        count = pp.Word(pp.nums).set_parse_action(set_value)
+        return pp.Optional(count + ":") + forward
+
+    pool = GrammarPool(factory)
+    assert pool.parse_string("1:1", parse_all=True).as_list() == ["1", ":", "1"]
+    # A previous successful parse cannot supply a missing dependency.
+    with pytest.raises(pp.ParseBaseException):
+        pool.parse_string("1", parse_all=True)
+    # Neither can a previous unsuccessful parse.
+    with pytest.raises(pp.ParseBaseException):
+        pool.parse_string("2:3", parse_all=True)
+    with pytest.raises(pp.ParseBaseException):
+        pool.parse_string("2", parse_all=True)
+    assert pool.parse_string("3:3", parse_all=True).as_list() == ["3", ":", "3"]

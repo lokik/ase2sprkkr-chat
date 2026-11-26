@@ -15,7 +15,7 @@ from functools import partial
 from .grammar_type import GrammarType, compare_numpy_values
 from ..dependencies import DependentValue
 from ..decorators import add_to_signature, cached_property
-from ..grammar import SkipToRegex, Forward, grammar_build_state
+from ..grammar import SkipToRegex, dependent_forward, register_grammar_reset
 
 def _shape_lines(shape, *, items_per_line):
     size = math.prod(shape)
@@ -152,9 +152,9 @@ class RawData(GrammarType):
                     raise KeyError(
                         f"No line-count dependencies found: {missing}"
                     )
-                state = grammar_build_state(self._line_dependency)
+                state = self._line_dependency.grammar_state()
                 if "forward" not in state:
-                    state["forward"] = Forward()
+                    state["forward"] = dependent_forward()
                 out = state["forward"]
         elif self.ends_with:
             if isinstance(self.ends_with, re.Pattern):
@@ -443,9 +443,11 @@ class NumpyArray(RawData):
     def _grammar(self, param_name=False):
         grammar = super()._grammar(param_name)
         shape_state = (
-            grammar_build_state(self._shape_dependency)
+            self._shape_dependency.grammar_state()
             if self._shape_dependency is not None else None
         )
+        if shape_state is not None:
+            register_grammar_reset(lambda: shape_state.pop("shape", None))
 
         def parse(v):
             v = v[0]

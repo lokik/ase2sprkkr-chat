@@ -22,7 +22,7 @@ import re
 from .options import Dummy, DummyStub
 from .decorators import cached_class_property, cached_property
 from .grammar import (as_delimiter, generate_grammar, Suppress, TokenConverter,
-                      GrammarPool, grammar_build, grammar_build_state)
+                      GrammarPool, grammar_build_state, register_grammar_reset)
 from .grammar_types.basic import Separator, KeywordSeparator
 from .repetition import Repeated, RepeatedItemGrammar
 from .warnings import DataValidityWarning, ValidationResult
@@ -207,12 +207,9 @@ class BaseDefinition:
                 if builder is None:
                     cache[key] = None
                 else:
-                    def compile_grammar():
-                        with grammar_build():
-                            return builder(
-                                allow_dangerous, allow_incomplete=allow_incomplete
-                            )
-                    cache[key] = GrammarPool(compile_grammar)
+                    cache[key] = GrammarPool(
+                        lambda: builder(allow_dangerous, allow_incomplete=allow_incomplete)
+                    )
             return cache[key]
 
     def _get_root_definition(self):
@@ -1031,6 +1028,7 @@ class Switch(ControlDefinition):
         f.set_name(f"<IF* ? THEN {str(grammar)}")
 
         grammar_build_state(self)["grammars"][definition.name] = (grammar, f)
+        register_grammar_reset(lambda: f << self.empty)
         return f
 
     def item_hook(self, grammar):

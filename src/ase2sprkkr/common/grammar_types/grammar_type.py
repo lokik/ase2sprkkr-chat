@@ -172,6 +172,7 @@ class GrammarType:
         return a == b
 
     def grammar(self, param_name: str = False):
+        """Return a pyparsing grammar for the named value."""
         # A compiled definition must own its type grammars as well: tables,
         # dynamic data and parse-action closures can carry parser state.
         if grammar_build_active():

@@ -8,7 +8,7 @@ import numpy as np
 
 from .dependencies import DependentValue
 from .parsing_results import ArrayKey, DefArrayKey, DefDictKey, DictKey, IgnoredKey, Key, RepeatedKey
-from .grammar import Forward, generate_grammar, TokenConverter, grammar_build_state
+from .grammar import dependent_forward, generate_grammar, TokenConverter
 from .warnings import DataValidityError
 
 if TYPE_CHECKING:
@@ -292,9 +292,9 @@ class VariableRepeatedItemGrammar(ValidatedRepeatedItemGrammar):
             missing = ", ".join(self.dependency.paths)
             raise KeyError(f"No repeated_count dependencies found: {missing}")
 
-        state = grammar_build_state(self.dependency)
+        state = self.dependency.grammar_state()
         if "forward" not in state:
-            state["forward"] = Forward()
+            state["forward"] = dependent_forward()
         state["item_grammar"] = grammar
         state["delimiter"] = delimiter or ''
         return state["forward"]

@@ -159,11 +159,7 @@ class OutputFileOption(OutputOption):
         """Invalidate evidence on every pathname change, including bulk edits."""
         previous = self()
         changed = super().stage(transaction, value, **kwargs)
-        current = self()
-        if (previous is None) != (current is None) or (
-            previous is not None and current is not None
-            and os.fspath(previous) != os.fspath(current)
-        ):
+        if previous != self():
             self.clear_attribution()
         return changed
 

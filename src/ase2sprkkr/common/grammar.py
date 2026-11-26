@@ -54,10 +54,11 @@ _grammar_build_state = ContextVar("grammar_build_state", default=None)
 @contextmanager
 def grammar_build():
     """Isolate temporary state used to assemble one compiled parser."""
-    token = _grammar_build_state.set({})
+    resets = []
+    token = _grammar_build_state.set(({}, resets))
     try:
         with generate_grammar():
-            yield
+            yield resets
     finally:
         _grammar_build_state.reset(token)
 
@@ -68,7 +69,12 @@ def grammar_build_active():
 
 def grammar_build_state(owner):
     """Return one construction-local slot, retained only by its parse actions."""
-    return _grammar_build_state.get().setdefault(owner, {})
+    return _grammar_build_state.get()[0].setdefault(owner, {})
+
+
+def register_grammar_reset(reset):
+    """Restore one piece of mutable parser state after returning its lease."""
+    _grammar_build_state.get()[1].append(reset)
 
 
 class GrammarPool:
@@ -82,14 +88,19 @@ class GrammarPool:
     @contextmanager
     def acquire(self):
         with self._lock:
-            grammar = self._available.pop() if self._available else None
-        if grammar is None:
-            grammar = self._factory()
+            entry = self._available.pop() if self._available else None
+        if entry is None:
+            with grammar_build() as resets:
+                grammar = self._factory()
+            entry = grammar, resets
+        grammar, resets = entry
         try:
             yield grammar
         finally:
+            for reset in resets:
+                reset()
             with self._lock:
-                self._available.append(grammar)
+                self._available.append(entry)
 
     def parse_string(self, *args, **kwargs):
         with self.acquire() as grammar:
@@ -255,6 +266,14 @@ class Forward(Transparent):
 
     def __lshift__(self, other):
         self.expr = other
+
+
+def dependent_forward():
+    """A forward whose parse-time target must not survive its grammar lease."""
+    unresolved = pp.NoMatch().set_name("<unresolved dependency>")
+    forward = Forward(unresolved)
+    register_grammar_reset(lambda: forward << unresolved)
+    return forward
 
 
 pp.ParserElement.add_condition_ex = add_condition_ex

@@ -3,7 +3,7 @@
 import copy
 import inspect
 
-from .grammar import grammar_build_state
+from .grammar import grammar_build_state, register_grammar_reset
 
 
 class DependentValue:
@@ -76,8 +76,14 @@ class DependentValue:
             source.remove_grammar_hook(hook)
         self.hooks = []
 
+    def grammar_state(self):
+        """Mark the dependent target as present in this compiled parser."""
+        state = grammar_build_state(self)
+        state["active"] = True
+        return state
+
     def bind(self, container, callback):
-        """Call ``callback`` with the derived value while parsing sources."""
+        """Bind a callback receiving the derived value and its parser-local state."""
 
         self.unbind()
         if container is None:
@@ -96,9 +102,20 @@ class DependentValue:
                 # The hook belongs to the definition, but its parse action
                 # and the target it updates belong to this compiled grammar.
                 state = grammar_build_state(self)
-                values = state.setdefault("values", [self._MISSING] * len(definitions))
+                if "values" not in state:
+                    values = state["values"] = [self._MISSING] * len(definitions)
+
+                    def reset():
+                        values[:] = [self._MISSING] * len(values)
+
+                    register_grammar_reset(reset)
+                else:
+                    values = state["values"]
 
                 def parse_action(string, location, tokens):
+                    # A standalone source section may not contain the target.
+                    if not state.get("active"):
+                        return tokens
                     values[index] = self._parsed_value(tokens)
                     if index == len(values) - 1:
                         if any(value is self._MISSING for value in values):
