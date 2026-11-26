@@ -222,6 +222,20 @@ def test_customized_spectroscopy_definitions_are_independent(task):
     assert not np.array_equal(first["ENERGY"]["NE"].default_value, second["ENERGY"]["NE"].default_value)
 
 
+def test_modified_length_definition_copy_and_pickle():
+    definition = cd.InputParametersDefinition.definition_from_dict({
+        "CONTROL": [
+            V("VALUES", gt.Array(int), is_optional=True),
+            V("NVALUES", Length("VALUES"), is_optional=length_is_optional, is_required=False),
+        ],
+    })
+    for restored in (definition.copy(), pickle.loads(pickle.dumps(definition))):
+        parameters = restored.create_object()
+        parameters.CONTROL.VALUES = [1, 2, 3]
+        assert parameters.CONTROL.NVALUES() == 3
+        assert "NVALUES=3" in compact(parameters.to_string())
+
+
 def test_length():
     definition = cd.InputParametersDefinition.definition_from_dict(
         {
