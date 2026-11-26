@@ -317,7 +317,7 @@ class TaskResult:
     def result_values(self):
         """Scientific outputs only, selected by the task's result declarations.
 
-        Auxiliary outputs (such as SCF's *_new potential), input/output logs
+        Auxiliary outputs (such as SCF's ``*_new`` potential), input/output logs
         and caches stay available through output_values and the file manifest,
         but are not standalone end-of-run result tabs.
         """

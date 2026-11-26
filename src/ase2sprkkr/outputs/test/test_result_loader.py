@@ -354,7 +354,8 @@ def test_cached_unmatched_input_is_rediscovered_after_repair(tmp_path, monkeypat
     def parse_input(path):
         if inp.read_text() == "invalid input":
             raise ValueError("invalid input")
-        return SimpleNamespace(task_name="DOS")
+        from ase2sprkkr import InputParameters
+        return InputParameters.create("DOS")
 
     monkeypatch.setattr(loader.inputs, "parse", parse_input)
     first = loader.load_file(output)

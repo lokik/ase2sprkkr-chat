@@ -1,5 +1,6 @@
 """Project-scoped SPR-KKR runs using the KKRunner EndpointClient/Run lifecycle."""
 
+from contextlib import ExitStack
 from dataclasses import replace
 import pytest
 from types import SimpleNamespace
@@ -15,24 +16,6 @@ from ase2sprkkr.sprkkr import calculation as calculation_module
 from ase2sprkkr.sprkkr.calculation import PreparedCalculation
 from ase2sprkkr.sprkkr.calculator import SPRKKR
 from ase2sprkkr.sprkkr.profile import SPRKKRProfile
-
-
-class _Prepared:
-    create_run = PreparedCalculation.create_run
-
-    def __init__(self, parameters, input_file, output_file, directory):
-        self.input_parameters = parameters
-        self.input_file = input_file
-        self.potential_file = None
-        self.output_file = output_file
-        self.directory = str(directory)
-        self.closed = False
-
-    def close(self):
-        if not self.closed:
-            self.closed = True
-            self.input_file.close()
-            self.output_file.close()
 
 
 def _parameters(monkeypatch, task="DOS"):
@@ -76,7 +59,13 @@ def _runner(parameters, tmp_path, manager, *, metadata=None, profile=None):
     input_file.write("input")
     input_file.flush()
     output_file = (tmp_path / "test.out").open("wb")
-    prepared = _Prepared(parameters, input_file, output_file, tmp_path)
+    resources = ExitStack()
+    resources.callback(input_file.close)
+    resources.callback(output_file.close)
+    prepared = PreparedCalculation(
+        parameters, input_file, None, output_file, str(tmp_path),
+        0, resources, None,
+    )
     return prepared.create_run(
         result_context=SimpleNamespace(directory=str(tmp_path)),
         profile=SPRKKRProfile(mpi=False) if profile is None else profile,
