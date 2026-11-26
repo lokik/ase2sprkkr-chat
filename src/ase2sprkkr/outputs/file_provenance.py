@@ -177,13 +177,13 @@ def register_declared_result_files(result, *, warn_missing=True, file_operations
             else (declared,)
         )
         found = [path for path in paths if operations.is_file(path)]
-        if getattr(result, "run_record", None) is not None:
+        if result.run_record is not None:
             # Wildcards must not discover additional outputs of a newer run.
             found = [path for path in found if result_file_version(result, path) is not None]
-        if not found and not getattr(declaration, "optional", False):
+        if not found and not declaration.optional:
             missing_required.add(pattern)
 
-        hint = getattr(declaration, "type", None)
+        hint = declaration.type
         file_type = hint.lower() if hint and hint.lower() in known_formats else None
         for path in found:
             if path in registered:
@@ -271,7 +271,7 @@ def capture_result_file_manifest(
     parameters, declarations = task_file_declarations(result)
     for kind, declaration in declarations:
         path = absolute(declaration)
-        optional = getattr(declaration, "optional", False)
+        optional = declaration.optional
         if glob.has_magic(str(path)):
             for match in operations.glob(str(path), recursive=False):
                 if operations.is_file(match):
@@ -286,15 +286,11 @@ def capture_result_file_manifest(
         if potential:
             add(potential, "input")
 
-    registered = result.files.items()
-    # OutputFilesSection.items() returns a dict, unlike dict.items().
-    if isinstance(registered, Mapping):
-        registered = registered.items()
-    for name, option in registered:
+    for name, option in result.files.items().items():
         role = str(name).casefold()
         if role == "output":
             continue
-        location = option.path() if callable(getattr(option, "path", None)) else option
+        location = option.path()
         if role in {"input", "potential", "start_potential"}:
             kind = "input"
         elif role == "sfn":
