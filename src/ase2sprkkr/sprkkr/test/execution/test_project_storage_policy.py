@@ -25,3 +25,16 @@ def test_explicit_project_repository_keeps_its_explicit_store(tmp_path):
     projects = ProjectRepository(tmp_path / "custom/projects")
     manager = project_execution_manager(projects)
     assert manager.store.directory == tmp_path / "custom/projects_runs"
+
+
+def test_default_memory_manager_and_projects_share_conflicts(tmp_path, monkeypatch):
+    from ase2sprkkr.sprkkr.projects import memory_execution_manager
+    from kkrunner import MemoryRunStore
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    memory = memory_execution_manager()
+    projects = project_execution_manager()
+    assert isinstance(memory.store, MemoryRunStore)
+    assert projects.conflict_stores == (memory.store,)
+    assert memory.conflict_stores[0].lock_key == projects.store.lock_key
+    assert memory_execution_manager().store is memory.store

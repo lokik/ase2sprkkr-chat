@@ -204,7 +204,7 @@ class SPRKKR(BaseCalculator):
         self._counter += 1
         return str(self._counter)
 
-    def prepare(
+    def plan(
         self,
         atoms=None,
         input_parameters=None,
@@ -221,18 +221,8 @@ class SPRKKR(BaseCalculator):
         restart_scf: bool = False,
         clear_cache: bool = False,
     ):
-        """Materialize current calculation state into one prepared calculation.
-
-        ``InputParameters`` are copied before one-shot task/options and generated
-        file values are applied. Selected ``Atoms`` and ``Potential`` objects are
-        not deep-copied and may be normalized or synchronized during preparation.
-        The returned :class:`PreparedCalculation` owns all concrete files and
-        temporary directory resources, so subsequent physical-state changes do
-        not alter the already materialized run. Call
-        :meth:`PreparedCalculation.close` when the object is not transferred to
-        a runner.
-        """
-        prepared = PreparedCalculation.prepare(
+        """Resolve a calculation's parameter snapshot and paths without opening files."""
+        planned = CalculationPlan.plan(
             default_atoms=self._atoms,
             default_potential=self._potential,
             # Explicit per-call parameters override calculator defaults. Do not
@@ -262,8 +252,12 @@ class SPRKKR(BaseCalculator):
             restart_scf=restart_scf,
             clear_cache=clear_cache,
         )
-        self._counter = prepared.counter
-        return prepared
+        self._counter = planned.counter
+        return planned
+
+    def prepare(self, *args, run_manager=None, **kwargs):
+        """Materialize a calculation immediately, optionally using a session manager."""
+        return self.plan(*args, **kwargs).prepare(run_manager=run_manager)
 
     @staticmethod
     def _is_temporary_directory(directory):
@@ -286,6 +280,7 @@ class SPRKKR(BaseCalculator):
         empty_spheres=None,
         return_files=False,
         restart_scf: bool = False,
+        run_manager=None,
     ):
         """Materialize SPR-KKR input files without starting an executable.
 
@@ -303,6 +298,9 @@ class SPRKKR(BaseCalculator):
         directory is owned naturally by a runner, whereas returning filenames
         from ``save_input`` after deleting their directory would be invalid.
         Use :meth:`create_run`/``calculate`` for temporary run directories.
+
+        ``run_manager`` selects the process-local reservation domain when supplied.
+        Save-only operations do not create project history.
         """
         selected_directory = self._directory if directory is None else directory
         if self._is_temporary_directory(selected_directory):
@@ -311,7 +309,7 @@ class SPRKKR(BaseCalculator):
                 "directory=False is supported by create_run()/calculate() instead"
             )
 
-        prepared = self.prepare(
+        planned = self.plan(
             atoms=atoms,
             input_parameters=input_parameters,
             potential=potential,
@@ -327,28 +325,38 @@ class SPRKKR(BaseCalculator):
             restart_scf=restart_scf,
         )
 
-        if return_files:
-            if prepared.temporary_potential or prepared.temporary_cluster_potential:
-                prepared.close()
+        try:
+            if return_files and any(
+                file is not None and file.temporary
+                for file in (planned.potential_plan, planned.cluster_plan)
+            ):
                 raise ValueError(
                     "save_input(return_files=True) cannot transfer ownership of "
                     "a temporary POTFIL or POTFIL_CLU pathname; use persistent paths"
                 )
-            prepared.release_file_ownership()
-            prepared.close_directory_context()
-            return (
-                prepared.input_parameters,
-                prepared.input_file,
-                prepared.potential_file,
-                prepared.output_file,
-            )
+            with planned.reservation(run_manager=run_manager):
+                prepared = planned._materialize()
+                try:
+                    if return_files:
+                        prepared.close_directory_context()
+                        prepared.release_file_ownership()
+                        return (
+                            prepared.input_parameters,
+                            prepared.input_file,
+                            prepared.potential_file,
+                            prepared.output_file,
+                        )
 
-        input_name = prepared.input_file.name
-        output_name = prepared.output_file.name if prepared.output_file else None
-        potential_name = prepared.potential_file
-        input_parameters = prepared.input_parameters
-        prepared.close()
-        return input_parameters, input_name, potential_name, output_name
+                    input_name = prepared.input_file.name
+                    output_name = prepared.output_file.name if prepared.output_file else None
+                    potential_name = prepared.potential_file
+                    input_parameters = prepared.input_parameters
+                    return input_parameters, input_name, potential_name, output_name
+                finally:
+                    prepared.close()
+        except BaseException:
+            planned.close()
+            raise
 
     def create_run(
         self,
@@ -375,7 +383,7 @@ class SPRKKR(BaseCalculator):
         error_file=None,
         metadata=None,
     ):
-        """Prepare a calculation and return an unstarted owning runner.
+        """Plan a calculation and return an unstarted owning runner. File writes begin only after reservation.
 
         An explicit per-run executor has highest precedence. Otherwise an
         explicit per-run profile selects its backend; if neither is supplied,
@@ -401,7 +409,7 @@ class SPRKKR(BaseCalculator):
         if executor is None and not explicit_profile:
             executor = self.executor
 
-        prepared = self.prepare(
+        planned = self.plan(
             atoms=atoms,
             input_parameters=input_parameters,
             potential=potential,
@@ -417,7 +425,7 @@ class SPRKKR(BaseCalculator):
             restart_scf=restart_scf,
             clear_cache=clear_cache,
         )
-        return prepared.create_run(
+        return planned.create_run(
             result_context=self,
             profile=run_profile,
             executor=executor,
@@ -625,6 +633,7 @@ class SPRKKR(BaseCalculator):
 from ..input_parameters.input_parameters import InputParameters  # NOQA: E402
 from .calculation import (  # NOQA: E402
     FilenameTemplator as _FilenameTemplator,
+    CalculationPlan,
     PreparedCalculation,
 )
 

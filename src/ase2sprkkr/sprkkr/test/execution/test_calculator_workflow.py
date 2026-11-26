@@ -47,7 +47,7 @@ def test_create_run_only_prepares_runner(tmp_path, monkeypatch, case):
     def prepare(**kwargs):
         seen['prepare'] = kwargs
         return prepared
-    monkeypatch.setattr(calculator, 'prepare', prepare)
+    monkeypatch.setattr(calculator, 'plan', prepare)
     created = calculator.create_run(**options)
     assert created is runner
     assert not runner.ran

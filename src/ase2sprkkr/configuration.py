@@ -334,9 +334,17 @@ definition = ConfigFileDefinition(
                     info="Shared target filesystem identity for SSH aliases or shared mounts.",
                 ),
                 V(
-                    "ssh_zstd",
-                    False,
-                    info="Use tar --zstd for batch SSH file transfers (requires zstd on both ends).",
+                    "ssh_compression",
+                    Keyword({
+                        "auto": "Prefer Zstandard if both Python interpreters support it; otherwise gzip.",
+                        "gz": "Gzip.",
+                        "bz2": "Bzip2.",
+                        "xz": "XZ.",
+                        "zstd": "Zstandard (requires native support on both sides).",
+                        "none": "Disable archive compression.",
+                    }, transform='lower'),
+                    default_value="auto",
+                    info="Compression for SSH archive transfers.",
                 ),
                 V(
                     "remote_command",

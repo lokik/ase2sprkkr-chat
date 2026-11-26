@@ -57,23 +57,27 @@ def _create_run(prepared, *, executor=None, callback=None):
     )
 
 
-def test_files_are_closed_when_runner_creation_fails(prepared, monkeypatch):
+def test_prepared_files_remain_owned_by_caller_when_runner_creation_fails(prepared, monkeypatch):
     executor = EndpointClient()
 
     def fail_factory(*args, **kwargs):
         raise RuntimeError("factory failed")
 
     monkeypatch.setattr(executor, "create_run_parts", fail_factory)
-    with pytest.raises(RuntimeError, match="factory failed"):
-        _create_run(prepared, executor=executor)
-    assert prepared.input_file.closed
-    assert prepared.output_file.closed
+    try:
+        with pytest.raises(RuntimeError, match="factory failed"):
+            _create_run(prepared, executor=executor)
+        assert not prepared.closed
+        assert not prepared.input_file.closed
+        assert not prepared.output_file.closed
+    finally:
+        prepared.close()
 
 
 def test_files_are_closed_when_submission_fails_before_start(prepared, monkeypatch):
     runner = _create_run(prepared)
     assert isinstance(runner, Run)
-    assert not prepared.input_file.closed
+    assert not prepared.closed
 
     def fail_submission():
         raise SubmissionNotStarted("staging failed")
@@ -82,6 +86,7 @@ def test_files_are_closed_when_submission_fails_before_start(prepared, monkeypat
     with pytest.raises(SubmissionNotStarted, match="staging failed"):
         runner.submit()
     assert runner.state is RunState.FAILED
+    assert prepared.closed
     assert prepared.input_file.closed
     assert prepared.output_file.closed
 
@@ -92,13 +97,57 @@ def test_completion_releases_files_without_wait(prepared):
     runner.submit()
     assert completed.wait(10), "completion callback was not called"
     assert runner.state is RunState.FINISHED
+    assert prepared.closed
     assert prepared.input_file.closed
     assert prepared.output_file.closed
 
 
-def test_unstarted_runner_can_release_owned_files_explicitly(prepared):
+def test_unstarted_runner_never_acquires_prepared_files(prepared):
     runner = _create_run(prepared)
-    runner.close()
-    runner.close()
-    assert prepared.input_file.closed
-    assert prepared.output_file.closed
+    try:
+        runner.close()
+        runner.close()
+        assert not prepared.closed
+        assert not prepared.input_file.closed
+        assert not prepared.output_file.closed
+    finally:
+        prepared.close()
+
+
+def test_prepared_input_handle_is_flushed_under_reservation(tmp_path, prepared):
+    prepared.input_file.close()
+    prepared.input_file = prepared._file_resources.enter_context((tmp_path / "run.inp").open("w+"))
+    prepared.input_file.write("print('buffered')\n")
+    runner = _create_run(prepared)
+    assert (tmp_path / "run.inp").read_text() == ""
+    runner.run()
+    assert (tmp_path / "run.out").read_text().strip() == "buffered"
+
+
+@pytest.mark.parametrize("role", ["input_file", "output_file"])
+def test_rejected_prepared_run_does_not_flush_owned_by_caller(tmp_path, prepared, role):
+    from kkrunner import ExecutionSpec, MemoryRunStore, RunManager
+    from kkrunner.runs import DuplicateSubmissionError
+
+    getattr(prepared, role).close()
+    path = tmp_path / ("run.inp" if role == "input_file" else "run.out")
+    path.write_text("original")
+    stream = prepared._file_resources.enter_context(path.open("r+"))
+    setattr(prepared, role, stream)
+    stream.write("buffered")
+    manager = RunManager(MemoryRunStore())
+    try:
+        with manager.preprocessing_reservation(
+            ExecutionSpec(argv=(), directory=tmp_path, input_file=path)
+        ):
+            runner = prepared.create_run(
+                profile=SPRKKRProfile(mpi=False), executor=EndpointClient(), project=manager,
+            )
+            with pytest.raises(DuplicateSubmissionError):
+                runner.submit()
+            runner.close()
+            assert not stream.closed
+            assert not prepared.closed
+            assert path.read_text() == "original"
+    finally:
+        prepared.close()

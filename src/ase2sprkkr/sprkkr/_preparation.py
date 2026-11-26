@@ -1,7 +1,7 @@
 """Internal state resolution and file materialization for SPR-KKR calculations.
 
-``PreparedCalculation.prepare`` orchestrates these helpers and owns the
-resources they acquire. This module depends on neither ``PreparedCalculation``
+``CalculationPlan`` orchestrates these helpers and owns the
+resources acquired during materialization. This module depends on neither ``PreparedCalculation``
 nor the execution subsystem.
 """
 
@@ -15,8 +15,10 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 from pyparsing import ParseBaseException
+from kkrunner.files.versions import FileVersion
 
 from ..ase.symbols import filename_from_symbols
 from ..bindings.empty_spheres import add_empty_spheres
@@ -92,14 +94,16 @@ class TemporaryNamedFile:
     owns the temporary artifact.
     """
 
-    def __init__(self, *, directory, mode):
-        self._file = tempfile.NamedTemporaryFile(
-            mode=mode,
-            delete=False,
-            dir=directory,
-        )
+    def __init__(self, *, directory, mode, path=None):
+        if path is None:
+            self._file = tempfile.NamedTemporaryFile(mode=mode, delete=False, dir=directory)
+        else:
+            # The planner chose a unique name without creating a file. Exclusive
+            # creation protects it even if some external process used that name.
+            self._file = open(path, mode.replace("w", "x", 1),
+                              opener=lambda name, flags: os.open(name, flags, 0o600))
         self.name = self._file.name
-        self._removed = False
+        self._delete_on_close = True
 
     def __getattr__(self, name):
         return getattr(self._file, name)
@@ -112,11 +116,15 @@ class TemporaryNamedFile:
         if not self._file.closed:
             self._file.close()
 
+    def preserve(self):
+        """Relinquish pathname deletion, but not ownership of the open handle."""
+        self._delete_on_close = False
+
     def close(self):
         self.close_file()
-        if self._removed:
+        if not self._delete_on_close:
             return
-        self._removed = True
+        self._delete_on_close = False
         try:
             os.unlink(self.name)
         except FileNotFoundError:
@@ -138,7 +146,7 @@ def named_file_name(value):
     """Return a path-backed file name, or ``None`` for anonymous streams."""
     if value is None:
         return None
-    name = getattr(value, "name", value if isinstance(value, os.PathLike) else None)
+    name = value if isinstance(value, (str, os.PathLike)) else getattr(value, "name", None)
     if name is None or isinstance(name, int):
         return None
     try:
@@ -157,6 +165,15 @@ def require_named_file(value, role):
     return name
 
 
+def execution_path(value, directory):
+    """Normalize declarations and open handles in their respective path domains."""
+    if value is None:
+        return None
+    if isinstance(value, (str, os.PathLike)):
+        return calculation_path(value, directory)
+    return os.path.abspath(require_named_file(value, "execution file"))
+
+
 def open_file(
     filename,
     directory,
@@ -164,6 +181,7 @@ def open_file(
     mode="w+",
     allow_temporary=True,
     create_subdirs=False,
+    planned_path=None,
 ):
     """Open one path-backed calculation file according to the public contract."""
     if filename is False:
@@ -171,7 +189,7 @@ def open_file(
             raise ValueError(
                 "Creation of temporary files is not allowed in this context"
             )
-        return TemporaryNamedFile(directory=directory, mode=mode)
+        return TemporaryNamedFile(directory=directory, mode=mode, path=planned_path)
 
     if not isinstance(filename, (str, os.PathLike)):
         return filename
@@ -220,6 +238,7 @@ class ResolvedInput:
     filename: object
     potential_file: object
     write: bool
+    source_version: FileVersion | None = None
 
 
 def resolve_potential_and_atoms(
@@ -311,13 +330,17 @@ def resolve_input_parameters(
     potential_file = potential.filename
     potential_missing = potential.potential is None
     write_input = True
+    source_version = None
 
     if isinstance(value, (str, os.PathLike)):
         if isinstance(value, str) and InputParameters.is_task_name(value):
             value = InputParameters.create(value)
         else:
             parameter_filename = calculation_path(value, directory)
+            version = FileVersion.capture(parameter_filename, require_digest=True)
             parsed = InputParameters.from_file(parameter_filename)
+            if not version.is_current():
+                raise ValueError(f"Input parameters changed while planning: {parameter_filename}")
 
             reuse_input = (
                 potential_missing
@@ -332,6 +355,7 @@ def resolve_input_parameters(
             if reuse_input:
                 input_file = parameter_filename
                 write_input = False
+                source_version = version
             value = parsed
 
     if value is None:
@@ -365,7 +389,7 @@ def resolve_input_parameters(
             "Potential object has been supplied."
         )
 
-    return ResolvedInput(input_parameters, input_file, potential_file, write_input)
+    return ResolvedInput(input_parameters, input_file, potential_file, write_input, source_version)
 
 
 def validate_task_system(task, resolved_input, resolved_potential):
@@ -476,8 +500,22 @@ def filename_from_input(selected, *, reused_input, suffix, default):
     return base + suffix
 
 
+@dataclass(frozen=True)
+class PlannedFile:
+    """One concrete filename and opening intent; no descriptor is opened."""
+
+    selection: object
+    path: str
+    role: str
+    mode: str
+
+    @property
+    def temporary(self):
+        return self.selection is False
+
+
 class CalculationFiles:
-    """Open, validate and register files with shared preparation settings."""
+    """Resolve filenames once and later materialize exactly those declarations."""
 
     def __init__(
         self, directory, templator, resources, *, allow_temporary, create_subdirs
@@ -488,29 +526,42 @@ class CalculationFiles:
         self.allow_temporary = allow_temporary
         self.create_subdirs = create_subdirs
         self._owned_ids = set()
+        self.temporary_files = []
 
-    def open(self, filename, role, *, mode="w+"):
+    def plan(self, filename, role, *, mode="w+"):
+        if filename is False:
+            if not self.allow_temporary:
+                raise ValueError("Creation of temporary files is not allowed in this context")
+            path = os.path.join(self.directory, "tmp-sprkkr-" + uuid4().hex)
+        elif isinstance(filename, (str, os.PathLike)):
+            path = calculation_path(self.templator(os.fspath(filename)), self.directory)
+        else:
+            # Borrow the descriptor until materialization. Closing it during
+            # rejected planning/submission could flush bytes without a reservation.
+            path = os.path.abspath(require_named_file(filename, role))
+        return PlannedFile(filename, path, role, mode)
+
+    def open(self, planned):
+        selection = planned.selection
+        filename = planned.path if isinstance(selection, (str, os.PathLike)) else selection
         file = open_file(
-            filename,
-            self.directory,
-            self.templator,
-            mode=mode,
-            allow_temporary=self.allow_temporary,
-            create_subdirs=self.create_subdirs,
+            filename, self.directory, mode=planned.mode,
+            allow_temporary=self.allow_temporary, create_subdirs=self.create_subdirs,
+            planned_path=planned.path if planned.temporary else None,
         )
-        # Own the descriptor before validation, so invalid streams are closed
-        # along with all other acquired resources if preparation fails.
         own_file(self.resources, self._owned_ids, file)
-        require_named_file(file, role)
+        if isinstance(file, TemporaryNamedFile):
+            self.temporary_files.append(file)
+        require_named_file(file, planned.role)
         return file
 
-    def open_input(self, resolved, default_filename):
+    def plan_input(self, resolved, default_filename):
         filename = default_filename if resolved.filename is None else resolved.filename
         if filename is True:
             filename = "%l%_%a_%T.inp"
-        return self.open(filename, "input_file", mode="w+" if resolved.write else "r")
+        return self.plan(filename, "input_file", mode="w+" if resolved.write else "r")
 
-    def open_output(self, filename, *, default_filename, reused_input):
+    def plan_output(self, filename, *, default_filename, reused_input):
         if filename is None:
             filename = default_filename
         if filename is False or filename is None:
@@ -518,7 +569,7 @@ class CalculationFiles:
         filename = filename_from_input(
             filename, reused_input=reused_input, suffix=".out", default="%a_%T.out"
         )
-        return self.open(filename, "output_file", mode="wb")
+        return self.plan(filename, "output_file", mode="wb")
 
 
 def validate_restart(potential, task_name, restart_scf):
@@ -533,19 +584,23 @@ def validate_restart(potential, task_name, restart_scf):
         )
 
 
-def write_potential(
-    resolved, filename, files, *, default_filename, task_name, restart_scf
-):
-    """Serialize POTFIL without retaining temporary changes to SCF status."""
-    potential = resolved.potential
-    if potential is None:
-        return filename, False
-
+def plan_potential(resolved, filename, files, *, default_filename):
+    """Choose POTFIL without creating it, or reuse an existing potential."""
+    if resolved.potential is None:
+        return None
     if filename is None:
         filename = default_filename
     if filename is True:
         filename = "%a.pot"
-    handle = files.open(filename, "potential_file")
+    return files.plan(filename, "potential_file")
+
+
+def write_potential(resolved, planned, files, *, task_name, restart_scf):
+    """Serialize a previously declared POTFIL, without changing SCF status."""
+    if planned is None:
+        return
+    potential = resolved.potential
+    handle = files.open(planned)
     status_context = nullcontext()
     if (
         isinstance(potential, Potential)
@@ -563,47 +618,34 @@ def write_potential(
         handle.close_file()
     else:
         handle.close()
-    # Caller-supplied handles may have names relative to the Python process's
-    # cwd. Files opened above already have absolute names.
-    name = named_file_name(handle)
-    if not os.path.isabs(name):
-        name = os.path.abspath(name)
-    return name, filename is False
 
 
 
-def write_cluster_potentials(
-    resolved, host_filename, files, *, default_filename, task_name,
-    input_parameters, restart_scf=False,
-):
-    """Write an embedded cluster and its host as separate native POTFILs."""
-    cluster = resolved.potential
-    host = cluster.host
+def plan_cluster_potentials(resolved, host_filename, files, *, default_filename, input_parameters):
+    """Resolve both embedded potential paths before either file is opened."""
+    host = resolved.potential.host
     if not isinstance(host, Potential):
-        raise ValueError(
-            "A ClusterPotential calculation requires a host Potential"
-        )
-
-    host_file, temporary_host = write_potential(
+        raise ValueError("A ClusterPotential calculation requires a host Potential")
+    host_plan = plan_potential(
         ResolvedPotential(host, host.atoms, host_filename),
-        host_filename,
-        files,
-        default_filename=default_filename,
-        task_name=task_name,
-        restart_scf=False,
+        host_filename, files, default_filename=default_filename,
     )
     cluster_target = input_parameters.CONTROL.POTFIL_CLU.result
     if not cluster_target:
-        if temporary_host:
-            cluster_target = False
-        else:
-            cluster_target = str(Path(host_file).with_suffix(".clu.pot"))
-    if cluster_target is not False:
-        intended = calculation_path(cluster_target, files.directory)
-        if os.path.abspath(host_file) == intended:
-            raise ValueError("POTFIL and POTFIL_CLU must be different files")
+        cluster_target = False if host_plan.temporary else str(Path(host_plan.path).with_suffix(".clu.pot"))
+    cluster_plan = files.plan(cluster_target, "cluster_potential_file")
+    if host_plan.path == cluster_plan.path:
+        raise ValueError("POTFIL and POTFIL_CLU must be different files")
+    return host_plan, cluster_plan
 
-    handle = files.open(cluster_target, "cluster_potential_file")
+
+def write_cluster_potentials(resolved, host_plan, cluster_plan, files, *, task_name, restart_scf=False):
+    """Write the two already planned native POTFILs."""
+    cluster = resolved.potential
+    host = cluster.host
+    write_potential(ResolvedPotential(host, host.atoms, host_plan.path), host_plan, files,
+                    task_name=task_name, restart_scf=False)
+    handle = files.open(cluster_plan)
     # Restart is a serialization intent; do not mutate the canonical
     # converged cluster potential retained by the calling Atoms.
     if restart_scf:
@@ -617,23 +659,24 @@ def write_cluster_potentials(
         handle.close_file()
     else:
         handle.close()
-    cluster_file = named_file_name(handle)
-    if not os.path.isabs(cluster_file):
-        cluster_file = os.path.abspath(cluster_file)
-    return host_file, cluster_file, temporary_host, cluster_target is False
 
 
-def write_input(resolved, handle, potential_file, atoms, *, cluster_potential_file=None):
-    """Serialize the snapshot, letting filename mappings render relative paths."""
+
+def configure_input(resolved, input_name, potential_file, *, cluster_potential_file=None):
+    """Set file-derived parameter values as part of the write-free plan."""
     if not resolved.write:
         return
-
     parameters = resolved.parameters
     if potential_file:
         parameters.CONTROL.POTFIL = potential_file
     if cluster_potential_file:
         parameters.CONTROL.POTFIL_CLU = cluster_potential_file
     if not parameters.CONTROL.DATASET.is_set():
-        parameters.CONTROL.DATASET.result = Path(named_file_name(handle)).stem
-    parameters.save_to_file(handle, atoms)
-    handle.seek(0)
+        parameters.CONTROL.DATASET.result = Path(input_name).stem
+
+
+def write_input(resolved, handle):
+    """Serialize the already derived parameter snapshot, without recomputing it."""
+    if resolved.write:
+        resolved.parameters.save_to_file(handle, False)
+        handle.seek(0)

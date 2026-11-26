@@ -16,8 +16,9 @@ from kkrunner.files import TaskFile
 from ..common.file_utils import Directory
 from ..common.output_printing import output_listeners
 from kkrunner.runs.base import ExecutionResources
-from .projects import resolve_project_manager, project_execution_manager
+from .projects import memory_execution_manager, resolve_project_manager
 from kkrunner.runs import Run
+from kkrunner import ExecutionSpec, MemoryRunStore
 from ..input_parameters.input_parameters import InputParameters
 from ..potentials.cluster_potentials import ClusterPotential
 from . import _preparation as preparation
@@ -32,9 +33,9 @@ class PreparedCalculation:
 
     Instances own the concrete parameter snapshot, path-backed calculation
     files and, when applicable, an entered temporary working-directory context.
-    Ownership can be transferred to a runner, explicitly released for the
-    legacy ``save_input(return_files=True)`` API, or terminated with
-    :meth:`close`.
+    Ownership can be transferred to a runner when preprocessing begins,
+    explicitly released for ``save_input(return_files=True)``, or terminated
+    with :meth:`close`.
 
     :meth:`prepare` is the canonical factory because it resolves all public
     calculator sentinels and establishes these invariants. The generated
@@ -56,6 +57,8 @@ class PreparedCalculation:
     cluster_potential_file: str | None = None
     _temporary_cluster_potential: bool = False
     clear_cache: bool = False
+    _temporary_files: tuple = ()
+    _directory_context: Directory | None = None
 
     def __post_init__(self):
         if type(self.clear_cache) is not bool:
@@ -80,7 +83,180 @@ class PreparedCalculation:
         self.directory = os.path.abspath(os.fspath(self.directory))
 
     @classmethod
-    def prepare(
+    def prepare(cls, *, run_manager=None, **kwargs):
+        """Plan and materialize an explicit standalone preparation."""
+        return CalculationPlan.plan(**kwargs).prepare(run_manager=run_manager)
+
+    def create_run(
+        self,
+        *,
+        result_context=None,
+        profile: SPRKKRProfile,
+        executor=None,
+        project=None,
+        print_output=False,
+        read_callback=None,
+        callback=None,
+        gdb=False,
+        error_file=None,
+        create_subdirs=False,
+        metadata=None,
+    ):
+        """Create an unstarted runner borrowing this calculation.
+
+        Its resources transfer to the run only when reserved preprocessing
+        starts. If creation, cancellation or reservation fails before that
+        boundary, the caller retains ownership and must close the calculation.
+        The prepared calculation does not depend on the calculator facade.
+        ``result_context`` is optional runtime context for output readers; the
+        :class:`SPRKKR` facade supplies itself so result convenience APIs can
+        construct follow-up calculations, while standalone prepared runs may
+        leave the context unset.
+
+        ``error_file=None`` stores stderr as ``<output_file>.err``. ``True``
+        explicitly merges stderr into ``output_file``; ``False`` requests a
+        managed temporary stderr file; a path or file object is used directly.
+        Tracked runs require persistent working-directory and stderr paths so
+        they can be recovered after the client exits.
+        """
+        return _create_sprkkr_run(
+            self,
+            result_context=result_context,
+            profile=profile,
+            executor=executor,
+            project=project,
+            print_output=print_output,
+            read_callback=read_callback,
+            callback=callback,
+            gdb=gdb,
+            error_file=error_file,
+            create_subdirs=create_subdirs,
+            metadata=metadata,
+        )
+
+    @property
+    def input_declarations(self):
+        # A caller-supplied prepared input may still contain buffered writes.
+        path = preparation.execution_path(self.input_file, self.directory)
+        return _input_declarations(self, (path,))
+
+    @property
+    def closed(self):
+        """Whether this object has relinquished or closed all owned resources."""
+        return self._closed
+
+    @property
+    def temporary_directory(self):
+        return self._temporary_directory
+
+    @property
+    def has_temporary_inputs(self):
+        return bool(self._temporary_files)
+
+    @property
+    def temporary_potential(self):
+        """Whether POTFIL is a managed temporary pathname."""
+        return self._temporary_potential
+
+    @property
+    def temporary_cluster_potential(self):
+        """Whether POTFIL_CLU is a managed temporary pathname."""
+        return self._temporary_cluster_potential
+
+    def release_file_ownership(self):
+        """Transfer ownership of open input/output files to the caller.
+
+        The files themselves are not closed. This supports the legacy
+        ``save_input(return_files=True)`` API. A temporary POTFIL cannot be
+        transferred by that API because it returns only its pathname; callers
+        must supply a persistent POTFIL name in that case.
+        """
+        stack = self._file_resources
+        self._file_resources = None
+        if stack is not None:
+            stack.pop_all()
+        self._update_closed_state()
+
+    def close_directory_context(self):
+        """Close the entered working-directory context after file transfer."""
+        stack = self._directory_resources
+        self._directory_resources = None
+        if stack is not None:
+            stack.close()
+        self._update_closed_state()
+
+    def _update_closed_state(self):
+        if self._file_resources is None and self._directory_resources is None:
+            self._closed = True
+
+    def detach(self):
+        """Close client handles but preserve paths after uncertain execution."""
+        for file in self._temporary_files:
+            file.preserve()
+        if self._directory_context is not None:
+            self._directory_context.preserve()
+        self.close()
+
+    def close(self):
+        """Close all resources still owned by this prepared calculation."""
+        if self._closed:
+            return
+
+        file_resources = self._file_resources
+        directory_resources = self._directory_resources
+        self._file_resources = None
+        self._directory_resources = None
+        self._closed = True
+
+        error = None
+        if file_resources is not None:
+            try:
+                file_resources.close()
+            except BaseException as exc:
+                error = exc
+        if directory_resources is not None:
+            try:
+                directory_resources.close()
+            except BaseException as exc:
+                if error is None:
+                    error = exc
+        if error is not None:
+            raise error
+
+
+@dataclass
+class CalculationPlan:
+    """Write-free declaration of one calculation and its client preprocessing.
+
+    The planned files and parameter-derived dataset do not change between
+    declaration and materialization. The plan owns the resources acquired
+    during resolution until they are transferred to PreparedCalculation.
+    """
+
+    input_parameters: InputParameters
+    directory: str
+    counter: int
+    input_plan: preparation.PlannedFile
+    potential_plan: preparation.PlannedFile | None
+    cluster_plan: preparation.PlannedFile | None
+    output_plan: preparation.PlannedFile | None
+    potential_file: str | None
+    cluster_potential_file: str | None
+    resolved_input: preparation.ResolvedInput
+    resolved_potential: preparation.ResolvedPotential
+    files: preparation.CalculationFiles
+    directory_resources: ExitStack
+    directory_context: Directory
+    task_name: str
+    restart_scf: bool
+    temporary_directory: bool
+    clear_cache: bool
+    empty_spheres: object
+    _prepared: PreparedCalculation | None = None
+    _closed: bool = False
+
+    @classmethod
+    def plan(
         cls,
         *,
         default_atoms,
@@ -107,19 +283,12 @@ class PreparedCalculation:
         allow_temporary_files=False,
         restart_scf=False,
         clear_cache=False,
-    ) -> PreparedCalculation:
-        """Materialize all state and files required for one SPR-KKR run.
+    ) -> CalculationPlan:
+        """Resolve the physical state, parameter snapshot and exact file names.
 
-        ``default_*`` arguments are supplied by the calculator facade; explicit
-        per-call arguments override them. On success the returned object owns
-        every resource opened by preparation. On failure every resource
-        acquired up to that point is released before the original exception is
-        propagated.
-
-        Relative filenames and references inside input parameters use the
-        calculation directory as their base. Files opened here have absolute
-        names; filename mappings serialize references relative to that
-        directory, including when the input file is stored in a subdirectory.
+        Existing inputs may be read to resolve the declarations. No calculation
+        file is opened for writing. A private temporary working directory may be
+        allocated to establish its namespace.
         """
         directory_resources = ExitStack()
         file_resources = ExitStack()
@@ -162,12 +331,7 @@ class PreparedCalculation:
                         "Empty-sphere generation is not supported for an embedded cluster"
                     )
             else:
-                preparation.resolve_empty_spheres(
-                    input_parameters=parameters,
-                    atoms=atoms,
-                    empty_spheres=empty_spheres,
-                    default_empty_spheres=default_empty_spheres,
-                )
+                requested_spheres = default_empty_spheres if empty_spheres is None else empty_spheres
 
             templator = preparation.FilenameTemplator(
                 label,
@@ -189,60 +353,51 @@ class PreparedCalculation:
                 allow_temporary=allow_temporary_files,
                 create_subdirs=create_subdirs,
             )
-            opened_input = files.open_input(resolved_input, default_input_file)
-            reused_input = None if resolved_input.write else preparation.named_file_name(opened_input)
-
-            cluster_file = None
-            temporary_cluster = False
+            input_plan = files.plan_input(resolved_input, default_input_file)
+            reused_input = None if resolved_input.write else input_plan.path
+            cluster_plan = None
             if isinstance(resolved_potential.potential, ClusterPotential):
-                potential_file, cluster_file, temporary_potential, temporary_cluster = (
-                    preparation.write_cluster_potentials(
-                        resolved_potential,
-                        resolved_input.potential_file,
-                        files,
-                        default_filename=default_potential_file,
-                        task_name=task_name,
-                        input_parameters=parameters,
-                        restart_scf=restart_scf,
-                    )
+                potential_plan, cluster_plan = preparation.plan_cluster_potentials(
+                    resolved_potential, resolved_input.potential_file, files,
+                    default_filename=default_potential_file, input_parameters=parameters,
                 )
             else:
-                potential_file, temporary_potential = preparation.write_potential(
-                    resolved_potential,
-                    resolved_input.potential_file,
-                    files,
+                potential_plan = preparation.plan_potential(
+                    resolved_potential, resolved_input.potential_file, files,
                     default_filename=default_potential_file,
-                    task_name=task_name,
-                    restart_scf=restart_scf,
                 )
-            preparation.write_input(
-                resolved_input, opened_input, potential_file,
-                # In existing-POTFIL mode, explicit atoms are validation-only:
-                # never derive or replace native input settings from them.
-                atoms if resolved_potential.potential is not None else None,
-                cluster_potential_file=cluster_file,
+            potential_path = (resolved_input.potential_file if potential_plan is None
+                              else potential_plan.path)
+            cluster_path = None if cluster_plan is None else cluster_plan.path
+            preparation.configure_input(
+                resolved_input, input_plan.path, potential_path, cluster_potential_file=cluster_path,
             )
-
-            opened_output = files.open_output(
-                output_file,
-                default_filename=default_output_file,
-                reused_input=reused_input,
+            if resolved_input.write:
+                parameters.set_from_atoms(atoms if resolved_potential.potential is not None else None)
+            output_plan = files.plan_output(
+                output_file, default_filename=default_output_file, reused_input=reused_input,
             )
 
             return cls(
-                clear_cache=clear_cache,
                 input_parameters=parameters,
-                input_file=opened_input,
-                potential_file=potential_file,
-                output_file=opened_output,
                 directory=work_directory,
                 counter=templator.counter,
-                _file_resources=file_resources,
-                _directory_resources=directory_resources,
-                _temporary_potential=temporary_potential,
-                _temporary_directory=directory_context.dir is False,
-                cluster_potential_file=cluster_file,
-                _temporary_cluster_potential=temporary_cluster,
+                input_plan=input_plan,
+                potential_plan=potential_plan,
+                cluster_plan=cluster_plan,
+                output_plan=output_plan,
+                potential_file=potential_path,
+                cluster_potential_file=cluster_path,
+                resolved_input=resolved_input,
+                resolved_potential=resolved_potential,
+                files=files,
+                directory_resources=directory_resources,
+                directory_context=directory_context,
+                task_name=task_name,
+                restart_scf=restart_scf,
+                temporary_directory=directory_context.dir is False,
+                clear_cache=clear_cache,
+                empty_spheres=requested_spheres,
             )
         except BaseException:
             try:
@@ -255,142 +410,185 @@ class PreparedCalculation:
                 pass
             raise
 
-    def create_run(
-        self,
-        *,
-        result_context=None,
-        profile: SPRKKRProfile,
-        executor=None,
-        project=None,
-        print_output=False,
-        read_callback=None,
-        callback=None,
-        gdb=False,
-        error_file=None,
-        create_subdirs=False,
-        metadata=None,
-    ):
-        """Create an unstarted runner and transfer this calculation's resources.
+    @property
+    def has_temporary_inputs(self):
+        return any(file is not None and file.temporary
+                   for file in (self.input_plan, self.potential_plan, self.cluster_plan))
 
-        The prepared calculation does not depend on the calculator facade.
-        ``result_context`` is optional runtime context for output readers; the
-        :class:`SPRKKR` facade supplies itself so result convenience APIs can
-        construct follow-up calculations, while standalone prepared runs may
-        leave the context unset.
+    @property
+    def written_inputs(self):
+        """Input paths generated by this particular calculation."""
+        return tuple(file.path for file in (
+            self.input_plan if self.resolved_input.write else None,
+            self.potential_plan, self.cluster_plan,
+        ) if file is not None)
 
-        ``error_file=None`` stores stderr as ``<output_file>.err``. ``True``
-        explicitly merges stderr into ``output_file``; ``False`` requests a
-        managed temporary stderr file; a path or file object is used directly.
-        Tracked runs require persistent working-directory and stderr paths so
-        they can be recovered after the client exits.
-        """
+    @property
+    def input_declarations(self):
+        return _input_declarations(self, self.written_inputs)
+
+    @property
+    def input_file(self):
+        return self.input_plan.path
+
+    @property
+    def output_file(self):
+        return None if self.output_plan is None else self.output_plan.path
+
+    def create_run(self, **kwargs):
+        """Transfer this unmaterialized plan to a runner."""
+        if self._closed or self._prepared is not None:
+            raise RuntimeError("Calculation plan was already materialized or closed")
         return _create_sprkkr_run(
-            self,
-            result_context=result_context,
-            profile=profile,
-            executor=executor,
-            project=project,
-            print_output=print_output,
-            read_callback=read_callback,
-            callback=callback,
-            gdb=gdb,
-            error_file=error_file,
-            create_subdirs=create_subdirs,
-            metadata=metadata,
+            self, materialize=self._materialize_inputs,
+            **kwargs,
         )
 
-    @property
-    def closed(self):
-        """Whether this object has relinquished or closed all owned resources."""
-        return self._closed
+    def reservation(self, *, run_manager=None):
+        """Reserve standalone preparation without starting a native backend."""
+        primary, inputs = self.input_declarations
+        spec = ExecutionSpec(
+            argv=(), directory=self.directory,
+            input_file=primary, input_files=inputs, output_file=self.output_file,
+        )
+        manager = memory_execution_manager() if run_manager is None else run_manager
+        return manager.preprocessing_reservation(spec)
 
-    @property
-    def temporary_potential(self):
-        """Whether POTFIL is a managed temporary pathname."""
-        return self._temporary_potential
+    def prepare(self, *, run_manager=None):
+        """Materialize standalone input files while protecting their namespace."""
+        try:
+            with self.reservation(run_manager=run_manager):
+                return self._materialize()
+        except BaseException:
+            self.close()
+            raise
 
-    @property
-    def temporary_cluster_potential(self):
-        """Whether POTFIL_CLU is a managed temporary pathname."""
-        return self._temporary_cluster_potential
+    def _materialize_inputs(self):
+        """Materialize only the input side of an executing calculation."""
+        prepared = self._materialize(open_output=False)
+        # Native execution consumes pathnames, not the preparation descriptors.
+        if isinstance(prepared.input_file, preparation.TemporaryNamedFile):
+            prepared.input_file.close_file()
+        else:
+            prepared.input_file.close()
+        if self.output_plan is not None:
+            selection = self.output_plan.selection
+            if not isinstance(selection, (bool, str, os.PathLike)):
+                selection.close()  # Transfer a supplied named target before KKRunner opens it.
+        return prepared
 
-    def release_file_ownership(self):
-        """Transfer ownership of open input/output files to the caller.
+    def _materialize(self, *, open_output=True):
+        """Open and serialize the planned files under the caller's reservation."""
+        if self._closed or self._prepared is not None:
+            raise RuntimeError("Calculation plan was already materialized or closed")
+        try:
+            version = self.resolved_input.source_version
+            if version is not None and not version.is_current():
+                raise ValueError(f"Input parameters changed after planning: {version.path}")
+            # A path-only potential may have changed since planning. Validate
+            # the geometry under reservation, before opening any write target.
+            preparation.validate_task_system(
+                self.input_parameters.task_definition_required(),
+                self.resolved_input, self.resolved_potential,
+            )
+            if not isinstance(self.resolved_potential.potential, ClusterPotential):
+                preparation.resolve_empty_spheres(
+                    input_parameters=self.input_parameters,
+                    atoms=self.resolved_potential.atoms,
+                    empty_spheres=self.empty_spheres,
+                    default_empty_spheres=False,
+                )
+                if self.resolved_input.write and self.empty_spheres:
+                    self.input_parameters.set_from_atoms(
+                        self.resolved_potential.atoms if self.resolved_potential.potential is not None else None
+                    )
+            opened_input = self.files.open(self.input_plan)
+            if self.cluster_plan is not None:
+                preparation.write_cluster_potentials(
+                    self.resolved_potential, self.potential_plan, self.cluster_plan, self.files,
+                    task_name=self.task_name, restart_scf=self.restart_scf,
+                )
+            else:
+                preparation.write_potential(
+                    self.resolved_potential, self.potential_plan, self.files,
+                    task_name=self.task_name, restart_scf=self.restart_scf,
+                )
+            preparation.write_input(self.resolved_input, opened_input)
+            opened_output = self.output_file
+            if open_output and self.output_plan is not None:
+                opened_output = self.files.open(self.output_plan)
+            self._prepared = PreparedCalculation(
+                input_parameters=self.input_parameters,
+                input_file=opened_input,
+                potential_file=self.potential_file,
+                output_file=opened_output,
+                directory=self.directory,
+                counter=self.counter,
+                _file_resources=self.files.resources,
+                _directory_resources=self.directory_resources,
+                _temporary_potential=self.potential_plan is not None and self.potential_plan.temporary,
+                _temporary_directory=self.temporary_directory,
+                cluster_potential_file=self.cluster_potential_file,
+                _temporary_cluster_potential=self.cluster_plan is not None and self.cluster_plan.temporary,
+                clear_cache=self.clear_cache,
+                _temporary_files=tuple(self.files.temporary_files),
+                _directory_context=self.directory_context,
+            )
+            return self._prepared
+        except BaseException:
+            try:
+                self.close()
+            except BaseException:
+                pass
+            raise
 
-        The files themselves are not closed. This supports the legacy
-        ``save_input(return_files=True)`` API. A temporary POTFIL cannot be
-        transferred by that API because it returns only its pathname; callers
-        must supply a persistent POTFIL name in that case.
-        """
-        stack = self._file_resources
-        self._file_resources = None
-        if stack is not None:
-            stack.pop_all()
-        self._update_closed_state()
-
-    def close_directory_context(self):
-        """Close the entered working-directory context after file transfer."""
-        stack = self._directory_resources
-        self._directory_resources = None
-        if stack is not None:
-            stack.close()
-        self._update_closed_state()
-
-    def _update_closed_state(self):
-        if self._file_resources is None and self._directory_resources is None:
-            self._closed = True
+    def detach(self):
+        """Relinquish a possibly still running calculation without deleting its files."""
+        if self._prepared is not None:
+            self._prepared.detach()
+        self.close()
 
     def close(self):
-        """Close all resources still owned by this prepared calculation."""
+        """Release unmaterialized resources or the materialized calculation."""
         if self._closed:
             return
-
-        file_resources = self._file_resources
-        directory_resources = self._directory_resources
-        self._file_resources = None
-        self._directory_resources = None
         self._closed = True
-
-        error = None
-        if file_resources is not None:
+        if self._prepared is not None:
+            self._prepared.close()
+        else:
             try:
-                file_resources.close()
-            except BaseException as exc:
-                error = exc
-        if directory_resources is not None:
-            try:
-                directory_resources.close()
-            except BaseException as exc:
-                if error is None:
-                    error = exc
-        if error is not None:
-            raise error
+                self.files.resources.close()
+            finally:
+                self.directory_resources.close()
 
 
-def _prepare_error_file(error_file, output_file, directory, create_subdirs):
-    """Materialize stderr for one run without changing preparation semantics."""
-    if error_file is True or error_file is output_file:
+def _input_declarations(calculation, written_inputs):
+    """Attach the resolved write intent without duplicating input declarations."""
+    directory = calculation.directory
+    written = set(written_inputs)
+    primary = preparation.execution_path(calculation.input_file, directory)
+    primary = TaskFile(primary, write=primary in written)
+    declarations = []
+    for value in (calculation.potential_file, *calculation.input_parameters.input_files(directory)):
+        if value is None:
+            continue
+        declaration = value if isinstance(value, TaskFile) else TaskFile(value)
+        path = preparation.calculation_path(declaration, directory)
+        declarations.append(replace(declaration, pathname=path,
+                                    write=declaration.write or path in written))
+    return primary, tuple(declarations)
+
+
+def _plan_error_file(error_file, output_file, directory):
+    """Return a stderr pathname and whether it is a temporary target."""
+    if error_file is True:
         return output_file, False
-
-    output_name = preparation.named_file_name(output_file)
     if error_file is None:
-        if output_name is None:
-            return None, False
-        error_file = output_name + ".err"
-    elif isinstance(error_file, (str, os.PathLike)) and output_name is not None:
-        error_name = preparation.calculation_path(error_file, directory)
-        if os.path.abspath(output_name) == error_name:
-            return output_file, False
-
-    opened_error = preparation.open_file(
-        error_file,
-        directory,
-        mode="wb",
-        allow_temporary=True,
-        create_subdirs=create_subdirs,
-    )
-    preparation.require_named_file(opened_error, "error_file")
-    return opened_error, opened_error is not output_file
+        return None if output_file is None else output_file + ".err", False
+    if error_file is False:
+        from uuid import uuid4
+        return os.path.join(directory, "tmp-sprkkr-" + uuid4().hex), True
+    return preparation.execution_path(error_file, directory), False
 
 
 def _run_cache_files(parameters, directory, *, clear_cache=False):
@@ -411,10 +609,11 @@ def _run_cache_files(parameters, directory, *, clear_cache=False):
 
 
 def _create_sprkkr_run(
-    prepared: PreparedCalculation,
+    calculation,
     *,
-    result_context,
+    result_context=None,
     profile: SPRKKRProfile,
+    materialize=None,
     executor=None,
     project=None,
     print_output=False,
@@ -425,30 +624,46 @@ def _create_sprkkr_run(
     create_subdirs=False,
     metadata=None,
 ):
-    """Adapt a prepared SPR-KKR calculation to the execution subsystem.
+    """Adapt declared calculation files and optional materialization to execution.
 
     This SPR-KKR layer owns task metadata, reader construction and TaskResult
     reconstruction. Executors see only :class:`ExecutionSpec` and produce raw
     :class:`ExecutionOutcome` values; the generic postprocessing layer merely
     invokes the callable defined here.
     """
+    error_resources = ExitStack()
+    calculation_resources = ExitStack()
+    release = calculation.close
+
+    def close_calculation():
+        release()
+
+    # An unmaterialized plan owns only private planning resources. A
+    # prepared calculation may own buffered user files and remains borrowed
+    # until reservation succeeds; its cleanup must not run on rejection.
+    if materialize is not None:
+        calculation_resources.callback(close_calculation)
+
+    def detach():
+        nonlocal release
+        error_resources.pop_all()  # Preserve a possibly active temporary stderr.
+        release = calculation.detach
+        calculation_resources.close()
+
+    resources = ExecutionResources(calculation_resources, error_resources, on_detach=detach)
     try:
-        opened_error, owns_error = _prepare_error_file(
-            error_file,
-            prepared.output_file,
-            prepared.directory,
-            create_subdirs,
+        input_file = preparation.execution_path(calculation.input_file, calculation.directory)
+        output_file = preparation.execution_path(calculation.output_file, calculation.directory)
+        if error_file is calculation.output_file and error_file is not None:
+            error_file = True
+        error_path, temporary_error = _plan_error_file(
+            error_file, output_file, calculation.directory,
         )
     except BaseException:
-        prepared.close()
+        resources.close(suppress_errors=True)
         raise
-
-    resources = ExecutionResources(
-        prepared,
-        opened_error if owns_error else None,
-    )
     handed_off = False
-    input_parameters = prepared.input_parameters
+    input_parameters = calculation.input_parameters
 
     try:
         listeners, print_info = output_listeners(print_output)
@@ -457,59 +672,66 @@ def _create_sprkkr_run(
             input_parameters=input_parameters,
             calculator=result_context,
             print_info=print_info,
-            directory=prepared.directory,
+            directory=calculation.directory,
         )
         if executor is None:
             executor = executor_from_profile(profile)
         manager = resolve_project_manager(project)
-        if manager is None and prepared.clear_cache:
-            # An untracked run has no conflict reservation. A clean-cache run
-            # must use the same persistent run store as ordinary project runs,
-            # even when the caller has not assigned a specific project.
-            from kkrunner.runs.manager import RunManager
-            manager = RunManager(project_execution_manager().store)
-        if metadata is not None and manager is None:
-            raise ValueError("Run metadata requires a persistent project")
+        if manager is None:
+            manager = memory_execution_manager()
+        durable = not isinstance(manager.store, MemoryRunStore)
         if metadata is not None and "ase2sprkkr" in metadata:
             raise ValueError("The 'ase2sprkkr' run metadata namespace is reserved")
-        if manager is not None:
-            if prepared._temporary_directory:
-                raise ValueError("Tracked runs require a persistent calculation directory; pass directory=path")
-            if error_file is False:
-                raise ValueError("Tracked runs require persistent stderr; use error_file=None or a pathname")
+        detached = True if profile.detached and executor.backend.name == "direct" else None
+        if durable or detached or executor.default_detached:
+            if calculation.temporary_directory:
+                raise ValueError("Recoverable runs require a persistent calculation directory; pass directory=path")
+            if temporary_error:
+                raise ValueError("Recoverable runs require persistent stderr; use error_file=None or a pathname")
+            if calculation.has_temporary_inputs:
+                raise ValueError("Recoverable runs require persistent input and potential files")
 
-        input_files = tuple(
-            file
-            for file in (
-                prepared.input_file,
-                prepared.potential_file,
-                *input_parameters.input_files(prepared.directory),
-            )
-            if file is not None
-        )
+        input_file, input_files = calculation.input_declarations
         auxiliary_outputs, cache_files = _run_cache_files(
-            input_parameters, prepared.directory, clear_cache=prepared.clear_cache,
+            input_parameters, calculation.directory, clear_cache=calculation.clear_cache,
         )
         output_files = tuple(
             file for file in (
-                prepared.output_file,
-                opened_error if opened_error is not prepared.output_file else None,
+                output_file,
+                error_path if error_path != output_file else None,
                 *auxiliary_outputs,
             ) if file is not None
         )
 
         spec = profile.create_execution(
             resolve_task_executable(task, input_parameters),
-            prepared.input_file,
-            prepared.output_file,
-            prepared.directory,
-            error_file=opened_error,
+            input_file,
+            output_file,
+            calculation.directory,
+            error_file=error_path,
             input_files=input_files,
             output_files=output_files,
             cache_files=cache_files,
             mpi_supported=task.mpi,
             gdb=gdb,
         )
+
+        def preprocess():
+            if materialize is not None:
+                materialize()
+            else:
+                calculation_resources.callback(close_calculation)
+                # The explicit prepared-calculation API can supply a still
+                # buffered input handle. Flush only under the reservation.
+                if not isinstance(calculation.input_file, (str, os.PathLike)):
+                    calculation.input_file.flush()
+                if calculation.output_file is not None and not isinstance(calculation.output_file, (str, os.PathLike)):
+                    calculation.output_file.close()  # Standalone prepare() may have returned an open OUT.
+            if error_file is not None and not isinstance(error_file, (bool, str, os.PathLike)):
+                error_file.close()
+            if temporary_error:
+                from pathlib import Path
+                error_resources.callback(Path(error_path).unlink, missing_ok=True)
 
         def flush_listeners():
             for listener in listeners:
@@ -528,33 +750,32 @@ def _create_sprkkr_run(
 
         def finalized(out):
             if out is not None:
-                if manager is not None:
+                if durable:
                     out.run_record = manager.store.get(runner.id)
                 else:
                     out.file_manifest = runner.files
             flush_listeners()
-            # Run owns and releases ExecutionResources after completion.
+            # Run has already released ExecutionResources before completion.
             if callback:
                 callback(out)
 
-        record_options = {}
-        if manager is not None:
-            record_options["metadata"] = {
-                **(dict(metadata) if metadata is not None else {}),
-                "ase2sprkkr": {
-                    "task": task.name,
-                    "input_definition": input_parameters.definition_name,
-                    "dataset": input_parameters.CONTROL.DATASET.result,
-                    "profile": profile.name,
-                },
-            }
+        record_options = {"metadata": {
+            **(dict(metadata) if metadata is not None else {}),
+            "ase2sprkkr": {
+                "task": task.name,
+                "input_definition": input_parameters.definition_name,
+                "dataset": input_parameters.CONTROL.DATASET.result,
+                "profile": profile.name,
+            },
+        }}
         runner = Run.create(
             executor, spec,
-            persistent=manager if manager is not None else False,
-            detached=(True if profile.detached and executor.backend.name == "direct" else None),
+            persistent=manager,
+            detached=detached,
             process_result=process_result,
             callback=finalized,
             owned_resources=resources,
+            preprocess=preprocess,
             **record_options,
         )
         handed_off = True

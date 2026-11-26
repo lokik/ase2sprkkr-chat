@@ -29,7 +29,7 @@ def test_named_ssh_profile_resolves_client_and_staging(monkeypatch):
             "backend": "psij", "psij_backend": "slurm",
             "local_root": "/home/user/work",
             "remote_root": "/scratch/user/work",
-            "ssh_options": ["-p", "2222"], "ssh_zstd": True,
+            "ssh_options": ["-p", "2222"], "ssh_compression": "gz",
             "remote_python": ["python3"],
             "input_sync": "missing", "output_sync": "always", "mpi": 16,
         },
@@ -41,7 +41,7 @@ def test_named_ssh_profile_resolves_client_and_staging(monkeypatch):
     assert profile.local_root == "/home/user/work"
     assert profile.remote_root == "/scratch/user/work"
     assert profile.ssh_options == ("-p", "2222")
-    assert profile.ssh_zstd is True
+    assert profile.ssh_compression == "gz"
     assert profile.remote_python == ("python3",)
     assert profile.input_sync == "missing"
     assert profile.output_sync == "always"
@@ -50,6 +50,7 @@ def test_named_ssh_profile_resolves_client_and_staging(monkeypatch):
     client = executor_from_profile(profile)
     assert isinstance(client, EndpointClient)
     assert isinstance(client.transport, SshTransport)
+    assert client.transport.compression == "gz"
     assert client.backend.name == "psij"
 
 
@@ -64,12 +65,12 @@ def test_ssh_profile_does_not_embed_staging_into_transport(tmp_path):
     profile = SPRKKRProfile(
         executor="ssh", host="user@cluster",
         local_root="/home/user/work", remote_root="/scratch/user/work",
-        ssh_options=("-p", "2222"), ssh_zstd=True,
+        ssh_options=("-p", "2222"), ssh_compression="xz",
         input_sync="missing", output_sync="always",
     )
     client = executor_from_profile(profile)
     assert client.transport == SshTransport(
-        "user@cluster", options=("-p", "2222"), zstd=True
+        "user@cluster", options=("-p", "2222"), compression="xz"
     )
     input_file = SimpleNamespace(name="/home/user/work/test.inp")
     spec = profile.create_execution(

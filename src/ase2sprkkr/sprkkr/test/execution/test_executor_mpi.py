@@ -30,3 +30,11 @@ def test_explicit_mpi_process_count_and_serial_selection(tmp_path):
     assert mpi.mpi.required
     assert serial.mpi == MpiSpec()
     assert serial.mpi_argv is None
+
+
+def test_mpi_preserves_input_subdirectory_for_planned_paths(tmp_path):
+    path = tmp_path / "subdir" / "test.inp"
+    profile = SPRKKRProfile(mpi=2)
+    for declaration in (path, str(path)):
+        spec = profile.create_execution("kkrscf", declaration, None, tmp_path, mpi_supported=True)
+        assert spec.mpi_argv == ("kkrscfMPI", "subdir/test.inp")
