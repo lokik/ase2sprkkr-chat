@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from kkrunner.files import FileOperations, FileVersion
+from kkrunner.files import FileEntry, FileManifest, FileOperations, FileVersion
 from ase2sprkkr.outputs import FileAttribution, ResultLoader
 from ase2sprkkr.outputs.task_result import TaskResult
 from kkrunner.runs import HistoricalFileMismatchError
@@ -113,8 +113,7 @@ def test_historical_hash_is_stronger_than_mtime_heuristic(tmp_path, monkeypatch)
         result = _SCF(None, None, tmp_path, output_file=path, task_name="SCF")
         if Path(path) == old:
             result.run_record = SimpleNamespace(
-                files=SimpleNamespace(captured_at="historical",
-                                      all_versions=(version,))
+                files=FileManifest(captured_at="historical", output_versions=(version,))
             )
         return result
 
@@ -257,8 +256,8 @@ def test_historical_missing_file_is_unknown_not_wrong_result(tmp_path, monkeypat
 
     def parse(_cls, path, *, on_files_parsed=None):
         result = _SCF(None, None, tmp_path, output_file=path, task_name="SCF")
-        result.run_record = SimpleNamespace(files=SimpleNamespace(
-            captured_at="historical", all_versions=(captured,),
+        result.run_record = SimpleNamespace(files=FileManifest(
+            captured_at="historical", output_versions=(captured,),
         ))
         return result
 
@@ -326,8 +325,8 @@ def test_historical_missing_potential_retains_recorded_version(tmp_path, monkeyp
     captured = FileVersion.capture(potential, require_digest=True)
     def parse(_cls, path, *, on_files_parsed=None):
         result = _SCF(None, None, tmp_path, output_file=path, task_name="SCF")
-        result.run_record = SimpleNamespace(files=SimpleNamespace(
-            captured_at="historical", all_versions=(captured,),
+        result.run_record = SimpleNamespace(files=FileManifest(
+            captured_at="historical", output_versions=(captured,),
         ))
         return result
     monkeypatch.setattr(TaskResult, "_parse_file", classmethod(parse))
@@ -353,11 +352,10 @@ def test_cached_unmatched_input_is_rediscovered_after_repair(tmp_path, monkeypat
 
     def parse_input(path):
         from ase2sprkkr.input_parameters.input_parameters import NativeInputError
-
         if inp.read_text() == "invalid input":
             raise NativeInputError("invalid input")
         from ase2sprkkr import InputParameters
-        return InputParameters.create("DOS")
+        return InputParameters.create("DOS"), loader.file_operations.fingerprint(path)
 
     monkeypatch.setattr(loader.inputs, "parse", parse_input)
     first = loader.load_file(output)
@@ -570,7 +568,7 @@ def test_native_input_changed_during_parse_is_not_cached(tmp_path, monkeypatch):
         "from_file",
         classmethod(lambda _cls, path: SimpleNamespace(task_name="SCF")),
     )
-    assert loader.inputs.parse(native_input).task_name == "SCF"
+    assert loader.inputs.parse(native_input)[0].task_name == "SCF"
 
 
 def test_file_index_refreshes_symlink_target_without_parent_change(tmp_path):
@@ -631,14 +629,14 @@ def test_native_input_cache_is_caller_scoped(tmp_path, monkeypatch):
         return SimpleNamespace(task_name="DOS", value=value)
 
     monkeypatch.setattr(module.input_parameters.InputParameters, "from_file", classmethod(parse))
-    assert loader.inputs.parse(native_input).value == "initial"
+    assert loader.inputs.parse(native_input)[0].value == "initial"
     native_input.write_text("modified")
     # This is an intentional cache: no automatic stat or parse on repeat.
-    assert loader.inputs.parse(native_input).value == "initial"
+    assert loader.inputs.parse(native_input)[0].value == "initial"
     assert parsed == ["initial"]
 
     loader.file_operations.invalidate()
-    assert loader.inputs.parse(native_input).value == "modified"
+    assert loader.inputs.parse(native_input)[0].value == "modified"
     assert parsed == ["initial", "modified"]
 
 
@@ -657,6 +655,157 @@ def test_run_record_without_available_manifest_never_adopts_scf_potential(tmp_pa
     option = result.files["converged"]
     assert option.attribution is FileAttribution.UNKNOWN
     assert not result.file_is_current(potential)
+
+
+def test_source_validation_shared_with_cache_detects_new_missing_file(tmp_path, monkeypatch):
+    output = _output(tmp_path / "dos.out", scf=False)
+    potential = tmp_path / "Fe.pot_new"
+    reads = []
+
+    def parse(_cls, path, *, on_files_parsed=None):
+        reads.append(path)
+        return _DOS(None, None, tmp_path, output_file=path, task_name="DOS")
+
+    monkeypatch.setattr(TaskResult, "_parse_file", classmethod(parse))
+    loader = ResultLoader()
+    first = loader.load_file(output)
+    assert ResultLoader().sources_are_current(first)
+    potential.write_text("now available")
+    assert not ResultLoader().sources_are_current(first)
+    loader.file_operations.invalidate()
+    second = loader.load_file(output)
+    assert second is not first
+    assert ResultLoader().sources_are_current(second)
+    assert len(reads) == 2
+
+
+def test_source_validation_detects_repaired_input_without_directory_change(tmp_path, monkeypatch):
+    output = _output(tmp_path / "dos.out", scf=False)
+    inp = tmp_path / "dos.inp"
+    inp.write_text("invalid input")
+    monkeypatch.setattr(TaskResult, "_parse_file", classmethod(
+        lambda _cls, path, **kwargs: TaskResult(None, None, tmp_path, output_file=path, task_name="DOS")
+    ))
+    loader = ResultLoader()
+    from ase2sprkkr.input_parameters.input_parameters import NativeInputError
+    monkeypatch.setattr(loader.inputs, "parse", lambda _: (_ for _ in ()).throw(NativeInputError("invalid input")))
+    result = loader.load_file(output)
+    assert ResultLoader().sources_are_current(result)
+    inp.write_text("different input parameters")
+    assert not ResultLoader().sources_are_current(result)
+
+
+def test_cached_scf_ownership_is_recomputed_only_on_fresh_import(tmp_path, monkeypatch):
+    (tmp_path / "Fe.pot_new").write_text("current potential")
+    output = _output(tmp_path / "first.out")
+    competitor = _output(tmp_path / "later.out", scf=False)
+    os.utime(output, ns=(1_000_000_000, 1_000_000_000))
+    os.utime(competitor, ns=(2_000_000_000, 2_000_000_000))
+    reads = []
+
+    def parse(_cls, path, **kwargs):
+        reads.append(path)
+        return _SCF(None, None, tmp_path, output_file=path, task_name="SCF")
+
+    monkeypatch.setattr(TaskResult, "_parse_file", classmethod(parse))
+    loader = ResultLoader()
+    first = loader.load_file(output)
+    assert first.files["converged"].attribution is FileAttribution.LIKELY
+    assert ResultLoader().sources_are_current(first)
+    directory_mtime = tmp_path.stat().st_mtime_ns
+    _output(competitor)
+    os.utime(competitor, ns=(3_000_000_000, 3_000_000_000))
+    assert tmp_path.stat().st_mtime_ns == directory_mtime
+    # The other OUT is not a source of this parsed result. A normal cache
+    # hit must not scan it again merely to update a heuristic.
+    assert ResultLoader().sources_are_current(first)
+    loader.file_operations.invalidate()
+    assert loader.load_file(output) is first
+    assert first.files["converged"].attribution is FileAttribution.LIKELY
+    assert len(reads) == 1
+
+    # A fresh import (also used by explicit GUI Refresh) redoes attribution.
+    second = ResultLoader().load_file(output)
+    assert second is not first
+    assert second.files["converged"].attribution is FileAttribution.NOT_THIS_RESULT
+    assert second.files["converged"].attributed_to == competitor
+    assert ResultLoader().sources_are_current(second)
+    assert len(reads) == 2
+
+
+def test_source_validation_allows_unchanged_unavailable_optional_file(tmp_path, monkeypatch):
+    from kkrunner.files import versions
+
+    output = _output(tmp_path / "dos.out", scf=False)
+    optional = tmp_path / "optional.pot"
+    optional.write_text("potential")
+    original_fingerprint = versions.file_fingerprint
+    original_is_file = FileOperations.is_file
+
+    def inaccessible(path):
+        if Path(path) == optional:
+            raise PermissionError(path)
+        return original_fingerprint(path)
+
+    def is_file(operations, path, **kwargs):
+        if Path(path) == optional:
+            raise PermissionError(path)
+        return original_is_file(operations, path, **kwargs)
+
+    monkeypatch.setattr(versions, "file_fingerprint", inaccessible)
+    monkeypatch.setattr(FileOperations, "is_file", is_file)
+    result = TaskResult(None, None, tmp_path, output_file=output, task_name="DOS")
+    result.files.add_file("potential", str(optional))
+    ResultLoader().associate_result(result)
+    assert ResultLoader().sources_are_current(result)
+
+    monkeypatch.setattr(versions, "file_fingerprint", original_fingerprint)
+    monkeypatch.setattr(FileOperations, "is_file", original_is_file)
+    assert not ResultLoader().sources_are_current(result)
+
+
+@pytest.mark.parametrize("explicit_input", (True, False))
+def test_input_rewrite_after_parse_cannot_adopt_new_version(tmp_path, monkeypatch, explicit_input):
+    from ase2sprkkr.outputs import result_loader as module
+
+    output = _output(tmp_path / "calc.out", scf=False)
+    native_input = tmp_path / "calc.inp"
+    native_input.write_text("original")
+    monkeypatch.setattr(
+        module.input_parameters.InputParameters, "from_file",
+        classmethod(lambda cls, path: module.input_parameters.InputParameters.create("DOS")),
+    )
+
+    def parse(_cls, path, *, on_files_parsed):
+        result = TaskResult(None, None, tmp_path, output_file=path,
+                            input_file=native_input if explicit_input else None, task_name="DOS")
+        on_files_parsed(result)
+        assert result.files["input"].observed_version is not None
+        native_input.write_text("replacement input")
+        return result
+
+    monkeypatch.setattr(TaskResult, "_parse_file", classmethod(parse))
+    with pytest.raises(RuntimeError, match="Native input changed after parsing"):
+        ResultLoader().load_file(output)
+
+
+@pytest.mark.parametrize("with_input", (False, True))
+def test_unrelated_directory_entry_does_not_invalidate_result(tmp_path, monkeypatch, with_input):
+    output = _output(tmp_path / "calc.out", scf=False)
+    inp = tmp_path / "calc.inp"
+    if with_input:
+        from ase2sprkkr import InputParameters
+        inp.write_text(InputParameters.create("DOS").to_string(validate=False))
+    monkeypatch.setattr(TaskResult, "_parse_file", classmethod(
+        lambda cls, path, **kwargs: TaskResult(None, None, tmp_path, output_file=path, task_name="DOS")
+    ))
+    loader = ResultLoader()
+    result = loader.load_file(output)
+    (tmp_path / "unrelated.dat").write_text("not a result source")
+    loader.file_operations.invalidate()
+    assert loader.load_file(output) is result
+    assert ResultLoader().sources_are_current(result)
+
 
 @pytest.mark.parametrize("error_type", (AttributeError, ValueError))
 def test_input_discovery_propagates_programming_errors(tmp_path, monkeypatch, error_type):
@@ -726,3 +875,68 @@ def test_invalid_native_input_remains_optional(tmp_path):
     result = TaskResult(None, None, tmp_path, output_file=output, task_name="DOS")
     assert ResultLoader().associate_result(result) is result
     assert "input" not in result.files
+
+
+def test_restored_historical_output_is_not_rehashed_on_cache_hit(tmp_path, monkeypatch):
+    from kkrunner.files import versions
+
+    output = _output(tmp_path / "calc.out", scf=False)
+    recorded = FileVersion.capture(output, require_digest=True)
+    data = output.read_bytes()
+    replacement = tmp_path / "replacement"
+    replacement.write_bytes(data)
+    replacement.replace(output)
+    result = TaskResult(None, None, tmp_path, output_file=output, task_name="DOS")
+    result.file_manifest = FileManifest(
+        stdout=FileEntry(str(output)), output_versions=(recorded,), captured_at="historical",
+    )
+    loader = ResultLoader()
+    loader.associate_result(result)
+    monkeypatch.setattr(versions, "file_digest", lambda path: pytest.fail("Cache hit hashed historical OUT"))
+    assert ResultLoader().sources_are_current(result)
+    output.write_text("changed")
+    assert not ResultLoader().sources_are_current(result)
+
+
+def test_historical_input_uses_manifest_even_when_missing(tmp_path, monkeypatch):
+    output = _output(tmp_path / "calc.out", scf=False)
+    original = tmp_path / "original.inp"
+    original.write_text("historical input")
+    captured = FileVersion.capture(original, require_digest=True)
+    original.unlink()
+    (tmp_path / "calc.inp").write_text("unrelated input")
+    result = TaskResult(None, None, tmp_path, output_file=output, task_name="DOS")
+    result.file_manifest = FileManifest(
+        inputs=(FileEntry(str(original)),), input_versions=(captured,), captured_at="historical",
+    )
+    loader = ResultLoader()
+    monkeypatch.setattr(loader, "_directory", lambda path: pytest.fail("Historical input discovery scanned directory"))
+    loader.associate_result(result)
+    assert Path(result.path_to("input")) == original
+    assert result.input_parameters is None
+
+
+@pytest.mark.parametrize("role", ("cache", "input", "output", "registered"))
+def test_historical_cache_files_only_invalidate_when_used_by_result(tmp_path, role):
+    output = _output(tmp_path / "calc.out", scf=False)
+    auxiliary = tmp_path / "auxiliary.dat"
+    auxiliary.write_text("original")
+    captured = FileVersion.capture(auxiliary, require_digest=True)
+    recorded = FileVersion.capture(output, require_digest=True)
+    result = TaskResult(None, None, tmp_path, output_file=output, task_name="DOS")
+    result.file_manifest = FileManifest(
+        stdout=FileEntry(str(output)),
+        input_versions=(captured,) if role == "input" else (),
+        output_versions=(recorded, captured) if role == "output" else (recorded,),
+        cache_versions=(captured,),
+        captured_at="historical",
+    )
+    if role == "registered":
+        result.files.add_file("auxiliary", str(auxiliary))
+
+    ResultLoader().associate_result(result)
+    assert ResultLoader().sources_are_current(result)
+    auxiliary.write_text("changed auxiliary data")
+    assert ResultLoader().sources_are_current(result) == (role == "cache")
+    auxiliary.unlink()
+    assert ResultLoader().sources_are_current(result) == (role == "cache")

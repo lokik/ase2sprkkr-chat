@@ -15,7 +15,7 @@ import stat as stat_module
 from pathlib import Path
 from typing import Iterable
 
-from kkrunner.files import FileFingerprint, FileOperations
+from kkrunner.files import FileFingerprint, FileOperations, FileVersion
 
 from ..input_parameters import input_parameters as input_parameters
 from ..input_parameters.input_parameters import NATIVE_INPUT_ERRORS
@@ -51,6 +51,13 @@ class _DirectoryIndex:
     version: FileFingerprint
     outputs: tuple[Path, ...]
     inputs: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _ResultSources:
+    """Small observation snapshot, retained without retaining the loader."""
+    files: tuple[FileVersion, ...]
+    input_candidates: tuple | None = None
 
 
 @dataclass(frozen=True)
@@ -98,8 +105,10 @@ class _NativeInputCache:
                 raise parameters
         # Parameters are mutable; every result receives its own detached copy.
         if isinstance(parameters, input_parameters.InputParameters):
-            return parameters.copy(copy_values=True)
-        return deepcopy(parameters)
+            parameters = parameters.copy(copy_values=True)
+        else:
+            parameters = deepcopy(parameters)
+        return parameters, identity
 
 
 class ResultLoader:
@@ -219,6 +228,15 @@ class ResultLoader:
         The result retains only a registered file and independent parameters,
         never a reference back to the loader or its caches.
         """
+        manifest = result_file_manifest(result)
+        if manifest is not None or result.run_record is not None:
+            # A tracked run has exactly one authoritative native input.
+            # Do not search the directory when it is missing or overwritten.
+            filename = manifest.input_file if manifest is not None else None
+            if filename is None:
+                return
+            if "input" not in result.files or result.path_to("input") != os.fspath(filename):
+                result.files.add_file("input", filename)
         if "input" in result.files:
             # A file named by the stdout or by the run is authoritative.
             filename = result.path_to("input")
@@ -226,13 +244,16 @@ class ResultLoader:
                     and result.__dict__.get("input_parameters") is None
                     and result.file_is_current(filename)):
                 try:
-                    parameters = self.inputs.parse(filename)
+                    parameters, identity = self.inputs.parse(filename)
                 except _INPUT_DISCOVERY_ERRORS:
                     # An invalid explicitly named input remains registered so
                     # a later request can report its actual parse error.
                     pass
                 else:
                     result.input_parameters = parameters
+                    result.files["input"].set_attribution(
+                        FileAttribution.LIKELY, observed_version=FileVersion(filename, identity),
+                    )
                     return True
             return
         if result._input_parameters is not None:
@@ -259,7 +280,7 @@ class ResultLoader:
             if not result.file_is_current(filename):
                 continue
             try:
-                parameters = self.inputs.parse(filename)
+                parameters, identity = self.inputs.parse(filename)
             except _INPUT_DISCOVERY_ERRORS:
                 continue
             if (result._task_name is not None
@@ -267,6 +288,9 @@ class ResultLoader:
                 continue
             result.input_parameters = parameters
             result.files.add_file("input", filename)
+            result.files["input"].set_attribution(
+                FileAttribution.LIKELY, observed_version=FileVersion(filename, identity),
+            )
             return True
 
     def _prepare_input(self, result):
@@ -308,19 +332,24 @@ class ResultLoader:
         self._expected_files(result)
         historical = (result_file_manifest(result) is not None
                       or result.run_record is not None)
+        sources = {}
         for name, item in result.files.items().items():
             try:
-                path = Path(item.path()).expanduser().resolve()
+                path = Path(item.path()).expanduser().absolute()
             except (OSError, ValueError):
                 continue
             recorded = result_file_version(result, path) if historical else None
-            observed = None
-            try:
-                version = self.file_operations.capture_version(path, digest=False)
-                if version.fingerprint is not None and stat_module.S_ISREG(version.fingerprint.mode):
-                    observed = version
-            except OSError:
-                pass
+            if name == "input" and item.observed_version is not None:
+                # The input parser has already established the identity of
+                # the actual bytes used to construct the parameters.
+                observed = item.observed_version
+                if not observed.is_current():
+                    raise _FileChangedDuringReadError(f"Native input changed after parsing: {path}")
+            else:
+                observed = self._observe_source(path)
+            sources[path] = observed
+            if observed.fingerprint is None:
+                observed = None
             if recorded is not None:
                 # Record evidence only; OutputFileOption evaluates its state
                 # once at the point where it is needed.
@@ -335,32 +364,88 @@ class ResultLoader:
             item.set_attribution(status, recorded_version=recorded,
                                  observed_version=observed, evidence=evidence)
 
+        manifest = result_file_manifest(result)
+        if manifest is not None:
+            # A missing historical input/output may not have been registered
+            # by the parser. Its restoration matters, but execution caches
+            # alone are not result sources. Explicit result files (including
+            # e.g. SCF's SFN) are already observed above.
+            for version in (*manifest.input_versions, *manifest.output_versions):
+                if version.kind == "file" and version.path not in sources:
+                    sources[version.path] = self._observe_source(version.path)
+        input_candidates = None
+        if not historical and "input" not in result.files and result._input_parameters is None:
+            input_candidates = self._input_candidate_versions(Path(result.directory).resolve())
+        recorded_output = result.files["output"].recorded_version
+        # The recorded digest may require a full read after restoration.
+        # Establish historical identity here, never on a cache hit.
+        result._source_snapshot = (
+            _ResultSources(tuple(sources.values()), input_candidates)
+            if recorded_output is None or recorded_output.is_current() else None
+        )
+        if not historical:
+            attribution = self._scf_attribution(result, output)
+            if attribution is not None:
+                status, evidence, owner = attribution
+                item = result.files["converged"]
+                item.set_attribution(status, evidence=evidence, attributed_to=owner,
+                                     observed_version=item.observed_version)
+
+    def _scf_attribution(self, result, output):
+        """Infer standalone SCF ownership without changing a parsed result."""
         if not result.produces_potential or "converged" not in result.files:
-            return
+            return None
         item = result.files["converged"]
-        if historical or item.observed_version is None:
-            # Historical run evidence is authoritative; standalone SCF
-            # heuristics need an observed physical potential. Do not compute
-            # a redundant FileVersion.state() to make this decision.
-            return
+        if item.observed_version is None:
+            return None
         target = Path(item.path()).resolve()
         candidates = set(self.scf_claims(output.parent, target))
         candidates.add(output)
         if len(candidates) <= 1:
-            return
+            return FileAttribution.LIKELY, "output_or_input_reference", None
         newest = self._newest(candidates)
         if newest is None:
-            item.set_attribution(FileAttribution.UNKNOWN,
-                                 observed_version=item.observed_version,
-                                 evidence="scf_mtime_tie_or_unreadable")
-        elif newest != output:
-            item.set_attribution(FileAttribution.NOT_THIS_RESULT,
-                                 observed_version=item.observed_version,
-                                 evidence="newer_scf_stdout", attributed_to=newest)
-        else:
-            item.set_attribution(FileAttribution.LIKELY,
-                                 observed_version=item.observed_version,
-                                 evidence="newest_scf_stdout")
+            return FileAttribution.UNKNOWN, "scf_mtime_tie_or_unreadable", None
+        if newest != output:
+            return FileAttribution.NOT_THIS_RESULT, "newer_scf_stdout", newest
+        return FileAttribution.LIKELY, "newest_scf_stdout", None
+
+    def _observe_source(self, path):
+        version = self.file_operations.capture_version(path, digest=False)
+        if version.fingerprint is not None and not stat_module.S_ISREG(version.fingerprint.mode):
+            return FileVersion(path, None)
+        return version
+
+    @_file_batch
+    def sources_are_current(self, result: TaskResult) -> bool:
+        """Whether the source observations of a parsed result still hold.
+
+        An unassociated/live result has no source snapshot. Missing optional
+        files are valid observations, but their later appearance invalidates
+        the parse just as a rewrite of an existing file does.
+        Discovery of additional outputs and SCF ownership runs when importing
+        a new result, not when checking already parsed sources.
+        """
+        snapshot = result._source_snapshot
+        if snapshot is None or "output" not in result.files:
+            return False
+        if result.files["output"].observed_version is None:
+            return False
+        try:
+            for version in snapshot.files:
+                if version.fingerprint is None:
+                    # Use the same best-effort observation as association.
+                    # An optional inaccessible file must not invalidate OUT.
+                    if self._observe_source(version.path).fingerprint is not None:
+                        return False
+                elif not version.is_current():
+                    return False
+            if (snapshot.input_candidates is not None
+                    and self._input_candidate_versions(Path(result.directory).resolve()) != snapshot.input_candidates):
+                return False
+            return True
+        except OSError:
+            return False
 
     @_file_batch
     def associate_result(self, result: TaskResult) -> TaskResult:
@@ -372,7 +457,13 @@ class ResultLoader:
     def _input_candidate_versions(self, directory):
         """Fingerprint unresolved input candidates without parsing them."""
         versions = []
-        for name in self._directory(directory).inputs:
+        index = self._directories.get(directory)
+        names = (index.inputs if index is not None else (
+            str(directory / name) for name in self.file_operations.listdir(directory)
+            if Path(name).suffix.casefold() in {".inp", ".in"}
+            and self.file_operations.is_file(directory / name)
+        ))
+        for name in sorted(names):
             try:
                 versions.append((name, self.file_operations.fingerprint(name)))
             except OSError:
@@ -384,43 +475,16 @@ class ResultLoader:
         path = Path(file).expanduser().resolve()
         version = self.file_operations.fingerprint(path)
         cached = self._outputs.get(path)
-        directory_version = self._directory(path.parent).version
-        same_sources = False
-        if cached is not None and cached[0] == version and cached[2] == directory_version:
-            result = cached[1]
-            input_file = result.files["input"] if "input" in result.files else None
-            observed = input_file.observed_version if input_file is not None else None
-            if observed is not None:
-                same_sources = observed.is_current()
-            elif input_file is None:
-                # Failed or ambiguous input discovery can become resolvable
-                # without changing the directory mtime (in-place INP edit).
-                same_sources = cached[3] == self._input_candidate_versions(path.parent)
-            if same_sources:
-                # Not just INPUT: a parsed result may already cache its
-                # POTFIL or auxiliary data. If those bytes changed, reuse of
-                # the TaskResult object would return stale cached properties.
-                for item in result.files.items().values():
-                    observed_file = item.observed_version
-                    if (observed_file is not None
-                            and not observed_file.is_current()):
-                        same_sources = False
-                        break
+        if cached is not None and self.sources_are_current(cached):
+            return cached
 
-        if not same_sources:
-            result = TaskResult._parse_file(path, on_files_parsed=self._prepare_input)
-            if self.file_operations.fingerprint(path, refresh=True) != version:
-                raise _FileChangedDuringReadError(f"Output changed during parsing: {path}")
+        result = TaskResult._parse_file(path, on_files_parsed=self._prepare_input)
+        if self.file_operations.fingerprint(path, refresh=True) != version:
+            raise _FileChangedDuringReadError(f"Output changed during parsing: {path}")
         self._associate(result, path)
         if self.file_operations.fingerprint(path, refresh=True) != version:
             raise _FileChangedDuringReadError(f"Output changed during association: {path}")
-        if not same_sources:
-            input_signature = (
-                self._input_candidate_versions(path.parent)
-                if "input" not in result.files else None
-            )
-            # Commit the parsed result to the cache only after association.
-            self._outputs[path] = (version, result, directory_version, input_signature)
+        self._outputs[path] = result
         return result
 
     @_file_batch

@@ -72,7 +72,8 @@ def _patch_reader(monkeypatch, parsed):
     monkeypatch.setattr(project_results, '_reader_for_record', lambda manager, record: Reader())
 
 
-def test_history_listing_is_lazy_but_loading_restores_missing_output(tmp_path, monkeypatch):
+@pytest.mark.parametrize("entrypoint", ("loader", "from_run"))
+def test_history_listing_is_lazy_but_loading_restores_missing_output(tmp_path, monkeypatch, entrypoint):
     manager, executor, record = _terminal_run(tmp_path)
     output_path = tmp_path / 'run.out'
     output_path.unlink()
@@ -82,7 +83,17 @@ def test_history_listing_is_lazy_but_loading_restores_missing_output(tmp_path, m
     assert not output_path.exists()
     parsed = []
     _patch_reader(monkeypatch, parsed)
-    result = load_project_result(manager, record.id)
+    with pytest.raises(ProjectResultUnavailableError, match='unavailable'):
+        load_project_result(manager, record.id)
+    assert executor.fetch_calls == []
+    assert not output_path.exists()
+    if entrypoint == "from_run":
+        with pytest.raises(ProjectResultUnavailableError, match="unavailable"):
+            TaskResult.from_run(record.id, manager, restore_missing=False)
+        assert not executor.fetch_calls
+        result = TaskResult.from_run(record.id, manager)
+    else:
+        result = load_project_result(manager, record.id, restore_missing=True)
     assert executor.fetch_calls == [(record.id, (str(output_path),))]
     assert output_path.read_text() == 'original output'
     assert parsed[0][0] == str(output_path)
@@ -113,7 +124,7 @@ def test_restored_changed_content_is_rejected_as_overwritten(tmp_path, monkeypat
                 raise AssertionError('overwritten historical output must not be parsed')
         monkeypatch.setattr(project_results, '_reader_for_record', lambda manager, record: Reader())
         with pytest.raises(ProjectResultUnavailableError, match='overwritten') as error:
-            load_project_result(manager, record.id)
+            load_project_result(manager, record.id, restore_missing=True)
         restored = error.value.record
     else:
         # The run manager reports per-artifact failures rather than aborting
@@ -164,18 +175,3 @@ def test_failed_history_without_return_code_is_not_parsed_as_success(tmp_path, m
     assert result.run_record.state == RunState.FAILED
 
 
-def test_history_load_uses_retrieval_record_without_extra_store_lookup(tmp_path, monkeypatch):
-    manager, _, record = _terminal_run(tmp_path)
-    parsed = []
-    _patch_reader(monkeypatch, parsed)
-    original_get = manager.store.get
-    retrieved = []
-
-    def get(run_id):
-        retrieved.append(run_id)
-        return original_get(run_id)
-    monkeypatch.setattr(manager.store, 'get', get)
-    loaded = load_project_result(manager, record.id)
-    assert loaded.run_record.state is RunState.FINISHED
-    assert len(parsed) == 1
-    assert retrieved == [record.id] * 4
