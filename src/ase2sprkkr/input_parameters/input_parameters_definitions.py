@@ -20,7 +20,7 @@ from ..common.grammar_types import mixed, flag
 from ..common.grammar import generate_grammar, delimitedList
 from ..common.decorators import cached_class_property, cache, maybeclassmethod
 from ..common.file_utils import filename_from_file
-from .input_parameters import InputParameters, InputSection, InputValue
+from .input_parameters import InputParameters, InputSection, InputValue, NativeInputError
 
 with generate_grammar():
     section_line_ends = pp.Regex("(\n[ \t]*)*[ \t]")
@@ -42,14 +42,14 @@ def _read_input_text(file):
     if isinstance(content, str):
         data = content.encode("utf-8")
         if len(data) > MAX_INPUT_FILE_SIZE:
-            raise ValueError(
+            raise NativeInputError(
                 f"SPR-KKR input exceeds {MAX_INPUT_FILE_SIZE} bytes"
             )
         return content
     if not isinstance(content, bytes):
         raise TypeError("Input stream must return str or bytes")
     if len(content) > MAX_INPUT_FILE_SIZE:
-        raise ValueError(
+        raise NativeInputError(
             f"SPR-KKR input exceeds {MAX_INPUT_FILE_SIZE} bytes"
         )
     return content.decode("utf-8")
@@ -259,7 +259,7 @@ def _read_selected_definitions(text, selectors, *, filename=None,
     for selector in selectors:
         selector = str(selector).upper()
         if selector not in mapping:
-            raise ValueError(f"Unknown TASK selector: {selector}")
+            raise NativeInputError(f"Unknown TASK selector: {selector}")
         for ipd in mapping[selector]:
             if all(ipd is not candidate for candidate in candidates):
                 candidates.append(ipd)
@@ -289,16 +289,16 @@ def _read_selected_definitions(text, selectors, *, filename=None,
         return successful[0][1]
     if len(successful) > 1:
         names = ", ".join(definition.name for definition, _ in successful)
-        raise ValueError(f"Ambiguous TASK selectors, multiple IPDs accept input: {names}")
+        raise NativeInputError(f"Ambiguous TASK selectors, multiple IPDs accept input: {names}")
     if failures:
         details = "\n".join(
             f"  {definition.name}: {type(error).__name__}: {error}"
             for definition, error in failures
         )
-        raise ValueError(
+        raise NativeInputError(
             f"No selected IPD can parse the input:\n{details}"
         ) from failures[-1][1]
-    raise ValueError("No input-parameter definition selected")
+    raise NativeInputError("No input-parameter definition selected")
 
 
 class InputValueDefinition(ConfigurationValueDefinition):
@@ -401,7 +401,7 @@ class InputParametersDefinition(ConfigurationFileDefinition):
         selectors = _scan_task_selectors(text, _task_selector_map())
         if not selectors:
             if allow_incomplete:
-                raise ValueError("Cannot autodetect incomplete input without TASK selector; supply an explicit definition or task")
+                raise NativeInputError("Cannot autodetect incomplete input without TASK selector; supply an explicit definition or task")
             selectors = ("SCF",)
         return _read_selected_definitions(
             text, selectors, filename=filename,

@@ -10,6 +10,10 @@ from ..input_parameters import input_parameters as input_parameters
 from .result_options import OutputFileOption, create_files_section
 
 
+class MissingPotentialError(ValueError):
+    """No required potential filename is available in this result's input or OUT."""
+
+
 class OutputMatch(Enum):
     """Strength of a reader's legacy fingerprint (when TASK is not explicit).
 
@@ -121,7 +125,7 @@ class TaskResult:
         parameters = self.input_parameters
         filename = parameters.CONTROL.POTFIL() if parameters is not None else None
         if not filename:
-            raise ValueError("An embedded calculation needs a host POTFIL")
+            raise MissingPotentialError("An embedded calculation needs a host POTFIL")
         return os.path.join(self.directory, os.fspath(filename))
 
     @cached_property
@@ -145,11 +149,11 @@ class TaskResult:
         if self.is_embedded:
             potfil = parameters.CONTROL.POTFIL_CLU()
             if not potfil:
-                raise ValueError("Embedded results require CONTROL.POTFIL_CLU")
+                raise MissingPotentialError("Embedded results require CONTROL.POTFIL_CLU")
         if not potfil:
             potfil = self.files["potential"]() if "potential" in self.files else None
         if not potfil:
-            raise ValueError("Please set CONTROL.POTFIL of the input_parameters to read the potential")
+            raise MissingPotentialError("Please set CONTROL.POTFIL of the input_parameters to read the potential")
         if self.directory:
             potfil = os.path.join(self.directory, potfil)
         return potfil
@@ -548,7 +552,7 @@ class KkrOutputReader:
         return result
 
     @maybeclassmethod
-    def read_from_file(self, cls, output, error=None, return_code=0, input_file=None, directory=None, *, run_record=None, on_files_parsed=None):
+    def read_from_file(self, cls, output, error=None, return_code=None, input_file=None, directory=None, *, run_record=None, on_files_parsed=None):
         """Parse output of an already finished SPR-KKR calculation."""
         if self is None:
             self = cls(None, None, directory)

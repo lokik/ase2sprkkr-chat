@@ -20,9 +20,9 @@ _grammar_defaults = None
 
 @contextmanager
 def generate_grammar():
-    """Share SPRKKR parser defaults until the last grammar builder exits.
+    """Share SPRKKR parser defaults during construction and pooled parsing.
 
-    Only entry and exit are synchronized; grammar construction can overlap.
+    Only entry and exit are synchronized; construction and parsing overlap.
     Other pyparsing users must not rely on independent global defaults while
     this context is active.
     """
@@ -86,29 +86,31 @@ class GrammarPool:
         self._lock = Lock()
 
     @contextmanager
-    def acquire(self):
+    def acquire(self, *, parse_all=False):
         with self._lock:
             entry = self._available.pop() if self._available else None
-        if entry is None:
-            with grammar_build() as resets:
-                grammar = self._factory()
-            entry = grammar, resets
-        grammar, resets = entry
-        try:
-            yield grammar
-        finally:
-            for reset in resets:
-                reset()
-            with self._lock:
-                self._available.append(entry)
+        with generate_grammar():
+            if entry is None:
+                with grammar_build() as resets:
+                    grammar = self._factory()
+                    complete = _complete_grammar(grammar)
+                entry = grammar, complete, resets
+            grammar, complete, resets = entry
+            try:
+                yield complete if parse_all else grammar
+            finally:
+                for reset in resets:
+                    reset()
+                with self._lock:
+                    self._available.append(entry)
 
-    def parse_string(self, *args, **kwargs):
-        with self.acquire() as grammar:
-            return grammar.parse_string(*args, **kwargs)
+    def parse_string(self, string, parse_all=False):
+        with self.acquire(parse_all=parse_all) as grammar:
+            return grammar.parse_string(string)
 
-    def parse_file(self, *args, **kwargs):
-        with self.acquire() as grammar:
-            return grammar.parse_file(*args, **kwargs)
+    def parse_file(self, file, encoding="utf-8", parse_all=False):
+        with self.acquire(parse_all=parse_all) as grammar:
+            return grammar.parse_file(file, encoding=encoding)
 
 
 def replace_whitechars(expr):
@@ -248,6 +250,22 @@ class Transparent(pp.ParseElementEnhance):
 
     def __str__(self):
         return f"{self.__class__.__name__}({self.expr})"
+
+def _complete_grammar(grammar):
+    """Match the whole input with an explicit, fixed trailing-whitespace rule.
+
+    pyparsing's parse_all=True constructs a fresh StringEnd during parsing,
+    so its behavior otherwise depends on the current global defaults.
+    """
+    end = pp.StringEnd().set_whitespace_chars(" \t\r\n")
+    for ignored in grammar.ignoreExprs:
+        end.ignore(ignored)
+    # Let the original grammar do its own initial preParse, as usual.
+    complete = pp.And([Transparent(grammar), end]).leave_whitespace(recursive=False)
+    if grammar.keepTabs:
+        complete.parse_with_tabs()
+    return complete
+
 
 class Suppress(Transparent):
 

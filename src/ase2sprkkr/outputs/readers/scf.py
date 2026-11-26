@@ -612,8 +612,8 @@ class ScfOutputParser(SprKkrOutputParser):
 
             result.iterations = iterations
 
-        except EOFError:
-            raise Exception("The output ends unexpectedly")
+        except EOFError as exc:
+            raise EOFError("The output ends unexpectedly") from exc
 
 
 class ScfProgressParser(ScfOutputParser):

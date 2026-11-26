@@ -74,7 +74,7 @@ def task_file_declarations(result, *, kinds=("input", "cache", "output")):
     These declarations are expectations, not evidence that a particular output
     was written by the run. Keep the parser's observed file registry separate.
     """
-    from ..input_parameters.input_parameters import InputParameters, NATIVE_INPUT_ERRORS
+    from ..input_parameters.input_parameters import InputParameters, NATIVE_INPUT_ERRORS, TaskSchemaError
 
     try:
         parameters = result.input_parameters
@@ -91,7 +91,7 @@ def task_file_declarations(result, *, kinds=("input", "cache", "output")):
     # declarations. Keep observed output files available independently.
     try:
         parameters.task_definition_required()
-    except RuntimeError:
+    except TaskSchemaError:
         return parameters, ()
     directory = str(result.directory)
     declarations = tuple(

@@ -225,3 +225,11 @@ def test_historical_auxiliary_actions_require_original_file(tmp_path, auxiliary_
         with pytest.raises(HistoricalFileMismatchError):
             option.copy_to(destination)
         assert not destination.exists()
+
+def test_standalone_output_does_not_invent_an_exit_status():
+    from pathlib import Path
+    from ase2sprkkr.outputs.task_result import TaskResult
+
+    output = Path(__file__).parents[1] / "examples" / "Al_SCF.out"
+    result = TaskResult.from_file(output)
+    assert result.return_code is None

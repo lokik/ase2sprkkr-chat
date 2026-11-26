@@ -127,9 +127,9 @@ class Array(GrammarType):
         if self.write_length:
             grammar = pp.Word(pp.nums).set_parse_action(lambda t: int(t[0])) + pp.ZeroOrMore(delimiter + grammar)
 
-            def check(x):
+            def check(s, loc, x):
                 if len(x) != x[0] + 1:
-                    raise ValueError("Wrong number of list items")
+                    raise pp.ParseException(s, loc, "Wrong number of list items")
                 return x[1:]
 
             grammar.set_parse_action(check)
@@ -707,12 +707,12 @@ class Table(GrammarType):
         grammar = delimitedList(line, line_end)
 
         if self.group_size:
-
-            def set_g_size(x):
-                grp_size.group_size = x[0]
-
-            grp_size = Unsigned.I.grammar().copy().set_parse_action(set_g_size)
-            grammar = pp.Suppress(pp.CaselessKeyword(self.group_size) + grp_size + "\n") + grammar
+            # Keep the header value in this parse's tokens, not on a shared
+            # grammar element. The grouping action consumes it below.
+            grp_size = Unsigned.I.grammar().copy().add_condition(
+                lambda x: x[0] > 0, message="Group size must be positive"
+            )
+            grammar = pp.Suppress(pp.CaselessKeyword(self.group_size)) + grp_size + pp.Suppress("\n") + grammar
 
         if self.header:
             if self.free_header:
@@ -748,17 +748,18 @@ class Table(GrammarType):
             return tabelize(datas)
 
         def data_grouping(s, loc, data):
-
+            group_size = data[0]
+            data = data[1:]
             out = []
             curr = []
             c = 0
-            if len(data) % (2 * grp_size.group_size):
+            if len(data) % (2 * group_size):
                 raise pp.ParseException(
-                    s, loc, f"The data in the table should be grouped by groups of length {grp_size.group_size}."
+                    s, loc, f"The data in the table should be grouped by groups of length {group_size}."
                 )
             for i in range(0, len(data), 2):
                 c += 1
-                if c > grp_size.group_size:
+                if c > group_size:
                     out.append(tabelize(curr))
                     curr = []
                     c = 1
@@ -767,7 +768,7 @@ class Table(GrammarType):
                         s,
                         loc,
                         "The value in the first column should "
-                        "be a row numbering within a group of a length {grp_size.group_size}."
+                        "be a row numbering within a group of a length {group_size}."
                         f"{data[i]} encountered, {c} expected.",
                     )
                 curr.append(data[i + 1])
@@ -778,6 +779,9 @@ class Table(GrammarType):
                 return np.asarray(out, dtype=self._numpy_type)
 
         def data_numbering_grouping(s, loc, data):
+            if self.group_size:
+                group_size = data[0]
+                data = data[1:]
             if len(data) == 0:
                 return data
 
@@ -817,11 +821,11 @@ class Table(GrammarType):
             out.append(tabelize(curr))
             if self.group_size:
                 for i, g in enumerate(out):
-                    if len(g) != grp_size.group_size:
+                    if len(g) != group_size:
                         raise pp.ParseException(
                             s,
                             loc,
-                            f"The group {i // 3 + 1} should have {grp_size.group_size} members, it has {len(g)}.",
+                            f"The group {i // 3 + 1} should have {group_size} members, it has {len(g)}.",
                         )
             if self.groups_as_list:
                 return [out]

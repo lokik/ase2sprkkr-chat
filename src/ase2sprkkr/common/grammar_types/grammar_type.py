@@ -173,17 +173,18 @@ class GrammarType:
 
     def grammar(self, param_name: str = False):
         """Return a pyparsing grammar for the named value."""
-        # A compiled definition must own its type grammars as well: tables,
-        # dynamic data and parse-action closures can carry parser state.
+        # A compiled definition must own the wrappers and dynamic data
+        # grammars built in its construction context. Static token grammars
+        # can still be shared.
         if grammar_build_active():
-            return self._build_grammar(param_name)
+            return self._compile_grammar(param_name)
         return self._cached_grammar(param_name)
 
     @cache
     def _cached_grammar(self, param_name):
-        return self._build_grammar(param_name)
+        return self._compile_grammar(param_name)
 
-    def _build_grammar(self, param_name):
+    def _compile_grammar(self, param_name):
         """Return a pyparsing grammar for the type
 
         Parameters

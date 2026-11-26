@@ -21,9 +21,17 @@ from ..common.warnings import DataValidityError
 from ..potentials.potentials import Potential
 from ..sprkkr.embedding import EMBEDDING_HOST, host_atoms
 
-# Failures expected while reading external native input, not arbitrary
-# exceptions from the caller or from registry/definition implementation.
-NATIVE_INPUT_ERRORS = (OSError, UnicodeError, ValueError, pp.ParseBaseException, DataValidityError)
+class NativeInputError(ValueError):
+    """External native input cannot be interpreted as a known input format."""
+
+
+class TaskSchemaError(RuntimeError):
+    """The input parameters have no matching runtime task/schema association."""
+
+
+# Errors that make optional external input unavailable, not arbitrary
+# ValueError or RuntimeError from definition implementations.
+NATIVE_INPUT_ERRORS = (OSError, UnicodeError, NativeInputError, pp.ParseBaseException, DataValidityError)
 
 
 class _LazyInputParametersDefinitions(Mapping):
@@ -129,13 +137,13 @@ class InputParameters(ConfigurationFile):
         """Return the task represented by the current values, failing if detached."""
         task = self.task_definition
         if task is None:
-            raise RuntimeError(
+            raise TaskSchemaError(
                 "These input parameters are not associated with an SPR-KKR task definition"
             )
         expected = self.input_parameters_registry.definition_for_task(task)
         if (expected is not self._definition
                 and expected.name.upper() != self._definition.derived_from_name.upper()):
-            raise RuntimeError(
+            raise TaskSchemaError(
                 f"Task {task.name} uses a different input schema; "
                 "use change_task() to switch schemas explicitly."
             )

@@ -96,3 +96,43 @@ def test_grammar_pool_resets_mutable_parse_state_on_every_return():
     with pytest.raises(pp.ParseBaseException):
         pool.parse_string("2", parse_all=True)
     assert pool.parse_string("3:3", parse_all=True).as_list() == ["3", ":", "3"]
+
+def test_pool_full_parse_accepts_trailing_whitespace_with_active_builder(tmp_path):
+    pool = GrammarPool(lambda: pp.Literal("x"))
+    file = tmp_path / "input"
+    file.write_text("x\n")
+    assert pool.parse_string("x\n", parse_all=True).as_list() == ["x"]
+    with generate_grammar():
+        assert pool.parse_string("x\n", parse_all=True).as_list() == ["x"]
+        assert pool.parse_file(file, parse_all=True).as_list() == ["x"]
+        assert pool.parse_string("x y").as_list() == ["x"]
+        with pytest.raises(pp.ParseBaseException):
+            pool.parse_string("x y", parse_all=True)
+
+
+def test_pooled_parse_keeps_defaults_when_another_builder_exits():
+    original = parser_defaults()
+    builder_entered, parsing, builder_exited = Event(), Event(), Event()
+
+    def build():
+        with generate_grammar():
+            builder_entered.set()
+            assert parsing.wait(5)
+        builder_exited.set()
+
+    def factory():
+        def check_during_parse():
+            assert builder_entered.is_set()
+            parsing.set()
+            assert builder_exited.wait(5)
+            assert parser_defaults()[0] == " \t\r"
+        return pp.Literal("x").set_parse_action(check_during_parse)
+
+    pool = GrammarPool(factory)
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        builder = workers.submit(build)
+        assert builder_entered.wait(5)
+        parser = workers.submit(pool.parse_string, "x\n", True)
+        assert parser.result(timeout=15).as_list() == ["x"]
+        builder.result(timeout=15)
+    assert parser_defaults() == original

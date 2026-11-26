@@ -619,3 +619,35 @@ def test_numpy_array_trivial_parsing_requires_supported_configuration():
         gt.NumpyArray(float, delimiter=10, trivial_parsing=True)
     with pytest.raises(ValueError, match="exactly one numeric dtype"):
         gt.NumpyArray(dtypes=[float, int], trivial_parsing=True)
+
+def test_grouped_table_can_be_parsed_concurrently():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, local
+
+    barrier = Barrier(2)
+    seen = local()
+
+    def row_condition(value):
+        # Both parses have consumed their distinct group-size headers
+        # when they reach the first row.
+        if value[0] == 1 and not getattr(seen, "waited", False):
+            seen.waited = True
+            barrier.wait(timeout=5)
+        return True
+
+    with generate_grammar():
+        table = gt.Table(X=int, grouping=True, group_size="GSIZE",
+                         row_condition=row_condition)
+        grammar = table.grammar()
+
+    def parse(size):
+        text = f"X\nGSIZE {size}\n" + "\n".join(
+            f"{i} {i}" for i in range(1, size + 1)
+        )
+        return grammar.parse_string(text, parse_all=True)[0]
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        first = workers.submit(parse, 2)
+        second = workers.submit(parse, 3)
+        assert first.result(timeout=15).shape[1] == 2
+        assert second.result(timeout=15).shape[1] == 3

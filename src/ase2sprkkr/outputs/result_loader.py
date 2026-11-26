@@ -22,7 +22,8 @@ from ..input_parameters.input_parameters import NATIVE_INPUT_ERRORS
 from .file_provenance import result_file_manifest, result_file_version
 from .output_detection import looks_like_scf_output
 from .result_options import FileAttribution
-from .task_result import TaskResult
+from .task_result import TaskResult, MissingPotentialError
+from ..common.process_output_reader import ProcessExitError
 
 
 class _FileChangedDuringReadError(RuntimeError):
@@ -30,7 +31,8 @@ class _FileChangedDuringReadError(RuntimeError):
 
 
 _INPUT_DISCOVERY_ERRORS = NATIVE_INPUT_ERRORS + (_FileChangedDuringReadError,)
-_COMPANION_READ_ERRORS = _INPUT_DISCOVERY_ERRORS + (EOFError,)
+_POTENTIAL_DISCOVERY_ERRORS = NATIVE_INPUT_ERRORS + (MissingPotentialError,)
+_COMPANION_READ_ERRORS = _INPUT_DISCOVERY_ERRORS + (EOFError, ProcessExitError)
 
 
 def _file_batch(method):
@@ -224,12 +226,14 @@ class ResultLoader:
                     and result.__dict__.get("input_parameters") is None
                     and result.file_is_current(filename)):
                 try:
-                    result.input_parameters = self.inputs.parse(filename)
-                    return True
+                    parameters = self.inputs.parse(filename)
                 except _INPUT_DISCOVERY_ERRORS:
                     # An invalid explicitly named input remains registered so
                     # a later request can report its actual parse error.
                     pass
+                else:
+                    result.input_parameters = parameters
+                    return True
             return
         if result._input_parameters is not None:
             return
@@ -286,7 +290,7 @@ class ResultLoader:
             )
         try:
             potential = result.potential_filename
-        except NATIVE_INPUT_ERRORS:
+        except _POTENTIAL_DISCOVERY_ERRORS:
             # No POTFIL or an invalid external input does not invalidate OUT.
             return
         if not potential:
@@ -443,7 +447,7 @@ class ResultLoader:
         try:
             source = Path(result.path_to("output")).resolve()
             potential = Path(result.potential_filename).resolve()
-        except NATIVE_INPUT_ERRORS:
+        except _POTENTIAL_DISCOVERY_ERRORS:
             return None
         candidates = set(self.scf_claims(source.parent, potential))
         while candidates:
@@ -460,7 +464,7 @@ class ResultLoader:
                 continue
             try:
                 declared = Path(companion.potential_filename).resolve()
-            except NATIVE_INPUT_ERRORS:
+            except _POTENTIAL_DISCOVERY_ERRORS:
                 continue
             if declared != potential:
                 continue

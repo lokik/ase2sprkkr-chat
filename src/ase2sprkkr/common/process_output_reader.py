@@ -58,13 +58,13 @@ class ProcessOutputParser:
         raise NotImplementedError("Please, redefine ProcessOutputParser.read_output coroutine")
 
     @maybeclassmethod
-    def read_from_file(self, cls, output, error=None, read_args=[], return_code=0):
+    def read_from_file(self, cls, output, error=None, read_args=[], return_code=None):
         """Synchronous wrapper for reading output/error from files."""
         if not self:
             self = cls()
         return run_coro_sync(self.read_output_file(output, error, read_args, return_code))
 
-    async def read_output_file(self, output, error=None, read_args=[], return_code=0):
+    async def read_output_file(self, output, error=None, read_args=[], return_code=None):
         """Read output and error files through the same async parser API."""
 
         async def read_output_file():
