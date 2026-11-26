@@ -571,6 +571,18 @@ def test_mixed_other_types_and_potential_line_strings_are_unchanged():
     assert gt.pot_mixed.grammar().parse_string("Fe Co", parse_all=True)[0] == "Fe Co"
 
 
+def test_grammar_type_dispatch_for_strings_and_restricted_sequences():
+    assert gt.type_from_value("Fe") is gt.String.I
+    assert gt.type_from_value("Fe Co") is gt.QString.I
+    assert gt.type_from_value("Fe,Co") is gt.QString.I
+
+    restricted = gt.CustomMixed((gt.Integer.I, gt.SetOf(int)))
+    assert restricted.convert(2) == 2
+    np.testing.assert_array_equal(restricted.convert([2, 3]), [2, 3])
+    with pytest.raises(ValueError):
+        restricted.convert(["Fe", "Co"])
+
+
 def _parse_numpy_array(grammar_type, text):
     with generate_grammar():
         return grammar_type.grammar().parse_string(text, parse_all=True)[0]

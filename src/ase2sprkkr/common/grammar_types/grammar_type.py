@@ -579,7 +579,7 @@ def type_from_value(value, type_map={}):
         try:
             grammar_types.String._grammar.parse_string(value, True)
             return grammar_types.String.I
-        except Exception:
+        except pp.ParseBaseException:
             return grammar_types.QString.I
     if isinstance(value, dict):
         return grammar_types.Keyword(value)
