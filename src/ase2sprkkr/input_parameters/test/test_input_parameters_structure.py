@@ -1,3 +1,4 @@
+import io
 import re
 import warnings
 import pickle
@@ -494,15 +495,20 @@ def test_section_assignment_accepts_read_only_mappings_and_preserves_input():
 
 
 def test_dangerous_values_without_native_mixed_grammar():
-    option = ValueDefinition("VALUE", int).create_object()
+    definition = ValueDefinition("VALUE", int)
+    option = definition.create_object()
     option.set(DangerousValue("not an integer"))
     assert option() == "not an integer"
-    assert '"not an integer"' in option.to_string()
+    output = io.StringIO()
+    definition.write_value(output, option, option(unpack=False))
+    assert output.getvalue() == '"not an integer"'
 
     option.set("invalid integer", retain_invalid="all", report_invalid="ignore")
     assert option.is_dangerous()
     assert option() == "invalid integer"
-    assert '"invalid integer"' in option.to_string()
+    output = io.StringIO()
+    definition.write_value(output, option, option(unpack=False))
+    assert output.getvalue() == '"invalid integer"'
 
 
 def test_compiled_grammar_is_reused_per_definition_and_parse_policy():
