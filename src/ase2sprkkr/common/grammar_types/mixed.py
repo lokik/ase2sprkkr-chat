@@ -139,7 +139,7 @@ class CustomMixed(BaseMixed):
 
         if isinstance(value, recognized_set_types):
             for candidate in self.types:
-                if not getattr(candidate, "array_access", False):
+                if not candidate.array_access:
                     continue
                 try:
                     converted = candidate.convert(value)
