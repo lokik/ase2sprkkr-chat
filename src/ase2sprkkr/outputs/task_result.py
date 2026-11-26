@@ -41,6 +41,7 @@ class TaskResult:
         task_name=None,
     ):
         self.run_record = None
+        self.file_manifest = None
         self.return_code = None
         self._input_parameters = input_parameters
         self._calculator = calculator

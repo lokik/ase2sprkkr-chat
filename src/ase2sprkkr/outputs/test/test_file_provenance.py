@@ -1,21 +1,14 @@
 from types import SimpleNamespace
 
 from kkrunner.files.versions import FileState
-from ase2sprkkr.outputs import capture_result_file_versions
-
-
-class _OutputValue:
-    def __init__(self, path):
-        self._path = path
-
-    def path(self):
-        return self._path
+from ase2sprkkr.outputs import TaskResult, capture_result_file_versions
 
 
 def test_capture_result_file_versions_uses_content_identity(tmp_path):
     path = tmp_path / "result.dat"
     path.write_bytes(b"result")
-    result = SimpleNamespace(output_values={"DATA": _OutputValue(path)})
+    result = TaskResult(None, None, tmp_path, task_name="DOS")
+    result.files.add_file("DATA", path)
 
     versions = capture_result_file_versions(result)
 
@@ -27,13 +20,13 @@ def test_capture_result_file_versions_uses_content_identity(tmp_path):
 
 
 def test_capture_result_file_versions_ignores_non_path_outputs(tmp_path):
-    result = SimpleNamespace(output_values={"VALUE": object()})
+    result = TaskResult(None, None, tmp_path, task_name="DOS")
+    assert result.file_manifest is None
 
     assert dict(capture_result_file_versions(result)) == {}
 
 
 def test_historical_versions_survive_overwrite_without_loader_annotation(tmp_path):
-    from ase2sprkkr.outputs.task_result import TaskResult
     from kkrunner.files import FileEntry, FileManifest, FileVersion
 
     output, curve, missing, unrelated = (
