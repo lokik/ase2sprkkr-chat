@@ -314,3 +314,19 @@ def test_tracked_run_rejects_temporary_stderr(tmp_path, fe_bulk):
         prepared.create_run(profile=SPRKKRProfile(mpi=False), executor=EndpointClient(),
                             project=manager, error_file=False)
     assert prepared.closed
+
+
+def test_untracked_clear_cache_keeps_temporary_directory(fe_bulk):
+    calculator = SPRKKR(
+        atoms=fe_bulk.copy(), profile=SPRKKRProfile(mpi=False), empty_spheres=False,
+    )
+    runner = calculator.create_run(
+        directory=False, executor=EndpointClient(), clear_cache=True,
+    )
+    directory = Path(runner.spec.directory)
+    try:
+        assert runner.record is None
+        assert directory.is_dir()
+    finally:
+        runner.close()
+    assert not directory.exists()

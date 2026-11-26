@@ -334,19 +334,13 @@ class OutputFileOption(OutputOption):
             result_class = self.definition().result_class
             if result_class.can_be_plotted():
                 out.append("plot")
-            for action in result_class.additional_actions:
-                # Several unrelated formats use .spc. When the filename only
-                # supplies that ambiguous extension, do not advertise ARPES
-                # conversion for SPLEED/BAND/AIPES calculations.
-                if action == "export_nexus" and self.file_type == "spc":
-                    owner = self._container.result
-                    try:
-                        task = owner.task_name if owner is not None else None
-                    except (AttributeError, ValueError):
-                        task = None
-                    if str(task).upper() != "ARPES":
-                        continue
-                out.append(action)
+            if result_class.additional_actions:
+                owner = self._container.result
+                try:
+                    task = owner.task_name if owner is not None else None
+                except ValueError:
+                    task = None
+                out.extend(result_class.additional_actions_for_task(task))
         return tuple(out)
 
     def __getattr__(self, name):

@@ -27,6 +27,12 @@ class ARPESResultFile(CommonResultFile, Arithmetic):
     # The GUI presents this action only for ARPES, not other SPC formats.
     additional_actions = ("export_nexus",)
 
+    @classmethod
+    def additional_actions_for_task(cls, task_name):
+        # SPC is a shared extension; only the ARPES task establishes that
+        # this spectrum is eligible for NeXus export without parsing it.
+        return cls.additional_actions if str(task_name).upper() == "ARPES" else ()
+
     def to_nexus(self, filename, *, input_parameters=None, input_file=None,
                  metadata=None, discover_input=True):
         """Export an ARPES spectrum together with its available input data."""

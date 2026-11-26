@@ -265,13 +265,13 @@ class TaskResult:
         if not isinstance(file, OutputFileOption) or file._container.result is not self:
             raise ValueError("A parsed result file must belong to this TaskResult")
         file.require_current()
-        # Grace plots do not depend on the calculation potential.
-        if potential is None and file.file_type != "agr":
-            potential = self.any_potential
+        # An associated result provides the authoritative potential lazily.
+        # Merely asking for its filename must not parse the potential either.
         return read_plottable_file(
             file.path(),
             try_only=file.file_type,
             potential=potential,
+            potential_source=self if potential is None else None,
         )
 
     def new_task(self, task):

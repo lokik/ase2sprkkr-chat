@@ -250,3 +250,13 @@ def test_export_nexus_reuses_cached_verified_input_after_file_is_removed(
     assert calls == [{
         "input_parameters": known, "discover_input": False,
     }]
+
+
+@pytest.mark.parametrize("task,expected", [("ARPES", True), ("SPLEED", False),
+                                          ("BAND", False), ("AIPES", False)])
+def test_spc_actions_depend_on_task_without_parsing(tmp_path, task, expected):
+    result = TaskResult(None, None, str(tmp_path), task_name=task)
+    path = tmp_path / "spectrum.spc"
+    path.write_text("not a parseable spectrum")
+    option = result.files.add_file("SPC", str(path), "spc")
+    assert ("export_nexus" in option.actions()) is expected
