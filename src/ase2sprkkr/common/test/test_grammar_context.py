@@ -110,7 +110,7 @@ def test_pool_full_parse_accepts_trailing_whitespace_with_active_builder(tmp_pat
             pool.parse_string("x y", parse_all=True)
 
 
-def test_pooled_parse_keeps_defaults_when_another_builder_exits():
+def test_pooled_parse_survives_restored_defaults_when_another_builder_exits():
     original = parser_defaults()
     builder_entered, parsing, builder_exited = Event(), Event(), Event()
 
@@ -125,7 +125,7 @@ def test_pooled_parse_keeps_defaults_when_another_builder_exits():
             assert builder_entered.is_set()
             parsing.set()
             assert builder_exited.wait(5)
-            assert parser_defaults()[0] == " \t\r"
+            assert parser_defaults() == original
         return pp.Literal("x").set_parse_action(check_during_parse)
 
     pool = GrammarPool(factory)
@@ -136,3 +136,19 @@ def test_pooled_parse_keeps_defaults_when_another_builder_exits():
         assert parser.result(timeout=15).as_list() == ["x"]
         builder.result(timeout=15)
     assert parser_defaults() == original
+
+def test_pooled_parse_does_not_change_global_defaults():
+    original = parser_defaults()
+
+    def factory():
+        assert parser_defaults()[0] == " \t\r"
+
+        def check_defaults():
+            assert parser_defaults() == original
+
+        return pp.Literal("x").set_parse_action(check_defaults)
+
+    pool = GrammarPool(factory)
+    for _ in range(2):
+        assert pool.parse_string("x\n", parse_all=True).as_list() == ["x"]
+        assert parser_defaults() == original
