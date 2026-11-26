@@ -162,38 +162,37 @@ class TestOutput:
         assert Path(output.potential_filename).name == "manual.pot_new"
 
     def test_potential_property_accepts_filename_or_potential(self, tmp_path):
-        output_path = tmp_path / "Fe_JXC_XCPLTEN_Jij.dat"
-        output_path.write_text("unused")
+        from ase.build import bulk
+        from ...potentials.potentials import Potential
+
+        package = Path(__file__).resolve().parents[2]
+        native_output = package / "result_files/examples/Mo2Se4_SCF_SCF_SCFSTART.dos"
+        native_potential = package / "potentials/examples/FePt.pot"
+        output_path = tmp_path / "Fe_DOS.dos"
+        output_path.write_bytes(native_output.read_bytes())
         guessed = tmp_path / "Fe.pot"
-        guessed.write_text("dummy")
+        guessed.write_bytes(native_potential.read_bytes())
+        output = ResultFile.from_file(output_path, try_only="dos", unknown=False)
 
-        class DummyOutput(ResultFile):
-            pass
+        assert Path(output.potential_filename) == guessed
+        assert Path(output.potential.original_filename) == guessed
 
-        output = object.__new__(DummyOutput)
-        object.__setattr__(output, "_definition", None)
-        object.__setattr__(output, "_filename", str(output_path))
-        object.__setattr__(output, "_potential", None)
-        object.__setattr__(output, "_potential_filename", None)
+        explicit_path = tmp_path / "explicit.pot"
+        explicit_path.write_bytes(native_potential.read_bytes())
+        explicit = Potential.from_file(explicit_path)
+        output.potential = explicit
+        assert output.potential is explicit
+        assert output.atoms is explicit.atoms
+        assert Path(output.potential_filename) == explicit_path
 
-        with patch(
-            "ase2sprkkr.result_files.result_files.Potential.from_file",
-            return_value="loaded",
-        ) as loader:
-            assert output.potential == "loaded"
-            loader.assert_called_once_with(str(guessed))
+        generated = Potential.from_atoms(bulk("Fe", "bcc", a=2.87))
+        output.potential = generated
+        assert output.potential is generated
+        assert output.potential_filename is None
+        assert output.atoms is generated.atoms
 
-        class FakePotential:
-            def __init__(self, filename):
-                self._filename = filename
-                self.atoms = "atoms"
-
-        with patch("ase2sprkkr.result_files.result_files.Potential", FakePotential):
-            fake_potential = FakePotential(str(tmp_path / "explicit.pot"))
-            output.potential = fake_potential
-            assert output.potential is fake_potential
-            assert output.atoms == "atoms"
-            assert Path(output.potential_filename).name == "explicit.pot"
+        output.potential = guessed
+        assert Path(output.potential.original_filename) == guessed
 
     def test_jxc_labels_are_taken_from_atoms(self):
         class FakeAtomicType:
