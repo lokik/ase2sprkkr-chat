@@ -32,12 +32,9 @@ class SitesSection(PotentialSection):
 
     def _update_atoms(self, atoms, read_io_data):
         positions = self["SCALED_ATOMIC_POSITIONS"]() * (read_io_data["lattice.alat"] * self["BASSCALE"]())
-        try:
-            if atoms is not None:
-                atoms.set_positions(positions)
-                return
-        except ValueError:
-            pass
+        if atoms is not None and len(atoms) == len(positions):
+            atoms.set_positions(positions)
+            return
         atoms = SPRKKRAtoms(positions=positions, potential=self._container)
         read_io_data.update_atoms(atoms)
         return atoms

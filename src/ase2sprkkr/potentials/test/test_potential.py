@@ -5,6 +5,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from ase import Atoms
+from ase.constraints import FixAtoms
 from ase.spacegroup import crystal
 
 from ...sprkkr.calculator import SPRKKR
@@ -66,6 +68,27 @@ class TestPotential:
         np.testing.assert_allclose(restored.atoms.cell, potential.atoms.cell)
         np.testing.assert_allclose(restored.atoms.positions, potential.atoms.positions)
         assert str(restored.atoms.symbols) == str(potential.atoms.symbols)
+
+    def test_update_atoms_replaces_only_a_different_site_count(self):
+        potential = Potential.from_file(EXAMPLES / "Au_single_type.pot")
+        expected = potential.atoms
+        target = Atoms(numbers=expected.numbers, positions=expected.positions)
+        assert potential.update_atoms(target) is target
+        np.testing.assert_allclose(target.positions, expected.positions)
+
+        wrong_count = Atoms("Au" * (len(expected) + 1))
+        replacement = potential.update_atoms(wrong_count)
+        assert replacement is not wrong_count
+        assert len(replacement) == len(expected)
+        np.testing.assert_allclose(replacement.positions, expected.positions)
+
+        class RejectPositions(FixAtoms):
+            def adjust_positions(self, atoms, newpositions):
+                raise ValueError("positions rejected by constraint")
+
+        target.set_constraint(RejectPositions(indices=[0]))
+        with pytest.raises(ValueError, match="positions rejected by constraint"):
+            potential.update_atoms(target)
 
     def test_scf_convergence_status(self):
         # A small, converged native potential is enough to exercise the
