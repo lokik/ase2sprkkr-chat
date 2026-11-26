@@ -272,10 +272,7 @@ class RepeatedConfigurationContainer(BaseConfigurationContainer):
         elif values is None:
             values = ()
 
-        try:
-            items = values.items()
-        except AttributeError:
-            items = enumerate(values)
+        items = values.items() if isinstance(values, Mapping) else enumerate(values)
 
         for key, child_values in items:
             if (

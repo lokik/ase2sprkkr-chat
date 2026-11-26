@@ -1,6 +1,7 @@
 import re
 import warnings
 import pickle
+from types import MappingProxyType
 
 import numpy as np
 import pyparsing as pp
@@ -464,6 +465,31 @@ def test_parse_validation_sees_keyword_assignments():
         parameters.CONTROL.set(MODE=6, validation_reason="parse")
     assert parameters.CONTROL.MODE() == 6
     assert parameters.CONTROL._parsed_values is None
+
+
+def test_section_assignment_accepts_read_only_mappings_and_preserves_input():
+    definition = cd.InputParametersDefinition([
+        cd.InputSectionDefinition("CONTROL", [V("MODE", 1)]),
+        cd.InputSectionDefinition("REPEATED", [V("MODE", 1)], is_repeated=True),
+    ])
+    parameters = definition.create_object()
+    values = {"MODE": 2}
+    readonly = MappingProxyType(values)
+    parameters.set({"CONTROL": readonly})
+    assert parameters.CONTROL.MODE() == 2
+
+    parameters.CONTROL.set(readonly, MODE=3)
+    assert parameters.CONTROL.MODE() == 3
+    assert values == {"MODE": 2}
+
+    parameters.REPEATED.set(MappingProxyType({0: readonly}))
+    assert parameters.REPEATED[0].MODE() == 2
+    parameters.REPEATED.set([{"MODE": 4}])
+    assert parameters.REPEATED[0].MODE() == 4
+
+    with pytest.raises(ValueError, match="Only a mapping"):
+        parameters.CONTROL.set([("MODE", 5)])
+    assert parameters.CONTROL.MODE() == 3
 
 
 def test_compiled_grammar_is_reused_per_definition_and_parse_policy():
