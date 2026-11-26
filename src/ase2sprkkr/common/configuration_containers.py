@@ -673,8 +673,8 @@ class ConfigurationContainer(BaseConfigurationContainer):
 
     def stage_member(self, name: str) -> "ConfigurationContainer.MemberChange":
         """Attach custom member ``name`` and return its rollback change."""
-        custom_class = getattr(self._definition, "custom_class", None)
-        if not custom_class:
+        custom_class = self._definition.custom_class
+        if custom_class is None:
             raise TypeError(
                 f"Can not add custom members to a configuration class "
                 f"{self._definition}"
@@ -693,12 +693,9 @@ class ConfigurationContainer(BaseConfigurationContainer):
         """
         Remove a (previously added) custom value from the container
         """
-        cclass = getattr(self._definition, "custom_class", False)
-        if not cclass:
-            raise TypeError("Can not remove items of {}".format(name))
-        if not getattr(self._members[name], "remove"):
-            raise KeyError("No custom member with name {} to remove".format(name))
         member = self._members[name]
+        if not member._definition.removable:
+            raise KeyError(f"No custom member with name {name} to remove")
         del self._members[name]
 
         iname = name.lower()
@@ -870,7 +867,7 @@ class CustomSection(BaseSection):
 
     def remove(self):
         """Remove the custom section from the parent container"""
-        self._container.remove(self.name)
+        self._container.remove_member(self.name)
 
     @classmethod
     def factory(cls, definition_type):
