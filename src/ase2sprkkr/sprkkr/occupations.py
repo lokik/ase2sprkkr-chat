@@ -7,7 +7,7 @@ from . import atomic_types
 from .atomic_types import AtomicType
 from typing import Dict, Union, Optional, List, Tuple
 from numbers import Integral
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from .sites import SiteType, SitePropertyProxy
 from .radial_meshes import Mesh
 
@@ -146,10 +146,7 @@ class Occupation:
         """Set occupation data without synchronizing, for object initialization."""
         if isinstance(dct, (int, str, AtomicType)):
             dct = {dct: 1.0}
-        if hasattr(dct, "items"):
-            iterator = dct.items()  # dict
-        else:
-            iterator = dct
+        iterator = dct.items() if isinstance(dct, (Mapping, Occupation)) else dct
         if not for_mesh:
             for_mesh = self.mesh
         self._occupation = dict((AtomicType.to_atomic_type(i, for_mesh), j) for i, j in iterator)
@@ -225,16 +222,15 @@ class Occupation:
 
     def __setitem__(self, name, value):
         try:
-            name = self._find_key(name)
-            self._normalize(1.0 - value, name)
-            self._occupation[name] = value
+            key = self._find_key(name)
         except KeyError:
-            if isinstance(name, int):
-                raise ValueError(
-                    f"Cannot add an atomic type using an integer key {name}. Please use a string (chemical symbol)."
-                )
             self.add(name, value)
             return
+        if key not in self._occupation:
+            self.add(key, value)
+            return
+        self._normalize(1.0 - value, key)
+        self._occupation[key] = value
         self._update_atoms()
 
     @property
