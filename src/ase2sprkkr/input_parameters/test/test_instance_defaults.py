@@ -26,7 +26,12 @@ def _repeated_schema():
 
 def test_copy_preserves_empty_repeated_item_then_its_instance_default():
     parameters = _repeated_schema().create_object()
+    assert 0 not in parameters.ITEM
     item = parameters.ITEM.add()
+    assert 0 in parameters.ITEM
+    assert -1 in parameters.ITEM
+    assert 1 not in parameters.ITEM
+    assert -2 not in parameters.ITEM
 
     # A copy must retain an empty repeated item.
     copied_empty = parameters.copy()
@@ -42,6 +47,18 @@ def test_copy_preserves_empty_repeated_item_then_its_instance_default():
     assert copied_with_default.ITEM[0].VALUE() == 2
     assert copied_with_default.ITEM[0].VALUE.default_value == 2
     assert not copied_with_default.ITEM[0].VALUE.is_set()
+
+    item.VALUE.set_default(None)
+    copied_none = parameters.copy()
+    assert copied_none.ITEM[0].VALUE.default_value is None
+    assert copied_none.ITEM[0].VALUE() is None
+    assert not copied_none.ITEM[0].VALUE.is_set()
+
+    item.VALUE.clear_default()
+    assert item.VALUE.default_value == 1
+    assert parameters.copy().ITEM[0].VALUE() == 1
+    assert copied_with_default.ITEM[0].VALUE() == 2
+    assert copied_none.ITEM[0].VALUE() is None
 
 
 def test_empty_reader_directory_is_explicit(tmp_path):
