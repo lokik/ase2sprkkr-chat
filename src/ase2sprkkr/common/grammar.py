@@ -92,7 +92,7 @@ class GrammarPool:
         if entry is None:
             with grammar_build() as resets:
                 grammar = self._factory()
-                complete = _complete_grammar(grammar)
+                complete = complete_grammar(grammar)
             entry = grammar, complete, resets
         grammar, complete, resets = entry
         try:
@@ -250,7 +250,7 @@ class Transparent(pp.ParseElementEnhance):
     def __str__(self):
         return f"{self.__class__.__name__}({self.expr})"
 
-def _complete_grammar(grammar):
+def complete_grammar(grammar):
     """Match the whole input with an explicit, fixed trailing-whitespace rule.
 
     pyparsing's parse_all=True constructs a fresh StringEnd during parsing,

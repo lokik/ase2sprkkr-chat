@@ -760,6 +760,13 @@ def test_switch():
         assert_not_valid(text, grammar)
     assert_parse("ENERGY A=2", {"ENERGY": {"A": 2}}, grammar)
 
+    # Reuse the same grammar after success and failure, switching between
+    # both branches and crossing a line/section delimiter.
+    for _ in range(5):
+        assert_parse("ENERGY A=1\n\tB=4", {"ENERGY": {"A": 1, "B": 4}}, grammar)
+        assert_not_valid("ENERGY A=1 C=4", grammar)
+        assert_parse("ENERGY A=2\n\tC=5", {"ENERGY": {"A": 2, "C": 5}}, grammar)
+
     definition["ENERGY"]["C"].is_optional = False
     definition["ENERGY"]["C"].clear_grammar_cache()
     assert_not_valid("ENERGY A=2", definition.grammar())

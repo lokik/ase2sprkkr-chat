@@ -22,7 +22,7 @@ import re
 from .options import Dummy, DummyStub
 from .decorators import cached_class_property, cached_property
 from .grammar import (as_delimiter, generate_grammar, Suppress, TokenConverter,
-                      GrammarPool, grammar_build_state, register_grammar_reset)
+                      Forward, GrammarPool, grammar_build_state, register_grammar_reset)
 from .grammar_types.basic import Separator, KeywordSeparator
 from .repetition import Repeated, RepeatedItemGrammar
 from .warnings import DataValidityWarning, ValidationResult
@@ -1023,8 +1023,7 @@ class Switch(ControlDefinition):
         """
         if not self.container.force_order:
             return grammar
-        f = pp.Forward()
-        f <<= self.empty
+        f = Forward(self.empty)
         f.set_name(f"<IF* ? THEN {str(grammar)}")
 
         grammar_build_state(self)["grammars"][definition.name] = (grammar, f)
@@ -1040,13 +1039,11 @@ class Switch(ControlDefinition):
         def choose(value):
 
             def ok(original, forward):
-                forward <<= original
-                forward.set_name(f"<IF True THEN {str(original)}>")
+                forward << original
                 return True
 
             def not_ok(original, forward):
-                forward <<= self.empty
-                forward.set_name(f"<IF False THEN {str(original)}>")
+                forward << self.empty
                 return False
 
             for k, items in self.values.items():

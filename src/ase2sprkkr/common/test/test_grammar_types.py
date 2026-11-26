@@ -651,3 +651,40 @@ def test_grouped_table_can_be_parsed_concurrently():
         second = workers.submit(parse, 3)
         assert first.result(timeout=15).shape[1] == 2
         assert second.result(timeout=15).shape[1] == 3
+
+def test_unit_grammar_sharing_does_not_share_validators_or_default_units():
+    from ..grammar import grammar_build
+
+    units = {"eV": unyt.eV, "Ry": unyt.Ry}
+    positive = gt.RealWithUnits(units=units, default_unit="eV",
+                                condition=lambda v: v.value > 0 or "positive required")
+    negative = gt.RealWithUnits(units=units, default_unit="eV",
+                                condition=lambda v: v.value < 0 or "negative required")
+    rydberg = gt.RealWithUnits(units=units, default_unit="Ry")
+
+    # Compiling additional definitions cannot change an already compiled
+    # grammar's validation or its default unit.
+    with grammar_build():
+        first = positive.grammar("FIRST")
+    with grammar_build():
+        second = negative.grammar("SECOND")
+        third = rydberg.grammar("THIRD")
+
+    assert first.parse_string("2")[0] == 2 * unyt.eV
+    assert second.parse_string("-2")[0] == -2 * unyt.eV
+    assert third.parse_string("2")[0].units == unyt.Ry
+    with pytest.raises(pyparsing.ParseBaseException, match="positive required"):
+        first.parse_string("-2")
+    with pytest.raises(pyparsing.ParseBaseException, match="negative required"):
+        second.parse_string("2")
+    assert positive.parse("2") == 2 * unyt.eV
+
+
+def test_standalone_type_full_parse_is_independent_of_active_builder():
+    value_type = gt.Integer()
+    assert value_type.parse("12\n") == 12
+    with generate_grammar():
+        assert value_type.parse("12\n") == 12
+        assert value_type.parse("12 other", whole_string=False) == 12
+        with pytest.raises(pyparsing.ParseBaseException):
+            value_type.parse("12 other")

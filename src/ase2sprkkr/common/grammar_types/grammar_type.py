@@ -12,7 +12,7 @@ import inspect
 from .. import grammar_types
 from ..decorators import cached_class_property, cache, add_called_class_as_argument, cached_property
 from ..alternative_types import normalize_type, allowed_types
-from ..grammar import generate_grammar, Forward, grammar_build_active
+from ..grammar import generate_grammar, Forward, grammar_build_active, complete_grammar
 from ..formats import full_format_for_string
 
 
@@ -220,11 +220,14 @@ class GrammarType:
         grammar.grammar_type = self
         return grammar
 
+    @cache
+    def _complete_value_grammar(self):
+        return complete_grammar(self._cached_grammar(False))
+
     def parse(self, str, whole_string=True):
-        """
-        Parse the string, return the obtained value.
-        """
-        return self.grammar().parse_string(str, whole_string)[0]
+        """Parse the string, return the obtained value."""
+        grammar = self._complete_value_grammar() if whole_string else self.grammar()
+        return grammar.parse_string(str)[0]
 
     async def parse_from_stream(self, stream, up_to, start=None, whole_string=True):
         result = await stream.readuntil(up_to)
