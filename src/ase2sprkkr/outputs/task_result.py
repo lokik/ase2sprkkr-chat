@@ -7,7 +7,7 @@ from ..common.decorators import cached_property, maybeclassmethod
 from ..common.file_utils import FilePath, filename_from_file
 from ..potentials.potentials import Potential
 from ..input_parameters import input_parameters as input_parameters
-from .result_options import create_files_section
+from .result_options import OutputFileOption, create_files_section
 
 
 class OutputMatch(Enum):
@@ -112,12 +112,7 @@ class TaskResult:
     def is_embedded(self):
         """Whether the run uses a separate cluster potential."""
         parameters = self.input_parameters
-        if parameters is None:
-            return False
-        try:
-            return parameters.CONTROL.CLUTYPE() == "embedded"
-        except (AttributeError, KeyError):
-            return False
+        return parameters is not None and parameters.cluster_type == "embedded"
 
     @cached_property
     def host_potential_filename(self):
@@ -261,7 +256,7 @@ class TaskResult:
 
         from ..result_files import read_plottable_file
 
-        if getattr(getattr(file, "_container", None), "result", None) is not self:
+        if not isinstance(file, OutputFileOption) or file._container.result is not self:
             raise ValueError("A parsed result file must belong to this TaskResult")
         file.require_current()
         # Grace plots do not depend on the calculation potential.
@@ -341,10 +336,9 @@ class TaskResult:
         results = {}
         seen_paths = set()
         for name, value in self.output_values.items():
-            try:
-                path = os.path.normcase(os.path.abspath(os.fspath(value.path())))
-            except (AttributeError, TypeError, ValueError, OSError):
+            if not isinstance(value, OutputFileOption):
                 continue
+            path = os.path.normcase(os.path.abspath(os.fspath(value.path())))
             if path in seen_paths or not any(fnmatchcase(path, pattern) for pattern in patterns):
                 continue
             seen_paths.add(path)

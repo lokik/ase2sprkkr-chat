@@ -54,9 +54,8 @@ def test_result_uses_effective_task_identity(tmp_path):
 
 
 def test_jxc_continuation_uses_source_result_energy(tmp_path):
-    source_parameters = SimpleNamespace(
-        CONTROL=SimpleNamespace(POTFIL=lambda: "Fe.pot")
-    )
+    source_parameters = InputParameters.create("SCF")
+    source_parameters.CONTROL.POTFIL = "Fe.pot"
     result = TaskResult(
         source_parameters,
         None,
