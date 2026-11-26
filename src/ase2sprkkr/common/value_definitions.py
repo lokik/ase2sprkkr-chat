@@ -1,5 +1,5 @@
 from .configuration_definitions import RealItemDefinition, Validator
-from .options import Option
+from .options import Option, _OptionState
 from .dangerous_values import DangerousValue
 from .grammar_types import GrammarType, BaseMixed, type_from_type, type_from_value, Array, QString
 from .warnings import warnings, DataValidityError, ValidationResult
@@ -435,7 +435,7 @@ class ValueDefinition(RealItemDefinition):
         if self.default_value_from_container:
             defval = (lambda d: lambda o: d(o._container))(defval)
         if self.result_is_visible:
-            return lambda o: o._result if hasattr(o, "_result") else defval
+            return lambda o: o._result if o._result is not _OptionState.MISSING else defval
         return defval
 
     @default_value.setter

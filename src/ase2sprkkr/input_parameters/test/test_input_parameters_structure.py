@@ -374,6 +374,40 @@ def test_standard_container_access_during_transactions():
     assert copied.CONTROL.NVALUES() == 2
 
 
+def test_option_result_state_survives_rollback_and_pickle():
+    definition = cd.InputParametersDefinition.definition_from_dict(
+        {"CONTROL": [V("VALUE", 1, result_is_visible=True)]}
+    )
+    section = definition.create_object().CONTROL
+    option = section.VALUE
+    assert option.result == 1
+    assert option.default_value == 1
+
+    option.result = None
+    assert option.result is None
+    assert option.default_value is None
+    with ConfigurationTransaction(section) as transaction:
+        with transaction.savepoint() as savepoint:
+            option.stage(transaction, 2)
+            assert option.result == 2
+            savepoint.rollback()
+    assert option.result is None
+
+    option.clear_result()
+    assert option.result == 1
+    with ConfigurationTransaction(section) as transaction:
+        with transaction.savepoint() as savepoint:
+            option.stage(transaction, 3)
+            assert option.result == 3
+            savepoint.rollback()
+    assert option.result == 1
+    assert pickle.loads(pickle.dumps(option)).result == 1
+    option.result = 4
+    option.set(5)
+    assert option.result == 5
+    assert option.default_value == 1
+
+
 def test_failed_post_change_hook_does_not_leave_transaction_active():
     definition = cd.InputParametersDefinition.definition_from_dict(
         {"CONTROL": [V("VALUE", 1)]}
