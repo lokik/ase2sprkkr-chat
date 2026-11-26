@@ -154,7 +154,7 @@ class UniqueListSection(PotentialSection):
     by the other sections.
 
     :cvar str _value_name: The name of the property of write_io_data to store the list of data
-    :cvar type  _value_class:  The class, that should be created from the list of data
+    :cvar type  _value_class: Class constructed with the native row as positional arguments
 
     """
 
@@ -177,13 +177,12 @@ class UniqueListSection(PotentialSection):
     def _update_atoms(self, atoms: SPRKKRAtoms, read_io_data: ReadIoData):
         """
         Update a ReadIoData object accordingly the data in the section:
-        set its _value_name to list of self_value_class.from_tuple(<data>)
+        construct each value by passing the native row to its constructor.
 
         :meta public:
 
         """
-        creator = getattr(self._value_class, "from_tuple", self._value_class)
-        read_io_data[self._value_name] = [creator(*i) for i in self["DATA"]()]
+        read_io_data[self._value_name] = [self._value_class(*row) for row in self["DATA"]()]
 
 
 class ASEArraySection(PotentialSection):

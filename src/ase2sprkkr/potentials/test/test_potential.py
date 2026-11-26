@@ -235,4 +235,17 @@ class TestPotential:
 
     def test_single_type(self):
         potential = Potential.from_file(EXAMPLES / "Au_single_type.pot")
-        assert potential.atoms is not None
+        site = potential.atoms.sites[0]
+        atomic_type = site.atomic_type(0)
+        row = potential.TYPES.DATA()[0]
+        assert atomic_type.symbol == row["TXT"]
+        assert atomic_type.atomic_number == row["ZT"]
+        assert atomic_type.n_core == row["NCORT"]
+        assert atomic_type.n_valence == row["NVALT"]
+        assert atomic_type.n_semicore == row["NSEMCORSHLT"]
+        np.testing.assert_allclose(
+            site.site_type.mesh.to_tuple(), tuple(potential.MESH_INFORMATION.DATA()[0])
+        )
+        np.testing.assert_allclose(
+            site.site_type.reference_system.to_tuple(), tuple(potential["REFERENCE SYSTEM"].DATA()[0])
+        )
