@@ -241,14 +241,26 @@ def test_subclass_extension_hint_uses_own_readers(tmp_path):
     attempts = []
 
     class Reader:
-        def __init__(self, name):
+        def __init__(self, name, extension):
             self.name = name
+            self.extension = extension
+
         def read_from_file(self, file, potential=None):
             attempts.append(self.name)
             return self.name
 
     class CustomResult(ResultFile):
-        definitions = {"dos": Reader("DOS"), "bsf": Reader("BSF")}
+        definitions = {"custom_dos": Reader("DOS", "dos"), "custom_bsf": Reader("BSF", "bsf")}
 
     assert CustomResult.from_file(path, unknown=False) == "BSF"
     assert attempts == ["BSF"]
+
+def test_task_file_help_uses_native_format_help_or_explicit_override():
+    from kkrunner.files.task_file import TaskFile
+    from ase2sprkkr.result_files.definition_registry import result_file_definition_registry
+
+    registry = result_file_definition_registry
+    definition = registry["dos"]
+    assert registry.info_for_task_file(TaskFile("example.dos", type="dos")) == definition.info()
+    assert registry.info_for_task_file(TaskFile("example.dos", type="dos", info="Specific spectrum")) == "Specific spectrum"
+    assert registry.info_for_task_file(TaskFile("example.txt")) is None

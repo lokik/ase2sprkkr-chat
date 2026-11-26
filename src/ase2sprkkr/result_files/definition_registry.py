@@ -54,7 +54,7 @@ class ResultFileDefinitionRegistry(ModuleRegistry):
         if task_file.info is not None:
             return task_file.info
         definition = self.definition_for_task_file(task_file)
-        return None if definition is None else definition.info
+        return None if definition is None else definition.info()
 
 
 

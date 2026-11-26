@@ -315,6 +315,7 @@ def test_result_file_parser_selection(
     class Reader:
         def __init__(self, name):
             self.name = name
+            self.extension = name
 
         def read_from_file(self, source, potential=None):
             attempted.append((self.name, source, potential))
