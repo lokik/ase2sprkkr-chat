@@ -20,6 +20,7 @@ from ..common.file_utils import filename_from_file
 from ..common.grammar import generate_grammar
 from ..common.warnings import ValidationResult, catch_warnings_of
 from ..sprkkr.configuration import ConfigurationFile
+from ..sprkkr.embedding import EMBEDDING_HOST
 from ..sprkkr.sprkkr_atoms import SPRKKRAtoms
 from .scf_state import PotentialScfState
 
@@ -171,17 +172,9 @@ class Potential(PotentialScfState, ConfigurationFile):
                 )
         else:
             if host is None and atoms is not None and atoms is not False:
-                host = atoms.info.get("sprkkr_embedding_host")
+                host = atoms.info.get(EMBEDDING_HOST)
             if isinstance(host, (str, bytes, PathLike)) or hasattr(host, "read"):
                 host = PeriodicPotential.from_file(host)
-            if isinstance(host, EmbeddedPotential):
-                raise TypeError("An embedded potential cannot be its own host")
-            if host is not None and not all(
-                hasattr(host, name) for name in ("atoms", "LATTICE", "OCCUPATION")
-            ):
-                raise TypeError(
-                    "An embedded potential requires a host Potential or host file"
-                )
             potential.host = host
             if atoms is not None and atoms is not False:
                 potential.atoms = atoms
