@@ -16,6 +16,7 @@ from ..common.configuration_containers import BaseConfigurationContainer
 from ..common.repeated_configuration_containers import RepeatedConfigurationContainer
 from ..common.decorators import cached_class_property
 from ..potentials.potentials import Potential
+from ..sprkkr.embedding import EMBEDDING_HOST, host_atoms
 
 class _LazyInputParametersDefinitions(Mapping):
     """Read-only compatibility mapping that materializes only requested schemas.
@@ -166,10 +167,8 @@ class InputParameters(ConfigurationFile):
 
     def set_from_atoms(self, atoms, io_data=None):
         """Derive native input settings from periodic atoms or an embedding host."""
-        host = getattr(atoms, "embedding_host", None)
+        host = atoms.info.get(EMBEDDING_HOST) if atoms is not None else None
         if host is not None:
-            from ..sprkkr.sprkkr_atoms import host_atoms
-
             if io_data is not None:
                 raise ValueError("Embedded atoms require IO data derived from their host")
             if self.CONTROL.CLUTYPE() not in (None, "embedded"):

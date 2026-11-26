@@ -49,6 +49,24 @@ def test_embedding_displacement_and_change_of_reference():
     assert atoms.arrays[EMBEDDING_ARRAY].shape == (2, 6)
 
 
+def test_input_parameters_use_embedding_host_from_ase_metadata():
+    from ...input_parameters.input_parameters import InputParameters
+
+    reference = host()
+    embedded = SPRKKRAtoms.from_embedding(reference, [(0, (0, 0, 0), "Fe")])
+    atoms = Atoms(
+        embedded.get_chemical_symbols(), positions=embedded.positions,
+        cell=embedded.cell, pbc=embedded.pbc, info=dict(embedded.info),
+    )
+    atoms.new_array(EMBEDDING_ARRAY, embedded.arrays[EMBEDDING_ARRAY].copy())
+
+    parameters = InputParameters.create("SCF")
+    io_data = parameters.set_from_atoms(atoms)
+
+    assert parameters.cluster_type == "embedded"
+    assert io_data.atoms is reference
+
+
 def test_embedding_requires_host_and_rejects_invalid_indices():
     h = host()
     atoms = SPRKKRAtoms.from_embedding(h, [(0, (0, 0, 0), "Fe")])
