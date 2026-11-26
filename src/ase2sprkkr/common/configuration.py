@@ -29,6 +29,10 @@ class Configuration:
     for :class:`Options<ase2sprkkr.common.options.Option>` and :class:`Sections<ase2sprkkr.common.configuration_containers.Section>`.
     """
 
+    # A standalone option can also be the root of a transaction.
+    _active_transaction: Optional[ConfigurationTransaction] = None
+    _running_post_change_hooks: bool = False
+
     def __init__(self, definition, container=None):
         """
         Create the object. Just sets the two properties from the parameters.
