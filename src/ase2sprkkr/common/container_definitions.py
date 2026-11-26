@@ -26,6 +26,9 @@ class ContainerDefinition(RealItemDefinition):
     its :class:`Section<ase2sprkkr.common.configuration_containers.Section>`.
     """
 
+    custom_class = None
+    """Factory for additional user-defined members, or None."""
+
     force_order = False
     """ Force order of its members """
 

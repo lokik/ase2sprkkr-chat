@@ -411,6 +411,36 @@ def test_unknown_member_is_converted_before_transaction_commit():
     assert "EXTRA" not in parameters.CONTROL
 
 
+def test_only_custom_sections_and_values_can_be_removed():
+    parameters = cd.InputParametersDefinition.definition_from_dict(
+        {"CONTROL": [V("KNOWN", 1)]}
+    ).create_object()
+    parameters.CONTROL.add("EXTRA", 2)
+    parameters.add("CUSTOM", {"X": 3})
+    assert parameters.CONTROL.EXTRA() == 2
+    assert parameters.CUSTOM.X() == 3
+
+    with pytest.raises(KeyError):
+        parameters.CONTROL.remove_member("KNOWN")
+    with pytest.raises(KeyError):
+        parameters.remove_member("CONTROL")
+    assert parameters.CONTROL.KNOWN() == 1
+
+    parameters.CONTROL.EXTRA.remove()
+    parameters.CUSTOM.remove()
+    assert "EXTRA" not in parameters.CONTROL
+    assert "CUSTOM" not in parameters
+    with pytest.raises(AttributeError):
+        _ = parameters.CONTROL.EXTRA
+    with pytest.raises(AttributeError):
+        _ = parameters.CUSTOM
+
+    parameters.CONTROL.add("EXTRA", 4)
+    parameters.add("CUSTOM", {"X": 5})
+    assert parameters.CONTROL.EXTRA() == 4
+    assert parameters.CUSTOM.X() == 5
+
+
 def test_add_with_invalid_value_rolls_back_custom_member():
     section = cd.InputSectionDefinition("CONTROL", [V("KNOWN", 1)])
     section.custom_class = CustomOption.factory(V, int)

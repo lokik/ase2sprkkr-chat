@@ -132,6 +132,9 @@ class BaseDefinition:
         state.pop("_grammar_cache", None)
         return state
 
+    removable = False
+    """Only custom definitions created for a runtime container are removable."""
+
     is_repeated = Repeated.NO
     """ By default, the configuration items are not repeated """
 
