@@ -201,7 +201,7 @@ dipole moment   1      0.0000000000000000      0.0000000000000000      0.0000000
         assert asa.sfn is None
         assert "SFN" not in asa.output_values
 
-    def test_output_files_prefer_existing_result_potential(self, tmp_path, monkeypatch):
+    def test_output_files_prefer_existing_result_potential(self, tmp_path):
         result = ScfResult(None, None, tmp_path)
         old_potential = tmp_path / "Fe.pot"
         new_potential = tmp_path / "Fe.pot_new"
@@ -216,18 +216,14 @@ dipole moment   1      0.0000000000000000      0.0000000000000000      0.0000000
         assert potential.original_filename == str(new_potential)
         assert result.any_potential is potential
 
-        output = result.files.add_file("JXC", "Fe_JXC.dat", "jxc")
-        # File currentness is validated before the scientific parser is called.
-        (tmp_path / "Fe_JXC.dat").write_text("fixture")
-        parsed = object()
+        from ...result_files.test.test_dos_header_only import native_header
+        source = tmp_path / "Fe.dos"
+        source.write_text(native_header("DOS") + "DOS-FMT:  OLD-SPRKKR\n")
+        option = result.files.add_file("DOS", source.name, "dos")
+        parsed = option.parsed_file()
+        assert parsed.potential is potential
+        assert parsed.potential_filename == str(new_potential)
 
-        def parse_output(filename, **kwargs):
-            assert filename == str(tmp_path / "Fe_JXC.dat")
-            assert kwargs == {"try_only": "jxc", "potential": potential}
-            return parsed
-
-        monkeypatch.setattr(ResultFile, "from_file", parse_output)
-        assert output.parsed_file() is parsed
 
     def test_scf_parser_registers_reported_sfn(self):
         directory = os.path.realpath(EXAMPLES)

@@ -28,8 +28,8 @@ class RATResultFile(CommonResultFile):
     Result file for XAS (X-ray Absorption Spectroscopy) and related spectra (XMCD, spin and orbital sum-rule integrands).
     """
 
-    def __init__(self, definition, container=None, potential=None):
-        super().__init__(definition, container, potential=potential)
+    def __init__(self, definition, container=None, potential=None, *, potential_source=None):
+        super().__init__(definition, container, potential=potential, potential_source=potential_source)
         self.EFERMI.add_hook(self.clear_cached_data)
 
     def clear_cached_data(self, _option=None):

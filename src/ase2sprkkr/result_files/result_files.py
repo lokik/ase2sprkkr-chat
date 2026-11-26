@@ -26,11 +26,14 @@ class ResultFile(ConfigurationFile):
     plot_parameters = {}
     additional_actions = ()
 
-    def __init__(self, definition=None, container=None, potential=None):
+    def __init__(self, definition=None, container=None, potential=None, *, potential_source=None):
         super().__init__(definition, container)
         self._potential = None
         self._potential_filename = None
+        self._potential_source = potential_source
         if potential is not None:
+            if potential_source is not None:
+                raise ValueError("Specify a potential or a potential source, not both")
             self.potential = potential
 
     def read_from_file(
@@ -59,12 +62,20 @@ class ResultFile(ConfigurationFile):
     def can_be_plotted(cls):
         return callable(getattr(cls, "plot", None))
 
+    @classmethod
+    def additional_actions_for_task(cls, task_name):
+        """Actions advertised for a result of the given task, without reading data."""
+        return cls.additional_actions
+
     def set_potential_filename(self, potential_filename):
+        self._potential_source = None
         self.__dict__["potential_filename"] = potential_filename
         self.__dict__.pop("potential", None)
 
     @cached_property
     def potential_filename(self):
+        if self._potential_source is not None:
+            return self._potential_source.potential_filename
         filename = self.original_filename
         if filename is None:
             raise ValueError("The result file has no filename. Set the potential filename manually.")
@@ -93,16 +104,18 @@ class ResultFile(ConfigurationFile):
 
     @cached_property
     def potential(self):
+        if self._potential_source is not None:
+            return self._potential_source.potential
         return Potential.from_file(self.potential_filename)
 
     @potential.setter
     def potential(self, value):
+        self._potential_source = None
         if isinstance(value, Potential):
             self.__dict__["potential"] = value
             self.__dict__["potential_filename"] = value.original_filename
         else:
-            self.__dict__["potential_filename"] = value
-            self.__dict__.pop("potential", None)
+            self.set_potential_filename(value)
 
     @property
     def atoms(self):
@@ -138,6 +151,8 @@ class ResultFile(ConfigurationFile):
         try_only=None,
         unknown=None,
         potential=None,
+        *,
+        potential_source=None,
     ):
         """
         Read SPRKKR result file (DOS, BSF....). The type of content of the
@@ -166,8 +181,17 @@ class ResultFile(ConfigurationFile):
 
         potential
           A :class:`Potential` or its filename. If omitted, it is looked up
-          lazily from the result filename when it is needed.
+          lazily from the result filename unless a potential_source is supplied.
+
+        potential_source
+          An associated calculation exposing potential and potential_filename.
+          Both properties are consulted only when needed.
         """
+        if potential is not None and potential_source is not None:
+            raise ValueError("Specify a potential or a potential source, not both")
+        parse_options = {"potential": potential}
+        if potential_source is not None:
+            parse_options["potential_source"] = potential_source
         definitions = cls.definitions
         # Candidate discovery follows cls.definitions, not the global registry:
         # subclasses can supply their own parsers for the same extension.
@@ -234,7 +258,7 @@ class ResultFile(ConfigurationFile):
                 if is_stream:
                     attempted_stream = True
                 try:
-                    result = definition.read_from_file(filename, potential=potential)
+                    result = definition.read_from_file(filename, **parse_options)
                 except (pp.ParseBaseException, ValueError) as exc:
                     errors.append(exc)
                 else:
@@ -298,7 +322,7 @@ class ResultFile(ConfigurationFile):
                 filename.seek(stream_position)
             try:
                 return cls.unknown_result_file_definition.read_from_file(
-                    filename, potential=potential
+                    filename, **parse_options
                 )
             except pp.ParseBaseException as exc:
                 raise ValueError(f"Cannot parse result file: {filename}") from exc
