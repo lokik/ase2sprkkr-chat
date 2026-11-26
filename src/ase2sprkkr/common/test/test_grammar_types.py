@@ -583,6 +583,27 @@ def test_grammar_type_dispatch_for_strings_and_restricted_sequences():
         restricted.convert(["Fe", "Co"])
 
 
+@pytest.mark.parametrize("kwargs,expected_type", [
+    ({}, tuple),
+    ({"as_list": True}, list),
+    ({"names": ("number", "symbol")}, tuple),
+])
+def test_sequence_conversion_matches_parsing(kwargs, expected_type):
+    grammar_type = gt.Sequence(int, str, **kwargs)
+    parsed = grammar_type.grammar().parse_string("2 Fe", parse_all=True)[0]
+    assert isinstance(parsed, expected_type)
+    assert tuple(parsed) == (2, "Fe")
+
+    for value in ([2, "Fe"], (2, "Fe")):
+        converted = grammar_type.convert(value)
+        assert type(converted) is type(parsed)
+        assert converted == parsed
+        assert grammar_type.validate(converted)
+    if "names" in kwargs:
+        assert parsed.number == 2
+        assert parsed.symbol == "Fe"
+
+
 def _parse_numpy_array(grammar_type, text):
     with generate_grammar():
         return grammar_type.grammar().parse_string(text, parse_all=True)[0]
