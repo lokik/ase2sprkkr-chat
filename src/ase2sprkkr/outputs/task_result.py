@@ -453,9 +453,7 @@ class TaskResult:
         result = reader.read_from_file(
             output,
             error_file,
-            return_code=(
-                record.return_code if return_code is None else return_code
-            ) or 0,
+            return_code=record.return_code if return_code is None else return_code,
             input_file=available_input,
             run_record=record,
         )
@@ -525,7 +523,7 @@ class KkrOutputReader:
 
     def complete_result(self, result, output, error, return_code):
         """Finalize a result after the execution backend completes."""
-        if return_code == 0:
+        if return_code in (0, None):
             if isinstance(output, BaseException):
                 raise output
             if isinstance(error, BaseException):

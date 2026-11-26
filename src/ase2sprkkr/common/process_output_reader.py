@@ -39,7 +39,9 @@ class ProcessOutputParser:
 
     def result(self, output, error, return_code):
         """Postprocess parsed stdout/stderr after execution completes."""
-        if return_code != 0:
+        # An independently observed process may end without a known OS status.
+        # Parsing its output does not establish a successful exit.
+        if return_code is not None and return_code != 0:
             exc = ProcessExitError(f"The process ended with return value {return_code}")
             exc.output = output
             exc.error = error

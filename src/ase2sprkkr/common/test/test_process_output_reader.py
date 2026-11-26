@@ -106,3 +106,10 @@ def test_reader_only_closes_streams_that_it_opens(tmp_path):
             assert borrowed.read() == b"data"
         assert reader.file is None
         assert not borrowed.closed
+
+def test_unknown_exit_status_permits_parsing_without_inventing_success():
+    output = io.BytesIO(b"out\n")
+    error = io.BytesIO(b"err\n")
+    assert _OutputParser().read_from_file(output, error, return_code=None) == (
+        b"out\n", b"err\n", None,
+    )

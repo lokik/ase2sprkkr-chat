@@ -203,6 +203,7 @@ def test_historical_auxiliary_actions_require_original_file(tmp_path, auxiliary_
 
     result = load_project_result(manager, record.id)
     assert result.run_record.return_code is None  # Unknown OS status still permits OUT parsing.
+    assert result.return_code is None
     option = result.files["curve"]
     captured = capture_result_file_versions(result)
     if auxiliary_state == "unrecorded":

@@ -74,3 +74,10 @@ def test_process_failure_preserves_error_precedence(parser_raises):
         assert exc.value is parse_error
     assert reader.parser.calls == [(None, "stderr", 2)]
     assert result.completions == []
+
+def test_unknown_status_does_not_turn_into_success():
+    reader = _reader()
+    result = _Result()
+    assert reader.complete_result(result, "stdout", "stderr", None) is result
+    assert result.completions == [("stderr", None)]
+    assert reader.parser.calls == [("stdout", "stderr", None)]
