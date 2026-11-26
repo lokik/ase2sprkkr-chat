@@ -72,6 +72,8 @@ def test_cluster_centre_object_references_are_written_as_native_numbers(option, 
              else atoms.sites[1].occupation.atomic_type("Ni"))
     p = parameters()
     p.TAU[option].set(value)
+    with pytest.raises(ValueError, match="requires atoms"):
+        p.save_to_file(io.StringIO())
     output = io.StringIO()
     p.save_to_file(output, atoms)
     parsed = p._definition.read_from_string(output.getvalue())

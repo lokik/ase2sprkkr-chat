@@ -90,9 +90,9 @@ class ConfigurationValue(Option):
         """Some types can/should be updated by the data in :class:`atoms<Atoms>` object
         (and/or :class:`io_data<WriteIoData>`) during save.
         """
-        sfa = getattr(self._definition, "set_from_atoms", None)
-        if sfa:
-            sfa(self, atoms, io_data)
+        setter = self._definition.set_from_atoms
+        if setter is not None:
+            setter(self, atoms, io_data)
 
 
 class CustomConfigurationValue(CustomOption):
