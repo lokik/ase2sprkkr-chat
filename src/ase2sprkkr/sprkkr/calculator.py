@@ -439,7 +439,9 @@ class SPRKKR(BaseCalculator):
 
     def _update_from_result(self, result, *, adopt_potential=False):
         """Update calculator state from a completed synchronous result."""
-        if hasattr(result, "energy"):
+        from ..outputs.readers.scf import ScfResult
+
+        if isinstance(result, ScfResult) and len(result.iterations) > 0:
             self.results["energy"] = result.energy
 
         if adopt_potential:
