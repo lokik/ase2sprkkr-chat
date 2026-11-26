@@ -48,6 +48,8 @@ def capture_result_file_versions(result: Any) -> Mapping[str, FileVersion]:
     except Exception:  # noqa: BLE001 - optional result metadata boundary
         return MappingProxyType({})
 
+    historical = (result_file_manifest(result) is not None
+                  or getattr(result, "run_record", None) is not None)
     versions: dict[str, FileVersion] = {}
     for key, value in items:
         path_getter = getattr(value, "path", None)
@@ -55,22 +57,16 @@ def capture_result_file_versions(result: Any) -> Mapping[str, FileVersion]:
             continue
         try:
             path = path_getter()
-        except Exception:  # noqa: BLE001 - optional result metadata boundary
-            continue
-        if not path:
-            continue
-        # Do not turn today's bytes of a known competing SCF potential into
-        # a seemingly historical version of the older calculation. Genuine
-        # run-manifest snapshots must be retained, including if now missing
-        # or overwritten, so that history can report their actual state.
-        recorded = getattr(value, "recorded_version", None)
-        if recorded is None:
-            checker = getattr(value, "is_current", None)
-            if callable(checker) and not checker():
-                # File options already account for wrong-SCF attribution,
-                # ambiguous matches and stale imports in one assessment.
+            if not path:
                 continue
-        try:
+            if not historical:
+                # A standalone import may only capture bytes that are still
+                # attributed to this result. A recorded manifest, by contrast,
+                # is authoritative even when its files have been overwritten
+                # or deleted, with or without prior ResultLoader annotation.
+                checker = getattr(value, "is_current", None)
+                if callable(checker) and not checker():
+                    continue
             version = result_file_version(result, path, require_digest=True)
             if version is not None:
                 versions[str(key)] = version
