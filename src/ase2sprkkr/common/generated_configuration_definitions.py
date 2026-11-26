@@ -49,11 +49,9 @@ def _validate_length(
     """Validate the generated length ``option`` for phase ``why``."""
     length = False
     if why == "parse":
-        parsed = getattr(container, "_parsed_values", None)
+        parsed = container._parsed_values
         if parsed is not None:
-            length = getattr(parsed, "checks", {}).get(
-                option.name, False
-            )
+            length = parsed.checks.get(option.name, False)
     return _validate_length_values(option._definition, container, length)
 
 
@@ -213,10 +211,10 @@ class Length(InheritingValueModifier):
     def validate_parsed(self, option: Option) -> None:
         """Check whether ``option`` was present as required by parse conditions."""
         section = option._container
-        parsed = getattr(section, "_parsed_values", None)
+        parsed = section._parsed_values
         if parsed is None:
             return
-        present = self.name in parsed or self.name in getattr(parsed, "checks", ())
+        present = self.name in parsed or self.name in parsed.checks
         allowed = self.allowed(section)
         if present and not allowed:
             raise pp.ParseException(f"Option {self.get_path()} is not allowed for the current configuration")
