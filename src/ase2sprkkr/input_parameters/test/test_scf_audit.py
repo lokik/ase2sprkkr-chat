@@ -1,6 +1,7 @@
 """SCF native algorithm and input-domain regressions."""
 import io
 import pickle
+import numpy as np
 import pytest
 from ..input_parameters import InputParameters
 from ...common.warnings import DataValidityError, DataValidityErrors
@@ -87,6 +88,8 @@ def test_cluster_centre_object_references_are_written_as_native_numbers(option, 
 
 def test_cluster_site_reference_follows_2d_potfil_order_on_each_write():
     from ase.cell import Cell
+    from ase.units import Bohr
+    from ...potentials.potential_base import Potential
     from ...sprkkr.atoms_region import AtomsRegion
     from ...sprkkr.sprkkr_atoms import SPRKKRAtoms
 
@@ -103,7 +106,16 @@ def test_cluster_site_reference_follows_2d_potfil_order_on_each_write():
     p.TAU.IQCNTR = atoms.sites[0]
     p.set_from_atoms(atoms)
     assert p.TAU.IQCNTR.result == 2
+    potential = Potential.from_atoms(atoms)
+    potential.set_from_atoms()
+    positions = potential.SITES.SCALED_ATOMIC_POSITIONS()
+    scale = potential.LATTICE.ALAT() * Bohr * potential.SITES.BASSCALE()
+    np.testing.assert_allclose(positions * scale, atoms.positions[[1, 0, 2, 3]])
+    np.testing.assert_allclose(positions[p.TAU.IQCNTR.result - 1] * scale, atoms.positions[0])
 
     atoms.positions[0, 2] = -1
     p.set_from_atoms(atoms)
     assert p.TAU.IQCNTR.result == 1
+    potential.set_from_atoms()
+    positions = potential.SITES.SCALED_ATOMIC_POSITIONS()
+    np.testing.assert_allclose(positions * scale, atoms.positions)
