@@ -5,6 +5,7 @@ from io import StringIO
 import pytest
 
 from ..cluster_potentials import ClusterPotential
+from ..potentials import PeriodicPotential
 from ..definitions.cluster import cluster_definition
 
 
@@ -172,20 +173,11 @@ def test_invalid_occupation_count_is_rejected():
 
 def test_embedded_atoms_to_start_cluster_potential_and_back():
     """START CLUPOT has a second magnetisation header and no radial data."""
-    from types import SimpleNamespace
     import numpy as np
     from ase import Atoms
     from ...sprkkr.sprkkr_atoms import SPRKKRAtoms
 
-    # Minimal host Potential protocol: lattice/occupations plus ASE atoms.
-    host = SimpleNamespace(
-        atoms=Atoms("Cu", positions=[[0., 0., 0.]], cell=[2., 2., 2.], pbc=True),
-        LATTICE=SimpleNamespace(ALAT=lambda: 4.0, SYSDIM=lambda: "3D",
-                                SYSTYPE=lambda: "BULK"),
-        OCCUPATION=SimpleNamespace(
-            DATA=lambda: np.array([(1,)], dtype=[("IMQ", int)])
-        ),
-    )
+    host = PeriodicPotential(Atoms("Cu", positions=[[0., 0., 0.]], cell=[2., 2., 2.], pbc=True))
     atoms = SPRKKRAtoms.from_embedding(host, [(0, (1, 0, 0), "Fe")])
     atoms.sites[0].embedding.displacement = (0.1, 0.0, 0.0)
     cluster = ClusterPotential.from_atoms(atoms)
@@ -224,27 +216,21 @@ def test_native_start_with_two_magnetisation_headers_is_readable():
 
 def _radial_host():
     """Host with eight native types and six radial meshes."""
-    from types import SimpleNamespace
     import numpy as np
     from ase import Atoms
 
-    mesh_dtype = [
-        ("R(1)", float), ("DX", float), ("JRMT", int),
-        ("RMT", float), ("JRWS", int), ("RWS", float),
-    ]
-    meshes = np.array(
-        [(1e-6, 0.02, 2, 2.5, 721, 3.0)] * 6, dtype=mesh_dtype
+    host = PeriodicPotential(
+        Atoms("Cu20", positions=np.zeros((20, 3)), cell=[2, 2, 2], pbc=True),
+        set_from_atoms=False,
     )
-    host_occ = np.array([(1,)] * 20, dtype=[("IMQ", int)])
-    return SimpleNamespace(
-        atoms=Atoms("Cu20", positions=np.zeros((20, 3)),
-                    cell=[2, 2, 2], pbc=True),
-        LATTICE=SimpleNamespace(ALAT=lambda: 4.0, SYSDIM=lambda: "3D",
-                                SYSTYPE=lambda: "BULK"),
-        TYPES=SimpleNamespace(DATA=lambda: [None] * 8),
-        MESH_INFORMATION=SimpleNamespace(DATA=lambda: meshes),
-        OCCUPATION=SimpleNamespace(DATA=lambda: host_occ),
-    )
+    host.LATTICE.ALAT = 4.0
+    host.LATTICE.SYSDIM = "3D"
+    host.LATTICE.SYSTYPE = "BULK"
+    host.TYPES.DATA = [("Cu", 29, 18, 11, 0)] * 8
+    host.MESH_INFORMATION.DATA = [(1e-6, 0.02, 2, 2.5, 721, 3.0)] * 6
+    host.OCCUPATION.DATA = [(1, 1, 1, [(1, 1.0)])] * 20
+    return host
+
 
 
 def test_iterating_radial_data_map_to_atomic_type_and_round_trip():
@@ -284,20 +270,12 @@ def test_invalid_global_radial_type_is_rejected():
 
 
 def test_shared_cluster_type_remains_shared_across_start_round_trip():
-    from types import SimpleNamespace
     import numpy as np
     from ase import Atoms
     from ...sprkkr.sprkkr_atoms import SPRKKRAtoms
 
-    host = SimpleNamespace(
-        atoms=Atoms("Cu2", positions=[[0, 0, 0], [1, 0, 0]],
-                    cell=[2, 2, 2], pbc=True),
-        LATTICE=SimpleNamespace(ALAT=lambda: 4.0, SYSDIM=lambda: "3D",
-                                SYSTYPE=lambda: "BULK"),
-        OCCUPATION=SimpleNamespace(DATA=lambda: np.array(
-            [(1,), (1,)], dtype=[("IMQ", int)]
-        )),
-    )
+    host = PeriodicPotential(Atoms("Cu2", positions=[[0, 0, 0], [1, 0, 0]],
+                    cell=[2, 2, 2], pbc=True))
     atoms = SPRKKRAtoms.from_embedding(
         host, [(0, (0, 0, 0), "Fe"), (1, (0, 0, 0), "Fe")]
     )
@@ -378,7 +356,6 @@ def test_cluster_fullpot_radial_and_mesh_round_trip():
 
 def test_optional_empty_tables_not_emitted_in_native_cluster(tmp_path):
     """Default headers without table records are not parseable by CLUPOTRD."""
-    from types import SimpleNamespace
     import numpy as np
     from ase import Atoms
     from ...sprkkr.sprkkr_atoms import SPRKKRAtoms
@@ -390,14 +367,7 @@ def test_optional_empty_tables_not_emitted_in_native_cluster(tmp_path):
     assert "\nMESH INFORMATION\n" not in native
     assert len(ClusterPotential.from_string(native).SITES.DATA()) == 1
 
-    host = SimpleNamespace(
-        atoms=Atoms("Cu", positions=[[0, 0, 0]], cell=[2, 2, 2], pbc=True),
-        LATTICE=SimpleNamespace(ALAT=lambda: 4.0, SYSDIM=lambda: "3D",
-                                SYSTYPE=lambda: "BULK"),
-        OCCUPATION=SimpleNamespace(
-            DATA=lambda: np.array([(1,)], dtype=[("IMQ", int)])
-        ),
-    )
+    host = PeriodicPotential(Atoms("Cu", positions=[[0, 0, 0]], cell=[2, 2, 2], pbc=True))
     atoms = SPRKKRAtoms.from_embedding(host, [(0, (0, 0, 0), "Fe")])
     cluster = ClusterPotential.from_atoms(atoms)
     out = StringIO()
