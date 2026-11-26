@@ -90,9 +90,9 @@ class ConfigurationValue(Option):
         """Some types can/should be updated by the data in :class:`atoms<Atoms>` object
         (and/or :class:`io_data<WriteIoData>`) during save.
         """
-        sfa = getattr(self._definition, "set_from_atoms", None)
-        if sfa:
-            sfa(self, atoms, io_data)
+        setter = self._definition.set_from_atoms
+        if setter is not None:
+            setter(self, atoms, io_data)
 
 
 class CustomConfigurationValue(CustomOption):
@@ -112,7 +112,7 @@ class ConfigurationValueDefinition(ValueDefinition):
     """ The values (or more precisely the objects holding the values) of SPR-KKR configuration should be of this class. """
 
     @property
-    def _set_from_atoms(self):
+    def set_from_atoms(self):
         """
         Allow to modify the result output value according to the
         computed atoms object.

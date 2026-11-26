@@ -4,6 +4,7 @@ reading or writing of potential/input_parameters files."""
 from ..common.decorators import cached_property
 from ..common.unique_values import UniqueValuesMapping
 from functools import wraps
+import numpy as np
 
 
 def unique_mapping(fce):
@@ -36,6 +37,30 @@ class WriteIoData(BaseIoData):
     def __init__(self, atoms):
         self.atoms = atoms
         self._has_converged_data = None
+
+    @cached_property
+    def sites_order(self):
+        """Order of ASE site indices in a native periodic POTFIL."""
+        atoms = self.atoms
+        if atoms.pbc.sum() != 2:
+            return slice(None)
+        order = np.concatenate([
+            atoms.regions[name].ids[np.argsort(atoms.regions[name].positions[:, 2])]
+            for name in ("left", "central", "right")
+        ])
+        if np.array_equal(order, np.arange(len(atoms))):
+            return slice(None)
+        return order
+
+    def site_number(self, site):
+        """One-based native site number, not a SiteType number."""
+        if site.atoms is not self.atoms:
+            raise ValueError("Site reference does not belong to the supplied atoms")
+        index = site.index
+        order = self.sites_order
+        if isinstance(order, slice):
+            return index + 1
+        return int(np.flatnonzero(order == index)[0]) + 1
 
     @unique_mapping
     def site_types(self):
