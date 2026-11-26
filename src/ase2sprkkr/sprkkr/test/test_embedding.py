@@ -197,3 +197,16 @@ def test_potential_native_file_probe_preserves_stream_position(tmp_path):
     filename.write_text(content)
     assert Potential.is_cluster_file(filename)
     assert not Potential.is_cluster_file(tmp_path / "does-not-exist.pot")
+
+
+def test_embedded_occupation_accepts_native_atomic_types_and_symbols():
+    from ..atomic_types import AtomicType
+
+    reference = host()
+    atoms = SPRKKRAtoms.from_embedding(reference, [
+        (0, (0, 0, 0), {AtomicType("Fe"): 0.25, "Ni": 0.75}),
+        (1, (0, 0, 0), {AtomicType("Vc"): 1.0}),
+    ])
+    assert atoms.sites[0].occupation.to_dict(True) == {"Fe": 0.25, "Ni": 0.75}
+    assert atoms.sites[1].occupation.to_dict(True) == {"X": 1.0}
+    assert atoms.get_chemical_symbols() == ["Ni", "X"]

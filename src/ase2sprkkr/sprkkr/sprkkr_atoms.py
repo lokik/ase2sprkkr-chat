@@ -341,6 +341,7 @@ class SPRKKRAtoms(Atoms):
         Set occupation=None to inherit the host site's chemical occupation
         without sharing its mutable SiteType or radial data.
         """
+        from .atomic_types import AtomicType
         from .embedding_geometry import HostSite
         from .occupations import Occupation
 
@@ -377,7 +378,7 @@ class SPRKKRAtoms(Atoms):
                 symbol = occ
             elif isinstance(occ, dict) and occ:
                 key = next(iter(occ))
-                symbol = getattr(key, "symbol", key)
+                symbol = key.symbol if isinstance(key, AtomicType) else key
             else:
                 raise TypeError("Occupation must be a symbol or nonempty occupation dictionary")
             # ASE calls the vacuum pseudo-atom X; SPR-KKR calls it Vc.
