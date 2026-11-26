@@ -185,15 +185,19 @@ def retry_project_postprocessing(manager, run):
     from .task_result import TaskResult
     if isinstance(result, TaskResult):
         result.run_record = manager.store.get(record.id)
+        from .result_loader import ResultLoader
+        result = ResultLoader().associate_result(result)
     return result
 
 
-def load_project_result(manager, run, *, allow_unparsed=False):
+def load_project_result(manager, run, *, allow_unparsed=False, restore_missing=False):
     """Reconstruct a historical TaskResult from a terminal project run.
 
     With allow_unparsed=True, a verified OUT remains inspectable when a
     recognized native-output error prevents parsing. Unverified or replaced
     historical files and unrelated programming errors never fall back.
+    Loading is local-only unless the caller explicitly requests restoration
+    of missing captured files.
     """
     record = _record(manager, run)
     if record.state not in (RunState.FINISHED, RunState.FAILED, RunState.CANCELLED):
@@ -201,20 +205,21 @@ def load_project_result(manager, run, *, allow_unparsed=False):
             record, f"run is still active ({record.state.value})"
         )
 
-    # Restore every available file independently. Missing auxiliary files do
-    # not invalidate a historical result whose primary output is intact.
-    try:
-        record = manager.retrieve_result_files(record)
-    except HistoricalFileMismatchError as exc:
-        # Older KKRunner versions raise the digest mismatch directly, rather
-        # than returning a per-file failure. Preserve the same public error
-        # and store the primary result's unavailability in either case.
-        output_file = None if record.files is None else record.files.output_file
-        if output_file is not None:
-            record = manager.update_artifact_availability(
-                record, output_file, ArtifactAvailabilityState.FAILED, str(exc),
-            )
-        raise ProjectResultUnavailableError(record, str(exc)) from exc
+    if restore_missing:
+        # Restore every available file independently. Missing auxiliary files do
+        # not invalidate a historical result whose primary output is intact.
+        try:
+            record = manager.retrieve_result_files(record)
+        except HistoricalFileMismatchError as exc:
+            # Older KKRunner versions raise the digest mismatch directly, rather
+            # than returning a per-file failure. Preserve the same public error
+            # and store the primary result's unavailability in either case.
+            output_file = None if record.files is None else record.files.output_file
+            if output_file is not None:
+                record = manager.update_artifact_availability(
+                    record, output_file, ArtifactAvailabilityState.FAILED, str(exc),
+                )
+            raise ProjectResultUnavailableError(record, str(exc)) from exc
     result_files = record.files
     if result_files is not None and result_files.captured_at is None:
         raise ProjectResultUnavailableError(
@@ -249,9 +254,9 @@ def load_project_result(manager, run, *, allow_unparsed=False):
     return_code = record.return_code
 
     input_file = None
-    if manager.input_file_is_current(record) and (
-        reader.input_parameters is not None
-    ):
+    if reader.input_parameters is not None:
+        if not manager.input_file_is_current(record):
+            raise ProjectResultUnavailableError(record, "historical input changed during parsing")
         input_file = result_files.input_file
 
     try:
@@ -274,8 +279,12 @@ def load_project_result(manager, run, *, allow_unparsed=False):
             "Cannot parse historical run %s; exposing verified OUT only",
             record.id, exc_info=True,
         )
-        from .result_loader import ResultLoader
-        return ResultLoader().associate_result(OutputOnlyResult(record, exc))
+        result = OutputOnlyResult(record, exc)
     result.run_record = record
     from .result_loader import ResultLoader
-    return ResultLoader().associate_result(result)
+    result = ResultLoader().associate_result(result)
+    if not manager.output_file_is_current(record):
+        raise ProjectResultUnavailableError(record, "historical output disappeared or changed during parsing")
+    if input_file is not None and not manager.input_file_is_current(record):
+        raise ProjectResultUnavailableError(record, "historical input changed during parsing")
+    return result

@@ -46,6 +46,7 @@ class TaskResult:
     ):
         self.run_record = None
         self.file_manifest = None
+        self._source_snapshot = None
         self.return_code = None
         self._input_parameters = input_parameters
         self._calculator = calculator
@@ -422,18 +423,21 @@ class TaskResult:
         return reader.read_from_file(filename, on_files_parsed=on_files_parsed)
 
     @classmethod
-    def from_run(cls, run, manager=None, *, allow_unparsed=False):
+    def from_run(cls, run, manager=None, *, allow_unparsed=False, restore_missing=True):
         """Load a persisted run using an execution manager.
 
         With no manager, use the shared default project-run store. The
-        manager retrieves missing files and checks their saved fingerprints.
+        manager retrieves missing files unless restore_missing is False,
+        and checks their saved fingerprints.
         """
         if manager is None:
             from ase2sprkkr.sprkkr.projects import project_execution_manager
 
             manager = project_execution_manager()
         from .project_results import load_project_result
-        return load_project_result(manager, run, allow_unparsed=allow_unparsed)
+        return load_project_result(
+            manager, run, allow_unparsed=allow_unparsed, restore_missing=restore_missing,
+        )
 
     @classmethod
     def from_run_record(

@@ -150,7 +150,7 @@ def test_load_historical_scf_with_missing_auxiliary_output(tmp_path, monkeypatch
             return rec
 
         def output_file_is_current(self, rec):
-            return True
+            return rec.files.output_versions[0].is_current()
 
     class Reader:
         input_parameters = None
@@ -164,7 +164,18 @@ def test_load_historical_scf_with_missing_auxiliary_output(tmp_path, monkeypatch
     loaded = project_results.load_project_result(manager, record.id)
     assert loaded is result
     assert loaded.run_record is record
+    assert calls == [("parse", str(output))]
+    calls.clear()
+    assert project_results.load_project_result(manager, record.id, restore_missing=True) is result
     assert calls == ["retrieve", ("parse", str(output))]
+
+    def rewrite(*args, **kwargs):
+        output.write_text("replacement output")
+        return result
+
+    monkeypatch.setattr(Reader, "read_from_file", rewrite)
+    with pytest.raises(project_results.ProjectResultUnavailableError, match="changed during parsing"):
+        project_results.load_project_result(manager, record.id)
 
 
 @pytest.mark.parametrize("auxiliary_state", ("current", "overwritten", "missing", "unrecorded"))
@@ -225,6 +236,7 @@ def test_historical_auxiliary_actions_require_original_file(tmp_path, auxiliary_
         with pytest.raises(HistoricalFileMismatchError):
             option.copy_to(destination)
         assert not destination.exists()
+
 
 def test_standalone_output_does_not_invent_an_exit_status():
     from pathlib import Path
