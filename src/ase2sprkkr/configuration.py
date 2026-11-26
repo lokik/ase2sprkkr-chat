@@ -299,6 +299,11 @@ definition = ConfigFileDefinition(
                     info="KKRunner backend, independent of local/SSH transport.",
                 ),
                 V(
+                    "detached",
+                    False,
+                    info="Keep a directly launched process running after the client disconnects.",
+                ),
+                V(
                     "host",
                     AlwaysQString.I,
                     is_optional=True,

@@ -66,6 +66,8 @@ class SPRKKRProfile:
     filesystem_id: str | None = None
     # Provenance of the selected named configuration; not part of backend identity.
     name: str | None = None
+    # Per-run option, deliberately not part of the pooled endpoint identity.
+    detached: bool = False
 
     @property
     def transport(self):
@@ -316,6 +318,7 @@ def _configured_profile(profile, configuration):
         psij_url=_profile_value(profile, "psij_url"),
         filesystem_id=_profile_value(profile, "filesystem_id"),
         mpi_warning=mpi_warning,
+        detached=bool(_profile_value(profile, "detached")),
     )
 
 

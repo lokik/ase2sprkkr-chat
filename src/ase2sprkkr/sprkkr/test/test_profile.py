@@ -203,3 +203,17 @@ def test_runtime_profile_preserves_optional_provenance_name():
     profile = SPRKKRProfile(name="created-by-caller", mpi=2)
     assert resolve_sprkkr_profile(profile).name == "created-by-caller"
     assert profile.with_overrides(mpi=8).name == "created-by-caller"
+
+
+def test_direct_detached_profile_round_trips_without_changing_endpoint(tmp_path):
+    path = tmp_path / "config.yaml"
+    config = definition.create_object()
+    config.profiles.set({"remote": {"executor": "ssh", "host": "cluster",
+                                    "backend": "direct", "detached": True}})
+    save_configuration_yaml(config, path)
+    restored = definition.create_object()
+    load_configuration_yaml(restored, path)
+    profile = resolve_sprkkr_profile("remote", configuration=restored)
+    assert profile.detached is True
+    assert SPRKKRProfile().detached is False
+    assert profile.backend_config == SPRKKRProfile(backend="direct").backend_config
