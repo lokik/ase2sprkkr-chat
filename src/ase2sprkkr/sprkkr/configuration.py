@@ -112,7 +112,7 @@ class ConfigurationValueDefinition(ValueDefinition):
     """ The values (or more precisely the objects holding the values) of SPR-KKR configuration should be of this class. """
 
     @property
-    def _set_from_atoms(self):
+    def set_from_atoms(self):
         """
         Allow to modify the result output value according to the
         computed atoms object.

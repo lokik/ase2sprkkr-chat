@@ -57,3 +57,50 @@ def test_tcheby_fullpot():
     p.SCF.FULLPOT.set(True)
     with pytest.raises((DataValidityError, DataValidityErrors), match="TCHEBY"):
         p.validate("save")
+
+
+@pytest.mark.parametrize("option, expected", [("IQCNTR", 2), ("ITCNTR", 3)])
+def test_cluster_centre_object_references_are_written_as_native_numbers(option, expected):
+    from ...sprkkr.sprkkr_atoms import SPRKKRAtoms
+
+    atoms = SPRKKRAtoms(
+        "FeNi", positions=[[0, 0, 0], [1, 1, 1]], cell=[3, 3, 3],
+        pbc=True, symmetry=False,
+    )
+    atoms.sites[0].occupation = {"Fe": 0.5, "Co": 0.5}
+    value = (atoms.sites[1] if option == "IQCNTR"
+             else atoms.sites[1].occupation.atomic_type("Ni"))
+    p = parameters()
+    p.TAU[option].set(value)
+    output = io.StringIO()
+    p.save_to_file(output, atoms)
+    parsed = p._definition.read_from_string(output.getvalue())
+    assert parsed.TAU[option]() == expected
+    # Replacing a reference with a numeric input must still work.
+    p.TAU[option].set(1)
+    output = io.StringIO()
+    p.save_to_file(output, atoms)
+    assert p._definition.read_from_string(output.getvalue()).TAU[option]() == 1
+
+
+def test_cluster_site_reference_follows_2d_potfil_order_on_each_write():
+    from ...sprkkr.atoms_region import AtomsRegion
+    from ...sprkkr.sprkkr_atoms import SPRKKRAtoms
+
+    atoms = SPRKKRAtoms(
+        "Fe4", positions=[[0, 0, 1], [0, 0, 0], [0, 0, 2], [0, 0, 4]],
+        cell=[2, 2, 6], pbc=(True, True, False), symmetry=False,
+    )
+    atoms.set_regions([
+        AtomsRegion("left", slice(0, 2), [2, 2, 2]),
+        AtomsRegion("central", slice(2, 3), [2, 2, 2], pbc=(True, True, False)),
+        AtomsRegion("right", slice(3, 4), [2, 2, 2]),
+    ])
+    p = parameters()
+    p.TAU.IQCNTR = atoms.sites[0]
+    p.set_from_atoms(atoms)
+    assert p.TAU.IQCNTR.result == 2
+
+    atoms.positions[0, 2] = -1
+    p.set_from_atoms(atoms)
+    assert p.TAU.IQCNTR.result == 1

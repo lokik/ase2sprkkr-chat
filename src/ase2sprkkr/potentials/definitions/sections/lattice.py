@@ -1,5 +1,3 @@
-import numpy as np
-
 from ase.units import Bohr
 from ase.cell import Cell
 
@@ -66,7 +64,6 @@ class LatticeSection(PotentialSection):
         self["BRAVAIS"].set(Pearson.from_symbol(pearson_symbol).xband_data())
         if self.SYSDIM() == "3D":
             self.SYSTYPE = "BULK"
-            write_io_data["sites_order"] = slice(None)
             self.A_L3.clear()
             self.A_R3.clear()
             self.NQ_L.clear()
@@ -98,20 +95,9 @@ class LatticeSection(PotentialSection):
             if self.NQ_L() + self.NQ_R() + len(atoms.regions["central"]) != la:
                 raise ValueError("The left, central and right do not cover all the atoms in the sample")
 
-            def order(region):
-                region = atoms.regions[region]
-                z = region.positions[:, 2]
-                return region.ids[np.argsort(z)]
-
-            write_io_data["sites_order"] = np.concatenate(list(map(order, ["left", "central", "right"])))
-            for i, j in zip(range(len(atoms)), write_io_data["sites_order"]):
-                if i != j:
-                    break
-            else:
-                # optimalization - do not reorder
-                write_io_data["sites_order"] = slice(None)
         else:
             raise ValueError(f"{self.SISDIM()} problem periodicity type not implemented")
+        write_io_data["sites_order"] = write_io_data.sites_order
         write_io_data["lattice.alat"] = alat
         self["ALAT"].set(alat / Bohr)
         self["SCALED_PRIMITIVE_CELL"].set(cell / alat)
