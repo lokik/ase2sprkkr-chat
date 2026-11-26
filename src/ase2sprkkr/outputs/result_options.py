@@ -74,6 +74,10 @@ class FileAttribution(Enum):
 
 
 class OutputFileOption(OutputOption):
+    def __init__(self, definition, container=None, value=None):
+        super().__init__(definition, container, value)
+        self.clear_attribution()
+
     _FILE_DISPLAY_NAMES = {
         "output": "Output file",
         "input": "Input file",
@@ -158,11 +162,11 @@ class OutputFileOption(OutputOption):
         whether its bytes may be used. TaskResult does not make a second
         decision for registered paths, and no filesystem state is retained.
         """
-        original = getattr(self, "_file_attribution", FileAttribution.UNKNOWN)
-        evidence = getattr(self, "_file_attribution_evidence", None)
+        original = self._file_attribution
+        evidence = self._file_attribution_evidence
         recorded = self.recorded_version
         observed = self.observed_version
-        owner = getattr(self._container, "result", None)
+        owner = self._container.result
 
         # Historical outputs may be used without a ResultLoader. Find their
         # recorded version without adopting today's contents as new history.
@@ -170,7 +174,7 @@ class OutputFileOption(OutputOption):
         if owner is not None:
             from .file_provenance import result_file_manifest, result_file_version
             historical = (result_file_manifest(owner) is not None
-                          or getattr(owner, "run_record", None) is not None)
+                          or owner.run_record is not None)
             if historical and recorded is None:
                 recorded = result_file_version(owner, self.path())
 
@@ -235,17 +239,17 @@ class OutputFileOption(OutputOption):
     @property
     def attributed_to(self):
         """Other SCF output identified as the likely source of these bytes."""
-        return getattr(self, "_file_attributed_to", None)
+        return self._file_attributed_to
 
     @property
     def recorded_version(self):
         """Version recorded by the calculation, if any."""
-        return getattr(self, "_file_recorded_version", None)
+        return self._file_recorded_version
 
     @property
     def observed_version(self):
         """Version captured at import, not proof of original-run identity."""
-        return getattr(self, "_file_observed_version", None)
+        return self._file_observed_version
 
     def set_attribution(
         self, attribution, *, evidence=None, recorded_version=None,
@@ -281,7 +285,7 @@ class OutputFileOption(OutputOption):
         return self.path()
 
     def path(self):
-        owner = getattr(self._container, "result", None)
+        owner = self._container.result
         return owner.path_to(self.name) if owner is not None else os.fspath(self())
 
     @property
@@ -327,7 +331,7 @@ class OutputFileOption(OutputOption):
                 # supplies that ambiguous extension, do not advertise ARPES
                 # conversion for SPLEED/BAND/AIPES calculations.
                 if action == "export_nexus" and self.file_type == "spc":
-                    owner = getattr(self._container, "result", None)
+                    owner = self._container.result
                     try:
                         task = owner.task_name if owner is not None else None
                     except (AttributeError, ValueError):
@@ -369,13 +373,13 @@ class OutputFileOption(OutputOption):
         exporter = getattr(spectrum, "to_nexus", None)
         if not callable(exporter):
             raise ValueError(f"NeXus export is unavailable for {self.path()}")
-        owner = getattr(self._container, "result", None)
+        owner = self._container.result
         if owner is not None:
             # An associated TaskResult is authoritative: never rediscover a
             # possibly unrelated neighboring .inp from the SPC filename.
             kwargs.setdefault("discover_input", False)
             if "input_parameters" not in kwargs and "input_file" not in kwargs:
-                known_parameters = getattr(owner, "_input_parameters", None)
+                known_parameters = owner._input_parameters
                 if known_parameters is None:
                     # The lazy input accessor may already have parsed a
                     # verified source before it was subsequently removed.
@@ -421,7 +425,7 @@ class ResultFileDefinition(ValueDefinition):
 
         ``item`` is accepted for the common value-definition conversion API.
         """
-        owner = getattr(option._container, "result", None)
+        owner = option._container.result
         directory = owner.directory if owner is not None else None
         return FilePath(value, directory)
 
