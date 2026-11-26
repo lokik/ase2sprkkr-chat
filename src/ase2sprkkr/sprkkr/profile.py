@@ -275,19 +275,19 @@ def _configured_profile(profile, configuration):
     if isinstance(profile, ASEProfile):
         profile = profile.configuration_profile()
     if isinstance(profile, LegacyProfile):
-        return _configured_profile(
-            SPRKKRProfile(
-                name=resolved_name,
-                executable_dir=profile.executable_dir(),
-                executable_suffix=(
-                    profile.executable_suffix()
-                    if profile.executable_suffix() is not None
-                    else os.environ.get("SPRKKR_EXECUTABLE_SUFFIX", "")
-                ),
-                mpi=profile.mpi(),
-                mpi_warning=profile.mpi_warning(),
+        suffix = profile.executable_suffix()
+        directory = profile.executable_dir()
+        mpi = profile.mpi()
+        warning = profile.mpi_warning()
+        return SPRKKRProfile(
+            name=resolved_name,
+            executable_dir=False if directory is None else directory,
+            executable_suffix=(
+                os.environ.get("SPRKKR_EXECUTABLE_SUFFIX", "")
+                if suffix is None else suffix
             ),
-            configuration,
+            mpi="auto" if mpi is None else _normalize_mpi(mpi),
+            mpi_warning=True if warning is None else warning,
         )
     if not isinstance(profile, ExecutionProfile):
         raise TypeError("Expected a profile name, SPRKKRProfile or configuration profile")

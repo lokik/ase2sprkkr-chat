@@ -11,6 +11,7 @@ import numpy as np
 from ase.units import Bohr
 
 from .potential_base import Potential
+from .potentials import PeriodicPotential
 from ..sprkkr.embedding import EMBEDDING_HOST, embedding_data, host_atoms
 
 
@@ -41,21 +42,18 @@ def _to_start_native(text):
 
 def _host_potential(atoms):
     host = atoms.info.get(EMBEDDING_HOST)
-    if host is None or not hasattr(host, "LATTICE") or not hasattr(host, "OCCUPATION"):
+    if not isinstance(host, PeriodicPotential):
         raise ValueError("Creating a CLUPOT requires sprkkr_embedding_host to be a host Potential")
     return host
 
 
 def _host_value(host, name, default):
-    try:
-        value = host.SCF_INFO[name]()
-        if value is None:
-            return default
-        if isinstance(value, (list, tuple, np.ndarray)):
-            return value[-1] if len(value) else default
-        return value
-    except (AttributeError, KeyError, TypeError):
+    value = host.SCF_INFO[name]()
+    if value is None:
         return default
+    if isinstance(value, (list, tuple, np.ndarray)):
+        return value[-1] if len(value) else default
+    return value
 
 
 class EmbeddedPotential(Potential):
@@ -214,16 +212,14 @@ class EmbeddedPotential(Potential):
         cluster_meshes = []
         host_type_count = 0
         if with_radial:
-            if not hasattr(host, "TYPES") or not hasattr(host, "MESH_INFORMATION"):
-                raise ValueError("Writing radial cluster data requires host TYPES and MESH INFORMATION")
-            host_type_count = len(host.TYPES.DATA())
+            host_types = host.TYPES.DATA()
             host_mesh_data = host.MESH_INFORMATION.DATA()
+            if host_types is None or host_mesh_data is None:
+                raise ValueError("Writing radial cluster data requires host TYPES and MESH INFORMATION")
+            host_type_count = len(host_types)
             # Only match ordinary host meshes. FULLPOT host meshes may have
             # different radial panel information not present in DATA().
-            host_mesh_fullpot = (
-                host.MESH_INFORMATION.FULLPOT()
-                if hasattr(host.MESH_INFORMATION, "FULLPOT") else None
-            )
+            host_mesh_fullpot = host.MESH_INFORMATION.FULLPOT()
             mesh_lookup = {} if host_mesh_fullpot is not None else {
                 tuple(row[name] for name in ("R(1)", "DX", "JRMT", "RMT", "JRWS", "RWS")) + (None,): i
                 for i, row in enumerate(host_mesh_data, 1)
@@ -389,7 +385,7 @@ class EmbeddedPotential(Potential):
         self.host = host
         if len(reference) == 0:
             raise ValueError("Host has no sites")
-        if not hasattr(host, "LATTICE"):
+        if not isinstance(host, PeriodicPotential):
             raise ValueError("Reading CLUPOT into Atoms requires a host Potential")
         alat = float(host.LATTICE.ALAT()) * Bohr
         if alat <= 0:
@@ -416,12 +412,13 @@ class EmbeddedPotential(Potential):
         # Collect all meshes by their *native global* identifiers. A cluster
         # can reuse a host mesh, or define a new one in MESH INFORMATION.
         meshes = {}
-        if hasattr(host, "MESH_INFORMATION"):
-            for number, row in enumerate(host.MESH_INFORMATION.DATA(), 1):
+        host_mesh_data = host.MESH_INFORMATION.DATA()
+        if host_mesh_data is not None:
+            for number, row in enumerate(host_mesh_data, 1):
                 meshes[number] = ExponentialMesh(
                     *(row[name] for name in ("R(1)", "DX", "JRMT", "RMT", "JRWS", "RWS"))
                 )
-        if hasattr(self, "MESH_INFORMATION") and self.MESH_INFORMATION.DATA() is not None:
+        if self.MESH_INFORMATION.DATA() is not None:
             for row in self.MESH_INFORMATION.DATA():
                 index = int(row["IM"])
                 if index in meshes:
@@ -451,9 +448,10 @@ class EmbeddedPotential(Potential):
             for _, block in getattr(self, section_name).items():
                 radial_blocks.append((section_name, property_name, block))
         if radial_blocks:
-            if not hasattr(host, "TYPES"):
+            host_types = host.TYPES.DATA()
+            if host_types is None:
                 raise ValueError("Reading radial cluster data requires host TYPES")
-            n_host_types = len(host.TYPES.DATA())
+            n_host_types = len(host_types)
             present = set()
             for section_name, property_name, block in radial_blocks:
                 global_index = int(block.TYPE())

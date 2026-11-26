@@ -8,7 +8,7 @@ def test_capture_result_file_versions_uses_content_identity(tmp_path):
     path = tmp_path / "result.dat"
     path.write_bytes(b"result")
     result = TaskResult(None, None, tmp_path, task_name="DOS")
-    result.files.add_file("DATA", path)
+    result.files.add_file("DATA", str(path))
 
     versions = capture_result_file_versions(result)
 
