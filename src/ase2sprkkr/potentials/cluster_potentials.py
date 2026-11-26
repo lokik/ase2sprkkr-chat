@@ -74,6 +74,8 @@ class EmbeddedPotential(Potential):
 
     @host.setter
     def host(self, value):
+        if value is not None and not isinstance(value, PeriodicPotential):
+            raise TypeError("An embedded potential requires a periodic host Potential")
         if value is not self._host:
             self._atoms = None
         self._host = value
@@ -385,8 +387,6 @@ class EmbeddedPotential(Potential):
         self.host = host
         if len(reference) == 0:
             raise ValueError("Host has no sites")
-        if not isinstance(host, PeriodicPotential):
-            raise ValueError("Reading CLUPOT into Atoms requires a host Potential")
         alat = float(host.LATTICE.ALAT()) * Bohr
         if alat <= 0:
             raise ValueError("Invalid host ALAT")

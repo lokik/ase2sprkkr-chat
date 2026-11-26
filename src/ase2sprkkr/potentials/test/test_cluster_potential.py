@@ -379,6 +379,24 @@ def test_optional_empty_tables_not_emitted_in_native_cluster(tmp_path):
 
 
 
+def test_cluster_potential_rejects_nonperiodic_host_without_replacing_valid_host():
+    from types import SimpleNamespace
+
+    host = _radial_host()
+    cluster = ClusterPotential.from_string(_sample(mesh=True), host=host)
+    original_atoms = cluster.atoms
+    imitation = SimpleNamespace(
+        atoms=host.atoms, LATTICE=host.LATTICE, OCCUPATION=host.OCCUPATION,
+    )
+    for invalid_host in (imitation, cluster, host.atoms):
+        with pytest.raises(TypeError, match="periodic host Potential"):
+            cluster.host = invalid_host
+        assert cluster.host is host
+        assert cluster.atoms is original_atoms
+    with pytest.raises(TypeError, match="periodic host Potential"):
+        ClusterPotential.from_string(_sample(mesh=True), host=imitation)
+
+
 def test_cluster_potential_keeps_host_reference():
     host = _radial_host()
     cluster = ClusterPotential.from_string(_sample(mesh=True), host=host)
