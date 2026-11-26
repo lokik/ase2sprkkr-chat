@@ -24,7 +24,7 @@ from .warnings import (
 )
 
 
-class _ResultState(Enum):
+class _OptionState(Enum):
     MISSING = 0
 
 
@@ -104,7 +104,7 @@ class Option(BaseOption):
     '1J'
     """
 
-    _result = _ResultState.MISSING
+    _result = _OptionState.MISSING
 
     class Change:
         """Original state and finalization of a staged option value."""
@@ -188,7 +188,7 @@ class Option(BaseOption):
         d = self._definition
         if d.is_generated:
             return d.get_generated(self)
-        if self._result is not _ResultState.MISSING:
+        if self._result is not _OptionState.MISSING:
             return self._result
         if self._value is not None:
             return self._value
@@ -386,7 +386,7 @@ class Option(BaseOption):
             transaction._finish_stage()
             return False
 
-        if self._value is None or self._result is not _ResultState.MISSING:
+        if self._value is None or self._result is not _OptionState.MISSING:
             current = copy.deepcopy(self._value_or_default())
             current = self._unpack_value(current)
             change = self.Change(self)
@@ -589,7 +589,7 @@ class Option(BaseOption):
         In a such case, this property can be utilized: the value of the option is
         retained as is and the transformed value is stored in the result.
         """
-        if self._result is not _ResultState.MISSING:
+        if self._result is not _OptionState.MISSING:
             if isinstance(self._result, DangerousValue):
                 return self._result.value
             return self._result
@@ -600,7 +600,7 @@ class Option(BaseOption):
         self._result = value
 
     def clear_result(self):
-        self._result = _ResultState.MISSING
+        self._result = _OptionState.MISSING
 
     def stage_clear(
         self,
