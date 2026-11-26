@@ -152,3 +152,33 @@ def test_pooled_parse_does_not_change_global_defaults():
     for _ in range(2):
         assert pool.parse_string("x\n", parse_all=True).as_list() == ["x"]
         assert parser_defaults() == original
+
+@pytest.mark.parametrize("wrapper_name", ("Forward", "Suppress", "TokenConverter"))
+def test_lightweight_wrappers_ignore_comments_without_skipping_whitespace(wrapper_name):
+    from .. import grammar as light
+
+    with generate_grammar():
+        wrapper = getattr(light, wrapper_name)(pp.Literal("B").leave_whitespace())
+        parser = pp.Literal("A") + wrapper
+        parser.ignore("#" + pp.rest_of_line + pp.LineEnd())
+    assert parser.parse_string("A# comment\nB", parse_all=True)[0] == "A"
+    with pytest.raises(pp.ParseBaseException):
+        parser.parse_string("A\nB", parse_all=True)
+
+
+def test_forward_propagates_ignored_comments_to_new_targets():
+    from ..grammar import Forward
+
+    with generate_grammar():
+        forward = Forward(pp.Empty())
+        first = pp.Literal("B") + "=" + pp.Word(pp.nums)
+        second = pp.Literal("C") + "=" + pp.Word(pp.nums)
+        parser = pp.Literal("A") + forward
+        parser.ignore("#" + pp.rest_of_line + pp.LineEnd())
+
+    for _ in range(5):
+        for target, name in ((first, "B"), (second, "C")):
+            forward << target
+            assert parser.parse_string(
+                f"A # comment\n{name} # comment\n=1", parse_all=True
+            ).as_list() == ["A", name, "=", "1"]

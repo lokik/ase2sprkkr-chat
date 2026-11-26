@@ -242,7 +242,9 @@ class Transparent(pp.ParseElementEnhance):
     """
 
     def preParse(self, instring, loc):
-        return loc
+        # Ignore comments just like ordinary pyparsing elements, but leave
+        # whitespace handling to the wrapped expression.
+        return self._skipIgnorables(instring, loc)
 
     def parseImpl(self, instring, loc, do_actions=True):
         return self.expr._parse(instring, loc, do_actions)
@@ -282,6 +284,10 @@ class Forward(Transparent):
         super().__init__(expr)
 
     def __lshift__(self, other):
+        # An alternative assigned after ignore() must receive the same
+        # ignore expressions as the original target.
+        for ignored in self.ignoreExprs:
+            other.ignore(ignored)
         self.expr = other
 
 

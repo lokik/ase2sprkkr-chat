@@ -657,9 +657,9 @@ def test_unit_grammar_sharing_does_not_share_validators_or_default_units():
 
     units = {"eV": unyt.eV, "Ry": unyt.Ry}
     positive = gt.RealWithUnits(units=units, default_unit="eV",
-                                condition=lambda v: v.value > 0 or "positive required")
+                                condition=lambda v: bool(v.value > 0) or "positive required")
     negative = gt.RealWithUnits(units=units, default_unit="eV",
-                                condition=lambda v: v.value < 0 or "negative required")
+                                condition=lambda v: bool(v.value < 0) or "negative required")
     rydberg = gt.RealWithUnits(units=units, default_unit="Ry")
 
     # Compiling additional definitions cannot change an already compiled
