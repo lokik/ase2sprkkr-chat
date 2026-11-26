@@ -1,12 +1,15 @@
 import os
+from types import MappingProxyType
 
 import ase.io
 import numpy as np
 import pytest
 
+from ..atomic_types import AtomicType
 from ..radial import RadialCharge, RadialPotential
 from ..radial_meshes import ExponentialMesh
 from ..sites import SiteType
+from ..occupations import Occupation
 from ..sprkkr_atoms import SPRKKRAtoms
 
 
@@ -128,6 +131,24 @@ class TestSites:
         assert len(site.occupation) == 2
         assert site.occupation[0] == pytest.approx(0.3 * 5.0 / 4.0)
         assert site.occupation[1] == pytest.approx(0.5 * 5.0 / 4.0)
+
+    def test_occupation_input_forms_and_native_type_assignment(self):
+        atoms = SPRKKRAtoms("Na")
+        site = atoms.sites[0]
+        occupation = site.occupation
+        new_type = AtomicType("Cl", mesh=site.site_type.mesh)
+
+        occupation[new_type] = 0.4
+        assert occupation["Na"] == pytest.approx(0.6)
+        assert occupation[new_type] == pytest.approx(0.4)
+        occupation.check()
+
+        occupation.set(MappingProxyType({"Na": 0.25, "Cl": 0.75}))
+        assert str(atoms.symbols) == "Cl"
+        assert Occupation(occupation).to_dict() == {"Na": 0.25, "Cl": 0.75}
+        occupation.set([("Na", 0.75), ("Cl", 0.25)])
+        assert str(atoms.symbols) == "Na"
+        assert occupation.to_dict() == {"Na": 0.75, "Cl": 0.25}
 
     def test_occupancy_is_keyed_by_spacegroup_kind(self):
         atoms = SPRKKRAtoms("Na2")
