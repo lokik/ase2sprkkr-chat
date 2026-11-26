@@ -17,6 +17,7 @@ from ..sprkkr.configuration import (
 from ..common.configuration_containers import BaseConfigurationContainer
 from ..common.repeated_configuration_containers import RepeatedConfigurationContainer
 from ..common.decorators import cached_class_property
+from ..common.options import _OptionState
 from ..common.warnings import DataValidityError
 from ..potentials.potentials import Potential
 from ..sprkkr.embedding import EMBEDDING_HOST, host_atoms
@@ -64,10 +65,12 @@ class InputSection(ConfigurationSection):
 class InputValue(ConfigurationValue):
     """Input-file option supporting a default specific to one parameter instance."""
 
+    _default_override = _OptionState.MISSING
+
     @property
     def default_value(self):
         """Return an instance-specific override of the definition default."""
-        if hasattr(self, "_default_override"):
+        if self._default_override is not _OptionState.MISSING:
             return self._default_override
         return super().default_value
 
@@ -83,7 +86,7 @@ class InputValue(ConfigurationValue):
 
     def clear_default(self):
         """Restore the default supplied by the input-parameter definition."""
-        self.__dict__.pop("_default_override", None)
+        self._default_override = _OptionState.MISSING
 
 
 class InputParameters(ConfigurationFile):
@@ -198,7 +201,7 @@ class InputParameters(ConfigurationFile):
     @staticmethod
     def _has_instance_defaults(source):
         if isinstance(source, InputValue):
-            return hasattr(source, "_default_override")
+            return source._default_override is not _OptionState.MISSING
         if isinstance(source, RepeatedConfigurationContainer):
             return any(
                 InputParameters._has_instance_defaults(member)
@@ -215,9 +218,7 @@ class InputParameters(ConfigurationFile):
     def _copy_instance_defaults(source, target, copy_values):
         if isinstance(source, RepeatedConfigurationContainer):
             for key, source_member in source._raw_items():
-                try:
-                    target_member = target[key]
-                except (IndexError, KeyError, TypeError):
+                if key not in target:
                     if not InputParameters._has_instance_defaults(source_member):
                         continue
                     if isinstance(target._values, list):
@@ -225,9 +226,8 @@ class InputParameters(ConfigurationFile):
                             target._add()
                     else:
                         target._add(key)
-                    target_member = target[key]
                 InputParameters._copy_instance_defaults(
-                    source_member, target_member, copy_values
+                    source_member, target[key], copy_values
                 )
             return
 
@@ -243,7 +243,7 @@ class InputParameters(ConfigurationFile):
 
         if not isinstance(source, InputValue):
             return
-        if not hasattr(source, "_default_override"):
+        if source._default_override is _OptionState.MISSING:
             return
         value = source._default_override
         if copy_values and value is not None:
