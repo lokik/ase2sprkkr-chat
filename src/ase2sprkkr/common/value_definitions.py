@@ -58,10 +58,8 @@ class InheritingValueModifier(ValueModifier):
     _enriching_classes = {}
 
     def modify_definition(self, definition):
-        modifiers = (*getattr(definition, "_modifiers", ()), self)
-        base_classes = getattr(
-            definition, "_base_classes", (definition.__class__,)
-        )
+        modifiers = (*definition._modifiers, self)
+        base_classes = definition._base_classes or (type(definition),)
         base_classes = (type(self), *base_classes)
         definition.__class__ = self._modified_class(base_classes)
         definition._modifiers = modifiers
@@ -128,6 +126,9 @@ def _rebuild_modified_definition(
 
 
 class ValueDefinition(RealItemDefinition):
+    _modifiers = ()
+    _base_classes = None
+
     result_class = Option
     type_of_dangerous: Optional[BaseMixed] = None
     """Mixed grammar for dangerous values, or None without a native fallback grammar."""
