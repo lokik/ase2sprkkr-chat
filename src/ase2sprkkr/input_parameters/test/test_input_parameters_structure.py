@@ -434,6 +434,13 @@ def test_parse_validation_sees_keyword_assignments():
     assert parameters.CONTROL.MODE() == 4
     assert parameters.CONTROL._parsed_values is None
 
+    # Multiple assignments to the same section share the outer transaction.
+    with parameters._mutation("parse"):
+        parameters.CONTROL.set(MODE=5, validation_reason="parse")
+        parameters.CONTROL.set(MODE=6, validation_reason="parse")
+    assert parameters.CONTROL.MODE() == 6
+    assert parameters.CONTROL._parsed_values is None
+
 
 def test_compiled_grammar_is_reused_per_definition_and_parse_policy():
     def make_definition():

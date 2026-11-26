@@ -218,12 +218,10 @@ class ConfigurationContainer(BaseConfigurationContainer):
             container._parsed_values = values
 
         def commit(self) -> None:
-            self._restore()
+            # Commit closes the entire transaction, including all savepoints.
+            self.container._parsed_values = None
 
         def rollback(self) -> None:
-            self._restore()
-
-        def _restore(self) -> None:
             self.container._parsed_values = self.old_values
 
     def __init__(self, definition, container=None):
