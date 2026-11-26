@@ -576,22 +576,15 @@ class ConfigurationContainer(BaseConfigurationContainer):
             )
         elif values is None:
             assignments = {}
-        else:
-            try:
-                values.items()
-            except AttributeError:
-                raise ValueError(
-                    "Only a mapping can be assigned to a section."
-                ) from None
+        elif isinstance(values, Mapping):
             assignments = values
+        else:
+            raise ValueError("Only a mapping can be assigned to a section.")
 
         if kwargs:
-            try:
-                assignments = copy.copy(assignments)
-                assignments.update(kwargs)
-            except (AttributeError, TypeError):
-                assignments = dict(assignments)
-                assignments.update(kwargs)
+            # Parsed Values carry deferred checks and the incomplete-input policy.
+            assignments = copy.copy(assignments) if isinstance(assignments, Values) else dict(assignments)
+            assignments.update(kwargs)
 
         policy = transaction.policy
         if policy.why == "parse":

@@ -9,7 +9,7 @@ from .parsing_results import dict_from_parsed
 
 
 import pyparsing as pp
-from typing import Iterable, Optional, Union
+from typing import Iterable, Mapping, Optional, Union
 
 from .warnings import DataValidityError
 from .native_preset_io import reading_preset
@@ -694,7 +694,7 @@ class SectionDefinition(ContainerDefinition):
         return f"Configuration section {self.name}"
 
     def accept_value(self, value) -> bool:
-        if isinstance(value, dict):
+        if isinstance(value, Mapping):
             return True
         return self.is_repeated and isinstance(value, Iterable)
 
