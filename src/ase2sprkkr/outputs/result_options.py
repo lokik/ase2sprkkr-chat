@@ -40,13 +40,13 @@ def _open_system_path(path):
 class OutputOption(Option):
     @property
     def display_name(self):
-        return getattr(self._definition, "display_name", self.name)
+        return self._definition.display_name
 
     def value_label(self):
         return self()
 
     def actions(self):
-        return ("plot",) if callable(getattr(self, "plot", None)) else ()
+        return ("plot",) if self._definition.plot else ()
 
 
 class DataOutputOption(OutputOption):
@@ -133,7 +133,7 @@ class OutputFileOption(OutputOption):
         return (
             self._FILE_DISPLAY_NAMES.get(self.name.casefold())
             or self._TYPE_DISPLAY_NAMES.get(self.file_type)
-            or super().display_name
+            or self.name
         )
 
     def set(self, value, **kwargs):
