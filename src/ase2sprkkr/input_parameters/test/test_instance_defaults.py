@@ -26,7 +26,12 @@ def _repeated_schema():
 
 def test_copy_preserves_empty_repeated_item_then_its_instance_default():
     parameters = _repeated_schema().create_object()
+    assert 0 not in parameters.ITEM
     item = parameters.ITEM.add()
+    assert 0 in parameters.ITEM
+    assert -1 in parameters.ITEM
+    assert 1 not in parameters.ITEM
+    assert -2 not in parameters.ITEM
 
     # A copy must retain an empty repeated item.
     copied_empty = parameters.copy()

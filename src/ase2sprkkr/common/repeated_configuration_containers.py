@@ -99,7 +99,7 @@ class RepeatedConfigurationContainer(BaseConfigurationContainer):
         """The check for existence of a member with the given name."""
         if self._definition.is_repeated == BaseDefinition.Repeated.LIST_SECTION:
             ln = len(self._values)
-            return isinstance(name, int) and abs(name) < len(self) or name == -ln
+            return isinstance(name, int) and -ln <= name < ln
         return name in self._values
 
     def _member_key(self, name):
