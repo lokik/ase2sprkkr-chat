@@ -82,8 +82,8 @@ def test_grammar_pool_resets_mutable_parse_state_on_every_return():
         forward = dependent_forward()
         def set_value(tokens):
             forward << pp.Literal(tokens[0])
-        count = pp.Word(pp.nums).set_parse_action(set_value)
-        return pp.Optional(count + ":") + forward
+        count = (pp.Word(pp.nums) + ":").set_parse_action(set_value)
+        return pp.Optional(count) + forward
 
     pool = GrammarPool(factory)
     assert pool.parse_string("1:1", parse_all=True).as_list() == ["1", ":", "1"]

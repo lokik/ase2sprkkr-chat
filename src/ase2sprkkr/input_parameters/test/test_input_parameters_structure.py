@@ -827,7 +827,8 @@ def test_switch():
     assert out["ENERGY"].to_string() == "ENERGY\n\tA=2\n\tC=4\n\tE=2\n\tB=6\n"
 
 
-def test_parallel_switch_parses_have_independent_compiled_grammars():
+@pytest.mark.parametrize("second_incomplete", (False, True))
+def test_parallel_switch_parses_have_independent_compiled_grammars(second_incomplete):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier, local
 
@@ -855,6 +856,8 @@ def test_parallel_switch_parses_have_independent_compiled_grammars():
     definition["ENERGY"]["A"].add_grammar_hook(overlap)
     with ThreadPoolExecutor(max_workers=2) as workers:
         first = workers.submit(definition.parse, "ENERGY A=1 B=10")
-        second = workers.submit(definition.parse, "ENERGY A=2 C=20")
+        second = workers.submit(
+            definition.parse, "ENERGY A=2 C=20", allow_incomplete=second_incomplete
+        )
         assert first.result(timeout=15).to_dict() == {"ENERGY": {"A": 1, "B": 10}}
         assert second.result(timeout=15).to_dict() == {"ENERGY": {"A": 2, "C": 20}}
