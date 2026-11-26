@@ -6,10 +6,10 @@ import numpy as np
 import pytest
 
 from ..atomic_types import AtomicType
-from ..occupations import Occupation
 from ..radial import RadialCharge, RadialPotential
 from ..radial_meshes import ExponentialMesh
 from ..sites import SiteType
+from ..occupations import Occupation
 from ..sprkkr_atoms import SPRKKRAtoms
 
 
