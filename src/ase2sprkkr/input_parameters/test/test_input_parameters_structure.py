@@ -591,6 +591,8 @@ def test_clear_grammar_cache_after_schema_edit():
     )
     root_grammar = definition.grammar()
     section_grammar = definition["CONTROL"].grammar()
+    leaf = definition["CONTROL"]["REQUIRED"]
+    leaf_grammar = leaf.grammar()
     assert definition.parse("CONTROL MODE=2").to_dict() == {
         "CONTROL": {"MODE": 2}
     }
@@ -603,6 +605,7 @@ def test_clear_grammar_cache_after_schema_edit():
 
     assert definition.grammar() is not root_grammar
     assert definition["CONTROL"].grammar() is not section_grammar
+    assert leaf.grammar() is not leaf_grammar
     with pytest.raises(pp.ParseBaseException):
         definition.parse("CONTROL MODE=2")
 

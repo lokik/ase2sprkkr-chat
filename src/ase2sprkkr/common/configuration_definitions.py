@@ -176,8 +176,9 @@ class BaseDefinition:
         """
         def clear_subtree(definition):
             definition.__dict__.pop("_grammar_cache", None)
-            for member in getattr(definition, "_members", {}).values():
-                clear_subtree(member)
+            if not definition.is_option:
+                for member in definition.members():
+                    clear_subtree(member)
 
         clear_subtree(self)
         parent = self.container
