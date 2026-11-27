@@ -35,6 +35,7 @@ class LaunchParameters:
     input_sync: str = "changed"
     output_sync: str = "changed"
     mpi_warning: bool = True
+    shared_filesystem: bool = False
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,7 @@ class SPRKKRProfile:
     mpi_warning: bool = True
     ssh_zstd: bool = False
     filesystem_id: str | None = None
+    shared_filesystem: bool = False
     # Provenance of the selected named configuration; not part of backend identity.
     name: str | None = None
     # Per-run option, deliberately not part of the pooled endpoint identity.
@@ -118,6 +120,7 @@ class SPRKKRProfile:
             input_sync=self.input_sync,
             output_sync=self.output_sync,
             mpi_warning=self.mpi_warning,
+            shared_filesystem=self.shared_filesystem,
         )
 
     def with_overrides(self, **overrides):
@@ -164,6 +167,7 @@ class SPRKKRProfile:
             input_sync=self.input_sync,
             output_sync=self.output_sync,
             filesystem_id=self.filesystem_id,
+            shared_filesystem=self.shared_filesystem,
         )
         argv = [executable]
         mpi_argv = None
@@ -326,6 +330,7 @@ def _configured_profile(profile, configuration):
         psij_backend=profile.psij_backend(),
         psij_url=profile.psij_url(),
         filesystem_id=profile.filesystem_id(),
+        shared_filesystem=bool(profile.shared_filesystem()),
         mpi_warning=mpi_warning,
         detached=bool(profile.detached()),
     )

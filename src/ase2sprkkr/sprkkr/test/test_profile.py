@@ -225,3 +225,26 @@ def test_invalid_profile_object_is_not_silently_treated_as_local():
 
     with pytest.raises(TypeError, match="Expected a profile"):
         resolve_sprkkr_profile(SimpleNamespace(executr="ssh"))
+
+
+def test_shared_filesystem_profile_round_trip_and_execution(tmp_path):
+    path = tmp_path / "config.yaml"
+    config = definition.create_object()
+    config.profiles.set({"cluster": {
+        "executor": "ssh", "host": "cluster", "shared_filesystem": True,
+        "local_root": "/mnt/work", "remote_root": "/scratch/work",
+        "input_sync": "always", "output_sync": "changed",
+    }})
+    save_configuration_yaml(config, path)
+    restored = definition.create_object()
+    load_configuration_yaml(restored, path)
+    profile = resolve_sprkkr_profile("cluster", configuration=restored)
+    assert profile.shared_filesystem
+    assert profile.launch_parameters.shared_filesystem
+    assert profile.target == SPRKKRProfile(executor="ssh", host="cluster").target
+    spec = profile.create_execution(
+        "kkrscf", "/mnt/work/run.inp", "/mnt/work/run.out", "/mnt/work",
+    )
+    assert spec.staging.shared_filesystem
+    assert spec.staging.input_sync == spec.staging.output_sync == "never"
+    assert not SPRKKRProfile().shared_filesystem
