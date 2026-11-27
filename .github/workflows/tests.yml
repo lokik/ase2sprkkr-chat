@@ -60,8 +60,9 @@ jobs:
   guy4ase-compatibility:
     if: github.event_name == 'push' && github.ref == 'refs/heads/workflow'
     needs: [build, execution-integration]
-    uses: ase2sprkkr/ase2sprkkr-gui/.github/workflows/backend-compatibility.yml@master
+    uses: lokik/ase2sprkkr-gui-chat/.github/workflows/backend-compatibility.yml@master
     with:
+      ase2sprkkr_gui_repository: lokik/ase2sprkkr-gui-chat
       ase2sprkkr_ref: ${{ github.sha }}
 
   # h5py is optional; do not allow an import skip to hide failed exports.
