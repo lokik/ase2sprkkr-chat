@@ -1,5 +1,6 @@
 import contextlib
 import tempfile
+import shutil
 import os
 from io import IOBase
 
@@ -99,22 +100,22 @@ class Directory:
 
     def __enter__(self):
         self.enters += 1
-        if self.enters == 1:
-            if self.dir is False:
-                self.handler = tempfile.TemporaryDirectory()
-                self.path = self.handler.name
-            else:
-                self.handler = None
-
-            if self.handler:
-                self.handler.__enter__()
+        if self.enters == 1 and self.dir is False:
+            self.path = tempfile.mkdtemp()
+            self._keep = False
         return self
+
+    def preserve(self):
+        """Keep a temporary working directory after its context exits."""
+        if self.dir is False and self.enters:
+            self._keep = True
 
     def __exit__(self, type, value, traceback):
         self.enters -= 1
-        if self.enters == 0 and self.handler:
-            self.handler.__exit__(type, value, traceback)
-            self.path = self.dir
+        if self.enters == 0 and self.dir is False:
+            path, self.path = self.path, self.dir
+            if not self._keep:
+                shutil.rmtree(path)
 
     @contextlib.contextmanager
     def chdir(self):

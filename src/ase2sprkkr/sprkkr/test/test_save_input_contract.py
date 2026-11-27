@@ -5,7 +5,7 @@ import pytest
 
 from ...input_parameters.input_parameters import InputParameters
 from ...potentials.potentials import Potential
-from ..calculation import PreparedCalculation
+from ..calculation import CalculationPlan
 from ..calculator import SPRKKR
 
 
@@ -59,7 +59,7 @@ def lightweight_serialization(monkeypatch):
     monkeypatch.setattr(Potential, "save_to_file", save_potential)
     monkeypatch.setattr(InputParameters, "save_to_file", save_parameters)
     yield
-    assert sorted(calls) == ["input", "potential"]
+    assert calls == []
 
 
 def test_create_run_preserves_explicitly_disabled_output(
@@ -74,7 +74,7 @@ def test_create_run_preserves_explicitly_disabled_output(
         prepared.close()
         return runner
 
-    monkeypatch.setattr(PreparedCalculation, "create_run", create_run)
+    monkeypatch.setattr(CalculationPlan, "create_run", create_run)
 
     assert calculator.create_run(output_file=False) is runner
 
@@ -94,7 +94,7 @@ def test_create_run_respects_calculator_level_disabled_output(
         prepared.close()
         return runner
 
-    monkeypatch.setattr(PreparedCalculation, "create_run", create_run)
+    monkeypatch.setattr(CalculationPlan, "create_run", create_run)
 
     assert calculator.create_run() is runner
     assert captured["output_file"] is None

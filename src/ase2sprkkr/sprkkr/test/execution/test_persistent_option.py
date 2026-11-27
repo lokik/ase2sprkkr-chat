@@ -23,7 +23,7 @@ def test_calculator_forwards_default_project_and_executor(tmp_path, monkeypatch)
         def create_run(self, **kwargs):
             captured.update(kwargs)
             return object()
-    monkeypatch.setattr(calculator, 'prepare', lambda **kwargs: Prepared())
+    monkeypatch.setattr(calculator, 'plan', lambda **kwargs: Prepared())
     calculator.create_run()
     assert captured['project'] is bound
     assert captured['executor'] is executor
@@ -39,7 +39,7 @@ def test_run_level_profile_overrides_calculator_executor(tmp_path, monkeypatch):
         def create_run(self, **kwargs):
             captured.update(kwargs)
             return object()
-    monkeypatch.setattr(calculator, 'prepare', lambda **kwargs: Prepared())
+    monkeypatch.setattr(calculator, 'plan', lambda **kwargs: Prepared())
     profile = SPRKKRProfile(executor='ssh', host='cluster')
     calculator.create_run(profile=profile)
     assert captured['executor'] is None

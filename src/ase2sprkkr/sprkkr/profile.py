@@ -62,7 +62,7 @@ class SPRKKRProfile:
     psij_backend: Any = None
     psij_url: Any = None
     mpi_warning: bool = True
-    ssh_zstd: bool = False
+    ssh_compression: str | None = "auto"
     filesystem_id: str | None = None
     # Provenance of the selected named configuration; not part of backend identity.
     name: str | None = None
@@ -85,7 +85,7 @@ class SPRKKRProfile:
             return SshTransport(
                 host=self.host,
                 options=self.ssh_options,
-                zstd=self.ssh_zstd,
+                compression=self.ssh_compression,
                 python_command=python_command,
             )
         if self.executor in ("local", "psij"):
@@ -170,9 +170,15 @@ class SPRKKRProfile:
         stdin = input_file
 
         if mpi.requested:
-            input_name = input_file.name
-            if len(input_name) > 80:
-                input_name = os.path.relpath(input_name, directory)
+            input_name = os.fspath(input_file) if isinstance(input_file, (str, os.PathLike)) else input_file.name
+            # Keep paths inside the calculation directory target-independent;
+            # remote staging preserves their relative names. Never discard an
+            # input subdirectory merely because the caller passed a Path.
+            if os.path.isabs(input_name):
+                relative = os.path.relpath(input_name, directory)
+                if (relative != os.pardir and not relative.startswith(os.pardir + os.sep)
+                        or len(input_name) > 80):
+                    input_name = relative
             mpi_argv = [executable + "MPI", input_name]
             if gdb:
                 # Let the executor prepend whichever MPI launcher it uses.
@@ -183,7 +189,8 @@ class SPRKKRProfile:
             # This is also the serial command used by ``mpi='auto'`` when MPI
             # autodetection falls back to non-MPI execution.
             stdin = None
-            print(f"run <{input_file.name}")
+            input_name = os.fspath(input_file) if isinstance(input_file, (str, os.PathLike)) else input_file.name
+            print(f"run <{input_name}")
             argv = ["gdb", executable]
 
         return ExecutionSpec(
@@ -318,7 +325,7 @@ def _configured_profile(profile, configuration):
         local_root=profile.local_root(),
         remote_root=profile.remote_root(),
         ssh_options=_shell_argv(profile.ssh_options()),
-        ssh_zstd=bool(profile.ssh_zstd()),
+        ssh_compression=None if profile.ssh_compression() == "none" else profile.ssh_compression(),
         remote_command=_shell_argv(profile.remote_command()),
         remote_python=_shell_argv(profile.remote_python()) or ("python3",),
         input_sync=profile.input_sync() or "changed",
