@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from packaging.requirements import Requirement
 from kkrunner.client import pool as execution_pool
+from kkrunner.targets.implementations.ssh.sessions import _close_all
 
 
 @dataclass(frozen=True)
@@ -40,8 +41,8 @@ def isolated_default_client_pool():
     try:
         yield
     finally:
-        execution_pool._DEFAULT_CLIENT_POOL.close()
         execution_pool._DEFAULT_CLIENT_POOL = previous
+        _close_all()
 
 
 def _declared_kkrunner_requirement():
