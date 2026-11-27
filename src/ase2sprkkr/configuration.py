@@ -351,6 +351,11 @@ definition = ConfigFileDefinition(
                     info="Python command on the SSH host, e.g. ['python3'].",
                 ),
                 V(
+                    "shared_filesystem",
+                    False,
+                    info="The local and remote roots refer to the same mounted files; disable transfers.",
+                ),
+                V(
                     "input_sync",
                     SYNC_POLICY,
                     is_optional=True,
