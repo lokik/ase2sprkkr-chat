@@ -122,7 +122,7 @@ def test_remote_executor_runs_psij_slurm_over_ssh(docker_execution_image):
                 raise
             assert runner.backend_id is not None
             assert dict(runner.execution.backend.options)['executor_name'] == 'slurm'
-            assert runner.execution.transport.host == 'tester@127.0.0.1'
+            assert runner.execution.target.host == 'tester@127.0.0.1'
             assert runner.execution.directory.target == '/home/tester/ase2sprkkr-runs/calculation'
             try:
                 result = runner.wait()

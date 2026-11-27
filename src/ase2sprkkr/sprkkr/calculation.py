@@ -17,7 +17,6 @@ from ..common.file_utils import Directory
 from ..common.output_printing import output_listeners
 from kkrunner.runs.base import ExecutionResources
 from .projects import resolve_project_manager
-from kkrunner.runs import Run
 from ..input_parameters.input_parameters import InputParameters
 from ..potentials.cluster_potentials import ClusterPotential
 from . import _preparation as preparation
@@ -540,8 +539,8 @@ def _create_sprkkr_run(
                     "profile": profile.name,
                 },
             }
-        runner = Run.create(
-            executor, spec,
+        runner = executor.create_run(
+            spec,
             persistent=manager if manager is not None else False,
             detached=(True if profile.detached and executor.backend.name == "direct" else None),
             process_result=process_result,

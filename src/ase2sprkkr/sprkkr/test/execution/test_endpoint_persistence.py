@@ -1,5 +1,5 @@
 from kkrunner.backends.config import BackendConfig
-from kkrunner.transports import SshTransport
+from kkrunner.targets import SshTarget
 
 from ase2sprkkr.sprkkr.profile import SPRKKRProfile
 
@@ -11,7 +11,7 @@ def test_profile_persists_transport_separately_from_backend():
         remote_python=("python3",),
         backend="psij", psij_backend="slurm", psij_url="local://slurm",
     )
-    assert profile.transport == SshTransport(
+    assert profile.target == SshTarget(
         host="cluster", options=("-p", "2222"), zstd=True,
         python_command=("python3",),
     )

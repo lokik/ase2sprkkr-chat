@@ -1,4 +1,4 @@
-"""Project-scoped SPR-KKR runs using the KKRunner EndpointClient/Run lifecycle."""
+"""Project-scoped SPR-KKR runs using the KKRunner ExecutionClient/Run lifecycle."""
 
 from contextlib import ExitStack
 from dataclasses import replace

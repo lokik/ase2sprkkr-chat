@@ -8,9 +8,8 @@ from types import SimpleNamespace
 import pytest
 
 from kkrunner import ExecutionSpec, RunState
-from kkrunner.client import EndpointClient
+from kkrunner.client import ExecutionClient
 from kkrunner.execution import MpiSpec
-from kkrunner.runs import Run
 
 from ..profile import SPRKKRProfile
 
@@ -86,7 +85,7 @@ def _local_run(code):
         error_file=str(Path(directory.name) / "run.err"),
         directory=directory.name,
     )
-    runner = Run.create(EndpointClient(), spec, persistent=False)
+    runner = ExecutionClient().create_run(spec, persistent=False)
     runner._test_directory = directory
     return runner
 

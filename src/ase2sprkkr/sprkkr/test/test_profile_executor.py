@@ -10,8 +10,8 @@ from ase2sprkkr.profiles import ProfilesConfigurationContainer
 from ase2sprkkr.sprkkr.profile import (
     SPRKKRProfile, executor_from_profile, resolve_sprkkr_profile,
 )
-from kkrunner.client import EndpointClient
-from kkrunner.transports import LocalTransport, SshTransport
+from kkrunner.client import ExecutionClient
+from kkrunner.targets import LocalTarget, SshTarget
 
 
 def fresh_config(monkeypatch):
@@ -48,15 +48,15 @@ def test_named_ssh_profile_resolves_client_and_staging(monkeypatch):
     assert profile.mpi == 16
 
     client = executor_from_profile(profile)
-    assert isinstance(client, EndpointClient)
-    assert isinstance(client.transport, SshTransport)
+    assert isinstance(client, ExecutionClient)
+    assert isinstance(client.target, SshTarget)
     assert client.backend.name == "psij"
 
 
 def test_local_profile_uses_direct_client():
     client = executor_from_profile(SPRKKRProfile())
-    assert isinstance(client, EndpointClient)
-    assert isinstance(client.transport, LocalTransport)
+    assert isinstance(client, ExecutionClient)
+    assert isinstance(client.target, LocalTarget)
     assert client.backend.name == "direct"
 
 
@@ -68,7 +68,7 @@ def test_ssh_profile_does_not_embed_staging_into_transport(tmp_path):
         input_sync="missing", output_sync="always",
     )
     client = executor_from_profile(profile)
-    assert client.transport == SshTransport(
+    assert client.target == SshTarget(
         "user@cluster", options=("-p", "2222"), zstd=True
     )
     input_file = SimpleNamespace(name="/home/user/work/test.inp")
@@ -91,7 +91,7 @@ def test_psij_profile_creates_configured_backend():
     client = executor_from_profile(SPRKKRProfile(
         executor="psij", psij_backend="slurm", psij_url="local://scheduler",
     ))
-    assert isinstance(client.transport, LocalTransport)
+    assert isinstance(client.target, LocalTarget)
     assert client.backend.name == "psij"
     assert client.backend.options == {
         "executor_name": "slurm", "url": "local://scheduler",

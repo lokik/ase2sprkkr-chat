@@ -9,7 +9,7 @@ import pytest
 
 from kkrunner import RunState
 from kkrunner.backends.contracts import SubmissionNotStarted
-from kkrunner.client import EndpointClient
+from kkrunner.client import ExecutionClient
 from kkrunner.runs import Run
 
 from ase2sprkkr import InputParameters
@@ -52,13 +52,13 @@ def _create_run(prepared, *, executor=None, callback=None):
     return prepared.create_run(
         result_context=None,
         profile=SPRKKRProfile(mpi=False),
-        executor=executor or EndpointClient(),
+        executor=executor or ExecutionClient(),
         callback=callback,
     )
 
 
 def test_files_are_closed_when_runner_creation_fails(prepared, monkeypatch):
-    executor = EndpointClient()
+    executor = ExecutionClient()
 
     def fail_factory(*args, **kwargs):
         raise RuntimeError("factory failed")

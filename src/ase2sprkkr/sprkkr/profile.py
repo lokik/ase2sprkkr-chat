@@ -15,10 +15,10 @@ from typing import Any
 from ..configuration import config, ExecutionProfile
 from kkrunner import ExecutionSpec
 from kkrunner.backends.config import BackendConfig
-from kkrunner.client import EndpointClient
+from kkrunner.client import ExecutionClient
 from kkrunner.client.pool import default_client_pool
 from kkrunner.client.staging import StagingSpec
-from kkrunner.transports import LocalTransport, SshTransport
+from kkrunner.targets import LocalTarget, SshTarget
 from kkrunner.execution import MpiSpec
 from ..profiles import ASEProfile, LegacyProfile, ase_command_profile_values
 
@@ -42,7 +42,7 @@ class SPRKKRProfile:
     """Describe how and where SPR-KKR executables are invoked.
 
     The public/runtime profile stays flat for configuration ergonomics. Code
-    that creates execution objects splits it into :attr:`transport`, :attr:`backend_config`, and
+    that creates execution objects splits it into :attr:`target`, :attr:`backend_config`, and
     per-run staging and MPI options internally.
     """
 
@@ -70,7 +70,7 @@ class SPRKKRProfile:
     detached: bool = False
 
     @property
-    def transport(self):
+    def target(self):
         """Client connection, independent of the selected execution backend."""
         if self.executor == "ssh" or (self.executor == "psij" and self.host):
             if not self.host:
@@ -82,14 +82,14 @@ class SPRKKRProfile:
                     "remote_command is no longer supported by KKRunner; "
                     "configure remote_python with the remote Python interpreter instead"
                 )
-            return SshTransport(
+            return SshTarget(
                 host=self.host,
                 options=self.ssh_options,
                 zstd=self.ssh_zstd,
                 python_command=python_command,
             )
         if self.executor in ("local", "psij"):
-            return LocalTransport()
+            return LocalTarget()
         raise ValueError(f"Unknown execution location {self.executor!r}")
 
     @property
@@ -333,16 +333,16 @@ def _configured_profile(profile, configuration):
 
 def create_client_from_profile(profile: SPRKKRProfile):
     """Create a client combining independent transport and backend configuration."""
-    return EndpointClient.from_config(profile.transport, profile.backend_config)
+    return ExecutionClient.from_config(profile.target, profile.backend_config)
 
 
 def client_from_profile(profile: SPRKKRProfile):
     """Reuse a client based on its backend and connection, not staging or MPI."""
-    return default_client_pool().for_config(profile.transport, profile.backend_config)
+    return default_client_pool().for_config(profile.target, profile.backend_config)
 
 
 # Retain the calculator's existing executor= argument and import paths while
-# treating its value as a KKRunner EndpointClient from now on.
+# treating its value as a KKRunner ExecutionClient from now on.
 create_executor_from_profile = create_client_from_profile
 executor_from_profile = client_from_profile
 
