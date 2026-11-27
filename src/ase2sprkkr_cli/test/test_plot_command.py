@@ -117,7 +117,21 @@ def test_grace_plot_cli_rejects_unknown_set(tmp_path):
 
 
 
-def test_plot_windows_identify_each_source_file_and_show_together(monkeypatch):
+@pytest.fixture
+def window_titles(monkeypatch):
+    """Provide GUI-style window titles even with older noninteractive backends."""
+    import matplotlib.pyplot as plt
+
+    fig = plt.figure()
+    manager_type = type(fig.canvas.manager)
+    plt.close(fig)
+    monkeypatch.setattr(manager_type, "set_window_title",
+                        lambda self, title: setattr(self, "_test_window_title", title))
+    monkeypatch.setattr(manager_type, "get_window_title",
+                        lambda self: getattr(self, "_test_window_title", f"Figure {self.num}"))
+
+
+def test_plot_windows_identify_each_source_file_and_show_together(monkeypatch, window_titles):
     import matplotlib.pyplot as plt
     from ase2sprkkr import result_files
 
@@ -162,7 +176,7 @@ def test_plot_windows_identify_each_source_file_and_show_together(monkeypatch):
         plt.close("all")
 
 
-def test_plot_windows_disambiguate_identical_basenames(monkeypatch):
+def test_plot_windows_disambiguate_identical_basenames(monkeypatch, window_titles):
     import matplotlib.pyplot as plt
     from ase2sprkkr import result_files
 
