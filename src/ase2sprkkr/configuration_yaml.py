@@ -114,6 +114,9 @@ def _typed_configuration(data):
     for profile in profiles.values():
         if not isinstance(profile, Mapping):
             continue
+        # Migrate the former boolean option at the persisted YAML boundary.
+        if "ssh_zstd" in profile and type(profile["ssh_zstd"]) is bool:
+            profile.setdefault("ssh_compression", "zstd" if profile.pop("ssh_zstd") else "none")
         ssh_options = profile.get("ssh_options")
         if isinstance(ssh_options, str):
             profile["ssh_options"] = shlex.split(ssh_options)

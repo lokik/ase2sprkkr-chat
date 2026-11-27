@@ -353,3 +353,28 @@ def test_remove_named_profile_guards_and_preserves_unrelated_profiles():
     with pytest.raises(KeyError):
         config.profiles.remove("missing")
 
+
+
+@pytest.mark.parametrize("configured,expected", [
+    ("auto", "auto"), ("gz", "gz"), ("bz2", "bz2"),
+    ("xz", "xz"), ("zstd", "zstd"), ("none", None),
+])
+def test_configured_ssh_compression(configured, expected):
+    from ase2sprkkr.sprkkr.profile import resolve_sprkkr_profile
+
+    config = fresh_config()
+    apply_yaml_document(config, {"profiles": {"cluster": {
+        "executor": "ssh", "host": "cluster", "ssh_compression": configured,
+    }}})
+    assert resolve_sprkkr_profile("cluster", configuration=config).transport.compression == expected
+
+
+@pytest.mark.parametrize("old,expected", [(True, "zstd"), (False, None)])
+def test_legacy_ssh_compression_yaml(old, expected):
+    from ase2sprkkr.sprkkr.profile import resolve_sprkkr_profile
+
+    config = fresh_config()
+    apply_yaml_document(config, {"profiles": {"cluster": {
+        "executor": "ssh", "host": "cluster", "ssh_zstd": old,
+    }}})
+    assert resolve_sprkkr_profile("cluster", configuration=config).transport.compression == expected

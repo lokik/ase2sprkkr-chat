@@ -1,7 +1,7 @@
 """Project-scoped SPR-KKR runs using the KKRunner EndpointClient/Run lifecycle."""
 
-from contextlib import ExitStack
 from dataclasses import replace
+from contextlib import ExitStack
 import pytest
 from types import SimpleNamespace
 import sys
@@ -60,11 +60,11 @@ def _runner(parameters, tmp_path, manager, *, metadata=None, profile=None):
     input_file.flush()
     output_file = (tmp_path / "test.out").open("wb")
     resources = ExitStack()
-    resources.callback(input_file.close)
-    resources.callback(output_file.close)
+    resources.enter_context(input_file)
+    resources.enter_context(output_file)
     prepared = PreparedCalculation(
-        parameters, input_file, None, output_file, str(tmp_path),
-        0, resources, None,
+        parameters, input_file, None, output_file, str(tmp_path), 0,
+        resources, None,
     )
     return prepared.create_run(
         result_context=SimpleNamespace(directory=str(tmp_path)),
@@ -129,7 +129,7 @@ def test_calculator_forwards_persistence_settings(tmp_path, monkeypatch):
             captured.update(kwargs)
             return object()
 
-    monkeypatch.setattr(calculator, "prepare", lambda **kwargs: Prepared())
+    monkeypatch.setattr(calculator, "plan", lambda **kwargs: Prepared())
     calculator.create_run()
     assert captured["project"] is manager
     assert captured["executor"] is client
@@ -147,7 +147,7 @@ def test_explicit_run_profile_selects_client_over_calculator_client(tmp_path, mo
             captured.update(kwargs)
             return object()
 
-    monkeypatch.setattr(calculator, "prepare", lambda **kwargs: Prepared())
+    monkeypatch.setattr(calculator, "plan", lambda **kwargs: Prepared())
     calculator.create_run(profile=profile)
     assert captured["profile"] is profile
     assert captured["executor"] is None
