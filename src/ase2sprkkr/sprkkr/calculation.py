@@ -541,7 +541,7 @@ def _create_sprkkr_run(
             }
         runner = executor.create_run(
             spec,
-            persistent=manager if manager is not None else False,
+            tracked=manager if manager is not None else False,
             detached=(True if profile.detached and executor.backend.name == "direct" else None),
             process_result=process_result,
             callback=finalized,

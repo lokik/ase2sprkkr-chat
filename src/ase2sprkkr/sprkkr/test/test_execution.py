@@ -85,7 +85,7 @@ def _local_run(code):
         error_file=str(Path(directory.name) / "run.err"),
         directory=directory.name,
     )
-    runner = ExecutionClient().create_run(spec, persistent=False)
+    runner = ExecutionClient().create_run(spec, tracked=False)
     runner._test_directory = directory
     return runner
 
