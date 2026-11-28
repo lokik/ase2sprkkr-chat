@@ -30,15 +30,15 @@ def _remote_error(exc):
     pytest.fail(f"{exc}\n\nRemote stderr:\n{stderr or '<empty>'}")
 
 
-def _wait_for_live_output(runner, output_seen, output, timeout=30):
+def _wait_for_live_output(runner, observation, output_seen, output, timeout=30):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if output_seen.wait(0.1):
             return
         state = runner.state
-        if state.value in {'finished', 'failed', 'cancelled'}:
+        if observation.done():
             try:
-                result = runner.wait()
+                result = observation.result()
             except Exception as exc:
                 pytest.fail(f'remote run ended before live output: state={state.value}, exception={exc!r}, output={output!r}')
             pytest.fail(f'remote run ended before live output: state={state.value}, return_code={result.return_code}, output={output!r}')
@@ -91,17 +91,23 @@ def test_remote_executor_over_ssh(docker_execution_image):
             workdir.mkdir()
             calculator = SPRKKR(atoms=bulk('Al'), directory=workdir, executor=executor, profile=profile, project=manager, empty_spheres=False, print_output=False)
             runner = calculator.create_run(options={'NITER': 2, 'NKTAB': 5, 'NE': 5}, read_callback=read_output)
-            try:
-                runner.submit()
-            except SubmissionNotStarted as exc:
-                if isinstance(exc.__cause__, subprocess.CalledProcessError):
-                    _remote_error(exc.__cause__)
-                raise
-            assert runner.backend_id is not None
-            assert runner.execution.target.host == 'tester@127.0.0.1'
-            assert runner.execution.directory.target == '/home/tester/ase2sprkkr-runs/calculation'
-            _wait_for_live_output(runner, output_seen, output)
-            result = runner.wait()
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                observation = pool.submit(runner.run)
+                try:
+                    _wait_for_live_output(runner, observation, output_seen, output)
+                    assert runner.backend_id is not None
+                    assert runner.execution.target.host == 'tester@127.0.0.1'
+                    assert runner.execution.directory.target == '/home/tester/ase2sprkkr-runs/calculation'
+                    result = observation.result(timeout=60)
+                except SubmissionNotStarted as exc:
+                    if isinstance(exc.__cause__, subprocess.CalledProcessError):
+                        _remote_error(exc.__cause__)
+                    raise
+                finally:
+                    if not observation.done():
+                        runner.cancel().result(timeout=10)
             finished_at = time.monotonic()
             assert result.return_code == 0
             assert len(result.iterations) > 0

@@ -74,7 +74,7 @@ def test_non_mpi_task_ignores_profile_mpi():
     assert spec.mpi == MpiSpec()
 
 
-def _local_run(code):
+def _local_run(code, *, detached=False):
     directory = tempfile.TemporaryDirectory()
     source = Path(directory.name) / "run.inp"
     source.write_text("input")
@@ -85,7 +85,7 @@ def _local_run(code):
         error_file=str(Path(directory.name) / "run.err"),
         directory=directory.name,
     )
-    runner = ExecutionClient().create_run(spec, tracked=False)
+    runner = ExecutionClient().create_run(spec, tracked=False, detached=detached)
     runner._test_directory = directory
     return runner
 
@@ -107,7 +107,7 @@ def test_local_run_streams_output_to_parser_and_listeners():
 
 
 def test_local_run_submit_then_wait():
-    runner = _local_run("print('ok')")
+    runner = _local_run("print('ok')", detached=True)
     assert runner.state == RunState.NEW
     assert runner.backend_id is None
     runner.submit()

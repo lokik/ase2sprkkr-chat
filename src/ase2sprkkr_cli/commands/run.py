@@ -186,19 +186,20 @@ def run(args, global_args):
     runner = calc.create_run(
         potential=potential, input_parameters=ip, options=options, **kwargs
     )
-    if args.submit_only and runner.client.backend.execution_mode != "managed":
-        runner.close()
-        raise CLIUsageError(
-            "--submit-only requires a managed backend (kkrunner or psij); "
-            "select one using --profile"
-        )
+    def accepted(run):
+        print(f"Run ID: {run.id}", flush=True)
 
-    runner.submit()
-    print(f"Run ID: {runner.id}", flush=True)
     if args.submit_only:
+        if not runner.detached:
+            runner.close()
+            raise CLIUsageError(
+                "--submit-only requires detached execution; select a suitable --profile"
+            )
+        runner.submit(on_submitted=accepted)
+        runner.close()
         return
 
-    result = runner.wait()
+    result = runner.run(on_submitted=accepted)
     from ase.calculators.calculator import CalculationFailed
     from kkrunner import RunState
 

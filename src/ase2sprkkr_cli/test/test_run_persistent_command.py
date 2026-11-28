@@ -66,20 +66,29 @@ def test_project_id_resolves_existing_application_project(monkeypatch, tmp_path)
         command._project_manager(uuid4().hex)
 
 
-def _fake_calculator(monkeypatch, *, backend="managed", state=None):
+def _fake_calculator(monkeypatch, *, detached=True, state=None):
     import ase2sprkkr
     from kkrunner import RunState
 
     calls = []
     runner = SimpleNamespace(
         id="run-123",
-        client=SimpleNamespace(backend=SimpleNamespace(execution_mode=backend)),
+        detached=detached,
         state=RunState.FINISHED if state is None else state,
         return_code=0,
         failure_message=None,
     )
-    runner.submit = lambda: calls.append(("submit",))
-    runner.wait = lambda: calls.append(("wait",)) or "result"
+    def submit(*, on_submitted):
+        calls.append(("submit",))
+        on_submitted(runner)
+
+    def run(*, on_submitted):
+        calls.append(("run",))
+        on_submitted(runner)
+        return "result"
+
+    runner.submit = submit
+    runner.run = run
     runner.close = lambda: calls.append(("close",))
 
     class Calculator:
@@ -114,12 +123,13 @@ def test_project_submit_only_uses_profile_and_project_directory(monkeypatch, cap
     assert calls[1][0] == "create"
     assert calls[1][1]["project"] is manager
     assert calls[1][1]["directory"] == "/project/work"
-    assert [c[0] for c in calls[2:]] == ["submit"]
+    assert [c[0] for c in calls[2:]] == ["submit", "close"]
     assert "Run ID: run-123" in capsys.readouterr().out
 
 
-def test_project_waits_and_explicit_directory_overrides_project(monkeypatch, capsys):
-    calls = _fake_calculator(monkeypatch)
+@pytest.mark.parametrize("detached", [False, True])
+def test_project_waits_and_explicit_directory_overrides_project(monkeypatch, capsys, detached):
+    calls = _fake_calculator(monkeypatch, detached=detached)
     monkeypatch.setattr(command, "_project_manager", lambda _: (
         object(), SimpleNamespace(directory="/project/work"),
     ))
@@ -128,16 +138,16 @@ def test_project_waits_and_explicit_directory_overrides_project(monkeypatch, cap
         None,
     )
     assert calls[1][1]["directory"] == "/another"
-    assert [c[0] for c in calls[2:]] == ["submit", "wait"]
+    assert [c[0] for c in calls[2:]] == ["run"]
     assert "Run ID: run-123" in capsys.readouterr().out
 
 
-def test_submit_only_rejects_direct_backend_and_closes_unstarted_runner(monkeypatch):
-    calls = _fake_calculator(monkeypatch, backend="direct")
+def test_submit_only_rejects_attached_execution_and_closes_unstarted_runner(monkeypatch):
+    calls = _fake_calculator(monkeypatch, detached=False)
     monkeypatch.setattr(command, "_project_manager", lambda _: (
         object(), SimpleNamespace(directory=None),
     ))
-    with pytest.raises(CLIUsageError, match="managed backend"):
+    with pytest.raises(CLIUsageError, match="requires detached execution"):
         command.run(_args("sample.pot", "--project-id", uuid4().hex, "--submit-only"), None)
     assert calls[-1] == ("close",)
     assert all(c[0] != "submit" for c in calls)
@@ -161,7 +171,7 @@ def test_persistent_run_reports_nonfinished_state(monkeypatch):
     ))
     with pytest.raises(CalculationFailed, match="calculation failed"):
         command.run(_args("sample.pot", "--project-id", uuid4().hex), None)
-    assert [c[0] for c in calls[1:]] == ["create", "submit", "wait"]
+    assert [c[0] for c in calls[1:]] == ["create", "run"]
 
 
 def test_global_profiler_has_distinct_option_name(capsys):

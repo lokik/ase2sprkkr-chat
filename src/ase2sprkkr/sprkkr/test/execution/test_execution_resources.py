@@ -2,7 +2,6 @@
 
 import sys
 from contextlib import ExitStack
-from threading import Event
 from types import SimpleNamespace
 
 import pytest
@@ -75,22 +74,22 @@ def test_files_are_closed_when_submission_fails_before_start(prepared, monkeypat
     assert isinstance(runner, Run)
     assert not prepared.input_file.closed
 
-    def fail_submission():
+    async def fail_submission(*args, **kwargs):
         raise SubmissionNotStarted("staging failed")
 
-    monkeypatch.setattr(runner._job, "submit", fail_submission)
+    monkeypatch.setattr(runner._job.execution, "submit", fail_submission)
     with pytest.raises(SubmissionNotStarted, match="staging failed"):
-        runner.submit()
+        runner.run()
     assert runner.state is RunState.FAILED
     assert prepared.input_file.closed
     assert prepared.output_file.closed
 
 
-def test_completion_releases_files_without_wait(prepared):
-    completed = Event()
-    runner = _create_run(prepared, callback=lambda result: completed.set())
-    runner.submit()
-    assert completed.wait(10), "completion callback was not called"
+def test_completion_releases_files_in_the_caller(prepared):
+    completed = []
+    runner = _create_run(prepared, callback=completed.append)
+    result = runner.run()
+    assert completed == [result]
     assert runner.state is RunState.FINISHED
     assert prepared.input_file.closed
     assert prepared.output_file.closed
