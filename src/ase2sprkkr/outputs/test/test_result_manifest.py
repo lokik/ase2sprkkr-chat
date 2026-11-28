@@ -25,9 +25,8 @@ def test_task_result_manifest_uses_native_files_section(tmp_path):
 
     assert isinstance(manifest, FileManifest)
     assert manifest.stdout.local_path == str(tmp_path / "run.out")
-    assert {Path(entry.local_path).name for entry in manifest.inputs} == {
-        "run.inp", "start.pot",
-    }
+    assert manifest.input.local_path == str(tmp_path / "run.inp")
+    assert {Path(entry.local_path).name for entry in manifest.inputs} == {"start.pot"}
     assert {Path(entry.local_path).name for entry in manifest.outputs} == {
         "start.pot_new", "run_DOS.dos",
     }
@@ -41,7 +40,7 @@ def test_manifest_keeps_missing_declarations_without_discovering_neighbor_files(
     result = _result(tmp_path)
     (tmp_path / "other.out").write_text("unrelated", encoding="utf-8")
     manifest = capture_result_file_manifest(result)
-    paths = {Path(entry.local_path).name for entry in (*manifest.inputs, *manifest.outputs)}
+    paths = {Path(entry.local_path).name for entry in (*manifest.input_entries, *manifest.outputs)}
     assert paths == {"run.inp", "start.pot", "start.pot_new", "run_DOS.dos"}
     assert tuple(version.path.name for version in manifest.output_versions) == ("run.out",)
     assert manifest.state is FileState.CURRENT
@@ -119,7 +118,7 @@ def test_task_cache_and_optional_output_pattern_are_resolved(tmp_path):
     assert optional.optional
     assert optional.source_pattern == str(tmp_path / "*_SCFSTART.dos")
     assert "unrelated.dat" not in {
-        Path(entry.local_path).name for entry in (*manifest.inputs, *manifest.outputs)
+        Path(entry.local_path).name for entry in (*manifest.input_entries, *manifest.outputs)
     }
     # A missing pattern does not become an unsafe literal pathname.
     (tmp_path / "Fe_SCFSTART.dos").unlink()
@@ -189,3 +188,15 @@ def test_missing_parsed_result_file_has_no_actions(tmp_path):
     assert file.actions() == ("open_directory",)
     (tmp_path / "missing.dos").write_text("some data", encoding="utf-8")
     assert "open" in file.actions()
+
+
+def test_manifest_does_not_promote_starting_potential_to_primary_input(tmp_path):
+    (tmp_path / "run.out").write_text("OUT", encoding="utf-8")
+    (tmp_path / "start.pot").write_text("potential", encoding="utf-8")
+    result = TaskResult(None, None, tmp_path, output_file="run.out", task_name="SCF")
+    result.files.add_file("potential", "start.pot")
+    manifest = result.to_file_manifest()
+    assert manifest.input is None
+    assert manifest.input_file is None
+    assert {Path(item.local_path).name for item in manifest.inputs} == {"start.pot"}
+    assert {version.path.name for version in manifest.input_versions} == {"start.pot"}

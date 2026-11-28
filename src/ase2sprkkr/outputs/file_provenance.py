@@ -279,6 +279,7 @@ def capture_result_file_manifest(
         if potential:
             add(potential, "input")
 
+    primary = None if result.input_file is None else absolute(result.input_file)
     for name, option in result.files.items().items():
         role = str(name).casefold()
         if role == "output":
@@ -286,6 +287,8 @@ def capture_result_file_manifest(
         location = option.path()
         if role in {"input", "potential", "start_potential"}:
             kind = "input"
+            if role == "input" and primary is None:
+                primary = absolute(location)
         elif role == "sfn":
             if result.sfn_generated is True:
                 kind = "output"
@@ -301,7 +304,7 @@ def capture_result_file_manifest(
             kind = entries.get(absolute(location), ("output", False, None))[0]
         add(location, kind, observed=True)
 
-    add(result.input_file, "input", observed=True)
+    add(primary, "input", observed=True)
     if potential_path is not None:
         potential = absolute(potential_path)
         if potential not in entries:
@@ -343,7 +346,8 @@ def capture_result_file_manifest(
 
     inputs, outputs, caches = (selected(kind) for kind in ("input", "output", "cache"))
     return FileManifest(
-        inputs=tuple(entry(path) for path in inputs),
+        input=entry(primary) if primary in inputs else None,
+        inputs=tuple(entry(path) for path in inputs if path != primary),
         outputs=tuple(entry(path) for path in outputs),
         caches=tuple(CacheEntry(entry(path)) for path in caches),
         stdout=FileEntry(
