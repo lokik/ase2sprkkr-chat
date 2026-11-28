@@ -8,6 +8,7 @@ on:
       - 'chatgpt-**'
   pull_request:
     branches:
+      - adopt-kkrunner-execution-api
       - cluster
       - develop
       - workflow
@@ -31,6 +32,16 @@ jobs:
     - run: |
          mkdir -p ~/.config/matplotlib
          echo "text.usetex : False" >> ~/.config/matplotlib/matplotlibrc
+    - name: Checkout matching KKRunner refactor
+      if: github.repository == 'lokik/ase2sprkkr-chat' && (github.head_ref || github.ref_name) == 'refactor-independent-run-states'
+      uses: actions/checkout@v6
+      with:
+        repository: lokik/kkrunner-chat
+        ref: refactor-independent-run-states
+        path: .ci/kkrunner
+    - name: Install matching KKRunner
+      if: github.repository == 'lokik/ase2sprkkr-chat' && (github.head_ref || github.ref_name) == 'refactor-independent-run-states'
+      run: python -m pip install ./.ci/kkrunner
     - name: Install ASE2SPRKKR with declared KKRunner dependency
       run: ./install_dependencies.sh '.[psij]'
     - name: Test installed wheel
@@ -47,6 +58,16 @@ jobs:
     - run: |
          mkdir -p ~/.config/matplotlib
          echo "text.usetex : False" >> ~/.config/matplotlib/matplotlibrc
+    - name: Checkout matching KKRunner refactor
+      if: github.repository == 'lokik/ase2sprkkr-chat' && (github.head_ref || github.ref_name) == 'refactor-independent-run-states'
+      uses: actions/checkout@v6
+      with:
+        repository: lokik/kkrunner-chat
+        ref: refactor-independent-run-states
+        path: .ci/kkrunner
+    - name: Install matching KKRunner
+      if: github.repository == 'lokik/ase2sprkkr-chat' && (github.head_ref || github.ref_name) == 'refactor-independent-run-states'
+      run: python -m pip install ./.ci/kkrunner
     - name: Install ASE2SPRKKR with declared KKRunner dependency
       run: ./install_dependencies.sh '.[psij]'
     - name: Test SSH and PSI/J Slurm execution
@@ -75,6 +96,16 @@ jobs:
     - run: |
         mkdir -p ~/.config/matplotlib
         echo "text.usetex : False" >> ~/.config/matplotlib/matplotlibrc
+    - name: Checkout matching KKRunner refactor
+      if: github.repository == 'lokik/ase2sprkkr-chat' && (github.head_ref || github.ref_name) == 'refactor-independent-run-states'
+      uses: actions/checkout@v6
+      with:
+        repository: lokik/kkrunner-chat
+        ref: refactor-independent-run-states
+        path: .ci/kkrunner
+    - name: Install matching KKRunner
+      if: github.repository == 'lokik/ase2sprkkr-chat' && (github.head_ref || github.ref_name) == 'refactor-independent-run-states'
+      run: python -m pip install ./.ci/kkrunner
     - name: Install ASE2SPRKKR with declared KKRunner dependency
       run: ./install_dependencies.sh '.[psij]'
     - name: Install NeXus writers and independent reader

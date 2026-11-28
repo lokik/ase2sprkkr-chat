@@ -1,24 +1,12 @@
-from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
-from kkrunner import RunState, RunStore
+from kkrunner import RunFileState, RunState, RunStore
 from kkrunner.runs import FailurePhase
 from kkrunner.runs.manager import RunManager
 
 import ase2sprkkr.outputs.project_results as project_output
 from ase2sprkkr.outputs.project_results import UnrecoverableProjectResultError, attach_project_run
-
-
-def _complete_owned_processing(manager, record, **kwargs):
-    """Simulate the ownership claim made by KKRunner's processing lifecycle."""
-    claimed = manager.store.update(
-        record,
-        lambda current: replace(current, processing_attempt="test-processing-attempt"),
-    )
-    return manager.complete(
-        claimed, expected_processing_attempt=claimed.processing_attempt, **kwargs,
-    )
 
 
 def test_unrecoverable_processor_reconstruction_fails_postprocessing(tmp_path):
@@ -27,13 +15,13 @@ def test_unrecoverable_processor_reconstruction_fails_postprocessing(tmp_path):
     record = manager.new_record(
         directory=tmp_path, metadata={"ase2sprkkr": {"task": str("NO_SUCH_TASK").upper()}}, processing_required=True
     )
-    record = manager.transition(record, state=RunState.POSTPROCESSING)
+    record = manager.transition(record, state=RunState.FINISHED, file_state=RunFileState.POSTPROCESSING)
     with pytest.raises(UnrecoverableProjectResultError):
-        attach_project_run(manager, record)
+        project_output.retry_project_postprocessing(manager, record)
     failed = store.get(record.id)
-    # Attach never owns the processing lock, so must not change a live
+    # Reader reconstruction precedes the processing claim and must not change a live
     # processing attempt into a failed terminal result.
-    assert failed.state == RunState.POSTPROCESSING
+    assert failed.file_state == RunFileState.POSTPROCESSING
     assert failed.failure_phase is None
     assert failed.finished_at is None
 
@@ -44,7 +32,7 @@ def test_reader_constructor_programming_error_is_not_reclassified(tmp_path, monk
     record = manager.new_record(
         directory=tmp_path, metadata={"ase2sprkkr": {"task": str("DOS").upper()}}, processing_required=True
     )
-    record = manager.transition(record, state=RunState.POSTPROCESSING)
+    record = manager.transition(record, state=RunState.FINISHED, file_state=RunFileState.POSTPROCESSING)
     error = RuntimeError("reader constructor failed")
 
     class BrokenReader:
@@ -53,21 +41,21 @@ def test_reader_constructor_programming_error_is_not_reclassified(tmp_path, monk
 
     monkeypatch.setattr(project_output.reader_registry, "class_for_task", lambda _task_definition: BrokenReader)
     with pytest.raises(RuntimeError, match="reader constructor failed") as exc_info:
-        attach_project_run(manager, record)
+        project_output.retry_project_postprocessing(manager, record)
     assert exc_info.value is error
     current = store.get(record.id)
-    assert current.state == RunState.POSTPROCESSING
+    assert current.file_state == RunFileState.POSTPROCESSING
     assert current.message is None
     assert current.finished_at is None
 
 
-def test_transient_attach_failure_keeps_postprocessing_active(tmp_path, monkeypatch):
+def test_transient_attach_failure_keeps_publication_wait_active(tmp_path, monkeypatch):
     store = RunStore(tmp_path / "runs")
     manager = RunManager(store)
     record = manager.new_record(
         directory=tmp_path, metadata={"ase2sprkkr": {"task": str("DOS").upper()}}, processing_required=True
     )
-    record = manager.transition(record, state=RunState.POSTPROCESSING, execution=record.execution.submitted("job-1"))
+    record = manager.transition(record, state=RunState.FINISHED, file_state=RunFileState.WAITING, execution=record.execution.submitted("job-1"))
     monkeypatch.setattr(
         project_output, "_result_processor_for_record", lambda _manager, _record: lambda outcome: outcome
     )
@@ -79,11 +67,11 @@ def test_transient_attach_failure_keeps_postprocessing_active(tmp_path, monkeypa
     with pytest.raises(OSError, match="temporary ssh failure"):
         attach_project_run(manager, record)
     current = store.get(record.id)
-    assert current.state == RunState.POSTPROCESSING
+    assert current.file_state == RunFileState.WAITING
     assert current.finished_at is None
 
 
-def test_attaching_failed_download_reopens_transfer_without_resubmitting(tmp_path, monkeypatch):
+def test_failed_download_collects_and_processes_without_reattaching(tmp_path, monkeypatch):
     manager = RunManager(RunStore(tmp_path / "runs"))
     from kkrunner.files import FileEntry, FileManifest
 
@@ -102,32 +90,32 @@ def test_attaching_failed_download_reopens_transfer_without_resubmitting(tmp_pat
         processing_required=True,
     )
     record = manager.transition(
-        record, state=RunState.DOWNLOADING, execution=record.execution.submitted("existing-backend-id")
+        record, state=RunState.FINISHED, file_state=RunFileState.COLLECTING, execution=record.execution.submitted("existing-backend-id")
     )
     manager.complete(
         record,
-        state=RunState.FAILED,
+        state=RunState.FINISHED, file_state=RunFileState.FAILED,
         return_code=0,
-        failure_phase=FailurePhase.DOWNLOAD,
-        message="connection dropped",
+        file_failure_phase=FailurePhase.DOWNLOAD,
+        file_message="connection dropped",
         artifacts_available=False,
     )
     import ase2sprkkr.outputs.project_results as project_results
 
     monkeypatch.setattr(project_results, "_result_processor_for_record", lambda *_: lambda result: result)
-    attached = []
+    def unexpected_attach(*args, **kwargs):
+        pytest.fail("Published files must not create a Job")
 
-    def fake_attach(record, **kwargs):
-        attached.append(record)
-        return record
-
-    monkeypatch.setattr(manager, "attach", fake_attach)
-    resumed = attach_project_run(manager, record.id)
-    assert resumed.state == RunState.DOWNLOADING
-    assert resumed.execution.backend_id == "existing-backend-id"
-    assert manager.store.get(record.id).finished_at is None
+    monkeypatch.setattr(manager, "attach", unexpected_attach)
+    with pytest.raises(project_results.ProjectResultUnavailableError, match="finish_project_files"):
+        attach_project_run(manager, record.id)
+    result = project_results.finish_project_files(manager, record.id)
+    saved = manager.store.get(record.id)
+    assert saved.file_state == RunFileState.POSTPROCESSED
+    assert saved.execution.backend_id == "existing-backend-id"
+    assert saved.finished_at is not None
+    assert result.return_code == 0
     assert output.read_bytes() == b"partial output"
-    assert attached == [resumed]
 
 
 def test_failed_download_reader_construction_does_not_reopen_run(tmp_path, monkeypatch):
@@ -147,10 +135,10 @@ def test_failed_download_reader_construction_does_not_reopen_run(tmp_path, monke
         processing_required=True,
     )
     record = manager.transition(
-        record, state=RunState.DOWNLOADING, execution=record.execution.submitted("existing-backend")
+        record, state=RunState.FINISHED, file_state=RunFileState.COLLECTING, execution=record.execution.submitted("existing-backend")
     )
     failed = manager.complete(
-        record, state=RunState.FAILED, return_code=0, failure_phase=FailurePhase.DOWNLOAD, artifacts_available=False
+        record, state=RunState.FINISHED, file_state=RunFileState.FAILED, return_code=0, file_failure_phase=FailurePhase.DOWNLOAD, artifacts_available=False
     )
 
     def broken_reader(*args):
@@ -158,10 +146,10 @@ def test_failed_download_reader_construction_does_not_reopen_run(tmp_path, monke
 
     monkeypatch.setattr(project_output, "_result_processor_for_record", broken_reader)
     with pytest.raises(RuntimeError, match="Reader constructor is broken"):
-        attach_project_run(manager, failed.id)
+        project_output.finish_project_files(manager, failed.id)
     current = manager.store.get(failed.id)
-    assert current.state == RunState.FAILED
-    assert current.failure_phase == FailurePhase.DOWNLOAD
+    assert current.file_state == RunFileState.FAILED
+    assert current.file_failure_phase == FailurePhase.DOWNLOAD
     assert current.files == failed.files
 
 
@@ -178,14 +166,14 @@ def test_postprocessing_retry_uses_saved_files_without_backend(tmp_path):
         processing_required=True,
     )
     record = manager.transition(
-        record, state=RunState.POSTPROCESSING, execution=record.execution.submitted("existing-backend")
+        record, state=RunState.FINISHED, file_state=RunFileState.POSTPROCESSING, execution=record.execution.submitted("existing-backend")
     )
-    failed = _complete_owned_processing(
-        manager, record,
-        state=RunState.FAILED,
+    failed = manager.complete(
+        record,
+        state=RunState.FINISHED, file_state=RunFileState.FAILED,
         return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING,
-        message="transient parse error",
+        file_failure_phase=FailurePhase.POSTPROCESSING,
+        file_message="transient parse error",
         artifacts_available=True,
     )
     assert failed.files.captured_at is not None
@@ -203,7 +191,7 @@ def test_postprocessing_retry_uses_saved_files_without_backend(tmp_path):
     assert latest.execution.backend_id == "existing-backend"
     assert latest.files.input_versions == failed.files.input_versions
     assert latest.files.output_versions == failed.files.output_versions
-    with pytest.raises(ValueError, match="Only postprocessing failures"):
+    with pytest.raises(ValueError, match="Only ready, failed or interrupted postprocessing"):
         manager.retry_postprocessing(failed.id, parser)
 
 
@@ -220,13 +208,13 @@ def test_postprocessing_retry_failure_is_retryable_and_does_not_resubmit(tmp_pat
         processing_required=True,
     )
     record = manager.transition(
-        record, state=RunState.POSTPROCESSING, execution=record.execution.submitted("existing-backend")
+        record, state=RunState.FINISHED, file_state=RunFileState.POSTPROCESSING, execution=record.execution.submitted("existing-backend")
     )
-    failed = _complete_owned_processing(
-        manager, record,
-        state=RunState.FAILED,
+    failed = manager.complete(
+        record,
+        state=RunState.FINISHED, file_state=RunFileState.FAILED,
         return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING,
+        file_failure_phase=FailurePhase.POSTPROCESSING,
         artifacts_available=True,
     )
 
@@ -236,8 +224,8 @@ def test_postprocessing_retry_failure_is_retryable_and_does_not_resubmit(tmp_pat
     with pytest.raises(ValueError, match="parse failed again"):
         manager.retry_postprocessing(failed.id, broken)
     current = manager.store.get(failed.id)
-    assert current.state == RunState.FAILED
-    assert current.failure_phase == FailurePhase.POSTPROCESSING
+    assert current.file_state == RunFileState.FAILED
+    assert current.file_failure_phase == FailurePhase.POSTPROCESSING
     assert current.execution.backend_id == failed.execution.backend_id
     manager.retry_postprocessing(failed.id, lambda outcome: outcome)
     assert manager.store.get(failed.id).state == RunState.FINISHED
@@ -256,19 +244,19 @@ def test_postprocessing_retry_refuses_modified_or_uncaptured_artifacts(tmp_path)
         processing_required=True,
     )
     record = manager.transition(
-        record, state=RunState.POSTPROCESSING, execution=record.execution.submitted("existing-backend")
+        record, state=RunState.FINISHED, file_state=RunFileState.POSTPROCESSING, execution=record.execution.submitted("existing-backend")
     )
-    failed = _complete_owned_processing(
-        manager, record,
-        state=RunState.FAILED,
+    failed = manager.complete(
+        record,
+        state=RunState.FINISHED, file_state=RunFileState.FAILED,
         return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING,
+        file_failure_phase=FailurePhase.POSTPROCESSING,
         artifacts_available=True,
     )
     output.write_text("overwritten")
     with pytest.raises(ValueError, match="unchanged historical artifacts"):
         manager.retry_postprocessing(failed.id, lambda outcome: outcome)
-    assert manager.store.get(failed.id).state == RunState.FAILED
+    assert manager.store.get(failed.id).file_state == RunFileState.FAILED
 
 
 def test_postprocessing_retry_reader_constructor_error_does_not_reopen(tmp_path, monkeypatch):
@@ -286,13 +274,13 @@ def test_postprocessing_retry_reader_constructor_error_does_not_reopen(tmp_path,
         processing_required=True,
     )
     record = manager.transition(
-        record, state=RunState.POSTPROCESSING, execution=record.execution.submitted("existing-backend")
+        record, state=RunState.FINISHED, file_state=RunFileState.POSTPROCESSING, execution=record.execution.submitted("existing-backend")
     )
-    failed = _complete_owned_processing(
-        manager, record,
-        state=RunState.FAILED,
+    failed = manager.complete(
+        record,
+        state=RunState.FINISHED, file_state=RunFileState.FAILED,
         return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING,
+        file_failure_phase=FailurePhase.POSTPROCESSING,
         artifacts_available=True,
     )
     monkeypatch.setattr(
@@ -302,7 +290,7 @@ def test_postprocessing_retry_reader_constructor_error_does_not_reopen(tmp_path,
     )
     with pytest.raises(RuntimeError, match="broken reader"):
         retry_project_postprocessing(manager, failed.id)
-    assert manager.store.get(failed.id).state == RunState.FAILED
+    assert manager.store.get(failed.id).file_state == RunFileState.FAILED
 
 
 def test_project_retry_attaches_run_provenance(tmp_path, monkeypatch):
@@ -320,13 +308,13 @@ def test_project_retry_attaches_run_provenance(tmp_path, monkeypatch):
         processing_required=True,
     )
     record = manager.transition(
-        record, state=RunState.POSTPROCESSING, execution=record.execution.submitted("job-existing")
+        record, state=RunState.FINISHED, file_state=RunFileState.POSTPROCESSING, execution=record.execution.submitted("job-existing")
     )
-    failed = _complete_owned_processing(
-        manager, record,
-        state=RunState.FAILED,
+    failed = manager.complete(
+        record,
+        state=RunState.FINISHED, file_state=RunFileState.FAILED,
         return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING,
+        file_failure_phase=FailurePhase.POSTPROCESSING,
         artifacts_available=True,
     )
     from ase2sprkkr.outputs.task_result import TaskResult
@@ -358,13 +346,13 @@ def test_project_retry_accepts_immutable_results(tmp_path, monkeypatch, parsed):
         processing_required=True,
     )
     record = manager.transition(
-        record, state=RunState.POSTPROCESSING, execution=record.execution.submitted("existing-backend")
+        record, state=RunState.FINISHED, file_state=RunFileState.POSTPROCESSING, execution=record.execution.submitted("existing-backend")
     )
-    failed = _complete_owned_processing(
-        manager, record,
-        state=RunState.FAILED,
+    failed = manager.complete(
+        record,
+        state=RunState.FINISHED, file_state=RunFileState.FAILED,
         return_code=0,
-        failure_phase=FailurePhase.POSTPROCESSING,
+        file_failure_phase=FailurePhase.POSTPROCESSING,
         artifacts_available=True,
     )
     monkeypatch.setattr(project_output, "_result_processor_for_record", lambda *_: lambda outcome: parsed)

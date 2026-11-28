@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from kkrunner import ExecutionSpec, RunState, RunStore
+from kkrunner import ExecutionSpec, RunFileState, RunState, RunStore
 from kkrunner.files import ArtifactAvailabilityState, FileManifest, FileState
 from kkrunner.runs.manager import RunManager
 from kkrunner.client.pool import ClientPool
@@ -55,7 +55,7 @@ def _terminal_run(tmp_path, *, state=RunState.FINISHED, return_code=0, task='DOS
     record = manager.new_record(directory=tmp_path, files=FileManifest.from_spec(spec), metadata={'ase2sprkkr': {'task': str(task).upper()}}, processing_required=True)
     client_pool.get((record.execution.target, record.execution.backend), lambda: executor)
     record = manager.store.save(record)
-    record = manager.complete(record, state=state, execution=record.execution.submitted('job-1'), return_code=return_code, artifacts_available=True)
+    record = manager.complete(record, state=state, file_state=RunFileState.DONE, execution=record.execution.submitted('job-1'), return_code=return_code, artifacts_available=True)
     return (manager, executor, record)
 
 

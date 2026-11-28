@@ -12,7 +12,7 @@ from ..common.warnings import DataValidityError
 from ..common.module_registry import RegistryEntryNotFound
 from kkrunner.files import ArtifactAvailabilityState, FileState
 from kkrunner.runs import FailurePhase, HistoricalFileMismatchError
-from kkrunner import RunState
+from kkrunner import RunFileState
 from ..input_parameters.input_parameters import InputParameters
 from ..input_parameters.task_definition import TaskMismatchError
 from .reader_registry import reader_registry
@@ -133,28 +133,28 @@ def attach_project_run(
     callback=None,
     output_listener=None,
 ):
-    """Reconnect an active run and resume its client-side lifecycle."""
+    """Reconnect an active execution whose output is not yet confirmed published."""
     record = _record(manager, run)
-    retry_download = (
-        record.state == RunState.FAILED
-        and record.failure_phase == FailurePhase.DOWNLOAD
-        and record.return_code == 0
-    )
-    if not retry_download and record.state in (
-        RunState.FINISHED, RunState.FAILED, RunState.CANCELLED
+    if record.file_state == RunFileState.COLLECTING or (
+        record.file_state == RunFileState.FAILED
+        and record.file_failure_phase == FailurePhase.DOWNLOAD
     ):
         raise ProjectResultUnavailableError(
-            record, f"run is already terminal ({record.state.value})"
+            record, "use finish_project_files() to complete file collection"
+        )
+    if not record.is_active:
+        raise ProjectResultUnavailableError(
+            record, f"run files are already finalized ({record.file_state.value})"
+        )
+
+    if record.file_state in (RunFileState.READY, RunFileState.POSTPROCESSING):
+        raise ProjectResultUnavailableError(
+            record, "files are ready for local processing; use retry_project_postprocessing()"
         )
 
     # An attach attempt does not own a running processor's lock, so reader
     # reconstruction failures must not finalize its processing state.
     process_result = _result_processor_for_record(manager, record)
-
-    if retry_download:
-        # Resolve the reader first: a construction error must not turn a
-        # historically failed transfer into an orphan active run.
-        record = manager.resume_download(record)
 
     def completed(result):
         from .task_result import TaskResult
@@ -172,12 +172,32 @@ def attach_project_run(
     )
 
 
+def finish_project_files(manager, run):
+    """Collect published files and interpret them without reattaching a job."""
+    record = _record(manager, run)
+    if record.file_state == RunFileState.POSTPROCESSED:
+        return load_project_result(manager, record, allow_unparsed=True)
+    # Resolve the reader before reopening a failed reservation.
+    processor = _result_processor_for_record(manager, record)
+    record = manager.collect_files(record)
+    if record.file_state == RunFileState.POSTPROCESSED:
+        return load_project_result(manager, record, allow_unparsed=True)
+    if record.file_state != RunFileState.READY:
+        raise ProjectResultUnavailableError(
+            record, record.file_message or f"file collection ended in {record.file_state.value}"
+        )
+    return _process_project_record(manager, record, processor)
+
+
 def retry_project_postprocessing(manager, run):
-    """Explicitly parse preserved result files again without executing the task."""
+    """Process prepared or preserved result files locally, without executing the task."""
     record = _record(manager, run)
     # Reader construction is outside the transition: programming errors and
     # missing definitions must leave the original failure record unchanged.
-    processor = _result_processor_for_record(manager, record)
+    return _process_project_record(manager, record, _result_processor_for_record(manager, record))
+
+
+def _process_project_record(manager, record, processor):
     result = manager.retry_postprocessing(record, processor)
     # TaskResult provenance belongs to the outputs layer, not the generic project manager.
     # Generic processors may return immutable or scalar values.  Only task
@@ -200,9 +220,9 @@ def load_project_result(manager, run, *, allow_unparsed=False, restore_missing=F
     of missing captured files.
     """
     record = _record(manager, run)
-    if record.state not in (RunState.FINISHED, RunState.FAILED, RunState.CANCELLED):
+    if record.is_active:
         raise ProjectResultUnavailableError(
-            record, f"run is still active ({record.state.value})"
+            record, f"run files are still active ({record.file_state.value})"
         )
 
     if restore_missing:
