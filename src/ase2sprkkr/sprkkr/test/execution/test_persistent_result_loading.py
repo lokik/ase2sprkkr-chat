@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
-from kkrunner import ExecutionOutcome, RunState, RunStore
+from kkrunner import RunFileState, ExecutionOutcome, RunState, RunStore
 from kkrunner.files import FileEntry, FileManifest
 from kkrunner.runs.manager import RunManager
 
@@ -11,7 +11,7 @@ from ase2sprkkr.outputs import project_results
 from ase2sprkkr.outputs.task_result import TaskResult
 
 
-def stored_run(tmp_path, state=RunState.FINISHED):
+def stored_run(tmp_path, file_state=RunFileState.POSTPROCESSED):
     manager = RunManager(RunStore(tmp_path / "runs"))
     output = tmp_path / "saved.out"
     output.write_text("saved output")
@@ -21,7 +21,7 @@ def stored_run(tmp_path, state=RunState.FINISHED):
         processing_required=True,
         files=FileManifest(stdout=FileEntry(local_path=str(output))),
     )
-    record = manager.complete(record, state=state, return_code=0, artifacts_available=True)
+    record = manager.complete(record, state=RunState.FINISHED, file_state=file_state, return_code=0, artifacts_available=True)
     return manager, record, output
 
 
@@ -69,7 +69,7 @@ def test_from_run_uses_application_adapter(monkeypatch):
 
 
 def test_attach_builds_processor_in_application_layer(monkeypatch, tmp_path):
-    manager, record, output = stored_run(tmp_path, state=RunState.POSTPROCESSING)
+    manager, record, output = stored_run(tmp_path, file_state=RunFileState.WAITING)
     expected = object()
     monkeypatch.setattr(
         project_results,
@@ -85,3 +85,22 @@ def test_attach_builds_processor_in_application_layer(monkeypatch, tmp_path):
     monkeypatch.setattr(manager, "attach", attach)
     assert project_results.attach_project_run(manager, record.id) == "attached"
     assert captured["process_result"](ExecutionOutcome(output_file=str(output), return_code=0)) is expected
+
+
+def test_prepared_files_use_local_processor_without_backend(monkeypatch, tmp_path):
+    manager, record, output = stored_run(tmp_path, file_state=RunFileState.READY)
+    monkeypatch.setattr(
+        project_results, "_result_processor_for_record",
+        lambda owner, run: lambda outcome: (outcome.state, output.read_text()),
+    )
+
+    def unexpected_backend(*args, **kwargs):
+        pytest.fail("No execution client is needed for prepared files")
+
+    monkeypatch.setattr(manager, "client_for", unexpected_backend)
+    with pytest.raises(project_results.ProjectResultUnavailableError, match="local processing"):
+        project_results.attach_project_run(manager, record.id)
+    assert project_results.retry_project_postprocessing(manager, record.id) == (
+        RunState.FINISHED, "saved output",
+    )
+    assert manager.store.get(record.id).file_state == RunFileState.POSTPROCESSED

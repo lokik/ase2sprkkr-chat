@@ -11,6 +11,7 @@ from .project_results import (
     ProjectResultUnavailableError,
     UnrecoverableProjectResultError,
     attach_project_run,
+    finish_project_files,
     load_project_result,
     retry_project_postprocessing,
 )
@@ -29,6 +30,7 @@ __all__ = [
     "TaskResult",
     "OutputMatch",
     "attach_project_run",
+    "finish_project_files",
     "capture_result_file_manifest",
     "capture_result_file_versions",
     "load_project_result",

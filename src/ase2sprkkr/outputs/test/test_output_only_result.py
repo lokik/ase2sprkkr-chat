@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pyparsing as pp
 import pytest
-from kkrunner import RunState
+from kkrunner import RunFileState, RunState
 from kkrunner.files import FileEntry, FileManifest, FileVersion
 
 from ase2sprkkr.common.process_output_reader import ProcessExitError, ProcessOutputParser
@@ -22,7 +22,7 @@ def saved_run(tmp_path):
         captured_at="2026-11-18T00:00:00+00:00",
     )
     record = SimpleNamespace(
-        id="run", state=RunState.FAILED, files=files,
+        id="run", state=RunState.FAILED, file_state=RunFileState.DONE, is_active=False, files=files,
         metadata={"ase2sprkkr": {"task": "SCF"}},
         execution=SimpleNamespace(directory=SimpleNamespace(local=str(tmp_path))),
         return_code=139,
@@ -142,6 +142,8 @@ def test_output_disappearing_during_parse_is_rejected(saved_run, monkeypatch):
 def test_active_run_has_no_fallback(saved_run, monkeypatch):
     manager, record, _ = saved_run
     record.state = RunState.RUNNING
+    record.file_state = RunFileState.WAITING
+    record.is_active = True
     fail_read(monkeypatch, EOFError("Truncated OUT"))
     with pytest.raises(project_results.ProjectResultUnavailableError, match="still active"):
         project_results.load_project_result(manager, record.id, allow_unparsed=True)
@@ -181,7 +183,7 @@ def test_real_truncated_scf_output_is_inspectable_from_run_store(tmp_path):
             directory=tmp_path, files=files,
             metadata={"ase2sprkkr": {"task": "SCF"}},
         ),
-        state=RunState.FAILED, return_code=139,
+        state=RunState.FAILED, file_state=RunFileState.DONE, return_code=139,
     )
     manager.store.save(record)
     result = project_results.load_project_result(

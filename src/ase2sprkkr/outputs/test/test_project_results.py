@@ -5,7 +5,7 @@ from ase2sprkkr.common.module_registry import RegistryEntryNotFound
 from kkrunner.files import FileManifest, FileEntry
 from kkrunner.runs import ExecutionMetadata, WorkingDirectory, RunRecord
 from kkrunner.targets import LocalTarget
-from kkrunner import RunState
+from kkrunner import RunFileState, RunState
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from ase2sprkkr.outputs.project_results import ProjectResultUnavailableError, attach_project_run, _reader_for_record
 from ase2sprkkr.outputs.readers.bsf import BsfOutputReader
@@ -34,7 +34,7 @@ class _Manager:
 
 def _record(tmp_path, task, *, input_definition=None, input_file=None):
     files = FileManifest() if input_file is None else FileManifest(inputs=(FileEntry(local_path=str(input_file)),))
-    return RunRecord(id='run', state=RunState.RUNNING, created_at='2026-01-01T00:00:00+00:00', updated_at='2026-01-01T00:00:00+00:00', execution=ExecutionMetadata(LocalTarget(), WorkingDirectory(str(tmp_path)), backend_id='1'), files=files, metadata={'ase2sprkkr': {'task': str(task).upper(), 'input_definition': str(input_definition).upper()}}, processing_required=True)
+    return RunRecord(id='run', state=RunState.RUNNING, file_state=RunFileState.WAITING, created_at='2026-01-01T00:00:00+00:00', updated_at='2026-01-01T00:00:00+00:00', execution=ExecutionMetadata(LocalTarget(), WorkingDirectory(str(tmp_path)), backend_id='1'), files=files, metadata={'ase2sprkkr': {'task': str(task).upper(), 'input_definition': str(input_definition).upper()}}, processing_required=True)
 
 @cache
 def _input_text(task):
@@ -137,7 +137,7 @@ def test_load_historical_scf_with_missing_auxiliary_output(tmp_path, monkeypatch
         captured_at="2026-11-13T00:00:00+00:00",
     )
     record = _record(tmp_path, "SCF")
-    record = __import__("dataclasses").replace(record, state=RunState.FINISHED, files=files, return_code=0)
+    record = __import__("dataclasses").replace(record, state=RunState.FINISHED, file_state=RunFileState.DONE, files=files, return_code=0)
     # The mocked parser must still return a valid TaskResult: the loader
     # annotates its file provenance after historical reconstruction.
     from ase2sprkkr.outputs.task_result import TaskResult
@@ -205,7 +205,7 @@ def test_historical_auxiliary_actions_require_original_file(tmp_path, auxiliary_
     )
     manager = RunManager(RunStore(tmp_path / "runs"))
     record = replace(manager.new_record(directory=tmp_path, files=files,
-                     metadata={"ase2sprkkr": {"task": "SCF"}}), state=RunState.FINISHED)
+                     metadata={"ase2sprkkr": {"task": "SCF"}}), state=RunState.FINISHED, file_state=RunFileState.DONE)
     manager.store.save(record)
     if auxiliary_state == "overwritten":
         auxiliary.write_text("@type xy\n0 999\n&\n")
@@ -245,3 +245,13 @@ def test_standalone_output_does_not_invent_an_exit_status():
     output = Path(__file__).parents[1] / "examples" / "Al_SCF.out"
     result = TaskResult.from_file(output)
     assert result.return_code is None
+
+
+@pytest.mark.parametrize("state", [RunState.FINISHED, RunState.CANCELLED, RunState.FAILED])
+def test_attach_ended_calculation_awaiting_output_publication(tmp_path, state):
+    from dataclasses import replace
+    record = replace(_record(tmp_path, "DOS", input_definition="dos"),
+                     state=state, file_state=RunFileState.WAITING)
+    attached = attach_project_run(_Manager(record), record.id)
+    assert attached.record.state is state
+    assert callable(attached.process_result)
