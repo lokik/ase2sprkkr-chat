@@ -53,7 +53,7 @@ def _terminal_run(tmp_path, *, state=RunState.FINISHED, return_code=0, task='DOS
     output_file.write_text('original output')
     executor.output_file = str(output_file)
     record = manager.new_record(directory=tmp_path, files=FileManifest.from_spec(spec), metadata={'ase2sprkkr': {'task': str(task).upper()}}, processing_required=True)
-    client_pool.get((record.execution.transport, record.execution.backend), lambda: executor)
+    client_pool.get((record.execution.target, record.execution.backend), lambda: executor)
     record = manager.store.save(record)
     record = manager.complete(record, state=state, execution=record.execution.submitted('job-1'), return_code=return_code, artifacts_available=True)
     return (manager, executor, record)

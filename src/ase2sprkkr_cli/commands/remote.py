@@ -215,7 +215,7 @@ class _TextSink:
             self._callback(text, self._kind)
 
     def flush(self):
-        # Transport flush is called on every chunk; not an end-of-stream.
+        # Target flush is called on every chunk; not an end-of-stream.
         pass
 
     def finish(self):

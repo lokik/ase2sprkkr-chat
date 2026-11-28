@@ -4,9 +4,9 @@ from dataclasses import replace
 
 import pytest
 
-from kkrunner.client import EndpointClient
+from kkrunner.client import ExecutionClient
 from kkrunner.client.pool import ClientPool
-from kkrunner.transports import LocalTransport, SshTransport
+from kkrunner.targets import LocalTarget, SshTarget
 from kkrunner.execution import MpiSpec
 
 from ase2sprkkr.sprkkr.profile import (
@@ -19,8 +19,8 @@ from ase2sprkkr.sprkkr.profile import (
 def test_local_profile_uses_direct_backend_and_reuses_client():
     profile = SPRKKRProfile(mpi="auto")
     client = client_from_profile(profile)
-    assert isinstance(client, EndpointClient)
-    assert client.transport == LocalTransport()
+    assert isinstance(client, ExecutionClient)
+    assert client.target == LocalTarget()
     assert client.backend.name == "direct"
     assert client_from_profile(replace(profile, mpi=8)) is client
 
@@ -33,15 +33,15 @@ def test_backend_selection_is_independent_of_ssh_transport():
         local_root="/local", remote_root="/remote",
     )
     client = create_client_from_profile(profile)
-    assert isinstance(client.transport, SshTransport)
-    assert client.transport.host == "example.org"
-    assert client.transport.options == ("-p", "2222")
-    assert client.transport.python_command == ("python3", "-I")
+    assert isinstance(client.target, SshTarget)
+    assert client.target.host == "example.org"
+    assert client.target.options == ("-p", "2222")
+    assert client.target.python_command == ("python3", "-I")
     assert client.backend.name == "direct"
 
     managed = create_client_from_profile(replace(profile, backend="kkrunner"))
     assert managed.backend.name == "kkrunner"
-    assert managed.transport == client.transport
+    assert managed.target == client.target
 
 
 def test_ssh_default_is_managed_and_legacy_psij_is_supported():
@@ -86,17 +86,17 @@ def test_mpi_spec_is_independent_of_backend(tmp_path):
 
 def test_invalid_ssh_profile_rejected():
     with pytest.raises(ValueError, match="requires 'host'"):
-        SPRKKRProfile(executor="ssh").transport
+        SPRKKRProfile(executor="ssh").target
     with pytest.raises(ValueError, match="remote_command"):
         SPRKKRProfile(
             executor="ssh", host="example.org", remote_command=("custom-agent",)
-        ).transport
+        ).target
 
 
 def test_client_pool_discard_and_recreate():
     pool = ClientPool()
     profile = SPRKKRProfile()
-    key = (profile.transport, profile.backend_config)
+    key = (profile.target, profile.backend_config)
     first = pool.for_config(*key)
     assert pool.for_config(*key) is first
     assert pool.discard(key) is first

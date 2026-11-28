@@ -2,14 +2,13 @@
 
 import sys
 from contextlib import ExitStack
-from threading import Event
 from types import SimpleNamespace
 
 import pytest
 
 from kkrunner import RunState
 from kkrunner.backends.contracts import SubmissionNotStarted
-from kkrunner.client import EndpointClient
+from kkrunner.client import ExecutionClient
 from kkrunner.runs import Run
 
 from ase2sprkkr import InputParameters
@@ -52,13 +51,13 @@ def _create_run(prepared, *, executor=None, callback=None):
     return prepared.create_run(
         result_context=None,
         profile=SPRKKRProfile(mpi=False),
-        executor=executor or EndpointClient(),
+        executor=executor or ExecutionClient(),
         callback=callback,
     )
 
 
 def test_files_are_closed_when_runner_creation_fails(prepared, monkeypatch):
-    executor = EndpointClient()
+    executor = ExecutionClient()
 
     def fail_factory(*args, **kwargs):
         raise RuntimeError("factory failed")
@@ -75,22 +74,22 @@ def test_files_are_closed_when_submission_fails_before_start(prepared, monkeypat
     assert isinstance(runner, Run)
     assert not prepared.input_file.closed
 
-    def fail_submission():
+    async def fail_submission(*args, **kwargs):
         raise SubmissionNotStarted("staging failed")
 
-    monkeypatch.setattr(runner._job, "submit", fail_submission)
+    monkeypatch.setattr(runner._job.execution, "submit", fail_submission)
     with pytest.raises(SubmissionNotStarted, match="staging failed"):
-        runner.submit()
+        runner.run()
     assert runner.state is RunState.FAILED
     assert prepared.input_file.closed
     assert prepared.output_file.closed
 
 
-def test_completion_releases_files_without_wait(prepared):
-    completed = Event()
-    runner = _create_run(prepared, callback=lambda result: completed.set())
-    runner.submit()
-    assert completed.wait(10), "completion callback was not called"
+def test_completion_releases_files_in_the_caller(prepared):
+    completed = []
+    runner = _create_run(prepared, callback=completed.append)
+    result = runner.run()
+    assert completed == [result]
     assert runner.state is RunState.FINISHED
     assert prepared.input_file.closed
     assert prepared.output_file.closed

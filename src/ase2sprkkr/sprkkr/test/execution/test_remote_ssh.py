@@ -1,4 +1,4 @@
-"""Explicit Docker/SSH integration test for EndpointClient."""
+"""Explicit Docker/SSH integration test for ExecutionClient."""
 import os
 import posixpath
 import shutil
@@ -30,15 +30,15 @@ def _remote_error(exc):
     pytest.fail(f"{exc}\n\nRemote stderr:\n{stderr or '<empty>'}")
 
 
-def _wait_for_live_output(runner, output_seen, output, timeout=30):
+def _wait_for_live_output(runner, observation, output_seen, output, timeout=30):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if output_seen.wait(0.1):
             return
         state = runner.state
-        if state.value in {'finished', 'failed', 'cancelled'}:
+        if observation.done():
             try:
-                result = runner.wait()
+                result = observation.result()
             except Exception as exc:
                 pytest.fail(f'remote run ended before live output: state={state.value}, exception={exc!r}, output={output!r}')
             pytest.fail(f'remote run ended before live output: state={state.value}, return_code={result.return_code}, output={output!r}')
@@ -47,9 +47,9 @@ def _wait_for_live_output(runner, output_seen, output, timeout=30):
 
 def test_remote_executor_over_ssh(docker_execution_image):
     from ase.build import bulk
-    from kkrunner.client import EndpointClient
+    from kkrunner.client import ExecutionClient
     from kkrunner.client.pool import ClientPool
-    from kkrunner.transports import SshTransport
+    from kkrunner.targets import SshTarget
     from kkrunner.projects import ProjectRunManager, ProjectRepository
 
     from ase2sprkkr.outputs.project_results import load_project_result
@@ -72,7 +72,7 @@ def test_remote_executor_over_ssh(docker_execution_image):
             options = ('-i', str(key), '-p', port, '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null')
             ssh = ['ssh', *options, 'tester@127.0.0.1']
             _wait_for_ssh(ssh)
-            executor = EndpointClient('kkrunner', transport=SshTransport('tester@127.0.0.1', options=options, python_command=('/opt/venv/bin/python3',)))
+            executor = ExecutionClient('kkrunner', target=SshTarget('tester@127.0.0.1', options=options, python_command=('/opt/venv/bin/python3',)))
             profile = SPRKKRProfile(executable_dir='/opt/sprkkr', executable_suffix='', mpi=False, local_root=tmp, remote_root='/home/tester/ase2sprkkr-runs')
             projects = ProjectRepository(tmp / 'projects')
             project = projects.create('SSH integration')
@@ -91,17 +91,23 @@ def test_remote_executor_over_ssh(docker_execution_image):
             workdir.mkdir()
             calculator = SPRKKR(atoms=bulk('Al'), directory=workdir, executor=executor, profile=profile, project=manager, empty_spheres=False, print_output=False)
             runner = calculator.create_run(options={'NITER': 2, 'NKTAB': 5, 'NE': 5}, read_callback=read_output)
-            try:
-                runner.submit()
-            except SubmissionNotStarted as exc:
-                if isinstance(exc.__cause__, subprocess.CalledProcessError):
-                    _remote_error(exc.__cause__)
-                raise
-            assert runner.backend_id is not None
-            assert runner.execution.transport.host == 'tester@127.0.0.1'
-            assert runner.execution.directory.target == '/home/tester/ase2sprkkr-runs/calculation'
-            _wait_for_live_output(runner, output_seen, output)
-            result = runner.wait()
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                observation = pool.submit(runner.run)
+                try:
+                    _wait_for_live_output(runner, observation, output_seen, output)
+                    assert runner.backend_id is not None
+                    assert runner.execution.target.host == 'tester@127.0.0.1'
+                    assert runner.execution.directory.target == '/home/tester/ase2sprkkr-runs/calculation'
+                    result = observation.result(timeout=60)
+                except SubmissionNotStarted as exc:
+                    if isinstance(exc.__cause__, subprocess.CalledProcessError):
+                        _remote_error(exc.__cause__)
+                    raise
+                finally:
+                    if not observation.done():
+                        runner.cancel().result(timeout=10)
             finished_at = time.monotonic()
             assert result.return_code == 0
             assert len(result.iterations) > 0
@@ -121,8 +127,8 @@ def test_remote_executor_over_ssh(docker_execution_image):
             restarted_executor = restarted.client_for(record)
             replayed = load_project_result(restarted, run_id)
             assert restarted_executor is not executor
-            assert restarted_executor.transport.host == 'tester@127.0.0.1'
-            assert restarted_executor.transport.options == options
+            assert restarted_executor.target.host == 'tester@127.0.0.1'
+            assert restarted_executor.target.options == options
             assert replayed.return_code == 0
             assert len(replayed.iterations) > 0
         finally:

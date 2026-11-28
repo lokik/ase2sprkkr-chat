@@ -98,9 +98,9 @@ def test_runtime_profile_splits_endpoint_from_launch_parameters():
         output_sync="always",
     )
 
-    from kkrunner.transports import SshTransport
+    from kkrunner.targets import SshTarget
     from kkrunner.backends.config import BackendConfig
-    assert profile.transport == SshTransport(
+    assert profile.target == SshTarget(
         host="cluster.example", options=("-p", "2222"),
         python_command=("python3",),
     )
@@ -161,7 +161,7 @@ def test_profiles_with_same_backend_share_endpoint_identity():
         input_sync="never",
     )
 
-    assert first.transport == second.transport
+    assert first.target == second.target
     assert first.backend_config == second.backend_config
     assert first.launch_parameters != second.launch_parameters
 

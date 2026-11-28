@@ -5,7 +5,7 @@ from pathlib import Path
 from ase.build import bulk
 import pytest
 
-from kkrunner.client import EndpointClient
+from kkrunner.client import ExecutionClient
 from ...input_parameters.input_parameters import InputParameters
 from ...input_parameters.task_definition import TaskDefinition
 from ...potentials.potentials import Potential
@@ -60,7 +60,7 @@ def test_unstarted_run_owns_temporary_calculation_directory(fe_bulk):
 
     runner = calculator.create_run(
         directory=False,
-        executor=EndpointClient(),
+        executor=ExecutionClient(),
         empty_spheres=False,
     )
     directory = runner.spec.directory
@@ -85,7 +85,7 @@ def test_temporary_input_and_potential_are_path_backed_until_runner_close(tmp_pa
         input_file=False,
         potential_file=False,
         output_file=False,
-        executor=EndpointClient(),
+        executor=ExecutionClient(),
     )
 
     input_name = runner.spec.input_file.name
@@ -186,7 +186,7 @@ def test_prepared_calculation_constructs_its_runner(tmp_path, fe_bulk):
     runner = prepared.create_run(
         result_context=calculator,
         profile=calculator.profile,
-        executor=EndpointClient(),
+        executor=ExecutionClient(),
     )
 
     assert runner.spec.directory == str(tmp_path)
@@ -284,7 +284,7 @@ def test_reader_file_not_found_is_not_relabelled_as_missing_executable(
         prepared.create_run(
             result_context=calculator,
             profile=calculator.profile,
-            executor=EndpointClient(),
+            executor=ExecutionClient(),
         )
 
     assert prepared.closed
@@ -299,7 +299,7 @@ def test_tracked_run_rejects_directory_deleted_on_client_exit(tmp_path, fe_bulk)
     prepared = calculator.prepare(directory=False)
     directory = Path(prepared.directory)
     with pytest.raises(ValueError, match='persistent calculation directory'):
-        prepared.create_run(profile=SPRKKRProfile(mpi=False), executor=EndpointClient(), project=manager)
+        prepared.create_run(profile=SPRKKRProfile(mpi=False), executor=ExecutionClient(), project=manager)
     assert prepared.closed
     assert not directory.exists()
 
@@ -311,7 +311,7 @@ def test_tracked_run_rejects_temporary_stderr(tmp_path, fe_bulk):
     calculator = SPRKKR(atoms=fe_bulk.copy(), mpi=False, empty_spheres=False)
     prepared = calculator.prepare(directory=tmp_path)
     with pytest.raises(ValueError, match='persistent stderr'):
-        prepared.create_run(profile=SPRKKRProfile(mpi=False), executor=EndpointClient(),
+        prepared.create_run(profile=SPRKKRProfile(mpi=False), executor=ExecutionClient(),
                             project=manager, error_file=False)
     assert prepared.closed
 
@@ -321,7 +321,7 @@ def test_untracked_clear_cache_keeps_temporary_directory(fe_bulk):
         atoms=fe_bulk.copy(), profile=SPRKKRProfile(mpi=False), empty_spheres=False,
     )
     runner = calculator.create_run(
-        directory=False, executor=EndpointClient(), clear_cache=True,
+        directory=False, executor=ExecutionClient(), clear_cache=True,
     )
     directory = Path(runner.spec.directory)
     try:

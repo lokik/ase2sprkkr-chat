@@ -7,34 +7,9 @@ from ase.build import bulk
 from ...input_parameters.input_parameters import InputParameters
 from ...potentials.potentials import Potential
 
-from kkrunner.runs.base import RunState
+from kkrunner import ExecutionClient
 from ..calculator import SPRKKR
 from ..profile import SPRKKRProfile
-
-
-class _UnstartedRunner:
-    def __init__(self, spec, owned_resources):
-        self.spec = spec
-        self._owned_resources = owned_resources
-        self.state = RunState.NEW
-        self.result = None
-        self.reference = None
-        self.exception = None
-
-    def add_output_listener(self, callback):
-        pass
-
-    def close(self):
-        # A real Run owns these resources after Run.create succeeds.
-        self._owned_resources.close()
-
-
-class _Executor:
-    def resolve_mpi(self, mpi):
-        return mpi
-
-    def create_run(self, spec, callback=None, owned_resources=None):
-        return _UnstartedRunner(spec, owned_resources)
 
 
 def _calculator(tmp_path):
@@ -57,21 +32,10 @@ def lightweight_input_writes(monkeypatch):
 
     monkeypatch.setattr(Potential, "save_to_file", write_marker)
     monkeypatch.setattr(InputParameters, "save_to_file", write_marker)
-    from .. import calculation as calculation_module
-    original_create = calculation_module.Run.create
-
-    def create(client, spec, **kwargs):
-        if isinstance(client, _Executor):
-            return client.create_run(
-                spec, callback=kwargs.get("callback"), owned_resources=kwargs["owned_resources"],
-            )
-        return original_create(client, spec, **kwargs)
-
-    monkeypatch.setattr(calculation_module.Run, "create", staticmethod(create))
 
 
 def test_default_error_file_is_output_file_plus_err(tmp_path, lightweight_input_writes):
-    runner = _calculator(tmp_path).create_run(executor=_Executor())
+    runner = _calculator(tmp_path).create_run(executor=ExecutionClient())
     try:
         output_name = runner.spec.output_file.name
         assert runner.spec.error_file.name == output_name + ".err"
@@ -83,7 +47,7 @@ def test_default_error_file_is_output_file_plus_err(tmp_path, lightweight_input_
 
 def test_error_file_true_explicitly_merges_with_output(tmp_path, lightweight_input_writes):
     runner = _calculator(tmp_path).create_run(
-        executor=_Executor(),
+        executor=ExecutionClient(),
         error_file=True,
     )
     try:
@@ -97,7 +61,7 @@ def test_error_file_true_explicitly_merges_with_output(tmp_path, lightweight_inp
 
 def test_explicit_error_file_path_is_resolved_in_calculation_directory(tmp_path, lightweight_input_writes):
     runner = _calculator(tmp_path).create_run(
-        executor=_Executor(),
+        executor=ExecutionClient(),
         error_file="logs/stderr.txt",
         create_subdirs=True,
     )
@@ -112,7 +76,7 @@ def test_explicit_error_file_path_is_resolved_in_calculation_directory(tmp_path,
 
 def test_error_file_false_requests_managed_temporary_file(tmp_path, lightweight_input_writes):
     runner = _calculator(tmp_path).create_run(
-        executor=_Executor(),
+        executor=ExecutionClient(),
         error_file=False,
     )
     error_name = runner.spec.error_file.name

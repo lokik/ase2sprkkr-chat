@@ -1,8 +1,8 @@
 from types import SimpleNamespace
 
 from ase2sprkkr.configuration import definition
-from kkrunner.client import EndpointClient
-from kkrunner.transports import SshTransport
+from kkrunner.client import ExecutionClient
+from kkrunner.targets import SshTarget
 from kkrunner.runs import RunState
 from ase2sprkkr.profiles import ProfilesConfigurationContainer
 from ase2sprkkr.sprkkr import profile as profile_module
@@ -138,8 +138,8 @@ def test_ssh_profile_uses_managed_remote_execution_by_default():
     client = executor_from_profile(
         SPRKKRProfile(executor="ssh", host="user@cluster")
     )
-    assert isinstance(client, EndpointClient)
-    assert isinstance(client.transport, SshTransport)
+    assert isinstance(client, ExecutionClient)
+    assert isinstance(client.target, SshTarget)
     assert client.backend.name == "kkrunner"
 
 
@@ -150,7 +150,7 @@ def test_ssh_profile_can_use_psij_on_target():
             psij_backend="slurm", psij_url="local://scheduler",
         )
     )
-    assert isinstance(client, EndpointClient)
+    assert isinstance(client, ExecutionClient)
     assert client.backend.name == "psij"
     assert client.backend.options == {
         "executor_name": "slurm", "url": "local://scheduler",
@@ -159,6 +159,6 @@ def test_ssh_profile_can_use_psij_on_target():
 
 def test_direct_psij_profile_defaults_to_slurm():
     client = executor_from_profile(SPRKKRProfile(executor="psij"))
-    assert isinstance(client, EndpointClient)
+    assert isinstance(client, ExecutionClient)
     assert client.backend.name == "psij"
     assert client.backend.options == {"executor_name": "slurm", "url": None}

@@ -4,7 +4,7 @@ import pytest
 from ase2sprkkr.common.module_registry import RegistryEntryNotFound
 from kkrunner.files import FileManifest, FileEntry
 from kkrunner.runs import ExecutionMetadata, WorkingDirectory, RunRecord
-from kkrunner.transports import LocalTransport
+from kkrunner.targets import LocalTarget
 from kkrunner import RunState
 from ase2sprkkr.input_parameters.input_parameters import InputParameters
 from ase2sprkkr.outputs.project_results import ProjectResultUnavailableError, attach_project_run, _reader_for_record
@@ -34,7 +34,7 @@ class _Manager:
 
 def _record(tmp_path, task, *, input_definition=None, input_file=None):
     files = FileManifest() if input_file is None else FileManifest(inputs=(FileEntry(local_path=str(input_file)),))
-    return RunRecord(id='run', state=RunState.RUNNING, created_at='2026-01-01T00:00:00+00:00', updated_at='2026-01-01T00:00:00+00:00', execution=ExecutionMetadata(LocalTransport(), WorkingDirectory(str(tmp_path)), backend_id='1'), files=files, metadata={'ase2sprkkr': {'task': str(task).upper(), 'input_definition': str(input_definition).upper()}}, processing_required=True)
+    return RunRecord(id='run', state=RunState.RUNNING, created_at='2026-01-01T00:00:00+00:00', updated_at='2026-01-01T00:00:00+00:00', execution=ExecutionMetadata(LocalTarget(), WorkingDirectory(str(tmp_path)), backend_id='1'), files=files, metadata={'ase2sprkkr': {'task': str(task).upper(), 'input_definition': str(input_definition).upper()}}, processing_required=True)
 
 @cache
 def _input_text(task):
